@@ -39,11 +39,12 @@ def _import_hermes_runtime():
 
 
 # Fireworks rejects requests with `max_tokens > 4096` unless `stream=true`.
-# When that threshold applies we flip the call to streaming and let
-# run_agent's streaming path reassemble the response into the same shape the
-# rest of megaplan expects.  Streaming lives entirely inside the worker —
-# downstream callers never see streaming semantics.
-_FIREWORKS_STREAM_MAX_TOKENS = 4096
+# Direct DeepSeek accepts high-token non-streaming calls, but streaming keeps
+# the transport closer to the Fireworks path and avoids quiet long-poll gaps.
+# Streaming lives entirely inside the worker; downstream callers never see
+# streaming semantics.
+_HIGH_TOKEN_STREAM_MAX_TOKENS = 4096
+_HIGH_TOKEN_STREAM_PROVIDERS = ("fireworks:", "deepseek:")
 
 
 def _no_op_stream(_text: str) -> None:
@@ -60,17 +61,17 @@ _no_op_stream._megaplan_force_stream = True  # type: ignore[attr-defined]
 def _provider_requires_streaming(model: str | None, max_tokens: int | None) -> bool:
     """Return True when this provider/max_tokens pair must use streaming.
 
-    Today only Fireworks has this constraint (max_tokens > 4096 must stream).
-    Other providers (OpenRouter, DeepSeek-direct, MiniMax, etc.) accept
-    non-streamed high-max_tokens requests, so we keep the opt-in narrow.
+    Fireworks requires streaming above the threshold. Direct DeepSeek is kept on
+    the same high-token streaming path so `deepseek:*` behaves like the known
+    good Fireworks DeepSeek route.
     """
     if not model or not isinstance(model, str):
         return False
-    if not model.startswith("fireworks:"):
+    if not model.startswith(_HIGH_TOKEN_STREAM_PROVIDERS):
         return False
     if max_tokens is None:
         return False
-    return max_tokens > _FIREWORKS_STREAM_MAX_TOKENS
+    return max_tokens > _HIGH_TOKEN_STREAM_MAX_TOKENS
 
 
 def _streaming_run_kwargs(model: str | None, max_tokens: int | None) -> dict:
@@ -78,6 +79,23 @@ def _streaming_run_kwargs(model: str | None, max_tokens: int | None) -> dict:
     if _provider_requires_streaming(model, max_tokens):
         return {"stream_callback": _no_op_stream}
     return {}
+
+
+def _reasoning_config_for_model(resolved_model: str | None) -> dict | None:
+    """Return a reasoning override only for models known to need one.
+
+    DeepSeek V4 worked through Fireworks without a reasoning override. Keep the
+    direct DeepSeek API route aligned with that behavior: do not send
+    `thinking: disabled` or an equivalent override for `deepseek-v4-*`.
+    """
+    model_lower = (resolved_model or "").lower()
+    reasoning_off_families = (
+        "qwen/qwen3",
+        "deepseek/deepseek-r1",
+    )
+    if any(model_lower.startswith(prefix) for prefix in reasoning_off_families):
+        return {"enabled": False}
+    return None
 
 
 def _toolsets_for_phase(phase: str) -> list[str] | None:
@@ -487,23 +505,10 @@ def run_hermes_step(
 
     toolsets = _toolsets_for_phase(step)
 
-    # Disable reasoning/thinking for models that default to reasoning mode.
-    # When reasoning is enabled, some models (Qwen3.5, DeepSeek-R1) put all
-    # output in the reasoning field and return content: null.  Megaplan needs
-    # structured JSON in the content field, so force reasoning off for any
-    # model family known to use reasoning by default on OpenRouter.
-    _model_lower = (resolved_model or "").lower()
-    _reasoning_families = (
-        "qwen/qwen3",
-        "deepseek/deepseek-r1",
-        "deepseek-v4-",
-        "deepseek/deepseek-v4-",
-    )
-    _reasoning_off = (
-        {"enabled": False}
-        if any(_model_lower.startswith(prefix) for prefix in _reasoning_families)
-        else None
-    )
+    # Disable reasoning/thinking only for model families that otherwise return
+    # structured output outside the normal content field. DeepSeek V4 is not in
+    # this list so the direct API route matches the Fireworks route.
+    _reasoning_off = _reasoning_config_for_model(resolved_model)
 
     # Cap output tokens to prevent repetition loops (Qwen generates 330K+
     # of repeated text without a limit). Sized to fit large finalize.json

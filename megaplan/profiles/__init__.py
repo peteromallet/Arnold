@@ -31,7 +31,10 @@ PROFILE_METADATA_KEYS = frozenset({"vendor_locked"})
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
+VALID_DEEPSEEK_PROVIDER_CHOICES = ("fireworks", "direct")
 KIMI_SPEC = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+FIREWORKS_DEEPSEEK_V4_PRO_SPEC = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+DIRECT_DEEPSEEK_V4_PRO_SPEC = "hermes:deepseek:deepseek-v4-pro"
 _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 
 # Author-side phases that ``--depth`` rewrites. Critic phases (critique,
@@ -376,6 +379,37 @@ def apply_depth_rewrite(
     return result
 
 
+def _swap_deepseek_provider_spec(spec: str, provider: str) -> str:
+    if provider == "direct" and spec == FIREWORKS_DEEPSEEK_V4_PRO_SPEC:
+        return DIRECT_DEEPSEEK_V4_PRO_SPEC
+    if provider == "fireworks" and spec == DIRECT_DEEPSEEK_V4_PRO_SPEC:
+        return FIREWORKS_DEEPSEEK_V4_PRO_SPEC
+    return spec
+
+
+def apply_deepseek_provider_rewrite(
+    profile: dict[str, str],
+    provider: str,
+) -> dict[str, str]:
+    """Return a copy of ``profile`` with canonical DeepSeek v4-pro provider swapped.
+
+    This is a provider dial, not a profile-tier dial: it only rewrites the
+    canonical DeepSeek V4 Pro specs between Fireworks-direct and DeepSeek's
+    direct API. Kimi, non-DeepSeek Fireworks models, and DeepSeek Flash stay
+    exactly as declared by the profile.
+    """
+    if provider not in VALID_DEEPSEEK_PROVIDER_CHOICES:
+        raise CliError(
+            "invalid_deepseek_provider",
+            f"--deepseek-provider must be one of {', '.join(VALID_DEEPSEEK_PROVIDER_CHOICES)}; "
+            f"got {provider!r}",
+        )
+    return {
+        phase: _swap_deepseek_provider_spec(spec, provider)
+        for phase, spec in profile.items()
+    }
+
+
 def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     for spec in profile.values():
         agent, _model = parse_agent_spec(spec)
@@ -424,17 +458,21 @@ def apply_profile_expansion(
         cli_vendor = getattr(args, "vendor", None)
         cli_critic = getattr(args, "critic", None)
         cli_depth = getattr(args, "depth", None)
+        cli_deepseek_provider = getattr(args, "deepseek_provider", None)
         state_vendor = None
         state_critic = None
         state_depth = None
+        state_deepseek_provider = None
         if state is not None:
             cfg = state.get("config") or {}
             state_vendor = cfg.get("vendor")
             state_critic = cfg.get("critic")
             state_depth = cfg.get("depth")
+            state_deepseek_provider = cfg.get("deepseek_provider")
         effective_vendor_flag = cli_vendor or state_vendor
         effective_critic_flag = cli_critic or state_critic
         effective_depth_flag = cli_depth or state_depth
+        effective_deepseek_provider_flag = cli_deepseek_provider or state_deepseek_provider
 
         # Vendor-locked profiles silently ignore --vendor and --critic.
         # The lock is about which vendor, not which depth — --depth is
@@ -478,6 +516,9 @@ def apply_profile_expansion(
             # vendor_locked profile: --vendor / --critic are no-ops, but
             # --depth is still applied to author phases.
             resolved = apply_depth_rewrite(resolved, effective_depth_flag)
+
+        if effective_deepseek_provider_flag is not None:
+            resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag)
 
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:
@@ -526,10 +567,12 @@ def apply_profile_expansion(
 __all__ = [
     "DEPTH_AUTHOR_PHASES",
     "VALID_CRITIC_CHOICES",
+    "VALID_DEEPSEEK_PROVIDER_CHOICES",
     "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
     "PROFILE_METADATA_KEYS",
     "apply_critic_rewrite",
+    "apply_deepseek_provider_rewrite",
     "apply_depth_rewrite",
     "apply_profile_expansion",
     "apply_vendor_rewrite",

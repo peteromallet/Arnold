@@ -154,6 +154,18 @@ def test_render_dockerfile_matches_v0190_baseline_when_toolchains_omitted() -> N
     assert render_dockerfile(spec) == golden
 
 
+def test_render_dockerfile_installs_cloud_agent_runtime_dependencies() -> None:
+    rendered = render_dockerfile(_spec("idle"))
+
+    assert "      unzip \\" in rendered
+    assert "npm i -g @openai/codex @anthropic-ai/claude-code @dexh/shannon@0.0.2" in rendered
+    assert "https://bun.sh/install" in rendered
+    assert 'ln -sf "$NVBIN/codex"  /usr/local/bin/codex' in rendered
+    assert 'ln -sf "$NVBIN/claude" /usr/local/bin/claude' in rendered
+    assert 'ln -sf "$NVBIN/shannon" /usr/local/bin/shannon' in rendered
+    assert "ln -sf /root/.bun/bin/bun /usr/local/bin/bun" in rendered
+
+
 def test_render_dockerfile_adds_alias_toolchain_recipes() -> None:
     spec = replace(
         _spec("idle"),

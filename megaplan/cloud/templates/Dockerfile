@@ -5,7 +5,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     PYENV_ROOT=/root/.pyenv \
     PATH=/root/.pyenv/shims:/root/.pyenv/bin:/root/.local/bin:/usr/local/bin:/usr/bin:/bin \
-    NVM_DIR=/root/.nvm
+    NVM_DIR=/root/.nvm \
+    BUN_INSTALL=/root/.bun
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
@@ -27,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       sudo \
       tmux \
       tzdata \
+      unzip \
       vim \
       wget \
       xz-utils \
@@ -58,17 +60,24 @@ RUN curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh |
     && ln -s "$NVM_DIR/versions/node/$(nvm current)/bin/npm"  /usr/local/bin/npm \
     && ln -s "$NVM_DIR/versions/node/$(nvm current)/bin/npx"  /usr/local/bin/npx
 
-# Codex CLI + Claude Code, symlinked into /usr/local/bin so non-interactive shells see them.
+# Bun runtime used by Shannon.
+RUN curl -fsSL https://bun.sh/install | bash \
+    && ln -sf /root/.bun/bin/bun /usr/local/bin/bun \
+    && bun --version
+
+# Codex CLI + Claude Code + Shannon, symlinked into /usr/local/bin so non-interactive shells see them.
 RUN . "$NVM_DIR/nvm.sh" \
-    && npm i -g @openai/codex @anthropic-ai/claude-code \
+    && npm i -g @openai/codex @anthropic-ai/claude-code @dexh/shannon@0.0.2 \
     && NVBIN=$(ls -d /root/.nvm/versions/node/*/bin | head -1) \
     && ln -sf "$NVBIN/codex"  /usr/local/bin/codex \
     && ln -sf "$NVBIN/claude" /usr/local/bin/claude \
+    && ln -sf "$NVBIN/shannon" /usr/local/bin/shannon \
     && codex --version \
-    && claude --version
+    && claude --version \
+    && command -v shannon
 
 # Megaplan from source
-RUN pip install --no-cache-dir git+https://github.com/peteromallet/megaplan.git \
+RUN pip install --no-cache-dir "megaplan-harness[agent] @ git+https://github.com/peteromallet/megaplan.git" \
     && megaplan --help > /dev/null
 ${TOOLCHAIN_BLOCK}
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

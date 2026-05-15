@@ -60,7 +60,7 @@ echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, sandbox: dange
 # requested ref without rebuilding the base image.
 MEGAPLAN_REF="$${MEGAPLAN_REF:-${MEGAPLAN_REF}}"
 echo "Installing/upgrading megaplan from github:$$MEGAPLAN_REF"
-pip install --upgrade --no-cache-dir "git+https://github.com/peteromallet/megaplan.git@$$MEGAPLAN_REF" 2>&1 | tail -3
+pip install --upgrade --force-reinstall --no-cache-dir "megaplan-harness[agent] @ git+https://github.com/peteromallet/megaplan.git@$$MEGAPLAN_REF" 2>&1 | tail -3
 
 echo "Configuring megaplan agent routing and execution defaults"
 ${AGENT_ROUTING_BLOCK}
