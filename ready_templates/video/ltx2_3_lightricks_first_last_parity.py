@@ -50,7 +50,7 @@ READY_METADATA = {
         "Use tiled VAE decode for full-size app outputs.",
         "Do not force the LTX2 memory-efficient Sage/Triton patch in the portable 4090 profile; LTX 2.3 guide masks must remain on the stable SDPA-compatible path unless a separate optimized profile proves the patch end-to-end.",
     ],
-    "comfy_configuration": {"memory_profile": 1, "fp8_e4m3fn_text_enc": True},
+    "comfy_configuration": {"memory_profile": 3, "fp8_e4m3fn_text_enc": True},
 }
 
 READY_REQUIREMENTS = {
