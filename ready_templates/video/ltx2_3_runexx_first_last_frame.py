@@ -66,7 +66,7 @@ READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
 READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']}
+ 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']}
 
 
 def build() -> VibeWorkflow:
@@ -172,19 +172,11 @@ def build() -> VibeWorkflow:
         unet_name='ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors',
         weight_dtype='default',
     )
-    dualcliploadergguf = _node(wf, 'DualCLIPLoaderGGUF', '189',
-        widget_0='gemma-3-12b-it-Q2_K.gguf',
-        widget_1='ltx-2.3_text_projection_bf16.safetensors',
-        widget_2='ltxv',
-    )
     dualcliploader = _node(wf, 'DualCLIPLoader', '190',
         clip_name1='gemma_3_12B_it_fp4_mixed.safetensors',
         clip_name2='ltx-2.3_text_projection_bf16.safetensors',
         type='ltxv',
         device='default',
-    )
-    unetloadergguf = _node(wf, 'UnetLoaderGGUF', '191',
-        widget_0='LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf',
     )
     getnode_18 = _node(wf, 'GetNode', '193',
         widget_0='vae_tiny',
@@ -635,9 +627,18 @@ def build() -> VibeWorkflow:
         IMAGE=vaedecodetiled.out(0),
     )
 
+    _apply_runtime_schema_defaults(wf)
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
+
+
+def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
+    """Fill schema-required inputs that older exported widget JSON omitted."""
+    if "92" in wf.nodes:
+        wf.nodes["92"].inputs.setdefault("variables", "a")
+    if "2077" in wf.nodes:
+        wf.nodes["2077"].inputs.setdefault("variables", "a,b")
 
 
 def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):

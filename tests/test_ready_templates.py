@@ -254,6 +254,18 @@ def test_ltx_travel_segment_outputs_omit_synthetic_audio(template_id: str) -> No
     assert all("audio" not in node.get("inputs", {}) for node in video_combine_nodes)
 
 
+def test_ltx_runexx_first_last_frame_omits_dead_gguf_branch_and_validates_calculators() -> None:
+    workflow = workflow_from_ready("video/ltx2_3_runexx_first_last_frame")
+    api = workflow.compile("api")
+
+    assert workflow.validate().ok
+    assert "ComfyUI-GGUF" not in workflow.requirements.custom_nodes
+    assert "189" not in api
+    assert "191" not in api
+    assert api["92"]["inputs"]["variables"] == "a"
+    assert api["2077"]["inputs"]["variables"] == "a,b"
+
+
 def test_ready_template_loads_vibe_workflow() -> None:
     workflow = workflow_from_ready("edit/qwen_image_edit")
 

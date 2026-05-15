@@ -80,7 +80,6 @@ READY_METADATA = {
 READY_REQUIREMENTS = {
     "models": LTX_RUNEXX_MODEL_ASSETS,
     "custom_nodes": [
-        "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite",
