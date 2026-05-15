@@ -66,6 +66,9 @@ class VibeOutput:
     node_id: str
     output_type: str
     name: str | None = None
+    artifact_kind: str | None = None
+    mime_type: str | None = None
+    filename_prefix: str | None = None
 
 
 @dataclass(slots=True)

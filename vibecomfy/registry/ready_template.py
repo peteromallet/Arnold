@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 from vibecomfy.handles import Handle
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeOutput, VibeWorkflow, WorkflowSource
 
 
 def build_api_ready_workflow(
@@ -176,6 +176,170 @@ def _referenced_model_filenames(workflow: VibeWorkflow) -> set[str]:
     return filenames
 
 
+def ready_workflow(
+    workflow_id: str,
+    *,
+    source_path: str,
+    source_type: str = "ready_template",
+    provenance: Mapping[str, Any] | None = None,
+) -> VibeWorkflow:
+    """Create a VibeWorkflow with a properly populated WorkflowSource.
+
+    This is the canonical constructor for emitted ready-template code,
+    replacing the inline ``VibeWorkflow(...)`` / ``WorkflowSource(...)``
+    boilerplate.
+    """
+    return VibeWorkflow(
+        workflow_id,
+        WorkflowSource(
+            id=workflow_id,
+            path=source_path,
+            source_type=source_type,
+            provenance=dict(provenance) if provenance else {},
+        ),
+    )
+
+
+def ready_node(
+    wf: VibeWorkflow,
+    class_type: str,
+    *,
+    source_id: str | None = None,
+    outputs: tuple[str, ...] | None = None,
+    extras: Mapping[str, Any] | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Create a node, preserving a source-side *source_id* when provided.
+
+    Semantically equivalent to the old ``_node()`` helper but lives in the
+    shared registry so generated ready templates don't need to inline it.
+
+    * *source_id* -- if given and different from the auto-assigned node id,
+      the node is renamed in ``wf.nodes`` and all edge references are updated.
+    * *outputs* -- attaches ``output_names`` metadata to the node so later
+      ``.out('name')`` calls work.
+    * *extras* -- dict of kwargs whose names are not valid Python identifiers
+      (e.g. ``\"resize_type.multiple\"``).  Handle values in *extras* are
+      connected as edges; plain values are set as inputs.
+    """
+    from vibecomfy.handles import Handle
+
+    builder = wf.node(class_type, **kwargs)
+    if outputs is not None:
+        builder.node.metadata["output_names"] = list(outputs)
+    if extras:
+        for key, value in extras.items():
+            if isinstance(value, Handle):
+                wf.connect(value, f"{builder.node.id}.{key}")
+            else:
+                builder.node.inputs[key] = value
+    if source_id is not None and builder.node.id != source_id:
+        old_id = builder.node.id
+        node = wf.nodes.pop(old_id)
+        node.id = source_id
+        wf.nodes[source_id] = node
+        for edge in wf.edges:
+            if edge.to_node == old_id:
+                edge.to_node = source_id
+            if edge.from_node == old_id:
+                edge.from_node = source_id
+    return builder
+
+
+def finalize_ready_template(
+    wf: VibeWorkflow,
+    ready_metadata: Mapping[str, Any],
+    *,
+    source_path: str,
+    requirements: Mapping[str, list[Any]] | None = None,
+) -> VibeWorkflow:
+    """Call ``finalize_metadata()`` then ``apply_ready_template_policy()``.
+
+    The order is **critical**: ``finalize_metadata()`` clears inputs/outputs
+    and re-infers them, so any ``bind_input``/``bind_output`` calls must come
+    **after** this function returns.
+    """
+    wf.finalize_metadata()
+    return apply_ready_template_policy(
+        wf,
+        ready_metadata,
+        source_path=source_path,
+        requirements=requirements,
+    )
+
+
+def bind_input(
+    wf: VibeWorkflow,
+    name: str,
+    node_id: str,
+    field: str,
+) -> VibeWorkflow:
+    """Register a public input binding **after** ``finalize_ready_template()``.
+
+    Validates that *node_id* exists in ``wf.nodes`` and that *field* is a
+    known input/widget key on that node.  Raises ``ValueError`` with a
+    descriptive message when either check fails.
+    """
+    if node_id not in wf.nodes:
+        raise ValueError(
+            f"bind_input({name!r}): target node {node_id!r} does not exist "
+            f"in workflow {wf.id!r}"
+        )
+    node = wf.nodes[node_id]
+    if field not in node.inputs and field not in node.widgets:
+        raise ValueError(
+            f"bind_input({name!r}): field {field!r} not found in "
+            f"node {node_id!r} ({node.class_type}) inputs or widgets"
+        )
+    value = node.inputs.get(field, node.widgets.get(field))
+    return wf.register_input(name, node_id, field, value)
+
+
+def bind_output(
+    wf: VibeWorkflow,
+    node_id: str,
+    *,
+    output_type: str | None = None,
+    name: str | None = None,
+    artifact_kind: str | None = None,
+    mime_type: str | None = None,
+    filename_prefix: str | None = None,
+) -> VibeWorkflow:
+    """Register or update a public output binding.
+
+    If the workflow already has a ``VibeOutput`` for *node_id*, its fields
+    are updated in-place.  Otherwise a new ``VibeOutput`` is appended.
+
+    This should be called **after** ``finalize_ready_template()`` so that
+    the binding survives finalization.
+    """
+    output_type = output_type or ""
+    for existing in wf.outputs:
+        if existing.node_id == node_id:
+            if name is not None:
+                existing.name = name
+            if artifact_kind is not None:
+                existing.artifact_kind = artifact_kind
+            if mime_type is not None:
+                existing.mime_type = mime_type
+            if filename_prefix is not None:
+                existing.filename_prefix = filename_prefix
+            if output_type and not existing.output_type:
+                existing.output_type = output_type
+            return wf
+    wf.outputs.append(
+        VibeOutput(
+            node_id=node_id,
+            output_type=output_type,
+            name=name,
+            artifact_kind=artifact_kind,
+            mime_type=mime_type,
+            filename_prefix=filename_prefix,
+        )
+    )
+    return wf
+
+
 def finalise_model_assets(workflow: VibeWorkflow) -> None:
     referenced = _referenced_model_filenames(workflow)
     raw_assets = workflow.metadata.get("model_assets", [])
@@ -215,8 +379,13 @@ _finalise_model_assets = finalise_model_assets
 __all__ = [
     "apply_authored_metadata",
     "apply_ready_template_policy",
+    "bind_input",
+    "bind_output",
     "build_authored_ready_workflow",
     "build_api_ready_workflow",
+    "finalize_ready_template",
     "finalise_model_assets",
+    "ready_node",
+    "ready_workflow",
     "_finalise_model_assets",
 ]

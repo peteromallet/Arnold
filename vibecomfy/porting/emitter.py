@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import keyword
 import pprint
 import re
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -60,6 +62,355 @@ LTX2_3_TAIL_PATCHES: tuple[str, ...] = (
     "from vibecomfy.patches.resolution import resolution",
 )
 
+# -- node role classification for section comments ---------------------------
+
+_ROLE_CLASSIFICATION: dict[str, str] = {
+    "LoadImage": "Inputs",
+    "PrimitiveInt": "Inputs",
+    "PrimitiveFloat": "Inputs",
+    "PrimitiveString": "Inputs",
+    "CLIPLoader": "Loaders",
+    "VAELoader": "Loaders",
+    "DualCLIPLoader": "Loaders",
+    "DualCLIPLoaderGGUF": "Loaders",
+    "CLIPVisionLoader": "Loaders",
+    "StyleModelLoader": "Loaders",
+    "UNETLoader": "Loaders",
+    "CheckpointLoaderSimple": "Loaders",
+    "CLIPTextEncode": "Conditioning",
+    "CLIPTextEncodeFlux": "Conditioning",
+    "CLIPTextEncodeSD3": "Conditioning",
+    "FluxGuidance": "Conditioning",
+    "CFGGuider": "Conditioning",
+    "MultimodalGuider": "Conditioning",
+    "ConditioningSetTimestepRange": "Conditioning",
+    "KSampler": "Sampling",
+    "KSamplerAdvanced": "Sampling",
+    "SamplerCustomAdvanced": "Sampling",
+    "BasicScheduler": "Sampling",
+    "Flux2Scheduler": "Sampling",
+    "KSamplerSelect": "Sampling",
+    "EmptySD3LatentImage": "Sampling",
+    "EmptyFlux2LatentImage": "Sampling",
+    "EmptyLTXVLatentVideo": "Sampling",
+    "EmptyHunyuanLatentVideo": "Sampling",
+    "VAEDecode": "Decode",
+    "VAEDecodeTiled": "Decode",
+    "LTXVDecoder": "Decode",
+    "SaveImage": "Outputs",
+    "SaveVideo": "Outputs",
+    "VHS_VideoCombine": "Outputs",
+    "PreviewImage": "Outputs",
+}
+
+_SECTION_ORDER: tuple[str, ...] = (
+    "Inputs",
+    "Loaders",
+    "Conditioning",
+    "Sampling",
+    "Decode",
+    "Outputs",
+)
+
+_SECTION_NODE_THRESHOLD: int = 8
+
+# --- constant hoisting patterns ---------------------------------------------
+
+_MODEL_FILE_SUFFIXES: tuple[str, ...] = (
+    ".safetensors", ".ckpt", ".pt", ".bin", ".pth", ".gguf", ".onnx",
+)
+
+# Fields whose values are classified as prompts
+_PROMPT_INPUT_FIELDS: frozenset[str] = frozenset({"text", "prompt", "positive_prompt"})
+
+# Fields whose values are classified as negative prompts
+_NEGATIVE_PROMPT_INPUT_FIELDS: frozenset[str] = frozenset({"negative_prompt"})
+
+# Fields whose values are classified as seeds
+_SEED_INPUT_FIELDS: frozenset[str] = frozenset({"seed", "noise_seed"})
+
+# Fields whose values are output prefixes
+_OUTPUT_PREFIX_FIELDS: frozenset[str] = frozenset({"filename_prefix"})
+
+# Fields whose values are dimensions
+_DIMENSION_INPUT_FIELDS: frozenset[str] = frozenset({"resolution", "resolutions"})
+
+# Fields whose values are FPS
+_FPS_INPUT_FIELDS: frozenset[str] = frozenset({"fps"})
+
+# Fields whose values are frame counts
+_FRAMES_INPUT_FIELDS: frozenset[str] = frozenset({"length", "frames", "num_frames"})
+
+# Fields whose values are guide strengths
+_GUIDE_INPUT_FIELDS: frozenset[str] = frozenset({"cfg", "guidance", "strength_model", "strength_clip"})
+
+# Fields whose values are model names (by field name pattern, not just suffix)
+_MODEL_FIELD_PATTERNS: tuple[str, ...] = (
+    "ckpt_name", "clip_name", "clip_name1", "clip_name2",
+    "vae_name", "unet_name", "lora_name", "model_name",
+    "checkpoint", "model",
+)
+
+# --- constant hoisting -------------------------------------------------------
+
+
+def _classify_value_category(
+    field: str,
+    value: Any,
+    node_class_type: str,
+) -> str | None:
+    """Classify a value into a constant category for hoisting.
+
+    Returns one of: 'prompt', 'negative_prompt', 'seed', 'model', 'output_prefix',
+    'size', 'fps', 'frames', 'guide', 'preset', or None (do not hoist).
+    """
+    if not isinstance(value, (str, int, float)):
+        return None
+
+    # Model filenames - check suffix patterns
+    if isinstance(value, str):
+        if value.endswith(_MODEL_FILE_SUFFIXES):
+            return "model"
+        if field in _MODEL_FIELD_PATTERNS:
+            return "model"
+
+    # Prompts - long text strings
+    if isinstance(value, str):
+        if field in _PROMPT_INPUT_FIELDS and len(value) > 30:
+            return "prompt"
+        if field in _NEGATIVE_PROMPT_INPUT_FIELDS and len(value) > 10:
+            return "negative_prompt"
+
+    # Seeds
+    if isinstance(value, int) and field in _SEED_INPUT_FIELDS:
+        return "seed"
+
+    # Output prefixes
+    if isinstance(value, str) and field in _OUTPUT_PREFIX_FIELDS:
+        return "output_prefix"
+
+    # Dimensions
+    if isinstance(value, str) and field in _DIMENSION_INPUT_FIELDS:
+        return "size"
+
+    # FPS
+    if isinstance(value, (int, float)) and field in _FPS_INPUT_FIELDS:
+        return "fps"
+
+    # Frames
+    if isinstance(value, int) and field in _FRAMES_INPUT_FIELDS:
+        return "frames"
+
+    # Guide strengths
+    if isinstance(value, (int, float)) and field in _GUIDE_INPUT_FIELDS:
+        return "guide"
+
+    return None
+
+
+def _classify_node_role(node: Any) -> str | None:
+    """Return the section role for a node, or None if unclassified."""
+    return _ROLE_CLASSIFICATION.get(node.class_type)
+
+
+def _build_section_groups(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+) -> dict[str, list[str]]:
+    """Group node IDs by section role using topological order.
+
+    Only returns groups when the workflow has >= _SECTION_NODE_THRESHOLD nodes.
+    Groups are ordered by _SECTION_ORDER.
+    """
+    if len(workflow_nodes) < _SECTION_NODE_THRESHOLD:
+        return {}
+
+    topo_order = _topological_node_order(workflow_nodes, edges_in)
+    groups: dict[str, list[str]] = {}
+
+    for nid in topo_order:
+        node = workflow_nodes.get(nid)
+        if node is None:
+            continue
+        role = _classify_node_role(node)
+        if role is not None:
+            groups.setdefault(role, []).append(nid)
+
+    # Filter out groups with fewer than 2 nodes for readability
+    # (single-node groups don't need section comments)
+    return {role: ids for role, ids in groups.items() if len(ids) >= 1}
+
+
+def _hoist_constants(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+) -> tuple[list[str], dict[tuple[str, str], str]]:
+    """Scan workflow nodes for hoistable constants.
+
+    Returns (constant_lines, constant_map) where:
+    - constant_lines: list of "NAME = value" lines to emit in the constants section
+    - constant_map: mapping from (node_id, translated_field) to constant name
+    """
+    # Collect candidates: (node_id, translated_field, value, category)
+    candidates: list[tuple[str, str, Any, str]] = []
+
+    # Also track value occurrence count across all nodes for the "repeated" heuristic
+    value_counts: Counter[tuple[str, Any]] = Counter()
+
+    for nid, node in workflow_nodes.items():
+        cls = node.class_type
+        schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
+        node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
+        input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
+
+        for key, value in node.inputs.items():
+            if _is_link(value):
+                continue
+            translated = _translate_widget_for_key(key, input_aliases, cls)
+            if translated is None:
+                continue
+            category = _classify_value_category(translated, value, cls)
+            if category is not None:
+                candidates.append((nid, translated, value, category))
+                value_counts[(category, str(value))] += 1
+
+        for key, value in node.widgets.items():
+            if _is_link(value):
+                continue
+            translated = _translate_widget_for_key(key, input_aliases, cls)
+            if translated is None:
+                continue
+            category = _classify_value_category(translated, value, cls)
+            if category is not None:
+                candidates.append((nid, translated, value, category))
+                value_counts[(category, str(value))] += 1
+
+    if not candidates:
+        return [], {}
+
+    # Decide what to hoist:
+    # 1. Always hoist: model, prompt, negative_prompt, seed, output_prefix, size, fps, frames, guide
+    #    (these are public defaults by definition)
+    # 2. Hoist presets that appear 2+ times
+    # 3. Hoist any value of a recognized category that appears 2+ times
+
+    # Build constant names deterministically
+    category_counters: dict[str, int] = {}
+    constant_defs: dict[str, tuple[Any, str]] = {}  # name -> (value, category)
+    constant_map: dict[tuple[str, str], str] = {}  # (nid, field) -> name
+
+    # Pre-defined name patterns by category
+    _CATEGORY_NAMES: dict[str, str] = {
+        "prompt": "DEFAULT_PROMPT",
+        "negative_prompt": "DEFAULT_NEGATIVE",
+        "seed": "DEFAULT_SEED",
+        "model": "MODEL_NAME",
+        "output_prefix": "OUTPUT_PREFIX",
+        "size": "DEFAULT_SIZE",
+        "fps": "DEFAULT_FPS",
+        "frames": "DEFAULT_FRAMES",
+        "guide": "GUIDE_STRENGTH",
+    }
+
+    # Value dedup: same category + same value string -> same constant name
+    value_to_name: dict[tuple[str, str], str] = {}  # (category, str(value)) -> name
+
+    for nid, field, value, category in candidates:
+        value_key = (category, str(value))
+        count = value_counts[value_key]
+
+        # Always hoist categories that represent public defaults
+        always_hoist = category in ("model", "prompt", "negative_prompt", "seed",
+                                    "output_prefix", "size", "fps", "frames", "guide")
+        should_hoist = always_hoist or count >= 2
+
+        if not should_hoist:
+            continue
+
+        if value_key in value_to_name:
+            name = value_to_name[value_key]
+        else:
+            base = _CATEGORY_NAMES.get(category, "CONSTANT")
+            category_counters[base] = category_counters.get(base, 0) + 1
+            cnt = category_counters[base]
+            name = base if cnt == 1 else f"{base}_{cnt}"
+            value_to_name[value_key] = name
+            constant_defs[name] = (value, category)
+
+        constant_map[(nid, field)] = name
+
+    # Also check for repeated presets (non-categorized values appearing 2+ times)
+    # Scan for string values that appear 2+ times and hoist them
+    all_values: Counter[tuple[str, Any]] = Counter()
+    for nid, node in workflow_nodes.items():
+        cls = node.class_type
+        node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
+        input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
+        for key, value in {**node.inputs, **node.widgets}.items():
+            if _is_link(value):
+                continue
+            translated = _translate_widget_for_key(key, input_aliases, cls)
+            if translated is None:
+                continue
+            # Only track string values that are not already categorized
+            if not isinstance(value, str):
+                continue
+            cat = _classify_value_category(translated, value, cls)
+            if cat is not None:
+                continue  # already handled above
+            all_values[(translated, value)] += 1
+
+    for (field, value), count in all_values.items():
+        if count >= 2:
+            # This is a repeated preset
+            value_key = ("preset", str(value))
+            if value_key in value_to_name:
+                continue  # already named
+            # Deterministic name: field name ALL_CAPS_ style
+            sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", field.upper())
+            if not sanitized or sanitized[0].isdigit():
+                sanitized = f"P_{sanitized}"
+            category_counters[sanitized] = category_counters.get(sanitized, 0) + 1
+            cnt = category_counters[sanitized]
+            name = sanitized if cnt == 1 else f"{sanitized}_{cnt}"
+            value_to_name[value_key] = name
+            constant_defs[name] = (value, "preset")
+            # Map all occurrences
+            for nid, node in workflow_nodes.items():
+                if (nid, field) in constant_map:
+                    continue
+                # Check if this node has this value at this field
+                node_val = node.inputs.get(field, node.widgets.get(field))
+                if node_val == value:
+                    constant_map[(nid, field)] = name
+
+    # Build constant lines, sorted by name for determinism
+    constant_lines: list[str] = []
+    for name in sorted(constant_defs.keys()):
+        value, category = constant_defs[name]
+        constant_lines.append(f"{name} = {_format_value(value)}")
+
+    return constant_lines, constant_map
+
+
+def _translate_widget_for_key(
+    key: str,
+    input_aliases: list[str | None] | None,
+    class_type: str,
+) -> str | None:
+    """Translate a widget_N key to its named field, or None if it should be dropped."""
+    if not key.startswith("widget_"):
+        return key
+    try:
+        idx = int(key.split("_", 1)[1])
+    except ValueError:
+        return key
+    if isinstance(input_aliases, (list, tuple)) and 0 <= idx < len(input_aliases):
+        alias = input_aliases[idx]
+        return alias  # may be None (UI-only)
+    return resolve_widget_name(class_type, idx)
+
 
 def emit_ready_template_python(
     workflow,
@@ -85,8 +436,13 @@ def emit_ready_template_python(
     out_lines.append('"""Auto-generated ready_template - see tools/convert_ready_templates.py."""')
     out_lines.append("from __future__ import annotations")
     out_lines.append("")
-    out_lines.append("from vibecomfy.workflow import VibeWorkflow, WorkflowSource")
-    out_lines.append("from vibecomfy.registry.ready_template import apply_ready_template_policy")
+    out_lines.append("from vibecomfy.registry.ready_template import (")
+    out_lines.append("    ready_workflow,")
+    out_lines.append("    ready_node,")
+    out_lines.append("    finalize_ready_template,")
+    out_lines.append("    bind_input,")
+    out_lines.append("    bind_output,")
+    out_lines.append(")")
     if has_ltx_tail:
         out_lines.extend(LTX2_3_TAIL_PATCHES)
     out_lines.append("")
@@ -106,10 +462,10 @@ def emit_ready_template_python(
             registered_inputs=registered_inputs,
             tail_lines=_ready_template_tail_lines(has_ltx_tail),
             diagnostics=diagnostics,
+            use_shared_helpers=True,
         )
     )
     out_lines.append("")
-    out_lines.append(_NODE_HELPER_SOURCE)
     return "\n".join(out_lines) + "\n"
 
 
@@ -192,6 +548,7 @@ def _emit_build_function(
     registered_inputs: dict[str, tuple[str, str]] | None,
     tail_lines: list[str],
     diagnostics: list[EmissionDiagnostic] | None = None,
+    use_shared_helpers: bool = False,
 ) -> list[str]:
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
@@ -203,17 +560,35 @@ def _emit_build_function(
     provenance_part = ""
     if source_provenance is not None:
         provenance_part = f",\n            provenance={_format_value(source_provenance)}"
-    out_lines.append(
-        "    wf = VibeWorkflow(\n"
-        f"        {workflow_id_expr},\n"
-        "        WorkflowSource(\n"
-        f"            id={workflow_id_expr},\n"
-        f"            path={source_path_expr},\n"
-        f"            source_type={source_type!r}"
-        f"{provenance_part},\n"
-        "        ),\n"
-        "    )"
-    )
+
+    if use_shared_helpers:
+        if source_provenance is not None:
+            out_lines.append(
+                "    wf = ready_workflow(\n"
+                f"        {workflow_id_expr},\n"
+                f"        source_path={source_path_expr},\n"
+                f"        provenance={_format_value(source_provenance)},\n"
+                "    )"
+            )
+        else:
+            out_lines.append(
+                "    wf = ready_workflow(\n"
+                f"        {workflow_id_expr},\n"
+                f"        source_path={source_path_expr},\n"
+                "    )"
+            )
+    else:
+        out_lines.append(
+            "    wf = VibeWorkflow(\n"
+            f"        {workflow_id_expr},\n"
+            "        WorkflowSource(\n"
+            f"            id={workflow_id_expr},\n"
+            f"            path={source_path_expr},\n"
+            f"            source_type={source_type!r}"
+            f"{provenance_part},\n"
+            "        ),\n"
+            "    )"
+        )
     out_lines.append("")
 
     for nid in _topological_node_order(workflow_nodes, edges_in):
@@ -221,14 +596,39 @@ def _emit_build_function(
         var = var_names[nid]
         kwargs = _node_kwargs(node, edges_in, var_names, workflow_nodes=workflow_nodes, diagnostics=diagnostics)
 
-        head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
-        if not kwargs:
-            out_lines.append(f"{head})")
-        else:
-            out_lines.append(f"{head},")
+        if use_shared_helpers:
+            # Map _outputs -> outputs=, _extras -> extras= for ready_node
+            ready_kwargs: list[tuple[str, str]] = []
+            outputs_expr: str | None = None
+            extras_expr: str | None = None
             for key, expr in kwargs:
-                out_lines.append(f"        {key}={expr},")
-            out_lines.append("    )")
+                if key == "_outputs":
+                    outputs_expr = expr
+                elif key == "_extras":
+                    extras_expr = expr
+                else:
+                    ready_kwargs.append((key, expr))
+
+            lines: list[str] = []
+            lines.append(f"    {var} = ready_node(wf, {node.class_type!r},")
+            lines.append(f"        source_id={nid!r},")
+            if outputs_expr is not None:
+                lines.append(f"        outputs={outputs_expr},")
+            for key, expr in ready_kwargs:
+                lines.append(f"        {key}={expr},")
+            if extras_expr is not None:
+                lines.append(f"        extras={extras_expr},")
+            lines.append("    )")
+            out_lines.extend(lines)
+        else:
+            head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
+            if not kwargs:
+                out_lines.append(f"{head})")
+            else:
+                out_lines.append(f"{head},")
+                for key, expr in kwargs:
+                    out_lines.append(f"        {key}={expr},")
+                out_lines.append("    )")
 
     out_lines.append("")
     out_lines.extend(tail_lines)
@@ -242,10 +642,45 @@ def _emit_build_function(
                     resolved_field = resolve_widget_name(cls, idx)
                 except (ValueError, IndexError):
                     pass
-            out_lines.append(
-                f"    wf.register_input({input_name!r}, {old_id!r}, {resolved_field!r}, "
-                f"wf.nodes[{old_id!r}].inputs.get({resolved_field!r}, wf.nodes[{old_id!r}].widgets.get({resolved_field!r})))"
-            )
+            if use_shared_helpers:
+                out_lines.append(
+                    f"    bind_input(wf, {input_name!r}, {old_id!r}, {resolved_field!r})"
+                )
+            else:
+                out_lines.append(
+                    f"    wf.register_input({input_name!r}, {old_id!r}, {resolved_field!r}, "
+                    f"wf.nodes[{old_id!r}].inputs.get({resolved_field!r}, wf.nodes[{old_id!r}].widgets.get({resolved_field!r})))"
+                )
+
+    # -- bind_output for known output contracts (shared-helper mode only) -----
+    if use_shared_helpers:
+        _OUTPUT_CLASSES: dict[str, str] = {
+            "SaveImage": "image",
+            "PreviewImage": "image",
+            "SaveVideo": "video",
+            "VHS_VideoCombine": "video",
+        }
+        for nid in _topological_node_order(workflow_nodes, edges_in):
+            node = workflow_nodes[nid]
+            output_type = _OUTPUT_CLASSES.get(node.class_type)
+            if output_type is None:
+                continue
+            # Gather output metadata
+            prefix_raw = node.inputs.get("filename_prefix", node.widgets.get("filename_prefix"))
+            prefix_str = _format_value(prefix_raw) if prefix_raw is not None else None
+            out_name = None
+            output_names = getattr(node, "metadata", {}).get("output_names")
+            if isinstance(output_names, (list, tuple)) and len(output_names) > 0 and output_names[0]:
+                out_name = output_names[0]
+
+            parts: list[str] = [f"    bind_output(wf, {nid!r}"]
+            parts.append(f"output_type={output_type!r}")
+            if out_name is not None:
+                parts.append(f"name={out_name!r}")
+            if prefix_str is not None:
+                parts.append(f"filename_prefix={prefix_str}")
+            out_lines.append(", ".join(parts) + ")")
+
     out_lines.append("    return wf")
     return out_lines
 
@@ -256,12 +691,10 @@ def _ready_template_tail_lines(has_ltx_tail: bool) -> list[str]:
             "    apply_ltx_lowvram(wf)",
             "    resolution(384, 256, 9).apply(wf)",
             "    ensure_custom_nodes(wf, READY_REQUIREMENTS[\"custom_nodes\"])",
-            "    wf.finalize_metadata()",
-            "    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
+            "    finalize_ready_template(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
         ]
     return [
-        "    wf.finalize_metadata()",
-        "    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
+        "    finalize_ready_template(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
     ]
 
 
