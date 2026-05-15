@@ -89,11 +89,25 @@ class _RuntimeStep:
         )
 
 
-def _step_for(state_name: str) -> _RuntimeStep:
+_HANDLER_STEPS: dict[str, Any] | None = None
+
+
+def _step_for(state_name: str) -> Any:
     # State names like 'initialized', 'planned', 'critiqued', etc. become
-    # stage names. Slot/handler mapping (prep / plan / critique / gate /
-    # finalize / execute / review / tiebreaker_*) belongs to Sprint 3 —
-    # for now we just expose the structural shape.
+    # stage names. Sprint 3: bind to real handler-backed Steps when the
+    # state name has a matching handler (prep / plan / critique / gate /
+    # finalize / execute / review / tiebreaker_*); fall back to the
+    # _RuntimeStep placeholder for terminal/non-handler states
+    # (initialized, gated → finalize-edge, done, aborted,
+    # awaiting_human_verify).
+    global _HANDLER_STEPS
+    if _HANDLER_STEPS is None:
+        from megaplan._pipeline.stages.handler_step import build_planning_steps
+
+        _HANDLER_STEPS = build_planning_steps()
+    handler = _HANDLER_STEPS.get(state_name)
+    if handler is not None:
+        return handler
     return _RuntimeStep(name=state_name)
 
 
