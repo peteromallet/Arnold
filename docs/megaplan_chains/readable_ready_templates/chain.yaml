@@ -14,75 +14,37 @@ on_escalate:
 milestones:
   - label: sprint-01-safe-compiler-foundation
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-01-safe-compiler-foundation.md
-    profile: thoughtful
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: high
-    deepseek_provider: direct
-    phase_model: &direct_deepseek_review
-      - critique=hermes:deepseek:deepseek-v4-pro
-      - review=hermes:deepseek:deepseek-v4-pro
   - label: sprint-02-schema-backed-readable-emission
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-02-schema-backed-readable-emission.md
-    profile: thoughtful
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: high
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: sprint-03-public-helper-template-shape
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-03-public-helper-template-shape.md
-    profile: thoughtful
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: medium
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: sprint-04-public-contract-v2
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-04-public-contract-v2.md
-    profile: premium
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: high
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: sprint-05-import-to-ready-orchestrator
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-05-import-to-ready-orchestrator.md
-    profile: thoughtful
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: high
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: sprint-06-generated-template-regeneration
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-06-generated-template-regeneration.md
-    profile: led
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: medium
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: sprint-07-manual-app-active-curation
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-07-manual-app-active-curation.md
-    profile: thoughtful
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: medium
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: sprint-08-strict-gates-docs
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-08-strict-gates-docs.md
-    profile: thoughtful
+    profile: all-claude
     robustness: standard
-    vendor: codex
-    depth: medium
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
   - label: publish-shared-branch
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/publish-shared-branch.md
-    profile: basic
+    profile: all-claude
     robustness: light
-    vendor: codex
-    depth: low
-    deepseek_provider: direct
-    phase_model: *direct_deepseek_review
