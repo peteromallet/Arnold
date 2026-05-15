@@ -50,9 +50,11 @@ export ANTHROPIC_API_KEY=...
 export DEEPSEEK_API_KEY=...
 ```
 
-The chain spec sets `vendor: codex` for premium phases and
-`deepseek_provider: direct` for DeepSeek phases. Do not switch DeepSeek traffic
-to Fireworks for this chain.
+The chain spec sets `vendor: codex` for premium phases,
+`deepseek_provider: direct` for DeepSeek phases, and explicit
+`phase_model` overrides for critique/review so Kimi/Fireworks profile defaults
+cannot leak into this chain. Do not switch DeepSeek traffic to Fireworks for
+this chain.
 
 Codex premium phases should use the same Codex allocation as the operator's
 normal Codex CLI login. If the cloud runner only has API-key auth, `gpt-5.5`
