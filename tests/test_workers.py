@@ -3494,6 +3494,114 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
     assert result.cost_usd == 0.02
 
 
+def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setattr("megaplan.shannon_worker.os.geteuid", lambda: 0)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    assert run_command.call_args.kwargs["env"]["ANTHROPIC_API_KEY"] == "sk-ant-test"
+
+
+def test_run_shannon_step_drops_root_for_trusted_cloud(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
+    monkeypatch.setattr("megaplan.shannon_worker.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+        run_shannon_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+        )
+
+    command = run_command.call_args.args[0]
+    env = run_command.call_args.kwargs["env"]
+    assert command[:6] == ["/bin/su", "-m", "-s", "/bin/bash", "nobody", "-c"]
+    assert " shannon -p " in command[6]
+    assert "claude -p" not in command[6]
+    assert "--bare" in command[6]
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-test"
+    assert env["HOME"] == str(tmp_path / "project" / ".megaplan" / "shannon-home")
+    assert env["MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT"] == "4"
+    assert (tmp_path / "project" / ".megaplan" / "shannon-home" / ".claude.json").exists()
+
+
 def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     tmp_path: Path,
 ) -> None:
@@ -3754,6 +3862,26 @@ def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
         "\n".join(
             [
                 "const TURN_TIMEOUT_MS = 180_000;",
+                "export function buildClaudeArgs(parsed: Record<string, unknown>): string[] {",
+                "  return [];",
+                "}",
+                "export async function runShannon(options: CliOptions) {",
+                "  const tmuxSession = 's';",
+                "  const prompt = 'p';",
+                "  await runCommand([",
+                '    "tmux",',
+                '    "new-session",',
+                '    "-d",',
+                '    "-s",',
+                "    tmuxSession,",
+                '    "-c",',
+                "    options.cwd,",
+                '    "claude",',
+                "    ...options.claudeArgs,",
+                "    prompt,",
+                "  ]);",
+                "  let launchedWithPrompt = true;",
+                "}",
                 "export function assistantReplyFromRows(prompt, rows) {",
                 "  for (const row of rows) {",
                 '    if (textFromContent(row.message.content)) return row;',
@@ -3771,7 +3899,99 @@ def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
     patched = entrypoint.read_text(encoding="utf-8")
     assert "SHANNON_TURN_TIMEOUT_MS" in patched
     assert 'row.message?.stop_reason === "tool_use"' in patched
+    assert "function rootSafeClaudeArgs(args: string[]): string[]" in patched
+    assert 'arg === "--dangerously-skip-permissions"' in patched
+    assert 'filtered.push("--permission-mode", "auto")' in patched
+    assert 'arg === "--session-id" || arg === "--resume"' in patched
+    assert "async function maybeSendStartupEnterKeys(tmuxSession: string)" in patched
+    assert "MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT" in patched
+    assert "void maybeSendStartupEnterKeys(tmuxSession);" in patched
+    assert '["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]' in patched
     assert (package_dir / "index.ts.bak.megaplan-shannon").exists()
+
+
+def test_shannon_worker_heals_partially_patched_entrypoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a previous megaplan patch left ``rootSafeClaudeArgs``
+    in place but never inserted ``maybeSendStartupEnterKeys`` because both
+    helpers were bundled behind a single gate.  The next patch pass must
+    insert the missing helper so the dangling call site resolves.
+    """
+    from megaplan.shannon_worker import _ensure_shannon_parent_timeout_control
+
+    package_dir = tmp_path / "shannon-package"
+    bin_dir = package_dir / "bin"
+    bin_dir.mkdir(parents=True)
+    executable = bin_dir / "shannon"
+    executable.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    entrypoint = package_dir / "index.ts"
+    # Pre-patched state: an older megaplan only knew about isRootProcess
+    # and rootSafeClaudeArgs, and still injected the maybeSendStartupEnterKeys
+    # call site below.  The function definition is intentionally absent.
+    entrypoint.write_text(
+        "\n".join(
+            [
+                "const TURN_TIMEOUT_MS = Number(Bun.env.SHANNON_TURN_TIMEOUT_MS ?? 900_000);",
+                "function isRootProcess() {",
+                '  return typeof process.getuid === "function" && process.getuid() === 0;',
+                "}",
+                "",
+                "function rootSafeClaudeArgs(args: string[]): string[] {",
+                "  if (!isRootProcess()) return args;",
+                "  const filtered: string[] = [];",
+                "  return filtered;",
+                "}",
+                "",
+                "export function buildClaudeArgs(parsed: Record<string, unknown>): string[] {",
+                "  return [];",
+                "}",
+                "export async function runShannon(options: CliOptions) {",
+                "  const tmuxSession = 's';",
+                "  const prompt = 'p';",
+                "  const claudeLaunchArgs = isRootProcess()",
+                '    ? ["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]',
+                '    : ["claude", ...options.claudeArgs, prompt];',
+                "  await runCommand([",
+                '    "tmux",',
+                '    "new-session",',
+                '    "-d",',
+                '    "-s",',
+                "    tmuxSession,",
+                '    "-c",',
+                "    options.cwd,",
+                "    ...claudeLaunchArgs,",
+                "  ]);",
+                "  void maybeSendStartupEnterKeys(tmuxSession);",
+                "",
+                "  let launchedWithPrompt = true;",
+                "}",
+                "export function assistantReplyFromRows(prompt, rows) {",
+                "  for (const row of rows) {",
+                '    if (row.message?.stop_reason === "tool_use") continue;',
+                '    if (textFromContent(row.message.content)) return row;',
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: str(executable))
+
+    _ensure_shannon_parent_timeout_control()
+
+    patched = entrypoint.read_text(encoding="utf-8")
+    # All three helper function definitions must be present after the heal.
+    assert "function isRootProcess()" in patched
+    assert "function rootSafeClaudeArgs(args: string[]): string[]" in patched
+    assert "async function maybeSendStartupEnterKeys(tmuxSession: string)" in patched
+    # The pre-existing call site is preserved.
+    assert "void maybeSendStartupEnterKeys(tmuxSession);" in patched
+    # No duplicates were inserted for helpers that were already present.
+    assert patched.count("function isRootProcess()") == 1
+    assert patched.count("function rootSafeClaudeArgs(args: string[]): string[]") == 1
+    assert patched.count("async function maybeSendStartupEnterKeys(tmuxSession: string)") == 1
 
 
 # ---------------------------------------------------------------------------
