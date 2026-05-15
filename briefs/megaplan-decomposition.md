@@ -347,3 +347,31 @@ follow-up brief.
 | Risk: joke mode prior art | Acknowledged in prior-art section; mode dispatch is an Overlay. |
 | Risk: 18 profiles × 13 slots migration | Resolved by slot-name preservation (no migration). |
 | Risk: unfalsifiable success | All criteria now have concrete tests. |
+
+## Revision notes
+
+### 2026-05-15 — Sprint 1 interface deviations
+
+The Step protocol + Pipeline value land with a few small widenings vs the
+sketch in `## Parent abstraction (specified)` above. These are deliberate
+and must hold for Sprint 2.
+
+- `Pipeline.stages` widened from `dict[str, Stage]` to
+  `Mapping[str, Stage | ParallelStage]`. A `ParallelStage` is addressable
+  by name like a regular `Stage`; broadening the value type avoids a
+  parallel registry.
+- Sequence fields switched from `list[...]` to `tuple[...]` for
+  `Stage.edges`, `ParallelStage.edges`, and `Pipeline.overlays`. Required
+  because every container is declared `@dataclass(frozen=True)` and lists
+  are not hashable. `Verdict.flags` is likewise `tuple[str, ...]`.
+- `PlanState` at `megaplan/types.py:146` is a `TypedDict`, not a
+  dataclass. Sprint 1's `StepContext.state` is typed `Any` to avoid
+  pulling that dependency into `_pipeline/`; Sprint 2 may tighten the
+  annotation when it ports the planning pipeline.
+- `'halt'` is reserved as both a terminal `NextEdge` label returned by
+  Step.run AND as an `Edge.target`. Authors MUST NOT use 'halt' as a
+  non-terminal edge label.
+- `'subloop'` and `'override'` are reserved `Step.kind` literals with
+  no executor branch in Sprint 1. The executor dispatches them through
+  the normal `Stage.step.run(ctx)` path. Sprint 2 introduces explicit
+  branches.
