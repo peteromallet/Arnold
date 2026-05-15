@@ -10,6 +10,11 @@ from vibecomfy.registry.ready_template import apply_ready_template_policy
 
 LTX_RUNEXX_MODEL_ASSETS = [
     {
+        "name": "gemma_3_12B_it_fp4_mixed.safetensors",
+        "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
+        "subdir": "text_encoders",
+    },
+    {
         "name": "ltx-2.3_text_projection_bf16.safetensors",
         "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors",
         "subdir": "text_encoders",
@@ -39,6 +44,11 @@ LTX_RUNEXX_MODEL_ASSETS = [
         "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
         "subdir": "loras",
     },
+    {
+        "name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "subdir": "latent_upscale_models",
+    },
 ]
 
 
@@ -47,9 +57,9 @@ READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
  'ready_template': 'video/ltx2_3_runexx_first_last_frame',
  'workflow_template': 'ltx2_3_runexx_first_last_frame',
  'capability': 'first_last_frame_video',
- 'source_role': 'materialized_ready_python_template',
+ 'source_role': 'manual_ready_python_template',
  'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json',
- 'coverage_tier': 'supplemental',
+ 'coverage_tier': 'required',
  'approach': 'first/last-frame image anchors',
  'runtime_note': None,
  'discord_signal': None,
@@ -63,9 +73,9 @@ READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
                         'model_mmap_residency for LatentUpscaleModelManageable.',
                         'Keep community audio, lip-sync, and long-form workflows as ready templates until '
                         'their custom node packs and service credentials are declared.'],
- 'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
+ 'comfy_configuration': {'memory_profile': 3, 'fp8_e4m3fn_text_enc': True}}
 
-READY_REQUIREMENTS = {'models': [],
+READY_REQUIREMENTS = {'models': LTX_RUNEXX_MODEL_ASSETS,
  'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']}
 
 
@@ -212,7 +222,7 @@ def build() -> VibeWorkflow:
         widget_0='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
     manualsigmas_3 = _node(wf, 'ManualSigmas', '216',
-        widget_0='0.85, 0.7250, 0.4219, 0.0',
+        widget_0='0.909375, 0.725, 0.421875, 0.0',
     )
     getnode_28 = _node(wf, 'GetNode', '219',
         widget_0='height_downscaled',
@@ -233,10 +243,10 @@ def build() -> VibeWorkflow:
         widget_0='enhance_prompt',
     )
     primitivefloat = _node(wf, 'PrimitiveFloat', '2076',
-        value=8,
+        value=24,
     )
     intconstant = _node(wf, 'INTConstant', '2078',
-        widget_0=10,
+        widget_0=81,
     )
     intconstant_2 = _node(wf, 'INTConstant', '2079',
         widget_0=720,
@@ -254,10 +264,10 @@ def build() -> VibeWorkflow:
         widget_0='lastframe',
     )
     primitivefloat_2 = _node(wf, 'PrimitiveFloat', '2108',
-        value=8,
+        value=1.0,
     )
     primitivefloat_3 = _node(wf, 'PrimitiveFloat', '2110',
-        value=8,
+        value=1.0,
     )
     getnode_35 = _node(wf, 'GetNode', '2114',
         widget_0='firstframe_strength',
@@ -376,7 +386,7 @@ def build() -> VibeWorkflow:
         FLOAT=primitivefloat.out(0),
     )
     simplecalculatorkj_2 = _node(wf, 'SimpleCalculatorKJ', '2077',
-        widget_0='((round((a * b -1) / 8)) * 8) + 1 ',
+        widget_0='a',
         a=intconstant.out(0),
         b=primitivefloat.out(0),
     )
@@ -448,8 +458,8 @@ def build() -> VibeWorkflow:
             'num_images.image_2': ltxvpreprocess.out(0),
             'num_images.index_1': 0,
             'num_images.index_2': -1,
-            'num_images.strength_1': 0.7,
-            'num_images.strength_2': 0.7,
+            'num_images.strength_1': getnode_35.out(0),
+            'num_images.strength_2': getnode_36.out(0),
         },
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
@@ -630,6 +640,25 @@ def build() -> VibeWorkflow:
     _apply_runtime_schema_defaults(wf)
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    wf.register_input("start_image", "45", "image", "image (6).png")
+    wf.register_input("end_image", "47", "image", "0 (13).webp")
+    wf.register_input("first_image", "45", "image", "image (6).png")
+    wf.register_input("last_image", "47", "image", "0 (13).webp")
+    wf.register_input("prompt", "2103", "value", wf.nodes["2103"].inputs.get("value", ""))
+    wf.register_input("negative", "11", "text", wf.nodes["11"].inputs.get("text", ""))
+    wf.register_input("negative_prompt", "11", "text", wf.nodes["11"].inputs.get("text", ""))
+    wf.register_input("seed", "15", "noise_seed", 42)
+    wf.register_input("seed_first", "15", "noise_seed", 42)
+    wf.register_input("seed_last", "14", "noise_seed", 43)
+    wf.register_input("frames", "2078", "widget_0", 81)
+    wf.register_input("width", "2080", "widget_0", 1280)
+    wf.register_input("height", "2079", "widget_0", 720)
+    wf.register_input("fps", "2076", "value", 24)
+    wf.register_input("fps_int", "2076", "value", 24)
+    wf.register_input("first_frame_strength", "2110", "value", 1.0)
+    wf.register_input("last_frame_strength", "2108", "value", 1.0)
+    wf.register_input("first_strength", "2110", "value", 1.0)
+    wf.register_input("last_strength", "2108", "value", 1.0)
     return wf
 
 
@@ -639,6 +668,17 @@ def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
         wf.nodes["92"].inputs.setdefault("variables", "a")
     if "2077" in wf.nodes:
         wf.nodes["2077"].inputs.setdefault("variables", "a,b")
+        wf.nodes["2077"].inputs["widget_0"] = "a"
+    if "43" in wf.nodes:
+        wf.nodes["43"].inputs.update(
+            {
+                "filename_prefix": "reigh_vibecomfy_ltx_first_last",
+                "format": "video/h264-mp4",
+                "loop_count": 0,
+                "pingpong": False,
+                "save_output": True,
+            }
+        )
 
 
 def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):

@@ -259,11 +259,22 @@ def test_ltx_runexx_first_last_frame_omits_dead_gguf_branch_and_validates_calcul
     api = workflow.compile("api")
 
     assert workflow.validate().ok
+    assert workflow.metadata["source_role"] == "manual_ready_python_template"
+    assert workflow.metadata["coverage_tier"] == "required"
+    assert workflow.metadata["comfy_configuration"] == {"memory_profile": 3, "fp8_e4m3fn_text_enc": True}
     assert "ComfyUI-GGUF" not in workflow.requirements.custom_nodes
     assert "189" not in api
     assert "191" not in api
     assert api["92"]["inputs"]["variables"] == "a"
     assert api["2077"]["inputs"]["variables"] == "a,b"
+    assert api["2077"]["inputs"]["expression"] == "a"
+    assert api["216"]["inputs"]["sigmas"] == "0.909375, 0.725, 0.421875, 0.0"
+    assert api["210"]["inputs"]["num_images.strength_1"] == ["2110", 0]
+    assert api["210"]["inputs"]["num_images.strength_2"] == ["2108", 0]
+    assert workflow.inputs["start_image"].node_id == "45"
+    assert workflow.inputs["end_image"].node_id == "47"
+    assert workflow.inputs["frames"].node_id == "2078"
+    assert workflow.inputs["fps"].node_id == "2076"
 
 
 def test_ready_template_loads_vibe_workflow() -> None:
@@ -616,9 +627,9 @@ def test_ltx_first_last_raw_video_guide_exposes_worker_patch_points() -> None:
     assert api["175"]["class_type"] == "LTXVAudioVAELoader"
     assert api["175"]["inputs"]["ckpt_name"] == "LTX23_audio_vae_bf16.safetensors"
     assert api["215"]["inputs"]["sigmas"].startswith("1.0, 0.99375")
-    assert api["216"]["inputs"]["sigmas"] == "0.85, 0.7250, 0.4219, 0.0"
+    assert api["216"]["inputs"]["sigmas"] == "0.909375, 0.725, 0.421875, 0.0"
     assert api["92"]["inputs"]["expression"] == "a"
-    assert api["2077"]["inputs"]["expression"].startswith("((round((a * b -1)")
+    assert api["2077"]["inputs"]["expression"] == "a"
     assert api["9"]["inputs"]["batch_size"] == 1
     assert api["26"]["inputs"]["upscale_method"] == "lanczos"
     assert api["26"]["inputs"]["scale_by"] == 0.5

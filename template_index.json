@@ -299,9 +299,8 @@
       "id": "video/ltx2_3_runexx_first_last_frame",
       "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
       "capability": "first_last_frame_video",
-      "coverage_tier": "supplemental",
+      "coverage_tier": "required",
       "custom_nodes": [
-        "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite",
@@ -315,7 +314,6 @@
       "capability": "first_last_frame_raw_video_guide",
       "coverage_tier": "required",
       "custom_nodes": [
-        "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite",
