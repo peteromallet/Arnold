@@ -89,11 +89,31 @@ PYENV_VERSION=3.11.11 python -m megaplan cloud chain docs/megaplan_chains/readab
   --cloud-yaml cloud.yaml
 ```
 
-Start the operator loop in a second tmux session after the chain launches:
+Start the lightweight operator loop in a second tmux session after the chain
+launches. This loop handles process restarts and push-after-completed-sprint:
 
 ```bash
 railway ssh --environment production --service agent -- \
   "cd /workspace/app && tmux new-session -d -s megaplan-operator './scripts/megaplan_cloud_operator_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml megaplan/production-parity-templates'"
+```
+
+For unattended end-to-end execution, also start the recovery loop. It wakes
+hourly, detects terminal `blocked` / `worker_blocked` milestones, backs up any
+dirty diff, runs a Codex repair pass against the current milestone artifacts,
+commits/pushes a recovery commit to the same branch, advances the chain state
+when the branch moves, and restarts the chain:
+
+```bash
+railway ssh --environment production --service agent -- \
+  "cd /workspace/app && tmux new-session -d -s megaplan-recovery './scripts/megaplan_cloud_recovery_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml megaplan/production-parity-templates'"
+```
+
+Optional tuning:
+
+```bash
+RECOVERY_INTERVAL_SECONDS=3600
+RECOVERY_CODEX_MODEL=gpt-5.5
+RECOVERY_MAX_REPAIR_SECONDS=3300
 ```
 
 Observe:
@@ -104,6 +124,9 @@ railway ssh --environment production --service agent -- \
 
 railway ssh --environment production --service agent -- \
   'cd /workspace/app && tail -n 120 .megaplan/cloud-chain.log && tail -n 80 .megaplan/cloud-operator-loop.log'
+
+railway ssh --environment production --service agent -- \
+  'cd /workspace/app && tail -n 120 .megaplan/cloud-recovery-loop.log && tail -n 120 .megaplan/recovery-prompts/recovery-agent.log'
 ```
 
 For an active milestone, the freshest progress is usually in the plan state
