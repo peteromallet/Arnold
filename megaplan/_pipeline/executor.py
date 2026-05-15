@@ -197,3 +197,110 @@ def run_pipeline(
         if edge.target == "halt":
             return {"state": state, "final_stage": node.name}
         cursor = edge.target
+
+
+def run_pipeline_with_policy(
+    pipeline: Pipeline,
+    ctx: StepContext,
+    *,
+    artifact_root: Path,
+    policy: Any,
+) -> dict[str, Any]:
+    """Walk ``pipeline`` under a :class:`RuntimePolicy`.
+
+    Sprint 4 Chunk C: wraps :func:`run_pipeline` with stall detection,
+    cost capping, escalate-policy resolution, and context/blocked
+    retry hooks. The bare :func:`run_pipeline` stays unchanged for
+    hermetic demos.
+
+    The policy observes each stage's result via ``state_patch`` +
+    the state.json snapshot the executor writes between stages.
+    """
+
+    # Defer heavy imports — the policy module lives next door but we
+    # don't want a circular dependency in the standalone executor path.
+    from megaplan._pipeline.runtime import RuntimePolicy as _Policy
+
+    if not isinstance(policy, _Policy):
+        raise TypeError(
+            f"run_pipeline_with_policy requires a RuntimePolicy, got {type(policy)!r}"
+        )
+
+    iterations = 0
+    artifact_root = Path(artifact_root)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+
+    state: dict[str, Any] = dict(ctx.state) if isinstance(ctx.state, Mapping) else {}
+    cursor = pipeline.entry
+    while True:
+        if iterations >= policy.max_iterations:
+            return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations"}
+        iterations += 1
+
+        node = pipeline.stages[cursor]
+        ctx = dataclasses.replace(ctx, state=state)
+        try:
+            if isinstance(node, ParallelStage):
+                workers = max(1, node.max_workers or len(node.steps))
+                results: list[StepResult] = [None] * len(node.steps)  # type: ignore[list-item]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                    future_to_idx = {
+                        pool.submit(step.run, ctx): idx
+                        for idx, step in enumerate(node.steps)
+                    }
+                    for fut in concurrent.futures.as_completed(future_to_idx):
+                        idx = future_to_idx[fut]
+                        results[idx] = fut.result()
+                result = node.join(results, ctx)
+            else:
+                assert isinstance(node, Stage)
+                result = node.step.run(ctx)
+        except BaseException as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            _record_error(artifact_root, node.name, exc)
+            raise
+
+        _verify_outputs(node.name, result.outputs)
+        state.update(dict(result.state_patch))
+        _atomic_write_json(artifact_root / "state.json", state)
+
+        # Policy hooks — observation is side-effecting.
+        policy.stall.observe(state)
+        if policy.stall.is_stalled():
+            return {"state": state, "final_stage": node.name, "halt_reason": "stalled"}
+        if policy.cost.should_abort(state):
+            return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap"}
+
+        if result.next == "halt":
+            return {"state": state, "final_stage": node.name}
+
+        edge = None
+        rec = None
+        if result.verdict is not None and result.verdict.recommendation is not None:
+            rec = result.verdict.recommendation
+            edge = next(
+                (e for e in node.edges if e.kind == "gate" and e.recommendation == rec),
+                None,
+            )
+            # Apply escalate policy when the gate emits "escalate".
+            if rec == "escalate" and edge is None:
+                resolution = policy.escalate.resolve(node.name)
+                if resolution == "force_proceed":
+                    edge = next(
+                        (e for e in node.edges if e.kind == "gate" and e.recommendation == "proceed"),
+                        None,
+                    )
+        if edge is None:
+            edge = next(
+                (e for e in node.edges if e.kind == "normal" and e.label == result.next),
+                None,
+            )
+        if edge is None:
+            raise LookupError(
+                f"Stage {node.name!r} produced next={result.next!r} "
+                f"recommendation={rec!r} but no matching edge was found"
+            )
+        if edge.target == "halt":
+            return {"state": state, "final_stage": node.name}
+        cursor = edge.target
