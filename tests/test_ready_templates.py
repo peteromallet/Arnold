@@ -448,8 +448,10 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
         "negative_prompt",
         "seed_first",
         "seed_last",
-        "width",
-        "height",
+        "stage1_width",
+        "stage1_height",
+        "stage1_image_longer_size",
+        "stage2_image_longer_size",
         "frames",
         "fps",
         "first_image",
@@ -465,8 +467,10 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert lens.registered_input_target("negative_prompt").node_id == "2612"
     assert lens.registered_input_target("seed_first").node_id == "4832"
     assert lens.registered_input_target("seed_last").node_id == "4967"
-    assert lens.registered_input_target("width").node_id == "3059"
-    assert lens.registered_input_target("height").node_id == "3059"
+    assert lens.registered_input_target("stage1_width").node_id == "3059"
+    assert lens.registered_input_target("stage1_height").node_id == "3059"
+    assert lens.registered_input_target("stage1_image_longer_size").node_id == "4990"
+    assert lens.registered_input_target("stage2_image_longer_size").node_id == "4991"
     assert lens.registered_input_target("frames").node_id == "4988"
     assert lens.registered_input_target("fps").node_id == "4989"
     assert lens.registered_input_target("first_image").node_id == "2004"
@@ -502,6 +506,16 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     preprocess_last = lens.node(image_src_last.node_id)
     assert preprocess_last.class_type == "ResizeImageMaskNode"
 
+    # Wan2GP distilled parity: stage 1 is half-res, then latent-upsampled
+    # before the full-res second stage.
+    assert lens.node("4974").class_type == "LatentUpscaleModelLoader"
+    assert lens.node_value("4974", "model_name") == "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    assert lens.node("4975").class_type == "LTXVLatentUpsampler"
+    assert lens.edge_source("4975", "samples").node_id == "4845"
+    assert lens.edge_source("4975", "upscale_model").node_id == "4974"
+    assert lens.edge_source("4975", "vae").node_id == "3940"
+    assert lens.edge_source("4970", "latent").node_id == "4975"
+
     # ── runtime materialization smoke (compiled API, minimal) ────────
     api = workflow.compile("api")
     assert api["2004"]["class_type"] == "LoadImage"
@@ -517,6 +531,11 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert api["4990"]["inputs"]["resize_type.longer_size"] == 256
     assert api["4991"]["inputs"]["resize_type"] == "scale longer dimension"
     assert api["4991"]["inputs"]["resize_type.longer_size"] == 256
+    assert api["4974"]["inputs"]["model_name"] == "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    assert api["4975"]["inputs"]["samples"] == ["4845", 0]
+    assert api["4975"]["inputs"]["upscale_model"] == ["4974", 0]
+    assert api["4975"]["inputs"]["vae"] == ["3940", 2]
+    assert api["4970"]["inputs"]["latent"] == ["4975", 0]
     assert api["4995"]["inputs"]["horizontal_tiles"] == 2
     assert api["4995"]["inputs"]["vertical_tiles"] == 2
     assert api["4995"]["inputs"]["overlap"] == 6
@@ -540,6 +559,10 @@ def test_ltx_lightricks_first_last_parity_resolves_assets_from_registry() -> Non
     assert assets["ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors"]["url"] == (
         "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/"
         "ltx-2.3-22b-distilled-lora-384-1.1.safetensors"
+    )
+    assert assets["ltx-2.3-spatial-upscaler-x2-1.1.safetensors"]["url"] == (
+        "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/"
+        "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
     )
 
 

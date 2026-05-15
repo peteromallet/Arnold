@@ -223,8 +223,10 @@ def test_lens_ltx_parity_registered_inputs_via_lens() -> None:
         "seed_first": ("4832", "noise_seed"),
         "seed_last": ("4967", "noise_seed"),
         "frames": ("4988", "value"),
-        "width": ("3059", "width"),
-        "height": ("3059", "height"),
+        "stage1_width": ("3059", "width"),
+        "stage1_height": ("3059", "height"),
+        "stage1_image_longer_size": ("4990", "resize_type.longer_size"),
+        "stage2_image_longer_size": ("4991", "resize_type.longer_size"),
         "fps": ("4989", "value"),
         "model": ("3940", "ckpt_name"),
     }
@@ -333,6 +335,20 @@ def test_lens_ltx_parity_dimensions_frames_fps_via_lens() -> None:
     assert isinstance(fps, (int, float)) and fps > 0
 
 
+def test_lens_ltx_parity_distilled_latent_upscale_spine_via_lens() -> None:
+    """Distilled LTX first/last must match Wan2GP's half-res stage-1 spine."""
+    wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
+    l = lens(wf)
+
+    assert wf.nodes["4974"].class_type == "LatentUpscaleModelLoader"
+    assert l.node_value("4974", "model_name") == "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
+    assert wf.nodes["4975"].class_type == "LTXVLatentUpsampler"
+    assert l.edge_source("4975", "samples").node_id == "4845"
+    assert l.edge_source("4975", "upscale_model").node_id == "4974"
+    assert l.edge_source("4975", "vae").node_id == "3940"
+    assert l.edge_source("4970", "latent").node_id == "4975"
+
+
 def test_lens_ltx_parity_stage2_sigmas_via_lens() -> None:
     """Stage-2 ManualSigmas (4985) carries the Wan2GP-parity sigma string,
     verified through the lens."""
@@ -416,4 +432,4 @@ def test_lens_ltx_parity_diagnostics_produces_readable_summary() -> None:
     assert "LTXVImgToVideoConditionOnly" in diag
     assert "SaveVideo" in diag
     # Verify input count is reasonable
-    assert "inputs (12)" in diag
+    assert "inputs (14)" in diag

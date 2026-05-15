@@ -22,8 +22,10 @@ _EXPECTED_INPUTS = frozenset(
         "negative_prompt",
         "seed_first",
         "seed_last",
-        "width",
-        "height",
+        "stage1_width",
+        "stage1_height",
+        "stage1_image_longer_size",
+        "stage2_image_longer_size",
         "frames",
         "fps",
         "first_image",
@@ -36,8 +38,10 @@ _EXPECTED_INPUT_TARGETS = {
     "negative_prompt": ("2612", "text"),
     "seed_first": ("4832", "noise_seed"),
     "seed_last": ("4967", "noise_seed"),
-    "width": ("3059", "width"),
-    "height": ("3059", "height"),
+    "stage1_width": ("3059", "width"),
+    "stage1_height": ("3059", "height"),
+    "stage1_image_longer_size": ("4990", "resize_type.longer_size"),
+    "stage2_image_longer_size": ("4991", "resize_type.longer_size"),
     "frames": ("4988", "value"),
     "fps": ("4989", "value"),
     "first_image": ("2004", "image"),
@@ -62,6 +66,12 @@ _SEED_LAST_ID = "4967"
 _LATENT_VIDEO_ID = "3059"
 _FRAMES_ID = "4988"
 _FPS_ID = "4989"
+_STAGE1_RESIZE_ID = "4990"
+_STAGE2_RESIZE_ID = "4991"
+_STAGE1_SEPARATE_ID = "4845"
+_LATENT_UPSCALE_MODEL_ID = "4974"
+_LATENT_UPSAMPLER_ID = "4975"
+_SPATIAL_UPSCALER_MODEL = "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"
 
 # ── stage-2 sigmas ────────────────────────────────────────────────────
 _STAGE2_SIGMAS_ID = "4985"
@@ -98,6 +108,7 @@ class LTXFirstLastTwoStageContract:
         report = ContractReport(contract_name="ltx-first-last-two-stage", passed=True)
         self._check_named_inputs(report)
         self._check_first_last_conditioning(report)
+        self._check_distilled_stage_spine(report)
         self._check_prompt_negative_paths(report)
         self._check_seeds(report)
         self._check_dimensions_frames_fps(report)
@@ -136,6 +147,16 @@ class LTXFirstLastTwoStageContract:
                         "expected_field": expected_field,
                     },
                 )
+        for deprecated in ("width", "height"):
+            target = self._lens.registered_input_target(deprecated)
+            if target is not None:
+                report.add(
+                    "deprecated_final_dimension_input",
+                    f"Named input {deprecated!r} targets {target.node_id}.{target.field}; "
+                    "the distilled parity path must expose stage1_width/stage1_height instead so "
+                    "callers do not accidentally sample stage 1 at final resolution.",
+                    detail={"input": deprecated, "actual_node_id": target.node_id, "actual_field": target.field},
+                )
 
     def _check_first_last_conditioning(self, report: ContractReport) -> None:
         for stage_id, label in [(_FIRST_STAGE_ID, "first"), (_LAST_STAGE_ID, "last")]:
@@ -165,6 +186,87 @@ class LTXFirstLastTwoStageContract:
                         severity="warning",
                         detail={"node_id": stage_id, "source_class_type": src_node.class_type},
                     )
+
+    def _check_distilled_stage_spine(self, report: ContractReport) -> None:
+        """Validate the Wan2GP distilled two-stage geometry spine.
+
+        Wan2GP samples the first stage at half resolution, spatially upsamples
+        the latent, then runs a short second stage at full resolution. This
+        check prevents a template from wiring final dimensions directly into
+        the first latent, which can pass shallow schema checks while diverging
+        badly in VRAM and runtime behavior.
+        """
+
+        upscaler_loader = self._lens.node(_LATENT_UPSCALE_MODEL_ID)
+        if upscaler_loader is None:
+            report.add(
+                "missing_latent_upscale_model_loader",
+                f"Missing LatentUpscaleModelLoader node {_LATENT_UPSCALE_MODEL_ID} for distilled stage handoff.",
+                detail={"expected_node_id": _LATENT_UPSCALE_MODEL_ID},
+            )
+        elif upscaler_loader.class_type != "LatentUpscaleModelLoader":
+            report.add(
+                "wrong_latent_upscale_model_loader_class",
+                f"Node {_LATENT_UPSCALE_MODEL_ID} has class_type {upscaler_loader.class_type!r}, "
+                "expected LatentUpscaleModelLoader.",
+                detail={"node_id": _LATENT_UPSCALE_MODEL_ID, "actual_class_type": upscaler_loader.class_type},
+            )
+        else:
+            model_name = self._lens.node_value(_LATENT_UPSCALE_MODEL_ID, "model_name") or self._lens.node_value(
+                _LATENT_UPSCALE_MODEL_ID, "widget_0"
+            )
+            if model_name != _SPATIAL_UPSCALER_MODEL:
+                report.add(
+                    "wrong_latent_upscale_model",
+                    f"Latent upscaler model is {model_name!r}, expected {_SPATIAL_UPSCALER_MODEL!r}.",
+                    detail={"actual": model_name, "expected": _SPATIAL_UPSCALER_MODEL},
+                )
+
+        upsampler = self._lens.node(_LATENT_UPSAMPLER_ID)
+        if upsampler is None:
+            report.add(
+                "missing_ltx_latent_upsampler",
+                f"Missing LTXVLatentUpsampler node {_LATENT_UPSAMPLER_ID} between stage 1 and stage 2.",
+                detail={"expected_node_id": _LATENT_UPSAMPLER_ID},
+            )
+            return
+        if upsampler.class_type != "LTXVLatentUpsampler":
+            report.add(
+                "wrong_ltx_latent_upsampler_class",
+                f"Node {_LATENT_UPSAMPLER_ID} has class_type {upsampler.class_type!r}, expected LTXVLatentUpsampler.",
+                detail={"node_id": _LATENT_UPSAMPLER_ID, "actual_class_type": upsampler.class_type},
+            )
+
+        samples_src = self._lens.edge_source(_LATENT_UPSAMPLER_ID, "samples")
+        if samples_src is None or samples_src.node_id != _STAGE1_SEPARATE_ID:
+            report.add(
+                "wrong_latent_upsampler_samples_source",
+                "LTXVLatentUpsampler.samples must be fed by first-stage LTXVSeparateAVLatent output.",
+                detail={
+                    "expected_source_node_id": _STAGE1_SEPARATE_ID,
+                    "actual_source_node_id": getattr(samples_src, "node_id", None),
+                },
+            )
+        model_src = self._lens.edge_source(_LATENT_UPSAMPLER_ID, "upscale_model")
+        if model_src is None or model_src.node_id != _LATENT_UPSCALE_MODEL_ID:
+            report.add(
+                "wrong_latent_upsampler_model_source",
+                "LTXVLatentUpsampler.upscale_model must be fed by LatentUpscaleModelLoader.",
+                detail={
+                    "expected_source_node_id": _LATENT_UPSCALE_MODEL_ID,
+                    "actual_source_node_id": getattr(model_src, "node_id", None),
+                },
+            )
+        stage2_latent_src = self._lens.edge_source(_LAST_STAGE_ID, "latent")
+        if stage2_latent_src is None or stage2_latent_src.node_id != _LATENT_UPSAMPLER_ID:
+            report.add(
+                "wrong_stage2_latent_source",
+                "Stage-2 LTXVImgToVideoConditionOnly.latent must consume the latent upsampler output.",
+                detail={
+                    "expected_source_node_id": _LATENT_UPSAMPLER_ID,
+                    "actual_source_node_id": getattr(stage2_latent_src, "node_id", None),
+                },
+            )
 
     def _check_prompt_negative_paths(self, report: ContractReport) -> None:
         for node_id, label in [(_PROMPT_ENCODE_ID, "prompt"), (_NEGATIVE_ENCODE_ID, "negative")]:
@@ -250,6 +352,17 @@ class LTXFirstLastTwoStageContract:
                 "wrong_fps_class_type",
                 f"Node {_FPS_ID} has class_type {fps_node.class_type!r}, expected PrimitiveFloat",
             )
+
+        for node_id, label in [(_STAGE1_RESIZE_ID, "stage1_image_longer_size"), (_STAGE2_RESIZE_ID, "stage2_image_longer_size")]:
+            node = self._lens.node(node_id)
+            if node is None:
+                report.add(f"missing_{label}_node", f"Missing ResizeImageMaskNode {node_id} for {label}.")
+            elif node.class_type != "ResizeImageMaskNode":
+                report.add(
+                    f"wrong_{label}_class_type",
+                    f"Node {node_id} has class_type {node.class_type!r}, expected ResizeImageMaskNode.",
+                    detail={"node_id": node_id, "actual_class_type": node.class_type},
+                )
 
     def _check_stage2_sigmas(self, report: ContractReport) -> None:
         node = self._lens.node(_STAGE2_SIGMAS_ID)

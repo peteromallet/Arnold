@@ -47,6 +47,7 @@ _MODEL_INPUT_SUBDIRS = {
 
 _CLASS_FIELD_SUBDIRS = {
     ("CLIPVisionLoader", "clip_name"): "clip_vision",
+    ("LatentUpscaleModelLoader", "model_name"): "latent_upscale_models",
     ("LoadWanVideoT5TextEncoder", "model_name"): "text_encoders",
     ("WanVideoTextEncodeCached", "model_name"): "text_encoders",
     ("WanVideoVAELoader", "model_name"): "vae",

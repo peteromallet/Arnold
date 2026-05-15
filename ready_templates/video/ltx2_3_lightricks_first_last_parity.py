@@ -21,7 +21,10 @@ READY_METADATA = {
     "source_workflow": None,
     "coverage_tier": "required",
     "approach": "Official Lightricks two-stage first/last spine",
-    "runtime_note": "Patches named inputs for prompt, negative, seeds, dimensions, frames, fps, first/last images.",
+    "runtime_note": (
+        "Patches named inputs for prompt, negative, seeds, stage-1 half-resolution dimensions, "
+        "resize targets, frames, fps, and first/last images."
+    ),
     "discord_signal": "First/last frame video generation for LTX 2.3 travel segments.",
     "smoke_resolution": "256x256x5_frames",
     "ltx_best_practices": [
@@ -240,6 +243,23 @@ def build() -> VibeWorkflow:
         av_latent=samplercustomadvanced_first.out(0),
     )
 
+    # ── latent upscale: Wan2GP distilled stage-1 half-res -> stage-2 full-res ──
+    latentupscalemodelloader = _node(
+        wf,
+        "LatentUpscaleModelLoader",
+        "4974",
+        model_name="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        widget_0="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+    )
+    ltxvlatentupsampler = _node(
+        wf,
+        "LTXVLatentUpsampler",
+        "4975",
+        samples=ltxvseparateavlatent_first.out(0),
+        upscale_model=latentupscalemodelloader.out(0),
+        vae=lowvramcheckpointloader.out(2),
+    )
+
     # ── stage 2: last frame conditioning ─────────────────────────────
     ltxvimgtovideoconditiononly_last = _node(
         wf,
@@ -250,7 +270,7 @@ def build() -> VibeWorkflow:
         widget_1=False,
         bypass=None,
         image=resizeimagemask_last.out(0),
-        latent=ltxvseparateavlatent_first.out(0),
+        latent=ltxvlatentupsampler.out(0),
         vae=lowvramcheckpointloader.out(2),
     )
 
@@ -345,8 +365,10 @@ def build() -> VibeWorkflow:
     wf.register_input("negative_prompt", "2612", "text", value=cliptextencode_negative.node.inputs.get("text"))
     wf.register_input("seed_first", "4832", "noise_seed", value=43)
     wf.register_input("seed_last", "4967", "noise_seed", value=42)
-    wf.register_input("width", "3059", "width", value=256)
-    wf.register_input("height", "3059", "height", value=256)
+    wf.register_input("stage1_width", "3059", "width", value=256)
+    wf.register_input("stage1_height", "3059", "height", value=256)
+    wf.register_input("stage1_image_longer_size", "4990", "resize_type.longer_size", value=256)
+    wf.register_input("stage2_image_longer_size", "4991", "resize_type.longer_size", value=256)
     wf.register_input("frames", "4988", "value", value=5)
     wf.register_input("fps", "4989", "value", value=8)
     wf.register_input("first_image", "2004", "image", value="example.png")
