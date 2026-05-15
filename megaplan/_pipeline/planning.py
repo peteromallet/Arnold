@@ -51,11 +51,13 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from megaplan._core.workflow import (
-    WORKFLOW,
-    Transition,
     _workflow_for_robustness,
     _with_prep_from_state,
     _with_feedback_from_state,
+)
+from megaplan._core.workflow_data import (
+    WORKFLOW,
+    Transition,
 )
 from megaplan._pipeline.types import (
     Edge,
