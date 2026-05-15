@@ -161,7 +161,12 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 output_index = int(from_output)
             except (TypeError, ValueError):
                 output_index = None
-            if output_index is not None and (output_index < 0 or output_index >= len(outputs)):
+            # Empty outputs list means the schema does not declare output info
+            # (e.g. permissive index synthesized from API workflows). Treat as
+            # unknown and skip the output-index bounds check rather than emit a
+            # false-positive violation. A truly outputless node would be a
+            # leaf sink that never appears as an edge source anyway.
+            if output_index is not None and outputs and (output_index < 0 or output_index >= len(outputs)):
                 issues.append(
                     ValidationIssue(
                         "invalid_output_index",
