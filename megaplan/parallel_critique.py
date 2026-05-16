@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import get_effective, read_json, schemas_root
-from megaplan.hermes_worker import (
+from megaplan.workers.hermes import (
     _streaming_run_kwargs,
     _toolsets_for_phase,
     clean_parsed_payload,
@@ -54,7 +54,7 @@ def _run_check(
     schema: dict[str, Any],
     project_dir: Path,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float]:
-    from megaplan.hermes_worker import _import_hermes_runtime
+    from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 

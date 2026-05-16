@@ -362,7 +362,7 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
       * ``TERMINAL_CWD`` is set to project_dir while the agent runs, AND
       * tool registry handlers are wrapped while the agent runs.
     """
-    from megaplan import hermes_worker as hw
+    from megaplan.workers import hermes as hw
     from megaplan._core import atomic_write_json, atomic_write_text, schemas_root
     from megaplan.workers import STEP_SCHEMA_FILENAMES
 

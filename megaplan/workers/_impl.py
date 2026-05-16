@@ -1813,7 +1813,7 @@ def run_claude_step(
     """Compatibility wrapper: the public ``claude`` route runs via Shannon."""
     if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
         raise CliError("invalid_args", f"Unsupported claude effort level: {effort}")
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
 
     return run_shannon_step(
         step,
@@ -2403,7 +2403,7 @@ def run_step_with_worker(
         try:
             if agent == "hermes":
                 # Deferred import to avoid circular import (hermes_worker imports from workers)
-                from megaplan.hermes_worker import run_hermes_step
+                from megaplan.workers.hermes import run_hermes_step
                 worker = run_hermes_step(
                     step,
                     state,
@@ -2414,7 +2414,7 @@ def run_step_with_worker(
                     prompt_override=prompt_override,
                 )
             elif agent == "claude":
-                from megaplan.shannon_worker import run_shannon_step
+                from megaplan.workers.shannon import run_shannon_step
                 worker = run_shannon_step(
                     step,
                     state,
@@ -2428,7 +2428,7 @@ def run_step_with_worker(
                 )
             elif agent == "shannon":
                 # Deferred import to avoid circular import
-                from megaplan.shannon_worker import run_shannon_step
+                from megaplan.workers.shannon import run_shannon_step
                 worker = run_shannon_step(
                     step,
                     state,

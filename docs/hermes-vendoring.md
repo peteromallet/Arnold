@@ -52,7 +52,7 @@ environment instead of relying on the current interpreter state:
 python -m venv /tmp/megaplan-agent-smoke
 /tmp/megaplan-agent-smoke/bin/pip install -e '.[agent]'
 HOME=$(mktemp -d) /tmp/megaplan-agent-smoke/bin/python - <<'PY'
-from megaplan.hermes_worker import _import_hermes_runtime
+from megaplan.workers.hermes import _import_hermes_runtime
 
 AIAgent, SessionDB = _import_hermes_runtime()
 import model_tools

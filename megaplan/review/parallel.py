@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import get_effective, read_json, schemas_root
-from megaplan.hermes_worker import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
+from megaplan.workers.hermes import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
 from megaplan.prompts.review import (
     _write_criteria_verdict_review_template,
     _write_single_check_review_template,
@@ -77,7 +77,7 @@ def _run_check(
     project_dir: Path,
     pre_check_flags: list[dict[str, Any]],
 ) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
-    from megaplan.hermes_worker import _import_hermes_runtime
+    from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
@@ -207,7 +207,7 @@ def _run_criteria_verdict(
     schema: dict[str, Any],
     project_dir: Path,
 ) -> tuple[dict[str, Any], float, int, int, int]:
-    from megaplan.hermes_worker import _import_hermes_runtime
+    from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
