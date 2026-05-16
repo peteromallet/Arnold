@@ -56,12 +56,20 @@ loop terminates after three iterations.
 _MAX_ITER = 3
 
 
-def _current_doc_path(ctx: StepContext) -> Path:
+def _latest_doc_path(ctx: StepContext) -> Path:
+    """Latest revision the critic should read.
+
+    Resolution order:
+    1. ctx.state['latest_doc'] — set by the reviser on each pass.
+    2. ctx.inputs['doc'] — the input fixture for iteration 0.
+    """
     state = ctx.state if isinstance(ctx.state, dict) else {}
-    iteration = state.get("critique_iter", 0)
-    if iteration == 0:
-        return Path(ctx.inputs["doc"])
-    return Path(ctx.plan_dir) / "doc_versions" / f"doc_v{iteration}.md"
+    latest = state.get("latest_doc")
+    if isinstance(latest, str) and latest:
+        candidate = Path(latest)
+        if candidate.exists():
+            return candidate
+    return Path(ctx.inputs["doc"])
 
 
 class DocCritic:
@@ -74,7 +82,7 @@ class DocCritic:
         state = dict(ctx.state) if isinstance(ctx.state, dict) else {}
         iteration = int(state.get("critique_iter", 0))
 
-        doc_path = _current_doc_path(ctx)
+        doc_path = _latest_doc_path(ctx)
         body = doc_path.read_text() if doc_path.exists() else ""
 
         # The Step's behaviour resolves the mode-aware prompt at
@@ -147,7 +155,9 @@ class DocReviser:
         prompt = resolve_prompt(ctx, self.prompt_key, params={"flags": flags})
         assert "Revise" in prompt, prompt
 
-        prev_path = _current_doc_path(ctx)
+        # Revise reads the latest doc the critic just judged (the
+        # fixture for iter==1, the previous revision otherwise).
+        prev_path = _latest_doc_path(ctx)
         prev_body = prev_path.read_text() if prev_path.exists() else ""
         flag_summary = ", ".join(str(f) for f in flags) or "no flags"
         next_body = (
