@@ -45,6 +45,20 @@ text = text.replace(
     '  addString(args, "--session-id", parsed.sessionId);\n',
     '  // Patched for Claude Code v2.1.x: --session-id is not accepted by claude.\n',
 )
+text = text.replace(
+'''      "claude",
+      ...options.claudeArgs,
+      prompt,
+''',
+'''      "claude",
+      ...options.claudeArgs,
+''',
+)
+text = text.replace(
+    "    let launchedWithPrompt = true;\n",
+    "    // Patched for Claude Code v2.1.x: send the first prompt through tmux after launch.\n"
+    "    let launchedWithPrompt = false;\n",
+)
 index_ts.write_text(text, encoding="utf-8")
 
 py_text = py_shannon.read_text(encoding="utf-8")
@@ -150,6 +164,7 @@ required_index = [
     'parsed.permissionMode === "bypassPermissions" ? "dontAsk"',
     "Patched for root Railway runner",
     "Patched for Claude Code v2.1.x",
+    "send the first prompt through tmux after launch",
 ]
 missing = [item for item in required_index if item not in patched_index]
 if missing:
