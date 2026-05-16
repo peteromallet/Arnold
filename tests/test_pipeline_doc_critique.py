@@ -42,4 +42,22 @@ def test_doc_critique_three_iterations(tmp_path: Path) -> None:
     assert final_doc != fixture.read_text()
     assert "Revision pass" in final_doc
 
+    # Doc continuity: the original fixture content must survive into
+    # the final revised doc (revisions are appended, not replacements).
+    assert fixture.read_text().strip() in final_doc, (
+        "final revised doc lost the original fixture content"
+    )
+    assert "Revision pass 1" in final_doc
+    assert "Revision pass 2" in final_doc
+
+    # Critique chain: critique_v1 reads the fixture; v2 reads doc_v1;
+    # v3 reads doc_v2 (proves the latest_doc state-patch threading
+    # works between critique and revise).
+    v1 = json.loads(critique_paths[0].read_text())
+    v2 = json.loads(critique_paths[1].read_text())
+    v3 = json.loads(critique_paths[2].read_text())
+    assert v1["doc_read"] == str(fixture)
+    assert "doc_v1.md" in v2["doc_read"]
+    assert "doc_v2.md" in v3["doc_read"]
+
     assert result.get("final_stage") == "critique"
