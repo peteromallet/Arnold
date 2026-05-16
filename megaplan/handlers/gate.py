@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, is_rubber_stamp, run_gate_checks
+from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, is_rubber_stamp, run_gate_checks
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_CRITIQUED, STATE_GATED, StepResponse
 from megaplan.workers import WorkerResult

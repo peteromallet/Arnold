@@ -17,7 +17,7 @@ from megaplan._core import (
     latest_plan_meta_path,
     read_json,
 )
-from megaplan.feedback import STAGES
+from megaplan.orchestration.feedback import STAGES
 
 
 # ---------------------------------------------------------------------------

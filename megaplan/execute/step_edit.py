@@ -20,7 +20,7 @@ from megaplan._core import (
     sha256_text,
     workflow_next,
 )
-from megaplan.evaluation import (
+from megaplan.orchestration.evaluation import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     PlanSection,
     parse_plan_sections,

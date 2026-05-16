@@ -37,7 +37,7 @@ from megaplan._core import (
 from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
 from .shared import _emit_phase_notice, attach_agent_fallback, worker_module
-from megaplan.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""

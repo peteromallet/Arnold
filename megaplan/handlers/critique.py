@@ -9,8 +9,8 @@ from megaplan import handlers as _pkg
 from megaplan.audits.robustness import validate_critique_checks
 from megaplan.forms.provocations import select_active_checks
 from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
-from megaplan.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
-from megaplan.parallel_critique import run_parallel_critique
+from megaplan.orchestration.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
+from megaplan.orchestration.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     CliError,

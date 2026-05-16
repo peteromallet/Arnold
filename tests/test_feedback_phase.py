@@ -33,7 +33,7 @@ from megaplan._core import (
     load_plan,
     save_state,
 )
-from megaplan.feedback import (
+from megaplan.orchestration.feedback import (
     FEEDBACK_FILENAME,
     STAGES,
     PlanFeedback,

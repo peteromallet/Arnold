@@ -240,7 +240,7 @@ def test_handle_feedback_workflow_scaffolds_and_transitions(
     )
 
     from tests.conftest import make_args_factory
-    from megaplan.feedback import feedback_path
+    from megaplan.orchestration.feedback import feedback_path
 
     make_args = make_args_factory(project_dir)
     response = megaplan.handle_init(
@@ -321,7 +321,7 @@ def test_handle_feedback_workflow_already_has_file(
     )
 
     from tests.conftest import make_args_factory
-    from megaplan.feedback import feedback_path
+    from megaplan.orchestration.feedback import feedback_path
 
     make_args = make_args_factory(project_dir)
     response = megaplan.handle_init(

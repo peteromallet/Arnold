@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.evaluation import (
+from megaplan.orchestration.evaluation import (
     PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
     _strip_fenced_blocks,
     build_gate_artifact,
@@ -615,7 +615,7 @@ def test_is_rubber_stamp_allows_short_specific_ack_only_in_loose_mode() -> None:
 
 def _stub_clean_git_status(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "megaplan.evaluation.subprocess.run",
+        "megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=0,
@@ -745,7 +745,7 @@ def test_validate_execution_evidence_reads_nested_git_repo_status(
             raise AssertionError(f"unexpected cwd {cwd}")
         return subprocess.CompletedProcess(args=args, returncode=0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr("megaplan.evaluation.subprocess.run", fake_run)
+    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", fake_run)
     finalize_data = {
         "tasks": [
             {
@@ -793,7 +793,7 @@ def test_validate_execution_evidence_flags_diff_mismatches_and_weak_notes(
     }
 
     monkeypatch.setattr(
-        "megaplan.evaluation.subprocess.run",
+        "megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=0,
@@ -878,7 +878,7 @@ def test_validate_execution_evidence_flags_perfunctory_executor_notes(
     }
 
     monkeypatch.setattr(
-        "megaplan.evaluation.subprocess.run",
+        "megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=0,
@@ -903,7 +903,7 @@ def test_validate_execution_evidence_skips_when_git_missing(
     def _raise(*args: object, **kwargs: object) -> object:
         raise FileNotFoundError
 
-    monkeypatch.setattr("megaplan.evaluation.subprocess.run", _raise)
+    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", _raise)
 
     result = validate_execution_evidence({"tasks": [], "sense_checks": []}, project_dir)
 
@@ -921,7 +921,7 @@ def test_validate_execution_evidence_skips_on_timeout(
     def _raise(*args: object, **kwargs: object) -> object:
         raise subprocess.TimeoutExpired(cmd=["git", "status", "--short"], timeout=30)
 
-    monkeypatch.setattr("megaplan.evaluation.subprocess.run", _raise)
+    monkeypatch.setattr("megaplan.orchestration.evaluation.subprocess.run", _raise)
 
     result = validate_execution_evidence({"tasks": [], "sense_checks": []}, project_dir)
 
@@ -937,7 +937,7 @@ def test_validate_execution_evidence_skips_on_nonzero_git_status(
     (project_dir / ".git").mkdir(parents=True)
 
     monkeypatch.setattr(
-        "megaplan.evaluation.subprocess.run",
+        "megaplan.orchestration.evaluation.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
             args=["git", "status", "--short"],
             returncode=128,

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.evaluation import validate_plan_structure
+from megaplan.orchestration.evaluation import validate_plan_structure
 from megaplan._core import PHASE_RUNTIME_POLICY
 from megaplan.types import CliError
 from megaplan.workers import (

@@ -15,7 +15,7 @@ from megaplan._core import (
     unresolved_significant_flags,
 )
 from megaplan.workers import CommandResult, WorkerResult, mock_worker_output
-from megaplan.evaluation import (
+from megaplan.orchestration.evaluation import (
     build_orchestrator_guidance,
     build_gate_signals,
     compute_plan_delta_percent,
