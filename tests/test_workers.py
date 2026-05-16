@@ -2803,7 +2803,7 @@ def _write_codex_rollout(
 
 
 def test_codex_pricing_table() -> None:
-    from megaplan.codex_pricing import (
+    from megaplan.pricing.codex import (
         DEFAULT_MODEL,
         PRICING,
         cost_from_usage,

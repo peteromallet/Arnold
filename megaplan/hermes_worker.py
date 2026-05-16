@@ -713,7 +713,7 @@ def run_hermes_step(
     if cost_usd == 0.0 and (prompt_tokens > 0 or completion_tokens > 0):
         model_actual = result.get("model")
         if model_actual:
-            from megaplan import fireworks_pricing
+            from megaplan.pricing import fireworks as fireworks_pricing
 
             cost_usd = fireworks_pricing.cost_from_usage(
                 prompt_tokens, completion_tokens, model_actual
