@@ -804,7 +804,7 @@ def _codex_step_cost(
     model, current_total_usage)``. Any failure to read the JSONL or compute
     the delta returns zeros and a ``None`` usage blob — never raises.
     """
-    from megaplan.codex_pricing import cost_from_usage
+    from megaplan.pricing.codex import cost_from_usage
 
     if not session_id:
         return 0.0, 0, 0, None, None
