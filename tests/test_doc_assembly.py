@@ -1,4 +1,4 @@
-"""Smoke tests for doc-mode section assembly (megaplan.doc_assembly)."""
+"""Smoke tests for doc-mode section assembly (megaplan.runtime.doc_assembly)."""
 from __future__ import annotations
 
 import json
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.doc_assembly import assemble_doc, extract_sections, extract_settled_decisions
+from megaplan.runtime.doc_assembly import assemble_doc, extract_sections, extract_settled_decisions
 
 
 def _write_batch(plan_dir: Path, index: int, payload: dict) -> None:

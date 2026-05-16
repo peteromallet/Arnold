@@ -142,7 +142,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             response["next_step"] = None
             response.pop("next_step_runtime", None)
         if is_prose_mode(state) and response.get("state") == STATE_EXECUTED:
-            from megaplan.doc_assembly import assemble_doc
+            from megaplan.runtime.doc_assembly import assemble_doc
             output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]
             finalize_data = read_json(plan_dir / "finalize.json")
             assemble_doc(plan_dir, output_path, finalize_data)

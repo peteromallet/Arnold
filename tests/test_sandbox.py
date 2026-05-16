@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.sandbox import (
+from megaplan.runtime.sandbox import (
     SandboxViolation,
     install_sandbox,
     validate_terminal_command,

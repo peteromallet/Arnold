@@ -500,7 +500,7 @@ def run_hermes_step(
     # Resolve model provider — support direct API providers via prefix
     # e.g. "zhipu:glm-5.1" → base_url=Zhipu API, model="glm-5.1"
     # Uses the key pool for key rotation and cooldown on 429s.
-    from megaplan.key_pool import resolve_model as _resolve_model, acquire_key, report_429
+    from megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)
 
     toolsets = _toolsets_for_phase(step)
@@ -624,7 +624,7 @@ def run_hermes_step(
     from contextlib import ExitStack
     _sandbox_stack = ExitStack()
     if toolsets:
-        from megaplan.sandbox import install_sandbox
+        from megaplan.runtime.sandbox import install_sandbox
         _sandbox_stack.enter_context(install_sandbox(project_dir))
 
     # Run — with fallback to OpenRouter for MiniMax if primary API fails
@@ -657,7 +657,7 @@ def run_hermes_step(
                         )
                     else:
                         print(f"[hermes-worker] MiniMax failed ({exc}), falling back to OpenRouter", file=sys.stderr)
-                    from megaplan.key_pool import minimax_openrouter_model
+                    from megaplan.runtime.key_pool import minimax_openrouter_model
                     fallback_model = minimax_openrouter_model(model[len("minimax:"):])
                     output_path = _rewrite_output_template(output_path)
                     agent = _make_agent(
