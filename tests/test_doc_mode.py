@@ -12,7 +12,7 @@ import megaplan
 import megaplan._core
 import megaplan._core.io as io_module
 import megaplan.cli
-from megaplan.doc_assembly import assemble_doc, extract_sections
+from megaplan.runtime.doc_assembly import assemble_doc, extract_sections
 from megaplan.orchestration.evaluation import validate_execution_evidence
 from megaplan.execute.timeout import _merge_timeout_checkpoint, _reset_timeout_invalid_tasks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key, strict_schema

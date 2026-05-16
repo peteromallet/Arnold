@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from megaplan.doc_assembly import extract_settled_decisions
+from megaplan.runtime.doc_assembly import extract_settled_decisions
 from megaplan.forms import available_form_ids
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse
