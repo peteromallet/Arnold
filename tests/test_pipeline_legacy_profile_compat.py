@@ -69,8 +69,9 @@ def test_planning_pipeline_phase_names_are_slot_addressable() -> None:
 
     pipeline = compile_pipeline_for(robustness="standard")
     # Stages named after live phases — these are the ones a profile slot
-    # would resolve a model for.
-    phase_like_stages = {"prepped", "planned", "critiqued", "gated", "finalized", "executed"}
+    # would resolve a model for. Post-Sprint-5 the canonical Pipeline
+    # uses phase-name stages.
+    phase_like_stages = {"prep", "plan", "critique", "gate", "finalize", "execute"}
     assert phase_like_stages.issubset(pipeline.stages.keys()), (
         phase_like_stages - pipeline.stages.keys()
     )

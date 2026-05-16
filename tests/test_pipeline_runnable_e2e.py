@@ -3,7 +3,7 @@
 The legacy ``compile_planning_pipeline()`` produces a Pipeline whose
 gate-recommendation edges sit on the wrong stage (``critiqued``
 instead of ``gate``), preventing the runtime from following gate
-verdict dispatch. ``compile_runnable_pipeline()`` is the
+verdict dispatch. ``compile_planning_pipeline()`` is the
 structurally-correct alternative — this test proves it actually
 drives a real mock plan from prep all the way to ``done``.
 """
@@ -23,7 +23,7 @@ import megaplan._core.io as io_module
 import megaplan.cli
 
 from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_runnable_pipeline
+from megaplan._pipeline.planning import compile_planning_pipeline
 from megaplan._pipeline.runtime import policy_from_cli_args
 from megaplan._pipeline.types import StepContext
 
@@ -70,7 +70,7 @@ def test_runnable_pipeline_drives_plan_to_done(
     """The runnable pipeline must reach state=done via real handlers."""
     root, project_dir, plan_name, plan_dir = _mock_plan(tmp_path, monkeypatch)
 
-    pipeline = compile_runnable_pipeline()
+    pipeline = compile_planning_pipeline()
     ctx = StepContext(
         plan_dir=plan_dir,
         state={"name": plan_name, **json.loads((plan_dir / "state.json").read_text())},
@@ -106,7 +106,7 @@ def test_runnable_pipeline_iterates_on_gate(
     """When gate emits iterate, the pipeline loops critique → gate."""
     root, project_dir, plan_name, plan_dir = _mock_plan(tmp_path, monkeypatch)
 
-    pipeline = compile_runnable_pipeline()
+    pipeline = compile_planning_pipeline()
     ctx = StepContext(
         plan_dir=plan_dir,
         state={"name": plan_name, **json.loads((plan_dir / "state.json").read_text())},
@@ -141,7 +141,7 @@ def test_runnable_pipeline_uses_named_step_classes() -> None:
     from megaplan._pipeline.stages.execute import ExecuteStep
     from megaplan._pipeline.stages.review import ReviewStep
 
-    pipeline = compile_runnable_pipeline()
+    pipeline = compile_planning_pipeline()
     expected = {
         "prep": PrepStep, "plan": PlanStep, "critique": CritiqueStep,
         "gate": GateStep, "revise": ReviseStep,
@@ -156,7 +156,7 @@ def test_runnable_pipeline_uses_named_step_classes() -> None:
 def test_runnable_pipeline_gate_has_typed_recommendation_edges() -> None:
     """The runnable pipeline's gate stage carries all four typed
     recommendation edges — proving the dispatch is on the right node."""
-    pipeline = compile_runnable_pipeline()
+    pipeline = compile_planning_pipeline()
     gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "gate"]
     recs = sorted(e.recommendation for e in gate_edges)
     assert recs == ["escalate", "iterate", "proceed", "tiebreaker"], recs

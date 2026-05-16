@@ -70,17 +70,9 @@ def _mock_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _build_pipeline_with_initial_entry():
-    """Compile the planning Pipeline but reroute entry from 'initialized'
-    so it lines up with what a mid-walk runtime would see."""
-    pipeline = compile_pipeline_for(robustness="robust")
-    # The compiled pipeline's entry is 'initialized'. The initialized
-    # stage has a _RuntimeStep placeholder (no real handler). Reroute
-    # entry to 'prepped' so the executor walks the real Steps.
-    from megaplan._pipeline.types import Pipeline as _Pipeline
-    rerouted = _Pipeline(
-        stages=pipeline.stages, entry="prepped", overlays=pipeline.overlays,
-    )
-    return rerouted
+    """Post-Sprint-5 the canonical pipeline already enters on the
+    real-handler 'prep' phase; no rerouting needed."""
+    return compile_pipeline_for(robustness="robust")
 
 
 def test_pipeline_runtime_drives_plan_through_prep_plan_critique(
@@ -134,7 +126,8 @@ def test_pipeline_runtime_drives_plan_through_prep_plan_critique(
 
     state = json.loads((plan_dir / "state.json").read_text())
     # After the executor walk, state must have advanced from
-    # 'initialized' through prep + plan + critique.
+    # 'initialized' through prep + plan + critique. Post-Sprint-5 the
+    # canonical Pipeline drives all the way to done.
     assert state["current_state"] in {
         "prepped", "planned", "critiqued", "gated", "finalized",
         "executed", "done",
@@ -149,24 +142,41 @@ def test_pipeline_runtime_drives_plan_through_prep_plan_critique(
 def test_pipeline_runtime_honors_cost_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Setting max_cost_usd=0 forces an immediate halt_reason=cost_cap."""
-    root, project_dir, plan_name, plan_dir = _mock_plan(tmp_path, monkeypatch)
-    pipeline = _build_pipeline_with_initial_entry()
-    ctx = StepContext(
-        plan_dir=plan_dir,
-        state={"name": plan_name, **json.loads((plan_dir / "state.json").read_text())},
-        profile={"root": root, "project_dir": project_dir},
-        mode="code", inputs={}, budget=None,
+    """CostTracker fires when cumulative spend exceeds the cap.
+
+    Mock workers report cost=0.0 so an E2E cap test would never trip;
+    instead seed state with a non-zero cost and run a trivial pipeline
+    to verify the tracker correctly halts on the first stage.
+    """
+    from dataclasses import dataclass
+    from megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult
+
+    @dataclass
+    class _Costly:
+        name: str = "costly"
+        kind: str = "produce"
+        prompt_key = None
+        slot = None
+
+        def run(self, ctx):
+            # Pretend this stage racked up cost.
+            return StepResult(next="again", state_patch={"meta": {"total_cost_usd": 10.0}})
+
+    pipeline = Pipeline(
+        stages={"costly": Stage(
+            name="costly", step=_Costly(),
+            edges=(Edge(label="again", target="costly"),),
+        )},
+        entry="costly",
     )
-    policy = policy_from_cli_args(max_cost_usd=0.000001, max_iterations=30)
-    try:
-        result = run_pipeline_with_policy(
-            pipeline, ctx, artifact_root=plan_dir, policy=policy,
-        )
-        assert result.get("halt_reason") == "cost_cap"
-    except (LookupError, KeyError):
-        # Acceptable — see comment in previous test.
-        pass
+    ctx = StepContext(
+        plan_dir=tmp_path, state={}, profile=None, mode="code", inputs={},
+    )
+    policy = policy_from_cli_args(max_cost_usd=1.0, max_iterations=10)
+    result = run_pipeline_with_policy(
+        pipeline, ctx, artifact_root=tmp_path, policy=policy,
+    )
+    assert result.get("halt_reason") == "cost_cap", result
 
 
 def test_pipeline_runtime_honors_max_iterations(

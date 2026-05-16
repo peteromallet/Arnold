@@ -115,16 +115,16 @@ def test_named_steps_are_what_planning_pipeline_uses() -> None:
 
     pipeline = compile_planning_pipeline()
     type_map = {
-        "prepped": "PrepStep",
-        "planned": "PlanStep",
-        "critiqued": "CritiqueStep",
-        "gated": "GateStep",
-        "finalized": "FinalizeStep",
-        "executed": "ExecuteStep",
+        "prep": "PrepStep",
+        "plan": "PlanStep",
+        "critique": "CritiqueStep",
+        "gate": "GateStep",
+        "finalize": "FinalizeStep",
+        "execute": "ExecuteStep",
     }
-    for state_name, expected_class in type_map.items():
-        actual = type(pipeline.stages[state_name].step).__name__
-        assert actual == expected_class, (state_name, actual, expected_class)
+    for stage_name, expected_class in type_map.items():
+        actual = type(pipeline.stages[stage_name].step).__name__
+        assert actual == expected_class, (stage_name, actual, expected_class)
 
 
 def test_mid_pipeline_profile_swap_during_real_run(mock_plan) -> None:
@@ -162,10 +162,11 @@ def test_mid_pipeline_profile_swap_during_real_run(mock_plan) -> None:
 
 def test_planning_pipeline_carries_typed_gate_edges() -> None:
     """The wired-up production Pipeline still has the typed gate edges
-    Chunk A introduced — no regression in elegance."""
+    Chunk A introduced — no regression in elegance. Sprint 5 Chunk A
+    canonicalised the phase-name shape, so the gate-recommendation edges
+    now sit on the ``gate`` stage (not the legacy ``critiqued`` state)."""
     from megaplan._pipeline.planning import compile_planning_pipeline
 
     pipeline = compile_planning_pipeline()
-    critiqued_edges = pipeline.stages["critiqued"].edges
-    gate_edges = [e for e in critiqued_edges if e.kind == "gate"]
-    assert {e.recommendation for e in gate_edges} == {"iterate", "proceed", "tiebreaker"}
+    gate_edges = [e for e in pipeline.stages["gate"].edges if e.kind == "gate"]
+    assert {e.recommendation for e in gate_edges} == {"iterate", "proceed", "tiebreaker", "escalate"}

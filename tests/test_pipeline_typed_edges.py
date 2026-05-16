@@ -47,21 +47,23 @@ def test_edge_typed_gate_round_trips() -> None:
 
 
 def test_compiled_planning_emits_typed_gate_edges() -> None:
+    """Sprint 5 Chunk A canonicalised the phase-name shape, so the gate
+    Step's typed recommendation edges now live on the ``gate`` stage."""
     pipeline = compile_planning_pipeline()
-    critiqued = pipeline.stages["critiqued"]
+    gate_stage = pipeline.stages["gate"]
 
-    gate_edges = [e for e in critiqued.edges if e.kind == "gate"]
+    gate_edges = [e for e in gate_stage.edges if e.kind == "gate"]
     recs = sorted(e.recommendation for e in gate_edges)
-    assert recs == ["iterate", "proceed", "tiebreaker"], recs
+    assert recs == ["escalate", "iterate", "proceed", "tiebreaker"], recs
 
-    # gate_escalate fan-out (3 edges) falls back to kind="normal" with
-    # bare next_step labels so each remains individually addressable.
+    # Override fan-out falls back to kind="normal" with bare next_step
+    # labels so each remains individually addressable.
     normal_overrides = [
-        e for e in critiqued.edges
+        e for e in gate_stage.edges
         if e.kind == "normal" and e.label.startswith("override ")
     ]
     assert sorted(e.label for e in normal_overrides) == [
-        "override abort", "override add-note", "override force-proceed",
+        "override abort", "override force-proceed",
     ]
 
 

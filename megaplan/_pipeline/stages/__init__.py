@@ -13,10 +13,7 @@ behaviour is preserved while the planning Pipeline becomes the
 orchestration layer.
 """
 
-from megaplan._pipeline.stages.handler_step import (
-    HandlerStep,
-    build_planning_steps,
-)
+from megaplan._pipeline.stages.handler_step import build_planning_steps
 from megaplan._pipeline.stages.prep import PrepStep
 from megaplan._pipeline.stages.plan import PlanStep
 from megaplan._pipeline.stages.critique import CritiqueStep
@@ -28,7 +25,6 @@ from megaplan._pipeline.stages.review import ReviewStep
 
 
 __all__ = [
-    "HandlerStep",
     "build_planning_steps",
     "PrepStep",
     "PlanStep",

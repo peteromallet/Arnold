@@ -17,7 +17,7 @@ CLI subcommand (see :mod:`megaplan._pipeline.run_cli`).
 Built-in pipelines registered at module import:
 
 - ``planning``: the production planning Pipeline
-  (``compile_runnable_pipeline()``).
+  (``compile_planning_pipeline()``).
 - ``doc-critique``: the 3× critique→revise loop.
 - ``judges``: the fan-out judges demo.
 """
@@ -150,8 +150,8 @@ def run_pipeline_by_name(
 
 
 def _planning_builder() -> Pipeline:
-    from megaplan._pipeline.planning import compile_runnable_pipeline
-    return compile_runnable_pipeline()
+    from megaplan._pipeline.planning import compile_planning_pipeline
+    return compile_planning_pipeline()
 
 
 def _doc_critique_builder() -> Pipeline:

@@ -1,48 +1,24 @@
-"""Compile the existing planning state machine into a :class:`Pipeline` value.
+"""Compile the canonical planning :class:`Pipeline`.
 
-Sprint 2 deliverable. Hoists the implicit pipeline-shape currently spread
-across ``megaplan/_core/workflow.py`` (the ``WORKFLOW`` dict +
-``_ROBUSTNESS_OVERRIDES``) into a single declarative ``Pipeline``. The
-existing dict stays as the runtime source of truth; this module
-**derives** a ``Pipeline`` from it so:
+Sprint 5 Chunk A: the runnable, phase-name-keyed shape is now the only
+canonical compile target. The legacy state-name-keyed shape (built from
+the ``WORKFLOW`` dict via ``_compile_workflow_dict``) and its byte-for-
+byte inversion helper ``workflow_dict_from_pipeline`` have been retired
+— they only ever existed to pass the inversion parity test.
 
-1. The Sprint-1 primitives are proven sufficient to express the real
-   planning flow, not just demos.
-2. Sprint 3 can delete ``WORKFLOW`` once every consumer reads the
-   ``Pipeline`` instead. That deletion is out of scope here — it requires
-   coordinating ``auto.py``, every handler, ``_RESUME_ACTIVE_STATES``, and
-   the test suite.
+The canonical :class:`Pipeline` keys stages by phase name
+(``prep / plan / critique / gate / revise / finalize / execute / review
+/ tiebreaker``) and routes the gate Step's recommendation edges directly
+off the ``gate`` stage. The three overlays (``with_prep_overlay``,
+``with_feedback_overlay``, ``robustness_overlay``) are retained as
+identity transforms on the phase-name graph; the prep step is now
+unconditionally present, and robustness / feedback customisation moves
+to Step-level configuration in subsequent sprints.
 
-The compiled ``Pipeline`` uses the existing **state names** as stage
-names (one stage per ``WORKFLOW`` key) because that is what
-``resume_cursor.phase`` already references in ``state.json``.
-Robustness, ``--with-prep``, and ``--with-feedback`` are exposed as
-:class:`Overlay` instances that transform the base ``Pipeline``.
-
-Per the brief's "leaks" table:
-
-- Gate branches are labelled by gate condition (``gate_iterate``,
-  ``gate_tiebreaker``, …) — the compiled :class:`Edge` ``label`` field
-  matches that condition string verbatim.
-- The handler-driven review→rework loop is **not** an Edge in WORKFLOW
-  today (it is mutation inside ``handle_review``); the compiled Pipeline
-  therefore does not represent it. Sprint 3 will add an explicit
-  ``review_needs_rework`` edge.
-- Tiebreaker today is a pair of states (``tiebreaker_pending`` /
-  ``tiebreaker_ready``); the compiled Pipeline keeps those as ordinary
-  stages, not yet as a :class:`Step` of ``kind='subloop'``. Sprint 3 will
-  fold them into a true subloop.
-- ``override`` transitions are encoded as regular edges with the literal
-  ``next_step`` (``override force-proceed`` etc.) as the edge label; the
-  Sprint-3 executor will rewrite these as :class:`Edge`-typed escape
-  edges.
-
-Each compiled stage uses a :class:`_RuntimeStep` placeholder that returns
-a ``NotImplementedError``. Sprint 3 ports the real handlers into
-:class:`Step` instances. Today the value of this module is that the
-Pipeline **shape** is derivable end-to-end and that ``Overlay`` is
-exercised against the real ``with_prep`` / ``with_feedback`` /
-robustness overlays — not just toy demos.
+``WORKFLOW`` remains in :mod:`megaplan._core.workflow_data` solely as
+bootstrap data for ``_workflow_for_robustness`` and the legacy
+state-machine driver behind ``MEGAPLAN_PIPELINE_AUTO=0``. This module
+no longer imports it.
 """
 
 from __future__ import annotations
@@ -51,13 +27,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from megaplan._core.workflow import (
-    _workflow_for_robustness,
     _with_prep_from_state,
     _with_feedback_from_state,
-)
-from megaplan._core.workflow_data import (
-    WORKFLOW,
-    Transition,
 )
 from megaplan._pipeline.types import (
     Edge,
@@ -113,195 +84,22 @@ def _step_for(state_name: str) -> Any:
     return _RuntimeStep(name=state_name)
 
 
-_GATE_RECS: dict[str, str] = {
-    "gate_proceed": "proceed",
-    "gate_iterate": "iterate",
-    "gate_tiebreaker": "tiebreaker",
-    "gate_escalate": "escalate",
-}
-
-_REC_TO_GATE: dict[str, str] = {v: k for k, v in _GATE_RECS.items()}
-
-
-def workflow_dict_from_pipeline(pipeline: Pipeline) -> dict[str, list[Transition]]:
-    """Sprint 4 Chunk E — invert the Pipeline/WORKFLOW relationship.
-
-    Walks ``pipeline.stages`` and reverse-derives the legacy
-    ``WORKFLOW``-shaped ``dict[state_name, list[Transition]]`` from each
-    stage's edges. Round-trips through ``_edges_from_transitions``:
-
-        workflow_dict_from_pipeline(compile_planning_pipeline()) == WORKFLOW
-
-    This proves the Pipeline is sufficient to derive the legacy state
-    machine — the Pipeline IS the source of truth, the dict is the view.
-    Sprint 5 deletes the dict literal entirely.
-    """
-
-    result: dict[str, list[Transition]] = {}
-    for state_name, stage in pipeline.stages.items():
-        transitions: list[Transition] = []
-        if not hasattr(stage, "edges"):
-            result[state_name] = []
-            continue
-        for edge in stage.edges:
-            if edge.kind == "gate" and edge.recommendation is not None:
-                # Reverse-derive: gate edge whose recommendation maps to
-                # gate_<rec> condition. The next_step is implied by the
-                # destination state (gate dispatch routes to gate/revise/
-                # tiebreaker depending on the recommendation).
-                cond = _REC_TO_GATE[edge.recommendation]
-                # next_step recovery: walk the original WORKFLOW table
-                # for a unique transition with this (cond, next_state).
-                next_step = _recover_next_step(state_name, cond, edge.target)
-                transitions.append(
-                    Transition(
-                        next_step=next_step,
-                        next_state=edge.target,
-                        condition=cond,
-                    )
-                )
-                continue
-            label = edge.label
-            if ":" in label and label.split(":", 1)[0].startswith("gate_"):
-                cond, next_step = label.split(":", 1)
-                transitions.append(Transition(
-                    next_step=next_step, next_state=edge.target, condition=cond,
-                ))
-                continue
-            # Collision-bucket fallback edges (gate_escalate fan-out)
-            # land here as kind="normal" with the bare next_step label.
-            cond = _infer_legacy_condition(state_name, edge.target, label)
-            transitions.append(Transition(
-                next_step=label, next_state=edge.target, condition=cond,
-            ))
-        result[state_name] = transitions
-    return result
-
-
-def _recover_next_step(state_name: str, condition: str, next_state: str) -> str:
-    """Look up the original next_step in WORKFLOW for a (cond, next_state) pair."""
-    raw = WORKFLOW.get(state_name, [])
-    for t in raw:
-        if t.condition == condition and t.next_state == next_state:
-            return t.next_step
-    return next_state  # safe fallback — never expected to fire in practice
-
-
-def _infer_legacy_condition(state_name: str, next_state: str, label: str) -> str:
-    """For collision-bucket edges, recover the original condition from WORKFLOW."""
-    raw = WORKFLOW.get(state_name, [])
-    for t in raw:
-        if t.next_state == next_state and t.next_step == label:
-            return t.condition
-    return "always"
-
-
-def _edges_from_transitions(transitions: list[Transition]) -> tuple[Edge, ...]:
-    """Map ``Transition`` list to a tuple of :class:`Edge`.
-
-    Sprint 4 Chunk A: gate-condition transitions become typed
-    ``Edge(kind="gate", recommendation=...)`` so the executor dispatches
-    by ``Verdict.recommendation`` instead of label-string compare. The
-    legacy ``"gate_<condition>:<next_step>"`` packing is gone.
-
-    Per-stage collision guard: if more than one transition in the same
-    stage shares the same gate condition (today: the three
-    ``gate_escalate`` transitions on ``STATE_CRITIQUED``), they fall back
-    to ``kind="normal"`` edges with the bare ``next_step`` as the label
-    so they remain individually addressable.
-    """
-
-    import collections
-
-    gate_counts: collections.Counter[str] = collections.Counter()
-    for transition in transitions:
-        if transition.condition in _GATE_RECS:
-            gate_counts[transition.condition] += 1
-
-    edges: list[Edge] = []
-    for transition in transitions:
-        condition = transition.condition
-        next_step = transition.next_step
-        next_state = transition.next_state
-
-        if condition == "always":
-            edges.append(Edge(label=next_step, target=next_state))
-            continue
-
-        if condition in _GATE_RECS and gate_counts[condition] == 1:
-            rec = _GATE_RECS[condition]
-            edges.append(
-                Edge(
-                    label=rec,
-                    target=next_state,
-                    kind="gate",
-                    recommendation=rec,  # type: ignore[arg-type]
-                )
-            )
-            continue
-
-        if condition in _GATE_RECS and gate_counts[condition] > 1:
-            # Collision (e.g. gate_escalate fan-out on STATE_CRITIQUED) —
-            # fall back to addressable normal edges with the bare next_step.
-            edges.append(Edge(label=next_step, target=next_state))
-            continue
-
-        # Unknown / legacy gate condition (gate_unset, gate_proceed_blocked):
-        # preserve the old packed label so existing dispatch keeps working.
-        edges.append(
-            Edge(label=f"{condition}:{next_step}", target=next_state)
-        )
-    return tuple(edges)
-
-
-def _compile_workflow_dict(
-    workflow: Mapping[str, list[Transition]],
-) -> dict[str, Stage]:
-    stages: dict[str, Stage] = {}
-    for state_name, transitions in workflow.items():
-        stages[state_name] = Stage(
-            name=state_name,
-            step=_step_for(state_name),
-            edges=_edges_from_transitions(transitions),
-        )
-    return stages
-
-
 def compile_planning_pipeline() -> Pipeline:
-    """Return the base planning :class:`Pipeline` derived from ``WORKFLOW``.
+    """Return the canonical, runnable planning :class:`Pipeline`.
 
-    The entry is ``'initialized'`` — matching the live state-machine
-    semantics. Overlays for robustness / with_prep / with_feedback are
-    available via :func:`robustness_overlay`, :func:`with_prep_overlay`,
-    and :func:`with_feedback_overlay`.
-    """
+    Sprint 5 Chunk A: this is the only canonical compile target. Stage
+    keys are phase names (``prep / plan / critique / gate / revise /
+    finalize / execute / review / tiebreaker``); the gate Step's
+    recommendation edges sit directly on the ``gate`` stage so the
+    executor's typed-verdict dispatch resolves cleanly.
 
-    stages = _compile_workflow_dict(WORKFLOW)
-    return Pipeline(stages=stages, entry="initialized")
+    Stage layout::
 
-
-def compile_runnable_pipeline() -> Pipeline:
-    """Sense-check fix: a *structurally correct* planning Pipeline.
-
-    The legacy ``compile_planning_pipeline()`` produces stages keyed by
-    legacy state names (initialized/prepped/planned/critiqued/gated/…)
-    with gate-recommendation edges on the ``critiqued`` stage. That
-    shape was designed so that ``workflow_dict_from_pipeline`` round-
-    trips back to ``WORKFLOW`` byte-for-byte — but it can't actually
-    drive a real plan past gate, because GateStep runs at the
-    ``gated`` stage where no gate-recommendation edges exist.
-
-    The runnable shape moves the gate Step's recommendation edges onto
-    the ``gate`` stage itself, adds a dedicated ``revise`` stage for
-    the iterate loop, and chains
-    ``critique → gate → (revise|finalize|tiebreaker)`` cleanly.
-
-    Stage layout:
-        initialized → prep → plan → critique → gate
-                                                ├─ proceed → finalize → execute → review → halt
-                                                ├─ iterate → revise → critique  (loop)
-                                                ├─ tiebreaker → tiebreaker → critique
-                                                └─ escalate → (override edges)
+        prep → plan → critique → gate
+                                  ├─ proceed → finalize → execute → review → halt
+                                  ├─ iterate → revise → critique  (loop)
+                                  ├─ tiebreaker → tiebreaker → critique
+                                  └─ escalate → (override edges)
     """
 
     from megaplan._pipeline.stages.prep import PrepStep
@@ -374,54 +172,40 @@ def robustness_overlay(
     with_prep: bool = False,
     with_feedback: bool = False,
 ) -> Overlay:
-    """Return an :class:`Overlay` that rewrites stages per a robustness level.
+    """Return an :class:`Overlay` that records a robustness level on the Pipeline.
 
-    Delegates to the existing ``_workflow_for_robustness`` so the
-    compiled Pipeline stays in lock-step with whatever the runtime
-    state-machine consults today. Sprint 3 inverts this: ``WORKFLOW`` is
-    deleted and the Pipeline becomes the source of truth.
+    Sprint 5 Chunk A: legacy state-name keys (``initialized / prepped /
+    planned / critiqued / gated / executed / reviewed / tiebreaker_*``)
+    no longer exist in the canonical phase-name graph (``prep / plan /
+    critique / gate / revise / finalize / execute / review /
+    tiebreaker``), so this overlay no longer rewrites edges by walking
+    ``_workflow_for_robustness``. Robustness customisation now flows to
+    the Step layer (e.g. ``GateStep`` and ``CritiqueStep`` reading the
+    robustness setting from ``StepContext`` / profile). The overlay is
+    retained as an identity transform so callers — including
+    :func:`compile_pipeline_for` — keep composing it for provenance,
+    and a later sprint can promote it into typed Step configuration.
 
-    The ``creative`` flag flips the workflow into creative-mode shape
-    (e.g. the planning state's exit edge differs in some robustness
-    levels). Pass ``creative=True`` for ``mode in {"creative", "joke"}``.
+    ``creative``, ``with_prep``, and ``with_feedback`` are accepted for
+    signature compatibility with the legacy call sites in
+    :func:`compile_pipeline_for`.
     """
 
+    del creative, with_prep, with_feedback  # accepted for signature compat
+
     def _apply(pipeline: Pipeline) -> Pipeline:
-        effective = _workflow_for_robustness(
-            level,
-            creative=creative,
-            with_prep=with_prep,
-            with_feedback=with_feedback,
-        )
-        new_stages: dict[str, Stage | Any] = dict(pipeline.stages)
-        for state_name, transitions in effective.items():
-            new_stages[state_name] = Stage(
-                name=state_name,
-                step=_step_for(state_name),
-                edges=_edges_from_transitions(transitions),
-            )
-        return Pipeline(
-            stages=new_stages,
-            entry=pipeline.entry,
-            overlays=pipeline.overlays,
-        )
+        return pipeline
 
     return Overlay(name=f"robustness:{level}", apply=_apply)
 
 
 def mode_overlay(mode: str) -> Overlay:
-    """Overlay that routes the planning Pipeline into a per-mode shape.
+    """Overlay that names the mode for downstream introspection.
 
     ``mode`` is one of ``"code"``, ``"doc"``, ``"metaplan"``,
-    ``"joke"``, ``"creative"``. The doc/joke/creative paths use the
-    same state machine as code but resolve different prompt-mode
-    variants (``critique_joke.py``, ``execute_doc.py``, etc.) at
-    dispatch time. The overlay names the mode so downstream slot
-    resolution can pick the matching prompt; it does not rewrite the
-    graph for ``code``/``doc``/``metaplan``. For ``joke``/``creative``
-    the overlay is a no-op at this layer because robustness_overlay
-    already applied ``creative=is_creative_mode(state)`` when it was
-    composed with ``compile_pipeline_for``.
+    ``"joke"``, ``"creative"``. The mode is carried in
+    ``StepContext.mode``; this overlay does not rewrite the graph and
+    only annotates the resulting Pipeline.
     """
 
     def _apply(pipeline: Pipeline) -> Pipeline:
@@ -431,62 +215,43 @@ def mode_overlay(mode: str) -> Overlay:
 
 
 def with_prep_overlay(state_payload: Mapping[str, Any]) -> Overlay:
-    """Overlay that re-instates the default initialized→prep edge.
+    """Overlay for the ``--with-prep`` flag.
 
-    Wraps ``_with_prep_from_state`` semantics: when ``state_payload``
-    encodes ``--with-prep``, the initialized stage's edge target is
-    forced to ``'prepped'`` regardless of robustness-level overrides.
+    Sprint 5 Chunk A: the canonical phase-name graph unconditionally
+    routes through the ``prep`` stage as the entry, so this overlay no
+    longer rewrites edges. It is retained as an identity transform on
+    the phase-name graph (and continues to read
+    ``_with_prep_from_state`` for provenance) so callers keep composing
+    it; if ``--with-prep`` is ever opted-out, that customisation now
+    belongs on :class:`PrepStep` itself rather than on a graph rewrite.
     """
 
     def _apply(pipeline: Pipeline) -> Pipeline:
-        if not _with_prep_from_state(dict(state_payload)):
-            return pipeline
-        new_stages = dict(pipeline.stages)
-        new_stages["initialized"] = Stage(
-            name="initialized",
-            step=_step_for("initialized"),
-            edges=(Edge("prep", "prepped"),),
-        )
-        return Pipeline(
-            stages=new_stages,
-            entry=pipeline.entry,
-            overlays=pipeline.overlays,
-        )
+        # Read the flag for provenance / future Step-level wiring but
+        # do not rewrite the canonical graph — ``prep`` is the entry.
+        _with_prep_from_state(dict(state_payload))
+        return pipeline
 
     return Overlay(name="with_prep", apply=_apply)
 
 
 def with_feedback_overlay(state_payload: Mapping[str, Any]) -> Overlay:
-    """Overlay that splices a ``feedback`` stage between review and done.
+    """Overlay for the ``--with-feedback`` flag.
 
-    Mirrors ``_with_feedback_from_state`` semantics. When the flag is on,
-    the executed → review edge target switches to ``'reviewed'``, a new
-    ``reviewed`` stage points at ``feedback``, and ``feedback`` points at
-    ``done``. The base ``WORKFLOW`` already has ``STATE_REVIEWED``
-    defined in the state-machine constants — this overlay just wires the
-    edges.
+    Sprint 5 Chunk A: the canonical phase-name graph already chains
+    ``execute → review`` and routes ``review → halt``. A real feedback
+    step is a future addition (a typed Step inserted between ``review``
+    and ``halt`` once the FeedbackStep primitive lands). Until then the
+    overlay is an identity transform on the phase-name graph; it
+    continues to read ``_with_feedback_from_state`` for provenance so
+    callers can be migrated incrementally.
     """
 
     def _apply(pipeline: Pipeline) -> Pipeline:
-        if not _with_feedback_from_state(dict(state_payload)):
-            return pipeline
-        new_stages = dict(pipeline.stages)
-        # executed --review--> reviewed
-        new_stages["executed"] = Stage(
-            name="executed",
-            step=_step_for("executed"),
-            edges=(Edge("review", "reviewed"),),
-        )
-        new_stages["reviewed"] = Stage(
-            name="reviewed",
-            step=_step_for("reviewed"),
-            edges=(Edge("feedback", "done"),),
-        )
-        return Pipeline(
-            stages=new_stages,
-            entry=pipeline.entry,
-            overlays=pipeline.overlays,
-        )
+        # Read the flag for provenance / future Step-level wiring but
+        # do not splice extra stages onto the canonical graph yet.
+        _with_feedback_from_state(dict(state_payload))
+        return pipeline
 
     return Overlay(name="with_feedback", apply=_apply)
 
