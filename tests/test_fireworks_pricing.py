@@ -1,4 +1,4 @@
-"""Unit tests for megaplan.fireworks_pricing.cost_from_usage."""
+"""Unit tests for megaplan.pricing.fireworks.cost_from_usage."""
 
 from __future__ import annotations
 

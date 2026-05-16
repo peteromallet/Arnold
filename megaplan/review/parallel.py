@@ -4,7 +4,7 @@ The preloaded-template-ID convention is the preferred way to get structured
 output from focused review agents: write the exact slot shape first, then have
 each agent fill that file instead of inventing IDs in free-form JSON.
 
-This module intentionally mirrors `megaplan.parallel_critique` so the two phase
+This module intentionally mirrors `megaplan.orchestration.parallel_critique` so the two phase
 runners remain easy to compare and later extract into a shared utility.
 """
 
