@@ -280,6 +280,93 @@ def compile_planning_pipeline() -> Pipeline:
     return Pipeline(stages=stages, entry="initialized")
 
 
+def compile_runnable_pipeline() -> Pipeline:
+    """Sense-check fix: a *structurally correct* planning Pipeline.
+
+    The legacy ``compile_planning_pipeline()`` produces stages keyed by
+    legacy state names (initialized/prepped/planned/critiqued/gated/…)
+    with gate-recommendation edges on the ``critiqued`` stage. That
+    shape was designed so that ``workflow_dict_from_pipeline`` round-
+    trips back to ``WORKFLOW`` byte-for-byte — but it can't actually
+    drive a real plan past gate, because GateStep runs at the
+    ``gated`` stage where no gate-recommendation edges exist.
+
+    The runnable shape moves the gate Step's recommendation edges onto
+    the ``gate`` stage itself, adds a dedicated ``revise`` stage for
+    the iterate loop, and chains
+    ``critique → gate → (revise|finalize|tiebreaker)`` cleanly.
+
+    Stage layout:
+        initialized → prep → plan → critique → gate
+                                                ├─ proceed → finalize → execute → review → halt
+                                                ├─ iterate → revise → critique  (loop)
+                                                ├─ tiebreaker → tiebreaker → critique
+                                                └─ escalate → (override edges)
+    """
+
+    from megaplan._pipeline.stages.prep import PrepStep
+    from megaplan._pipeline.stages.plan import PlanStep
+    from megaplan._pipeline.stages.critique import CritiqueStep
+    from megaplan._pipeline.stages.gate import GateStep
+    from megaplan._pipeline.stages.revise import ReviseStep
+    from megaplan._pipeline.stages.finalize import FinalizeStep
+    from megaplan._pipeline.stages.execute import ExecuteStep
+    from megaplan._pipeline.stages.review import ReviewStep
+
+    stages: dict[str, Stage] = {
+        "prep": Stage(
+            name="prep", step=PrepStep(),
+            edges=(Edge(label="plan", target="plan"),),
+        ),
+        "plan": Stage(
+            name="plan", step=PlanStep(),
+            edges=(Edge(label="critique", target="critique"),),
+        ),
+        "critique": Stage(
+            name="critique", step=CritiqueStep(),
+            edges=(Edge(label="gate_unset:gate", target="gate"),
+                   Edge(label="gate", target="gate")),
+        ),
+        "gate": Stage(
+            name="gate", step=GateStep(),
+            edges=(
+                Edge(label="iterate", target="revise", kind="gate", recommendation="iterate"),
+                Edge(label="proceed", target="finalize", kind="gate", recommendation="proceed"),
+                Edge(label="tiebreaker", target="tiebreaker", kind="gate", recommendation="tiebreaker"),
+                Edge(label="escalate", target="finalize", kind="gate", recommendation="escalate"),
+                # Fallback for the bare next-step label GateStep emits.
+                Edge(label="revise", target="revise"),
+                Edge(label="gate", target="finalize"),
+                Edge(label="override force-proceed", target="finalize"),
+                Edge(label="override abort", target="halt"),
+            ),
+        ),
+        "revise": Stage(
+            name="revise", step=ReviseStep(),
+            edges=(Edge(label="critique", target="critique"),),
+        ),
+        "finalize": Stage(
+            name="finalize", step=FinalizeStep(),
+            edges=(Edge(label="execute", target="execute"),),
+        ),
+        "execute": Stage(
+            name="execute", step=ExecuteStep(),
+            edges=(Edge(label="review", target="review"),),
+        ),
+        "review": Stage(
+            name="review", step=ReviewStep(),
+            edges=(Edge(label="review", target="halt"),
+                   Edge(label="halt", target="halt")),
+        ),
+        "tiebreaker": Stage(
+            name="tiebreaker", step=_step_for("tiebreaker_pending"),
+            edges=(Edge(label="critique", target="critique"),
+                   Edge(label="tiebreaker_decide", target="critique")),
+        ),
+    }
+    return Pipeline(stages=stages, entry="prep")
+
+
 def robustness_overlay(
     level: str,
     *,
