@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Repository organization
+
+- **Audits parallel-path dedupe**: `megaplan/audits/capabilities.py` and `megaplan/audits/verifiability.py` were byte-identical / near-duplicate copies of the canonical capability registry and verifiability audit. They have been collapsed into thin re-export shims (`from megaplan.runtime.capabilities import *` and `from megaplan.orchestration.verifiability import *` respectively, each with an explicit `__all__` snapshot) so the canonical implementation lives in exactly one place. All existing import sites — `from megaplan.audits.capabilities import …`, `from megaplan.audits.verifiability import …`, and `from megaplan.audits import …` — continue to resolve to the same symbols (verified via `is`-identity checks against the canonical modules).
+
 ## v0.21.0 — 2026-04-25
 
 This release lands the full **Sprint 1 (step receipts + scope-drift hardening)** and **Sprint 2 (multi-profile bake-off)** features that v0.20.0's bakeoff caveat (`sprint1_pending: true`) was waiting on, plus a coordinated reliability pass on the auto-driver and executor caught by running the bake-off against itself.
