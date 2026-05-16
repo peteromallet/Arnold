@@ -1,4 +1,4 @@
-"""Direct tests for megaplan.evaluation."""
+"""Direct tests for megaplan.orchestration.evaluation."""
 
 from __future__ import annotations
 
