@@ -20,6 +20,18 @@ A repo-wide layout pass groups the loose top-level `megaplan/*.py` modules into 
 - **No-shim policy**: per user direction, no compatibility shims were left at any of the old top-level module paths above (e.g. `megaplan/claude_pricing.py`, `megaplan/shannon_worker.py`, `megaplan/evaluation.py`). Every internal caller is rewritten to the new path. **Downstream consumers** outside this repo that still import `megaplan.shannon_worker`, `megaplan.hermes_worker`, `megaplan.evaluation`, etc., must update to the new paths listed above.
 - **Deferred**: the `.claude/skills/megaplan.md` flat-file → `.claude/skills/megaplan/SKILL.md` directory-bundle migration is **not** performed here. It remains a flat file pending user confirmation that the host Claude Code skill auto-discovery handles the directory form on this machine.
 
+### Ticket linkage proposal
+
+Ticket `01KRDSY0BK70DB58H9QRD6ZGMR` ("Clean up megaplan/ structure — split mega-files and consolidate root modules") describes three independent cleanup axes. This plan addresses **Axis 2** (consolidate the 23 root-level `.py` files into cohesive subpackages: `pricing/`, `workers/`, `orchestration/`, `runtime/`, plus the `execute/step_edit.py` move and `audits/` dedupe) but **explicitly defers Axis 1** (splitting the mega-files `store/db.py` ~4,134 LOC, `store/file.py` ~3,011 LOC, `cli.py` ~2,180 LOC, `workers/_impl.py` ~2,491 LOC after the move, and `auto.py` ~1,696 LOC). Axis 3 (the `ARCHITECTURE.md` doc) is also untouched.
+
+**Proposal**: link this plan to ticket `01KRDSY0BK70DB58H9QRD6ZGMR` with `resolves_on_complete=false` — the ticket must stay open after this plan completes so that the split-mega-files half remains visible as outstanding work. Equivalently, the `megaplan ticket link` CLI form is `megaplan ticket link 01KRDSY0BK70DB58H9QRD6ZGMR <epic_id>` *without* the `--resolves` flag (omitting `--resolves` is the equivalent of `resolves_on_complete=false`).
+
+**Tickets NOT linked**:
+- `01KRNKTKF8S857SZNMYH5DQ20D` ("Make `cloud chain` supervision first-class") — unrelated; no overlap with this layout refactor.
+- `01KRP5NG65429N1Y5W8J15V2YR` ("`chain replan` leaves stale blocked execution state and weakly applies ordering fixes") — unrelated; chain-replan correctness issue, not a layout concern.
+
+The actual `ticket link` invocation is pending user action **U4** (the after-execute confirmation in this plan's `user_actions.md`); the local `megaplan ticket` CLI also currently errors with `ModuleNotFoundError: No module named 'ulid'`, so the link operation would have to be performed in an environment with the ticket-store dependencies installed. This CHANGELOG entry stands as the durable manual record of the proposal until either condition is resolved.
+
 ## v0.21.0 — 2026-04-25
 
 This release lands the full **Sprint 1 (step receipts + scope-drift hardening)** and **Sprint 2 (multi-profile bake-off)** features that v0.20.0's bakeoff caveat (`sprint1_pending: true`) was waiting on, plus a coordinated reliability pass on the auto-driver and executor caught by running the bake-off against itself.
