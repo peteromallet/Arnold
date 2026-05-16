@@ -124,12 +124,17 @@ def run_pipeline_by_name(
 
     pipeline = get_pipeline(name)
     artifact_root = Path(artifact_root or plan_dir)
+    inputs_dict: dict[str, Any] = dict(inputs or {})
+    # Inject the pipeline name into inputs so PromptRegistry can scope
+    # by pipeline (lets two pipelines share a Step class but pick
+    # different prompts).
+    inputs_dict.setdefault("_pipeline", name)
     ctx = StepContext(
         plan_dir=Path(plan_dir),
         state=dict(state or {}),
         profile=profile,
         mode=mode,
-        inputs=dict(inputs or {}),
+        inputs=inputs_dict,
         budget=None,
     )
     if policy is None:

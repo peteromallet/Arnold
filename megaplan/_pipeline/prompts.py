@@ -27,12 +27,20 @@ PromptRenderer = Callable[[StepContext, Mapping[str, Any]], str]
 
 @dataclass
 class PromptRegistry:
-    """Mode-aware mapping of ``prompt_key`` → ``PromptRenderer``.
+    """Pipeline + mode aware mapping of ``prompt_key`` → ``PromptRenderer``.
 
-    Keys are namespaced as ``"<step_name>"`` (default) or
-    ``"<step_name>:<mode>"`` (mode override). Lookup falls back from the
-    most specific to the least specific: ``"<key>:<mode>"`` →
-    ``"<key>"`` → :class:`KeyError`.
+    Lookup precedence (most → least specific):
+
+    1. ``"<pipeline>/<key>:<mode>"`` — pipeline-scoped, mode-specific.
+    2. ``"<pipeline>/<key>"``       — pipeline-scoped default.
+    3. ``"<key>:<mode>"``           — global mode-specific.
+    4. ``"<key>"``                  — global default.
+
+    Pipeline-scoped registration lets two pipelines share a Step
+    class (e.g. ``CritiqueStep``) but use different prompts without
+    renaming the step. The pipeline name comes from
+    ``ctx.inputs['_pipeline']`` when set (the registry helper injects
+    it on each ``run_pipeline_by_name`` invocation).
     """
 
     renderers: dict[str, PromptRenderer] = field(default_factory=dict)
@@ -40,14 +48,29 @@ class PromptRegistry:
     def register(self, key: str, renderer: PromptRenderer) -> None:
         self.renderers[key] = renderer
 
-    def resolve(self, key: str, mode: str | None = None) -> PromptRenderer:
+    def resolve(
+        self,
+        key: str,
+        mode: str | None = None,
+        pipeline: str | None = None,
+    ) -> PromptRenderer:
+        if pipeline and mode:
+            candidate = f"{pipeline}/{key}:{mode}"
+            if candidate in self.renderers:
+                return self.renderers[candidate]
+        if pipeline:
+            candidate = f"{pipeline}/{key}"
+            if candidate in self.renderers:
+                return self.renderers[candidate]
         if mode:
             candidate = f"{key}:{mode}"
             if candidate in self.renderers:
                 return self.renderers[candidate]
         if key in self.renderers:
             return self.renderers[key]
-        raise KeyError(f"no prompt registered for key={key!r} mode={mode!r}")
+        raise KeyError(
+            f"no prompt registered for key={key!r} mode={mode!r} pipeline={pipeline!r}"
+        )
 
     def render(
         self,
@@ -55,7 +78,12 @@ class PromptRegistry:
         key: str,
         params: Mapping[str, Any] | None = None,
     ) -> str:
-        renderer = self.resolve(key, mode=ctx.mode)
+        pipeline = None
+        if isinstance(ctx.inputs, Mapping):
+            pipeline_value = ctx.inputs.get("_pipeline")
+            if isinstance(pipeline_value, str):
+                pipeline = pipeline_value
+        renderer = self.resolve(key, mode=ctx.mode, pipeline=pipeline)
         return renderer(ctx, params or {})
 
 
@@ -70,6 +98,24 @@ def resolve_prompt(
     ctx: StepContext, key: str, params: Mapping[str, Any] | None = None
 ) -> str:
     return _GLOBAL_REGISTRY.render(ctx, key, params)
+
+
+def register_pipeline_prompt(
+    pipeline: str,
+    key: str,
+    renderer: PromptRenderer,
+    *,
+    mode: str | None = None,
+) -> None:
+    """Register a prompt scoped to a specific pipeline (and optionally mode).
+
+    Lets two pipelines share a Step class but use different prompts
+    for it. Equivalent to ``register_prompt(f'{pipeline}/{key}[:{mode}]', renderer)``
+    but explicit about the scope.
+    """
+
+    suffix = f":{mode}" if mode else ""
+    register_prompt(f"{pipeline}/{key}{suffix}", renderer)
 
 
 def registered_keys() -> tuple[str, ...]:
