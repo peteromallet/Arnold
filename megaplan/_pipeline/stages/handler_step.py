@@ -198,23 +198,28 @@ def build_planning_steps() -> dict[str, HandlerStep]:
     """Return the canonical handler-backed Step set for the planning Pipeline.
 
     Keyed by stage name (matches the compiled Pipeline's stage names).
-    Sprint-3 callers wire these into the Pipeline by replacing
-    ``_RuntimeStep`` placeholders in ``megaplan/_pipeline/planning.py``.
+    Sprint 4 Chunk B+: returns the named Step classes
+    (PrepStep / PlanStep / etc.) defined under
+    ``megaplan/_pipeline/stages/`` instead of the legacy subprocess
+    HandlerStep wrappers. Production planning runs through these
+    directly; the legacy HandlerStep is kept for callers that need
+    cross-process dispatch.
     """
 
+    from megaplan._pipeline.stages.prep import PrepStep
+    from megaplan._pipeline.stages.plan import PlanStep
+    from megaplan._pipeline.stages.critique import CritiqueStep
+    from megaplan._pipeline.stages.gate import GateStep
+    from megaplan._pipeline.stages.finalize import FinalizeStep
+    from megaplan._pipeline.stages.execute import ExecuteStep
+
     return {
-        "prepped": HandlerStep(name="prep", kind="produce", slot="prep", phase="prep"),
-        "planned": HandlerStep(name="plan", kind="produce", slot="plan", phase="plan"),
-        "critiqued": HandlerStep(
-            name="critique", kind="judge", slot="critique", phase="critique"
-        ),
-        "gated": HandlerStep(name="gate", kind="decide", slot="gate", phase="gate"),
-        "finalized": HandlerStep(
-            name="finalize", kind="produce", slot="finalize", phase="finalize"
-        ),
-        "executed": HandlerStep(
-            name="execute", kind="produce", slot="execute", phase="execute"
-        ),
+        "prepped": PrepStep(),
+        "planned": PlanStep(),
+        "critiqued": CritiqueStep(),
+        "gated": GateStep(),
+        "finalized": FinalizeStep(),
+        "executed": ExecuteStep(),
         "tiebreaker_pending": HandlerStep(
             name="tiebreaker_run",
             kind="subloop",
