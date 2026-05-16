@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from evals.benchmarks.swe_bench import read_prompt
+from benchmarks.benchmarks.swe_bench import read_prompt
 
 
 def _prepared(problem_statement: str, fail_to_pass: list[str]) -> SimpleNamespace:
