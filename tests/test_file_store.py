@@ -16,7 +16,7 @@ from megaplan.store import (
 )
 from megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
 from megaplan.store.snapshot import canonical_sha256
-from megaplan.tests.store_contract import run_arnold_adapter_contract, run_store_contract
+from tests.contract.store_contract import run_arnold_adapter_contract, run_store_contract
 
 
 def test_file_store_contract(tmp_path: Path) -> None:
