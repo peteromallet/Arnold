@@ -50,6 +50,10 @@ ensure_chain_running() {
   if tmux has-session -t megaplan-chain 2>/dev/null; then
     return 0
   fi
+  ./scripts/patch_shannon_unattended_root.sh >> "$LOG" 2>&1 || {
+    log "failed to patch Shannon for unattended root execution"
+    return 1
+  }
   log "megaplan-chain tmux session is not running; restarting chain"
   tmux new-session -d -s megaplan-chain -c /workspace/app \
     "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec '$SPEC' --no-push >> /workspace/app/.megaplan/cloud-chain.log 2>&1"

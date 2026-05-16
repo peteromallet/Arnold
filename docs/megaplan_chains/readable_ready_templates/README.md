@@ -54,6 +54,14 @@ The chain spec currently uses `profile: all-claude` for every milestone. Keep
 that profile consistent across new milestones unless the operator explicitly
 changes the chain routing again.
 
+The Railway container runs as root, so Claude Code rejects
+`--dangerously-skip-permissions`. The operator and recovery loops run
+`scripts/patch_shannon_unattended_root.sh` before launching the chain; this
+keeps Shannon's long-turn fixes, strips root-rejected dangerous flags, maps
+Megaplan's `bypassPermissions` request to Claude's root-safe `dontAsk`
+permission mode, and makes the Megaplan Shannon parser tolerate a short prose
+prefix before the required JSON payload.
+
 Codex premium phases should use the same Codex allocation as the operator's
 normal Codex CLI login. If the cloud runner only has API-key auth, `gpt-5.5`
 can fail with `insufficient_quota` even when the Codex CLI account has
