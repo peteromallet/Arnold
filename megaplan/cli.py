@@ -84,7 +84,7 @@ from megaplan.profiles import (
     load_profiles,
     resolve_profile,
 )
-from megaplan.step_edit import handle_step
+from megaplan.execute.step_edit import handle_step
 
 _PROGRESS_PHASE_COMMANDS = {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
 
