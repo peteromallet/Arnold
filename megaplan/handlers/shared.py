@@ -15,7 +15,7 @@ from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.receipts import build_receipt
 from megaplan.receipts.writer import write_receipt
-from megaplan.step_edit import next_plan_artifact_name
+from megaplan.execute.step_edit import next_plan_artifact_name
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from megaplan.phase_result import (
     _emit_phase_result,
