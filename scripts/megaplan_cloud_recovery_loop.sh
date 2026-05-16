@@ -137,6 +137,35 @@ path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 }
 
+reset_current_milestone_for_retry() {
+  local label="$1"
+  local index="$2"
+  local plan="$3"
+  local state_file
+  state_file="$(chain_state_file)"
+  if [[ -z "$state_file" ]]; then
+    log "cannot reset milestone for retry: chain state file not found"
+    return 1
+  fi
+  python - "$state_file" "$label" "$index" "$plan" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+_label = sys.argv[2]
+index = int(sys.argv[3])
+_plan = sys.argv[4]
+data = json.loads(path.read_text())
+data["current_milestone_index"] = index
+data["current_plan_name"] = None
+data["last_state"] = None
+data["pr_number"] = None
+data["pr_state"] = None
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+}
+
 write_recovery_prompt() {
   local prompt_path="$1"
   local label="$2"
@@ -219,8 +248,14 @@ recover_if_needed() {
   after="$(git rev-parse --short HEAD)"
 
   if [[ "$after" != "$before" ]]; then
-    log "branch advanced during recovery: $before -> $after; marking $label complete"
-    mark_current_milestone_done "$label" "$index" "$plan" "$after" || true
+    state="$(last_state || true)"
+    plan_after="$(current_plan_name || true)"
+    if [[ "$plan_after" == "$plan" && ( "$state" == "blocked" || "$state" == "worker_blocked" || "$state" == "failed" ) ]]; then
+      log "branch advanced during recovery: $before -> $after; resetting failed $label plan for retry"
+      reset_current_milestone_for_retry "$label" "$index" "$plan" || true
+    else
+      log "branch advanced during recovery: $before -> $after; chain state no longer points at failed plan"
+    fi
   else
     log "branch did not advance during recovery for $label; not marking complete"
   fi

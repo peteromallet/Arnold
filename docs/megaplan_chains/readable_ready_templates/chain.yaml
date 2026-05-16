@@ -44,16 +44,16 @@ milestones:
     robustness: standard
   - label: sprint-07-manual-app-active-curation
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-07-manual-app-active-curation.md
-    profile: all-claude
-    vendor: claude
+    profile: all-codex
+    vendor: codex
     robustness: standard
   - label: sprint-08-strict-gates-docs
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/sprint-08-strict-gates-docs.md
-    profile: all-claude
-    vendor: claude
+    profile: all-codex
+    vendor: codex
     robustness: standard
   - label: publish-shared-branch
     idea: /workspace/app/docs/megaplan_chains/readable_ready_templates/ideas/publish-shared-branch.md
-    profile: all-claude
-    vendor: claude
+    profile: all-codex
+    vendor: codex
     robustness: light
