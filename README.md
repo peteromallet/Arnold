@@ -168,3 +168,8 @@ See [docs/authoring.md](docs/authoring.md) and [docs/adding_templates_models.md]
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Testing
+
+- [Internal testing contract](docs/testing.md)
+- [Testing your VibeComfy recipes](docs/testing-user-code.md) — assertions, dry-run runtime, snapshot CLI, pytest plugin
