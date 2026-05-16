@@ -50,12 +50,15 @@ export ANTHROPIC_API_KEY=...
 export DEEPSEEK_API_KEY=...
 ```
 
-The chain spec currently uses `profile: all-codex` for every milestone. This is
-an operator override from the earlier `all-claude` routing: Claude Code v2.1.143
-opens successfully in the Railway root container, but the Shannon tmux bridge
-does not reliably submit the initial prompt into Claude's transcript. Keep the
-profile consistent across new milestones unless the operator explicitly changes
-the chain routing again after validating the runner.
+The chain spec currently uses `profile: all-codex` and `vendor: codex` for every
+milestone. The explicit vendor is required because Megaplan's default vendor is
+Claude and can otherwise rewrite premium Codex slots back to Claude during
+profile expansion. This is an operator override from the earlier `all-claude`
+routing: Claude Code v2.1.143 opens successfully in the Railway root container,
+but the Shannon tmux bridge does not reliably submit the initial prompt into
+Claude's transcript. Keep the profile and vendor consistent across new
+milestones unless the operator explicitly changes the chain routing again after
+validating the runner.
 
 The Railway container runs as root, so Claude Code rejects
 `--dangerously-skip-permissions`. The operator and recovery loops run
