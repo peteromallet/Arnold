@@ -30,7 +30,7 @@ from megaplan.workers.hermes import (
     _streaming_run_kwargs,
     parse_agent_output,
 )
-from megaplan.parallel_critique import _run_check
+from megaplan.orchestration.parallel_critique import _run_check
 from megaplan.prompts.critique import write_single_check_template
 from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES

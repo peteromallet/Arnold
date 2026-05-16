@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from megaplan._core.workflow import _transition_matches
-from megaplan.audit import load_tiebreaker_audit, record_tiebreaker_audit
+from megaplan.orchestration.plan_audit import load_tiebreaker_audit, record_tiebreaker_audit
 from megaplan.handlers import _apply_gate_outcome, handle_tiebreaker_decide
 from megaplan.prompts.critique import _settled_decisions_block
 from megaplan.types import (
@@ -365,8 +365,8 @@ class TestValidateTiebreakerNoSignal:
         initial_worker.completion_tokens = 50
         initial_worker.total_tokens = 150
 
-        with patch("megaplan.iteration_pressure.compute_iteration_pressure", return_value=[]), \
-             patch("megaplan.iteration_pressure.has_mechanical_recurrence", return_value=False), \
+        with patch("megaplan.orchestration.iteration_pressure.compute_iteration_pressure", return_value=[]), \
+             patch("megaplan.orchestration.iteration_pressure.has_mechanical_recurrence", return_value=False), \
              patch("megaplan.handlers._build_tiebreaker_reprompt", return_value="reprompt"), \
              patch("megaplan.handlers._run_worker", return_value=(retry_worker, "claude", "direct", False)):
             result, next_step, _ = _validate_tiebreaker(
@@ -406,8 +406,8 @@ class TestValidateTiebreakerNoSignal:
                 "representative_concern": "bootstrap race",
             }
         ]
-        with patch("megaplan.iteration_pressure.compute_iteration_pressure", return_value=entries), \
-             patch("megaplan.iteration_pressure.has_mechanical_recurrence", return_value=True):
+        with patch("megaplan.orchestration.iteration_pressure.compute_iteration_pressure", return_value=entries), \
+             patch("megaplan.orchestration.iteration_pressure.has_mechanical_recurrence", return_value=True):
             result, next_step, _ = _validate_tiebreaker(
                 state, gate, plan_dir, worker,
                 Namespace(plan="test-plan", agent=None, hermes=None),

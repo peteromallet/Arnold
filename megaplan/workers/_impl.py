@@ -22,7 +22,7 @@ from typing import Any, Callable
 from megaplan.audits.robustness import build_empty_template
 from megaplan.forms.provocations import select_active_checks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
-from megaplan.progress import strip_progress_env
+from megaplan.orchestration.progress import strip_progress_env
 from megaplan.types import (
     CliError,
     DEFAULT_AGENT_ROUTING,
@@ -1191,7 +1191,7 @@ def _recover_codex_payload(
 
 def validate_payload(step: str, payload: dict[str, Any]) -> None:
     if step == "phase_result":
-        from megaplan.phase_result import validate_phase_result
+        from megaplan.orchestration.phase_result import validate_phase_result
         validate_phase_result(payload)
         return
     if step == "execute":
