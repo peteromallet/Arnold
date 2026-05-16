@@ -8,7 +8,7 @@ the heavier dev checkpoint plus distilled LoRA spine.
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
 
 
 LTX_FIRST_LAST_MODEL_ASSETS = [
@@ -57,6 +57,12 @@ READY_REQUIREMENTS = {
     "models": [],
     "custom_nodes": ["ComfyUI-LTXVideo"],
 }
+
+
+VIDEO_OUTPUT_NODE = "68"
+VIDEO_OUTPUT_NAME = "video"
+VIDEO_OUTPUT_PREFIX = "output"
+VIDEO_OUTPUT_MIME = "video/mp4"
 
 
 def build() -> VibeWorkflow:
@@ -241,7 +247,6 @@ def build() -> VibeWorkflow:
         "118",
         _outputs=("sigmas",),
         sigmas="1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
-        widget_0="1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0",
     )
     concat = _node(
         wf,
@@ -307,7 +312,7 @@ def build() -> VibeWorkflow:
         audio=decoded_audio.out("audio"),
         images=decoded_video.out("images"),
     )
-    _node(wf, "SaveVideo", "68", filename_prefix="output", format="auto", codec="auto", video=video.out("video"))
+    _node(wf, "SaveVideo", VIDEO_OUTPUT_NODE, filename_prefix=VIDEO_OUTPUT_PREFIX, format="auto", codec="auto", video=video.out("video"))
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
@@ -326,7 +331,19 @@ def build() -> VibeWorkflow:
     wf.register_input("last_strength", "111", "strength", value=1.0)
     wf.register_input("first_image", "31", "image", value="first.png")
     wf.register_input("last_image", "39", "image", value="last.png")
+    wf.register_input("start_image", "31", "image", value="first.png")
+    wf.register_input("end_image", "39", "image", value="last.png")
     wf.register_input("model", "127", "ckpt_name", value="ltx-2.3-22b-distilled-fp8.safetensors")
+    bind_output(
+        wf,
+        "68",
+        output_type="SaveVideo",
+        name="video",
+        artifact_kind="video",
+        mime_type="video/mp4",
+        filename_prefix="output",
+        expected_cardinality="one",
+    )
 
     return wf
 

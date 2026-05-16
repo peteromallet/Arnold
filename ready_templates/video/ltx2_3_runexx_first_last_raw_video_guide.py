@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from vibecomfy.handles import Handle
 from vibecomfy.registry.ready import workflow_from_ready
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -40,6 +40,8 @@ LTX_RUNEXX_MODEL_ASSETS = [
         "subdir": "loras",
     },
 ]
+
+OUTPUT_PREFIX = "reigh_vibecomfy_ltx_raw_guide"
 
 
 READY_METADATA = {
@@ -146,6 +148,16 @@ def build() -> VibeWorkflow:
     wf.register_input("last_frame_strength", "2108", "value", 0.8)
 
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_output(
+        wf,
+        "43",
+        output_type="VHS_VideoCombine",
+        name="video",
+        artifact_kind="video",
+        mime_type="video/mp4",
+        filename_prefix="reigh_vibecomfy_ltx_raw_guide",
+        expected_cardinality="one",
+    )
     return wf
 
 
@@ -210,7 +222,7 @@ def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
     if "43" in wf.nodes:
         wf.nodes["43"].inputs.update(
             {
-                "filename_prefix": "reigh_vibecomfy_ltx_raw_guide",
+                "filename_prefix": OUTPUT_PREFIX,
                 "format": "video/h264-mp4",
                 "loop_count": 0,
                 "pingpong": False,

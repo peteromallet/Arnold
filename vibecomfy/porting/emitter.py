@@ -56,6 +56,17 @@ class EmissionDiagnostic:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class _PublicInputBinding:
+    name: str
+    node_id: str
+    field: str
+    type: str | None = None
+    required: bool = False
+    aliases: tuple[str, ...] = ()
+    media_semantics: str | None = None
+
+
 GENERATED_HEADER = (
     "# vibecomfy: generated - converted by tools/convert_ready_templates.py\n"
     "# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`\n"
@@ -109,6 +120,8 @@ _ROLE_CLASSIFICATION: dict[str, str] = {
     "SaveVideo": "Outputs",
     "VHS_VideoCombine": "Outputs",
     "PreviewImage": "Outputs",
+    "SaveAudio": "Outputs",
+    "SaveAudioMP3": "Outputs",
 }
 
 _SECTION_ORDER: tuple[str, ...] = (
@@ -270,7 +283,7 @@ def _hoist_constants(
         cls = node.class_type
         schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
         node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
-        input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
+        input_aliases: list[str | None] | None = node_metadata.get("input_aliases") or _ui_widget_aliases(node)
 
         for key, value in node.inputs.items():
             if _is_link(value):
@@ -354,7 +367,7 @@ def _hoist_constants(
     for nid, node in workflow_nodes.items():
         cls = node.class_type
         node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
-        input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
+        input_aliases: list[str | None] | None = node_metadata.get("input_aliases") or _ui_widget_aliases(node)
         for key, value in {**node.inputs, **node.widgets}.items():
             if _is_link(value):
                 continue
@@ -573,6 +586,136 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
     return {"nodes": workflow_nodes, "edges_in": edges_in, "var_names": var_names}
 
 
+def _infer_public_input_bindings(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+) -> list[_PublicInputBinding]:
+    bindings: list[_PublicInputBinding] = []
+    used_names: set[str] = set()
+
+    def add(
+        name: str,
+        node_id: str,
+        field: str,
+        *,
+        type: str | None = None,
+        required: bool = False,
+        aliases: tuple[str, ...] = (),
+        media_semantics: str | None = None,
+    ) -> None:
+        if name in used_names:
+            return
+        node = workflow_nodes.get(node_id)
+        if node is None:
+            return
+        fields = _resolved_field_values(node)
+        available = set(fields)
+        incoming = {str(getattr(edge, "to_input", "")) for edge in edges_in.get(node_id, [])}
+        if field not in available or field in incoming:
+            return
+        used_names.add(name)
+        bindings.append(
+            _PublicInputBinding(
+                name=name,
+                node_id=node_id,
+                field=field,
+                type=type,
+                required=required,
+                aliases=aliases,
+                media_semantics=media_semantics,
+            )
+        )
+
+    prompt_candidate: tuple[str, str] | None = None
+    negative_candidate: tuple[str, str] | None = None
+    for node_id, node in sorted(workflow_nodes.items(), key=lambda item: _id_sort_key(item[0])):
+        fields = _resolved_field_values(node)
+        class_type = str(getattr(node, "class_type", ""))
+        title = _node_title(node).lower()
+
+        if class_type in {"CLIPTextEncode", "CLIPTextEncodeFlux", "CLIPTextEncodeSD3", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEdit"}:
+            value = fields.get("text")
+            if isinstance(value, str):
+                if "negative" in title:
+                    negative_candidate = negative_candidate or (str(node_id), "text")
+                elif value.strip():
+                    prompt_candidate = prompt_candidate or (str(node_id), "text")
+        if class_type in {"PrimitiveStringMultiline", "PrimitiveString"} and isinstance(fields.get("value"), str):
+            prompt_candidate = prompt_candidate or (str(node_id), "value")
+        if class_type == "LoadImage" and "image" in fields:
+            add("image", str(node_id), "image", type="IMAGE", required=True, aliases=("input_image",), media_semantics="image")
+        if "seed" in fields and isinstance(fields["seed"], int) and not isinstance(fields["seed"], bool):
+            add("seed", str(node_id), "seed", type="INT")
+        if "noise_seed" in fields and isinstance(fields["noise_seed"], int) and not isinstance(fields["noise_seed"], bool):
+            add("seed", str(node_id), "noise_seed", type="INT")
+        if "width" in fields and isinstance(fields["width"], int):
+            add("width", str(node_id), "width", type="INT")
+        if "height" in fields and isinstance(fields["height"], int):
+            add("height", str(node_id), "height", type="INT")
+        if "length" in fields and isinstance(fields["length"], int):
+            add("frames", str(node_id), "length", type="INT")
+        if "frames" in fields and isinstance(fields["frames"], int):
+            add("frames", str(node_id), "frames", type="INT")
+        if "fps" in fields and isinstance(fields["fps"], (int, float)):
+            add("fps", str(node_id), "fps", type="FLOAT")
+
+    if prompt_candidate is not None:
+        add("prompt", prompt_candidate[0], prompt_candidate[1], type="STRING", required=True, media_semantics="text")
+    if negative_candidate is not None:
+        add("negative_prompt", negative_candidate[0], negative_candidate[1], type="STRING", aliases=("negative",), media_semantics="text")
+    return bindings
+
+
+def _node_title(node: Any) -> str:
+    ui = getattr(node, "metadata", {}).get("_ui")
+    if isinstance(ui, dict):
+        title = ui.get("title")
+        if isinstance(title, str):
+            return title
+    return ""
+
+
+def _resolved_field_values(node: Any) -> dict[str, Any]:
+    class_type = str(getattr(node, "class_type", ""))
+    aliases = getattr(node, "metadata", {}).get("input_aliases") or _ui_widget_aliases(node)
+    values: dict[str, Any] = {}
+    for key, value in {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}.items():
+        translated = _translate_widget_for_key(str(key), aliases, class_type)
+        if translated is not None:
+            values[translated] = value
+    return values
+
+
+def _ui_widget_aliases(node: Any) -> list[str | None] | None:
+    ui = getattr(node, "metadata", {}).get("_ui")
+    if not isinstance(ui, dict):
+        return None
+    inputs = ui.get("inputs")
+    if not isinstance(inputs, list):
+        return None
+    aliases: list[str | None] = []
+    for item in inputs:
+        if not isinstance(item, dict):
+            continue
+        widget = item.get("widget")
+        if not isinstance(widget, dict):
+            continue
+        name = widget.get("name")
+        aliases.append(str(name) if isinstance(name, str) and name else None)
+    widget_indices: list[int] = []
+    for key in getattr(node, "widgets", {}):
+        key_str = str(key)
+        if not key_str.startswith("widget_"):
+            continue
+        try:
+            widget_indices.append(int(key_str.split("_", 1)[1]))
+        except ValueError:
+            continue
+    if widget_indices and len(aliases) <= max(widget_indices):
+        return None
+    return aliases or None
+
+
 def _emit_build_function(
     prepared: dict[str, Any],
     *,
@@ -677,6 +820,7 @@ def _emit_build_function(
             workflow_nodes=workflow_nodes,
             diagnostics=diagnostics,
             constant_map=constant_map,
+            use_ui_widget_aliases=use_shared_helpers,
         )
 
         if use_shared_helpers:
@@ -740,6 +884,20 @@ def _emit_build_function(
 
     out_lines.append("")
     out_lines.extend(tail_lines)
+    if use_shared_helpers:
+        for binding in _infer_public_input_bindings(workflow_nodes, edges_in):
+            parts = [
+                f"    bind_input(wf, {binding.name!r}, {binding.node_id!r}, {binding.field!r}",
+            ]
+            if binding.type is not None:
+                parts.append(f"type={binding.type!r}")
+            if binding.required:
+                parts.append("required=True")
+            if binding.aliases:
+                parts.append(f"aliases={list(binding.aliases)!r}")
+            if binding.media_semantics is not None:
+                parts.append(f"media_semantics={binding.media_semantics!r}")
+            out_lines.append(", ".join(parts) + ")")
     if registered_inputs:
         for input_name, (old_id, field) in registered_inputs.items():
             resolved_field = field
@@ -769,32 +927,38 @@ def _emit_build_function(
 
     # -- bind_output for known output contracts (shared-helper mode only) -----
     if use_shared_helpers:
-        _OUTPUT_CLASSES: dict[str, str] = {
-            "SaveImage": "image",
-            "PreviewImage": "image",
-            "SaveVideo": "video",
-            "VHS_VideoCombine": "video",
+        _OUTPUT_CLASSES: dict[str, tuple[str, str]] = {
+            "SaveImage": ("image", "image/png"),
+            "PreviewImage": ("image", "image/png"),
+            "SaveVideo": ("video", "video/mp4"),
+            "VHS_VideoCombine": ("video", "video/mp4"),
+            "SaveAudio": ("audio", "audio/wav"),
+            "SaveAudioMP3": ("audio", "audio/mpeg"),
         }
+        output_counts: Counter[str] = Counter()
         for nid in _topological_node_order(workflow_nodes, edges_in):
             node = workflow_nodes[nid]
-            output_type = _OUTPUT_CLASSES.get(node.class_type)
-            if output_type is None:
+            output_contract = _OUTPUT_CLASSES.get(node.class_type)
+            if output_contract is None:
                 continue
+            artifact_kind, mime_type = output_contract
+            output_counts[artifact_kind] += 1
             # Gather output metadata
             prefix_raw = node.inputs.get("filename_prefix", node.widgets.get("filename_prefix"))
             prefix_str = _format_value(prefix_raw) if prefix_raw is not None else None
-            out_name = None
+            out_name = artifact_kind if output_counts[artifact_kind] == 1 else f"{artifact_kind}_{output_counts[artifact_kind]}"
             output_names = getattr(node, "metadata", {}).get("output_names")
             if isinstance(output_names, (list, tuple)) and len(output_names) > 0 and output_names[0]:
                 out_name = output_names[0]
 
             parts: list[str] = [f"    bind_output(wf, {nid!r}"]
-            parts.append(f"output_type={output_type!r}")
-            parts.append(f"artifact_kind={output_type!r}")
-            if out_name is not None:
-                parts.append(f"name={out_name!r}")
+            parts.append(f"output_type={node.class_type!r}")
+            parts.append(f"name={out_name!r}")
+            parts.append(f"artifact_kind={artifact_kind!r}")
+            parts.append(f"mime_type={mime_type!r}")
             if prefix_str is not None:
                 parts.append(f"filename_prefix={prefix_str}")
+            parts.append("expected_cardinality='one'")
             out_lines.append(", ".join(parts) + ")")
 
     out_lines.append("    return wf")
@@ -998,6 +1162,7 @@ def _node_kwargs(
     workflow_nodes: dict[str, Any] | None = None,
     diagnostics: list[EmissionDiagnostic] | None = None,
     constant_map: dict[tuple[str, str], str] | None = None,
+    use_ui_widget_aliases: bool = False,
 ) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
@@ -1007,7 +1172,9 @@ def _node_kwargs(
     # convert_to_vibe_format.  Prefer this over the static WIDGET_SCHEMA so
     # that schema-source evidence wins - the static table is only a fallback.
     node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
-    input_aliases: list[str | None] | None = node_metadata.get("input_aliases")
+    input_aliases: list[str | None] | None = node_metadata.get("input_aliases") or (
+        _ui_widget_aliases(node) if use_ui_widget_aliases else None
+    )
 
     if constant_map is None:
         constant_map = {}

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
 
 
 LTX_RUNEXX_MODEL_ASSETS = [
@@ -50,6 +50,8 @@ LTX_RUNEXX_MODEL_ASSETS = [
         "subdir": "latent_upscale_models",
     },
 ]
+
+OUTPUT_PREFIX = "reigh_vibecomfy_ltx_first_last"
 
 
 READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
@@ -676,6 +678,16 @@ def build() -> VibeWorkflow:
     wf.register_input("last_frame_strength", "2108", "value", 1.0)
     wf.register_input("first_strength", "2110", "value", 1.0)
     wf.register_input("last_strength", "2108", "value", 1.0)
+    bind_output(
+        wf,
+        "43",
+        output_type="VHS_VideoCombine",
+        name="video",
+        artifact_kind="video",
+        mime_type="video/mp4",
+        filename_prefix="reigh_vibecomfy_ltx_first_last",
+        expected_cardinality="one",
+    )
     return wf
 
 
@@ -689,7 +701,7 @@ def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
     if "43" in wf.nodes:
         wf.nodes["43"].inputs.update(
             {
-                "filename_prefix": "reigh_vibecomfy_ltx_first_last",
+                "filename_prefix": OUTPUT_PREFIX,
                 "format": "video/h264-mp4",
                 "loop_count": 0,
                 "pingpong": False,

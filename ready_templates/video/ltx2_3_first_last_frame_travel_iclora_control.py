@@ -2,7 +2,7 @@
 """LTX 2.3 first/last-frame travel with full-length IC-LoRA control guide."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -483,6 +483,16 @@ def build() -> VibeWorkflow:
     wf.register_input("ic_lora_filename", "5011", "lora_name", "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors")
     wf.register_input("ic_lora_strength", "5011", "strength_model", 1)
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_output(
+        wf,
+        "43",
+        output_type="VHS_VideoCombine",
+        name="video",
+        artifact_kind="video",
+        mime_type="video/mp4",
+        filename_prefix="reigh_vibecomfy_ltx_control_first_last",
+        expected_cardinality="one",
+    )
     return wf
 
 

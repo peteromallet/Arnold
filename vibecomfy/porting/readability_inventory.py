@@ -234,9 +234,10 @@ def _count_local_node_copies(source: str) -> int:
 def _detect_missing_output_contract(source: str) -> bool:
     """Check if the template is missing an explicit output contract.
 
-    Looks for ``register_output`` or ``_outputs`` in the source.
+    Looks for semantic ``bind_output`` / ``register_output`` descriptors or
+    graph-level ``_outputs`` metadata in the source.
     """
-    has_output = bool(re.search(r"register_output|_outputs\s*=", source))
+    has_output = bool(re.search(r"bind_output|register_output|_outputs\s*=", source))
     return not has_output
 
 

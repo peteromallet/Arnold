@@ -1,11 +1,10 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
 
 
 READY_METADATA = {'model_assets': [{'name': 'flux-2-klein-4b-fp8.safetensors',
@@ -137,6 +136,10 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_input(wf, 'image', '76', 'image', type='IMAGE', required=True, aliases=['input_image'], media_semantics='image')
+    bind_input(wf, 'prompt', '75:74', 'text', type='STRING', required=True, media_semantics='text')
+    bind_input(wf, 'seed', '75:73', 'noise_seed', type='INT')
+    bind_output(wf, '9', output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', filename_prefix='Flux2-Klein', expected_cardinality='one')
     return wf
 
 
@@ -166,4 +169,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

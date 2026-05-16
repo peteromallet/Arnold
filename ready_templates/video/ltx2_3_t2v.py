@@ -1,11 +1,10 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.resolution import resolution
@@ -237,6 +236,15 @@ def build() -> VibeWorkflow:
     ensure_custom_nodes(wf, READY_REQUIREMENTS["custom_nodes"])
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_input(wf, 'prompt', '2483', 'text', type='STRING', required=True, media_semantics='text')
+    bind_input(wf, 'negative_prompt', '2612', 'text', type='STRING', aliases=['negative'], media_semantics='text')
+    bind_input(wf, 'seed', '4814', 'noise_seed', type='INT')
+    bind_input(wf, 'width', '3059', 'width', type='INT')
+    bind_input(wf, 'height', '3059', 'height', type='INT')
+    bind_input(wf, 'frames', '4979', 'value', type='INT')
+    bind_input(wf, 'fps', '4978', 'value', type='FLOAT')
+    bind_output(wf, '4823', output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', filename_prefix='output_F', expected_cardinality='one')
+    bind_output(wf, '4852', output_type='SaveVideo', name='preview_video', artifact_kind='video', mime_type='video/mp4', filename_prefix='output_D', expected_cardinality='one')
     return wf
 
 
@@ -266,4 +274,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

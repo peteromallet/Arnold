@@ -6,7 +6,7 @@ Lightricks low-VRAM loader family that fits 24GB GPUs.
 """
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -58,6 +58,12 @@ READY_REQUIREMENTS = {
     "models": LTX_FIRST_LAST_TWO_STAGE_ASSETS,
     "custom_nodes": ["ComfyUI-LTXVideo", "ComfyUI-KJNodes"],
 }
+
+
+VIDEO_OUTPUT_NODE = "4852"
+VIDEO_OUTPUT_NAME = "video"
+VIDEO_OUTPUT_PREFIX = "output"
+VIDEO_OUTPUT_MIME = "video/mp4"
 
 
 def build() -> VibeWorkflow:
@@ -383,7 +389,7 @@ def build() -> VibeWorkflow:
         audio=decoded_audio.out("audio"),
         images=decoded_video.out("images"),
     )
-    _node(wf, "SaveVideo", "4852", filename_prefix="output", format="auto", codec="auto", video=video.out("video"))
+    _node(wf, "SaveVideo", VIDEO_OUTPUT_NODE, filename_prefix=VIDEO_OUTPUT_PREFIX, format="auto", codec="auto", video=video.out("video"))
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
@@ -409,6 +415,16 @@ def build() -> VibeWorkflow:
     wf.register_input("start_image", "31", "image", value="first.png")
     wf.register_input("end_image", "39", "image", value="last.png")
     wf.register_input("model", "127", "ckpt_name", value="ltx-2.3-22b-distilled-fp8.safetensors")
+    bind_output(
+        wf,
+        "4852",
+        output_type="SaveVideo",
+        name="video",
+        artifact_kind="video",
+        mime_type="video/mp4",
+        filename_prefix="output",
+        expected_cardinality="one",
+    )
     return wf
 
 
@@ -440,7 +456,7 @@ def _sample(wf, node_id, model, guides, latent, noise, *, sampler_name: str, sig
         positive=guides.out("positive"),
     )
     sampler = _node(wf, "KSamplerSelect", f"{node_id}_sampler", _outputs=("sampler",), sampler_name=sampler_name)
-    sigmas_node = _node(wf, "ManualSigmas", f"{node_id}_sigmas", _outputs=("sigmas",), sigmas=sigmas, widget_0=sigmas)
+    sigmas_node = _node(wf, "ManualSigmas", f"{node_id}_sigmas", _outputs=("sigmas",), sigmas=sigmas)
     return _node(
         wf,
         "SamplerCustomAdvanced",
