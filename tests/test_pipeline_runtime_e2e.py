@@ -83,10 +83,17 @@ def _build_pipeline_with_initial_entry():
     return rerouted
 
 
-def test_pipeline_runtime_drives_plan_to_done(
+def test_pipeline_runtime_drives_plan_through_prep_plan_critique(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """run_pipeline_with_policy reaches state=done on a mock plan."""
+    """run_pipeline_with_policy walks prep → plan → critique on a real
+    mock plan. The gate branching shape isn't fully rewired yet (see
+    Sprint 5 follow-up — gate is currently encoded as multiple
+    outgoing edges on the critiqued stage rather than a separate
+    decision node), so the executor stops naturally when its edge
+    dispatch hits the legacy multi-edge shape. Reaching critiqued is
+    the proof that the runtime can drive real handlers through the
+    Pipeline + policy machinery."""
     root, project_dir, plan_name, plan_dir = _mock_plan(tmp_path, monkeypatch)
 
     pipeline = _build_pipeline_with_initial_entry()
@@ -127,11 +134,16 @@ def test_pipeline_runtime_drives_plan_to_done(
 
     state = json.loads((plan_dir / "state.json").read_text())
     # After the executor walk, state must have advanced from
-    # 'initialized' (the post-init/add-note state).
+    # 'initialized' through prep + plan + critique.
     assert state["current_state"] in {
         "prepped", "planned", "critiqued", "gated", "finalized",
         "executed", "done",
     }, state["current_state"]
+    # Prep wrote prep.json AND plan wrote plan_v1.md AND critique
+    # wrote critique_v1.json — proving the runtime drove all three.
+    assert (plan_dir / "prep.json").exists()
+    assert (plan_dir / "plan_v1.md").exists()
+    assert (plan_dir / "critique_v1.json").exists() or (plan_dir / "critique_output.json").exists()
 
 
 def test_pipeline_runtime_honors_cost_cap(
