@@ -205,14 +205,10 @@ def _render_missing_models(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _read_doctor_lockfile() -> list[LockEntry]:
-    return read_lockfile()
-
-
 def _nodepack_lockfile_drift() -> tuple[list[str], list[str]]:
     warnings: list[str] = []
     errors: list[str] = []
-    for entry in _read_doctor_lockfile():
+    for entry in read_lockfile():
         pack_dir = _doctor_nodepack_dir(entry.name)
         if pack_dir is None:
             warnings.append(f"{entry.name} in lockfile but not installed; skipping drift check")

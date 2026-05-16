@@ -40,7 +40,7 @@ def doctor_scratchpad(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_doctor_lockfile_absent_skips_silently(
     doctor_scratchpad: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(doctor_cmd, "_read_doctor_lockfile", lambda: [])
+    monkeypatch.setattr(doctor_cmd, "read_lockfile", lambda: [])
 
     assert _run_doctor(doctor_scratchpad) == 0
 
@@ -52,7 +52,7 @@ def test_doctor_lockfile_missing_pack_warns_without_failing(
 ) -> None:
     monkeypatch.setattr(
         doctor_cmd,
-        "_read_doctor_lockfile",
+        "read_lockfile",
         lambda: [LockEntry(name="MissingPack", git_commit_sha="abc123", url="https://example.test/missing.git")],
     )
 
@@ -71,7 +71,7 @@ def test_doctor_lockfile_matching_pack_succeeds(
     (pack / "nodes.py").write_text("print('ok')\n", encoding="utf-8")
     monkeypatch.setattr(
         doctor_cmd,
-        "_read_doctor_lockfile",
+        "read_lockfile",
         lambda: [
             LockEntry(
                 name="MatchPack",
@@ -98,7 +98,7 @@ def test_doctor_lockfile_mismatch_fails_closed(
     (tmp_path / "vendor" / "DriftPack").mkdir(parents=True)
     monkeypatch.setattr(
         doctor_cmd,
-        "_read_doctor_lockfile",
+        "read_lockfile",
         lambda: [LockEntry(name="DriftPack", git_commit_sha="expected", url="https://example.test/drift.git")],
     )
     monkeypatch.setattr(
@@ -120,7 +120,7 @@ def test_doctor_lockfile_mismatch_allow_drift_warns(
     (tmp_path / "vendor" / "DriftPack").mkdir(parents=True)
     monkeypatch.setattr(
         doctor_cmd,
-        "_read_doctor_lockfile",
+        "read_lockfile",
         lambda: [LockEntry(name="DriftPack", git_commit_sha="expected", url="https://example.test/drift.git")],
     )
     monkeypatch.setattr(

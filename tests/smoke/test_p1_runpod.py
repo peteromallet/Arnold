@@ -8,6 +8,7 @@ import pytest
 from ._runpod_helpers import (
     ensure_node_packs,
     install_current_branch,
+    launch_with_budget,
     load_runpod_lifecycle,
     pod_name,
     require_runpod_api_key,
@@ -28,18 +29,18 @@ async def _run_smoke(runpod_lifecycle) -> None:
         ram_tiers=(32, 16),
         storage_volumes=(),
     )
-    pod = None
-    try:
-        pod = await runpod_lifecycle.launch(config, name=pod_name("p1", "z_image"))
+    async with launch_with_budget(
+        runpod_lifecycle,
+        config,
+        name=pod_name("p1", "z_image"),
+        max_runtime_seconds=2400,
+    ) as pod:
         await pod.wait_ready(timeout=600)
         await install_current_branch(pod)
         await ensure_node_packs(pod, ("image/z_image",))
         code, stdout, stderr = await pod.exec_ssh(_REMOTE_SMOKE_COMMAND, timeout=1800)
         assert code == 0, f"remote smoke failed with {code}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
         assert "VIBECOMFY_P1_OUTPUTS=" in stdout
-    finally:
-        if pod is not None:
-            await pod.terminate()
 
 
 _REMOTE_SMOKE_COMMAND = r"""python - <<'PY'

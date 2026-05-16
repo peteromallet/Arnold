@@ -19,6 +19,8 @@ dependencies = [
 dev = [
   "pytest>=7",
   "pytest-asyncio>=0.23",
+  "pytest-cov>=4",
+  "pytest-rerunfailures>=14",
 ]
 runpod-local = [
   "python-dotenv>=1.0",
@@ -53,3 +55,14 @@ markers = [
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.coverage.run]
+source = ["vibecomfy"]
+branch = false
+omit = ["vibecomfy/comfy_nodes/*"]
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = true
+fail_under = 70
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:"]

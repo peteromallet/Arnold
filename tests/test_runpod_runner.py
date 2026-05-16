@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("dotenv", reason="requires runpod-launch extra (python-dotenv)")
+
 from scripts import runpod_runner
 
 

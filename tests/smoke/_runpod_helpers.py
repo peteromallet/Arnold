@@ -5,22 +5,134 @@ Centralises the bits every test in tests/smoke/test_*runpod*.py needs:
   * resolving the git repo URL + ref to install on a remote pod
   * installing the current branch onto a pod via SSH
   * a single canonical pod-name pattern so orphans are greppable
+  * a session-scoped budget cap (``VIBECOMFY_RUNPOD_BUDGET_USD``) enforced via
+    ``launch_with_budget`` — projects spend before launch, settles actuals on
+    termination, and ``pytest.fail``s before the over-budget pod is provisioned.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import os
 import subprocess
 import sys
 import time
 from types import ModuleType
+from typing import Any
 
 import pytest
 
 
 POD_NAME_PREFIX = "vibecomfy-layer2"
+
+
+# Per-GPU hourly USD rates. Source: runpod.io community-cloud pricing
+# (https://www.runpod.io/pricing) — kept hand-curated so an unfamiliar GPU type
+# raises rather than silently being charged at the wrong rate.
+HOURLY_USD: dict[str, float] = {
+    "NVIDIA GeForce RTX 4090": 0.69,
+    "NVIDIA RTX A6000": 0.79,
+    "NVIDIA A100 80GB PCIe": 1.89,
+    "NVIDIA A100-SXM4-80GB": 1.99,
+}
+
+
+_BUDGET_STATE: dict[str, Any] = {
+    "projected_usd": 0.0,
+    "actual_usd": 0.0,
+    "budget_usd": None,
+}
+
+
+_PYTEST_CONFIG: pytest.Config | None = None
+
+
+def set_pytest_config(config: pytest.Config | None) -> None:
+    """Stash the active pytest config so budget helpers can resolve defaults."""
+    global _PYTEST_CONFIG
+    _PYTEST_CONFIG = config
+
+
+def get_budget_state() -> dict[str, Any]:
+    """Return a snapshot of the running budget tally (read-only)."""
+    return dict(_BUDGET_STATE)
+
+
+def reset_budget_state() -> None:
+    _BUDGET_STATE["projected_usd"] = 0.0
+    _BUDGET_STATE["actual_usd"] = 0.0
+    _BUDGET_STATE["budget_usd"] = None
+
+
+def _hourly_rate(gpu_type: str) -> float:
+    try:
+        return HOURLY_USD[gpu_type]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"unknown gpu_type for budget cap: {gpu_type!r}; add it to HOURLY_USD with the runpod.io price."
+        ) from exc
+
+
+def _resolve_budget(pytestconfig: pytest.Config | None = None) -> float:
+    """Return the active budget in USD, honouring env override, falling back to flag-derived defaults."""
+    cached = _BUDGET_STATE.get("budget_usd")
+    if cached is not None:
+        return float(cached)
+    raw = os.environ.get("VIBECOMFY_RUNPOD_BUDGET_USD")
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"VIBECOMFY_RUNPOD_BUDGET_USD={raw!r} is not a valid float."
+            ) from exc
+    else:
+        config = pytestconfig if pytestconfig is not None else _PYTEST_CONFIG
+        runpod_full = bool(config.getoption("--runpod-full")) if config is not None else False
+        value = 15.0 if runpod_full else 2.0
+    _BUDGET_STATE["budget_usd"] = value
+    return value
+
+
+def precharge_budget(
+    pytestconfig: pytest.Config | None = None,
+    *,
+    gpu_type: str,
+    max_runtime_seconds: int,
+) -> float:
+    """Project spend for a pending pod launch and fail before going over budget.
+
+    Returns the projected USD cost added to the in-flight tally.
+    """
+    rate = _hourly_rate(gpu_type)
+    projected = (max_runtime_seconds / 3600.0) * rate
+    budget = _resolve_budget(pytestconfig)
+    cumulative = _BUDGET_STATE["actual_usd"] + _BUDGET_STATE["projected_usd"] + projected
+    if cumulative > budget:
+        pytest.fail(
+            f"RunPod budget exceeded: this launch would bring projected spend to "
+            f"${cumulative:.2f} (actual ${_BUDGET_STATE['actual_usd']:.2f} + "
+            f"in-flight ${_BUDGET_STATE['projected_usd']:.2f} + new ${projected:.2f}) "
+            f"vs budget ${budget:.2f}. Set VIBECOMFY_RUNPOD_BUDGET_USD to raise the cap."
+        )
+    _BUDGET_STATE["projected_usd"] += projected
+    return projected
+
+
+def settle_budget(
+    *,
+    gpu_type: str,
+    elapsed_seconds: float,
+    projected_seconds: int,
+) -> None:
+    """Move spend from projected to actual once a pod terminates."""
+    rate = _hourly_rate(gpu_type)
+    projected = (projected_seconds / 3600.0) * rate
+    actual = (max(0.0, elapsed_seconds) / 3600.0) * rate
+    _BUDGET_STATE["projected_usd"] = max(0.0, _BUDGET_STATE["projected_usd"] - projected)
+    _BUDGET_STATE["actual_usd"] += actual
 
 
 def require_runpod_api_key() -> None:
@@ -204,6 +316,39 @@ async def launch_with_retry(
     raise last_exc
 
 
+@contextlib.asynccontextmanager
+async def launch_with_budget(
+    runpod_lifecycle,
+    config,
+    *,
+    name: str,
+    max_runtime_seconds: int,
+    retries: int = 4,
+    pytestconfig: pytest.Config | None = None,
+):
+    """Async context manager: precharge budget, launch (with retry), settle and terminate.
+
+    Yields the launched pod. Always tears the pod down on exit and reconciles
+    the actual elapsed cost against the precharged projection.
+    """
+    gpu_type = config.gpu_type
+    precharge_budget(pytestconfig, gpu_type=gpu_type, max_runtime_seconds=max_runtime_seconds)
+    start = time.monotonic()
+    pod = await launch_with_retry(runpod_lifecycle, config, name, retries=retries)
+    try:
+        yield pod
+    finally:
+        elapsed = time.monotonic() - start
+        try:
+            await pod.terminate()
+        finally:
+            settle_budget(
+                gpu_type=gpu_type,
+                elapsed_seconds=elapsed,
+                projected_seconds=max_runtime_seconds,
+            )
+
+
 def _git_output(args: str) -> str | None:
     try:
         result = subprocess.run(
@@ -218,12 +363,19 @@ def _git_output(args: str) -> str | None:
 
 
 __all__ = [
+    "HOURLY_USD",
     "POD_NAME_PREFIX",
     "ensure_node_packs",
+    "get_budget_state",
     "install_current_branch",
+    "launch_with_budget",
     "launch_with_retry",
     "load_runpod_lifecycle",
     "pod_name",
+    "precharge_budget",
     "require_runpod_api_key",
+    "reset_budget_state",
     "resolve_repo_install_target",
+    "set_pytest_config",
+    "settle_budget",
 ]

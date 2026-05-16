@@ -53,7 +53,7 @@ def test_doctor_reports_missing_model_with_url_and_expected_path(
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(models_root))
 
     # B5 lockfile drift verification is default-on per Step 16; this test predates B5 and isolates from the seam to keep its existing assertions stable.
-    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+    monkeypatch.setattr("vibecomfy.commands.doctor.read_lockfile", lambda: [])
     assert _cmd_doctor(argparse.Namespace(path=str(scratchpad))) == 1
 
     captured = capsys.readouterr()
@@ -77,7 +77,7 @@ def test_doctor_passes_when_model_exists(
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(models_root))
 
     # B5 lockfile drift verification is default-on per Step 16; this test predates B5 and isolates from the seam to keep its existing assertions stable.
-    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+    monkeypatch.setattr("vibecomfy.commands.doctor.read_lockfile", lambda: [])
     assert _cmd_doctor(argparse.Namespace(path=str(scratchpad))) == 0
 
     captured = capsys.readouterr()

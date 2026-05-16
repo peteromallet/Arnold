@@ -8,6 +8,7 @@ import pytest
 from ._runpod_helpers import (
     ensure_node_packs,
     install_current_branch,
+    launch_with_budget,
     load_runpod_lifecycle,
     pod_name,
     require_runpod_api_key,
@@ -35,15 +36,17 @@ async def _run_dropped(runpod_lifecycle) -> None:
         ram_tiers=(32, 16),
         storage_volumes=(),
     )
-    pod = None
-    try:
-        pod = await runpod_lifecycle.launch(config, name=pod_name("dropped"))
+    async with launch_with_budget(
+        runpod_lifecycle,
+        config,
+        name=pod_name("dropped"),
+        max_runtime_seconds=3600,
+    ) as pod:
         print(f"VIBECOMFY_LAYER2_DROPPED_POD_PROVISIONED id={pod.id}")
-        await asyncio.wait_for(_run_body(pod), timeout=3600)
-    finally:
-        if pod is not None:
+        try:
+            await asyncio.wait_for(_run_body(pod), timeout=3600)
+        finally:
             print(f"VIBECOMFY_LAYER2_DROPPED_POD_TEARDOWN id={pod.id}")
-            await pod.terminate()
 
 
 async def _run_body(pod) -> None:

@@ -300,6 +300,7 @@ def test_range_enum_skipped_when_value_is_api_link() -> None:
     assert report.issues == []
 
 
+# Schema regression-guard contract — see .megaplan/plans/brief-a-internal-testing-20260516-0048/ (T7).
 @pytest.mark.parametrize("snapshot", sorted(Path("tests/snapshots").glob("*.api.json")))
 def test_snapshot_api_workflows_validate_against_permissive_local_schema(snapshot: Path, tmp_path: Path) -> None:
     api = json.loads(snapshot.read_text(encoding="utf-8"))

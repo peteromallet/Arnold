@@ -2,8 +2,7 @@
   "2004": {
     "class_type": "LoadImage",
     "inputs": {
-      "image": "example.png",
-      "widget_0": "egyptian_queen.png"
+      "image": "example.png"
     }
   },
   "3940": {
@@ -69,22 +68,22 @@
   "4977": {
     "class_type": "PrimitiveBoolean",
     "inputs": {
-      "value": true,
-      "widget_0": false
+      "widget_0": false,
+      "value": true
     }
   },
   "4978": {
     "class_type": "PrimitiveFloat",
     "inputs": {
-      "value": 24,
-      "widget_0": 8
+      "widget_0": 8,
+      "value": 24
     }
   },
   "4979": {
     "class_type": "PrimitiveInt",
     "inputs": {
-      "value": 121,
-      "widget_0": 9
+      "widget_0": 9,
+      "value": 121
     }
   },
   "2483": {
@@ -113,9 +112,6 @@
       "width": 384,
       "height": 256,
       "batch_size": 1,
-      "widget_0": 384,
-      "widget_1": 256,
-      "widget_2": 9,
       "length": [
         "4979",
         0
@@ -160,7 +156,6 @@
       "resize_type": "scale longer dimension",
       "scale_method": "lanczos",
       "resize_type.longer_size": 1536,
-      "widget_1": 384,
       "input": [
         "2004",
         0
@@ -180,7 +175,6 @@
   "1241": {
     "class_type": "LTXVConditioning",
     "inputs": {
-      "widget_0": 8,
       "frame_rate": [
         "4978",
         0
@@ -209,18 +203,16 @@
     "class_type": "LTXVEmptyLatentAudio",
     "inputs": {
       "batch_size": 1,
-      "widget_0": 9,
-      "widget_1": 8,
-      "audio_vae": [
-        "4010",
+      "frames_number": [
+        "4979",
         0
       ],
       "frame_rate": [
         "4985",
         0
       ],
-      "frames_number": [
-        "4979",
+      "audio_vae": [
+        "4010",
         0
       ]
     }

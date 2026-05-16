@@ -1,0 +1,75 @@
+# Fast CI suite.
+#
+# Runs on every push and on every pull_request so the snapshot-bypass
+# step can read either `head_commit.message` (populated on push) or
+# `pull_request.title` / `pull_request.labels` (populated on PRs).
+#
+# Steps:
+#   1. Checkout (fetch-depth: 2 so PR diffs see the merge base if needed).
+#   2. Install uv.
+#   3. `uv sync --extra dev` — the dev extra carries pytest, pytest-asyncio,
+#      pytest-cov, and pytest-rerunfailures. The Phase 0 importorskip guards
+#      mean ComfyUI / runpod-lifecycle / python-dotenv are NOT required at
+#      collection time.
+#   4. Fast suite with coverage. The coverage floor is enforced via
+#      [tool.coverage.report] fail_under in pyproject.toml; no --cov-fail-under
+#      override is needed here.
+#   5. Snapshot regenerator --check, with a multi-event bypass: if the push
+#      commit message, PR title, or PR labels contain a `snapshots:` tag
+#      (or a `snapshots` label), the check is skipped so intentional snapshot
+#      refreshes do not need to fight CI.
+#   6. Upload coverage.xml as a workflow artifact.
+#
+# Branch protection on `main` requires repo-admin action and is tracked as a
+# user_action; this workflow only exposes the `test` status check.
+
+name: ci
+
+on:
+  push: {}
+  pull_request: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run fast suite with coverage
+        run: |
+          uv run pytest -q --tb=no \
+            --cov=vibecomfy \
+            --cov-report=term-missing \
+            --cov-report=xml
+
+      - name: Check snapshots are up to date (with bypass)
+        env:
+          MSG_PUSH: ${{ github.event.head_commit.message }}
+          MSG_PR_TITLE: ${{ github.event.pull_request.title }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          if [[ "$MSG_PUSH" == *snapshots:* \
+             || "$MSG_PR_TITLE" == *snapshots:* \
+             || ",$LABELS," == *,snapshots,* ]]; then
+            echo "Snapshot bypass triggered; skipping --check"
+            exit 0
+          fi
+          uv run python scripts/regenerate_snapshots.py --check
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn

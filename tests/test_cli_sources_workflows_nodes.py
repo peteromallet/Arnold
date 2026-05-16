@@ -1,0 +1,440 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import pytest
+
+import vibecomfy.node_packs_install as node_packs_install
+from vibecomfy.commands.nodes import (
+    _cmd_nodes_ensure,
+    _cmd_nodes_install,
+    _cmd_nodes_install_plan,
+    _cmd_nodes_list,
+    _cmd_nodes_restore,
+    _cmd_nodes_spec,
+)
+from vibecomfy.commands.workflows import (
+    _cmd_workflows_enrich_targets,
+    _cmd_workflows_lens,
+    _cmd_workflows_list,
+    _cmd_workflows_source_info,
+)
+
+
+def test_workflows_list_reports_malformed_index_with_recovery_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "workflow_index.json").write_text("{not-json", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_workflows_list(argparse.Namespace(ready=False, limit=10)) == 1
+
+    captured = capsys.readouterr()
+    assert "workflow_index.json could not be read" in captured.err
+    assert "vibecomfy sources sync" in captured.err
+
+
+def test_workflows_source_info_json_reports_pure_python_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = _cmd_workflows_source_info(argparse.Namespace(template_id="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["template_id"] == "image/z_image"
+    assert payload["source_mode"] == "pure_python"
+    assert payload["runtime_source_of_truth"] is True
+
+
+def test_workflows_source_info_accepts_policy_applied_python_fork(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = _cmd_workflows_source_info(
+        argparse.Namespace(
+            template_id="video/ltx2_3_runexx_first_last_raw_video_guide",
+            json=True,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["template_id"] == "video/ltx2_3_runexx_first_last_raw_video_guide"
+    assert payload["source_mode"] == "pure_python"
+    assert payload["runtime_source_of_truth"] is True
+
+
+def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Path) -> None:
+    targets_path = tmp_path / "targets.json"
+    output_path = tmp_path / "enriched.json"
+    models_root = tmp_path / "models"
+    targets_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "selector": {"backend": "vibecomfy"},
+                "selection": {"case_names": ["z_image_turbo"]},
+                "targets": [
+                    {
+                        "case_name": "z_image_turbo",
+                        "task_type": "z_image_turbo",
+                        "route_key": "z_image_turbo",
+                        "template_id": "image/z_image",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_enrich_targets(
+        argparse.Namespace(
+            targets_json=str(targets_path),
+            output=str(output_path),
+            models_root=models_root,
+        )
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["producer"] == "vibecomfy.workflows.enrich-targets"
+    assert payload["templates"] == ["image/z_image"]
+    assert payload["target_count"] == 1
+    assert payload["template_count"] == 1
+    target = payload["targets"][0]
+    assert target["source"]["source_mode"] == "pure_python"
+    assert target["schema"]["node_count"] > 0
+    assert "SaveImage" in target["schema"]["class_types"]
+    assets = {asset["name"]: asset for asset in target["assets"]}
+    assert "z_image_bf16.safetensors" in assets
+    assert assets["z_image_bf16.safetensors"]["expected_path"].startswith(str(models_root))
+    assert assets["z_image_bf16.safetensors"]["present"] is False
+    missing_asset_issues = [item for item in target["issues"] if item["code"] == "missing_model_asset"]
+    assert missing_asset_issues
+    missing_z_image = next(
+        item for item in missing_asset_issues if item["detail"]["name"] == "z_image_bf16.safetensors"
+    )
+    assert missing_z_image["detail"]["expected_path"] == assets["z_image_bf16.safetensors"]["expected_path"]
+    assert missing_asset_issues[0]["detail"]["paths_checked"]
+    assert "curl -L" in (missing_asset_issues[0]["detail"]["remediation"] or "")
+
+
+def test_workflows_enrich_targets_treats_orchestrators_as_non_template_info(tmp_path: Path):
+    targets_path = tmp_path / "targets.json"
+    output_path = tmp_path / "enriched.json"
+    targets_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "selector": {"backend": "vibecomfy"},
+                "selection": {"case_names": ["travel_orchestrator_wan2_1seg"]},
+                "targets": [
+                    {
+                        "case_name": "travel_orchestrator_wan2_1seg",
+                        "task_type": "travel_orchestrator",
+                        "route_key": "travel_orchestrator",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_enrich_targets(
+        argparse.Namespace(
+            targets_json=str(targets_path),
+            output=str(output_path),
+            models_root=str(tmp_path / "models"),
+        )
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["target_count"] == 1
+    assert payload["template_count"] == 0
+    assert payload["templates"] == []
+    target = payload["targets"][0]
+    assert target["enrichment_status"] == "skipped"
+    assert target["issues"] == [
+        {
+            "group": "workflow_source",
+            "code": "non_template_target",
+            "severity": "info",
+            "message": "Target does not execute a VibeComfy template directly.",
+        }
+    ]
+
+
+def test_nodes_list_reports_malformed_index_with_recovery_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text("{not-json", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_nodes_list(argparse.Namespace(limit=10)) == 1
+
+    captured = capsys.readouterr()
+    assert "node_index.json could not be read" in captured.err
+    assert "vibecomfy sources sync" in captured.err
+
+
+def test_nodes_spec_reads_object_info_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cache = tmp_path / "object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "RuntimeOnlyNode": {
+                    "input": {"required": {"latent": ["LATENT", {}]}},
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                    "category": "runtime/test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _cmd_nodes_spec(argparse.Namespace(class_type="RuntimeOnlyNode", object_info_cache=str(cache))) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["class_type"] == "RuntimeOnlyNode"
+    assert payload["inputs"]["latent"]["type"] == "LATENT"
+    assert payload["outputs"][0]["name"] == "image"
+
+
+def test_nodes_install_plan_suggests_pack_for_missing_class(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "PreviewAudio", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_nodes_install_plan(argparse.Namespace(path=str(scratchpad), json=False)) == 0
+
+    captured = capsys.readouterr()
+    assert "ComfyUI-Qwen3-TTS" in captured.out
+    assert "Qwen3CustomVoice" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    [
+        ("installed", 0),
+        ("refreshed", 0),
+        ("skipped_dirty", 1),
+        ("failed", 1),
+    ],
+)
+def test_cmd_nodes_install_translates_install_result_to_exit_codes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+    expected_code: int,
+) -> None:
+    def fake_install_pack(**kwargs):
+        assert kwargs == {"name": "ExamplePack", "repo": None, "force": False}
+        return node_packs_install.InstallResult(
+            name="ExamplePack",
+            status=status,  # type: ignore[arg-type]
+            git_commit_sha="abc123" if status in {"installed", "refreshed"} else None,
+            error="install issue" if status in {"skipped_dirty", "failed"} else None,
+        )
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+
+    code = _cmd_nodes_install(argparse.Namespace(name="ExamplePack", repo=None, force=False))
+
+    captured = capsys.readouterr()
+    assert code == expected_code
+    assert f"ExamplePack: {status}" in captured.out
+    if expected_code:
+        assert "install issue" in captured.err
+    else:
+        assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_code"),
+    [
+        ("installed", 0),
+        ("refreshed", 0),
+        ("skipped_dirty", 1),
+        ("failed", 1),
+    ],
+)
+def test_cmd_nodes_restore_translates_results_to_exit_codes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: str,
+    expected_code: int,
+) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text("ExamplePack abc123 https://example.test/example.git\n", encoding="utf-8")
+
+    def fake_restore_pack(entry):
+        assert entry.name == "ExamplePack"
+        assert entry.git_commit_sha == "abc123"
+        return node_packs_install.InstallResult(
+            name="ExamplePack",
+            status=status,  # type: ignore[arg-type]
+            git_commit_sha="abc123" if status in {"installed", "refreshed"} else None,
+            error="restore issue" if status in {"skipped_dirty", "failed"} else None,
+        )
+
+    monkeypatch.setattr(node_packs_install, "restore_pack", fake_restore_pack)
+
+    code = _cmd_nodes_restore(argparse.Namespace(lockfile=str(lockfile)))
+
+    captured = capsys.readouterr()
+    assert code == expected_code
+    assert f"ExamplePack: {status}" in captured.out
+    if expected_code:
+        assert "restore issue" in captured.err
+    else:
+        assert captured.err == ""
+
+
+def test_cmd_nodes_ensure_dry_run_does_not_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "SaveImage", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    def fail_install_pack(**_kwargs):
+        raise AssertionError("install_pack must not be called during dry-run")
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fail_install_pack)
+
+    code = _cmd_nodes_ensure(argparse.Namespace(template=None, workflow=str(scratchpad), dry_run=True))
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "Suggested custom node packs:" in captured.out
+    assert "ComfyUI-Qwen3-TTS" in captured.out
+
+
+def test_ensure_calls_install_for_each_missing_pack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "SaveImage", "pack": "core", "inputs": {}, "outputs": []}]),
+        encoding="utf-8",
+    )
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
+
+def build():
+    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
+    workflow.nodes["2"] = VibeNode(id="2", class_type="VHS_LoadVideo")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    installed: list[str | None] = []
+
+    def fake_install_pack(**kwargs):
+        installed.append(kwargs.get("name"))
+        return node_packs_install.InstallResult(
+            name=str(kwargs["name"]),
+            status="refreshed",
+            git_commit_sha="abc123",
+            error=None,
+        )
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+
+    code = _cmd_nodes_ensure(argparse.Namespace(template=None, workflow=str(scratchpad), dry_run=False))
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert installed == ["ComfyUI-Qwen3-TTS", "ComfyUI-VideoHelperSuite"]
+    assert "Nodepacks installed/refreshed." in captured.out
+
+
+def test_workflows_lens_json_output(capsys: pytest.CaptureFixture[str]) -> None:
+    """JSON lens output includes node/edge counts, inputs, outputs, and per-node metadata."""
+    code = _cmd_workflows_lens(
+        argparse.Namespace(template_or_path="video/ltx2_3_lightricks_first_last_parity", json=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["workflow_id"] == "video/ltx2_3_lightricks_first_last_parity"
+    assert payload["node_count"] >= 20
+    assert payload["edge_count"] >= 20
+    assert "prompt" in payload["inputs"]
+    assert "negative_prompt" in payload["inputs"]
+    assert "first_image" in payload["inputs"]
+    assert "last_image" in payload["inputs"]
+    assert "seed_first" in payload["inputs"]
+    assert "seed_last" in payload["inputs"]
+    assert "width" in payload["inputs"]
+    assert "height" in payload["inputs"]
+    assert "first_strength" in payload["inputs"]
+    assert "last_strength" in payload["inputs"]
+    assert "frames" in payload["inputs"]
+    assert "fps" in payload["inputs"]
+    outputs = payload["outputs"]
+    assert any(o["output_type"] == "SaveVideo" for o in outputs)
+    nodes = payload["nodes"]
+    assert len(nodes) == payload["node_count"]
+    class_types = {n["class_type"] for n in nodes}
+    assert "LTXVAddGuide" in class_types
+    assert "RandomNoise" in class_types
+
+
+def test_workflows_lens_human_readable(capsys: pytest.CaptureFixture[str]) -> None:
+    """Human-readable lens diagnostics produce a readable graph summary."""
+    code = _cmd_workflows_lens(
+        argparse.Namespace(template_or_path="video/ltx2_3_lightricks_first_last_parity", json=False)
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 0
+    assert "video/ltx2_3_lightricks_first_last_parity" in captured
+    assert "LTXVAddGuide" in captured

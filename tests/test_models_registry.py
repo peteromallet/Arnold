@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip("dotenv", reason="requires runpod-launch extra (python-dotenv)")
+
 from scripts.runpod_corpus_matrix import _remote_script
 from vibecomfy.registry import models_loader
 from vibecomfy.registry.models_loader import (

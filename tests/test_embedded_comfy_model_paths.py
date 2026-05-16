@@ -3,7 +3,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vendor" / "ComfyUI"))
+
+pytest.importorskip("comfy.cli_args", reason="requires HiddenSwitch ComfyUI runtime")
 
 from comfy.cli_args import default_configuration
 from comfy.cmd.folder_paths import init_default_paths

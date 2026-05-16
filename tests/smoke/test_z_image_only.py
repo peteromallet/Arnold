@@ -12,6 +12,7 @@ import pytest
 
 from ._runpod_helpers import (
     install_current_branch,
+    launch_with_budget,
     load_runpod_lifecycle,
     pod_name,
     require_runpod_api_key,
@@ -32,15 +33,19 @@ async def _run(runpod_lifecycle) -> None:
         ram_tiers=(32, 16),
         storage_volumes=(),
     )
-    pod = await runpod_lifecycle.launch(config, name=pod_name("zimage", "proof"))
-    try:
+    async with launch_with_budget(
+        runpod_lifecycle,
+        config,
+        name=pod_name("zimage", "proof"),
+        max_runtime_seconds=2400,
+    ) as pod:
         print(f"[z-image-only] pod_id={pod.id}")
-        await pod.wait_ready(timeout=600)
-        await install_current_branch(pod)
-        await asyncio.wait_for(_remote(pod), timeout=2400)
-    finally:
-        print(f"[z-image-only] terminating pod_id={pod.id}")
-        await pod.terminate()
+        try:
+            await pod.wait_ready(timeout=600)
+            await install_current_branch(pod)
+            await asyncio.wait_for(_remote(pod), timeout=2400)
+        finally:
+            print(f"[z-image-only] terminating pod_id={pod.id}")
 
 
 async def _remote(pod) -> None:

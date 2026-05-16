@@ -16,13 +16,17 @@ import os
 
 import pytest
 
+import time
+
 from ._runpod_helpers import (
     ensure_node_packs,
     install_current_branch,
     launch_with_retry,
     load_runpod_lifecycle,
     pod_name,
+    precharge_budget,
     require_runpod_api_key,
+    settle_budget,
 )
 
 pytestmark = pytest.mark.runpod_full
@@ -150,6 +154,9 @@ async def _run_family(runpod_lifecycle, family_cfg: dict) -> dict:
         storage_volumes=(),
     )
     pod = None
+    max_runtime_seconds = 3600
+    precharge_budget(gpu_type=gpu_type, max_runtime_seconds=max_runtime_seconds)
+    start = time.monotonic()
     try:
         pod = await launch_with_retry(runpod_lifecycle, config, pod_name("matrix", family))
         print(f"[layer2-matrix:{family}] pod_id={pod.id} gpu={gpu_type}")
@@ -165,6 +172,11 @@ async def _run_family(runpod_lifecycle, family_cfg: dict) -> dict:
                 await pod.terminate()
             except BaseException as term_exc:  # noqa: BLE001 — log, don't mask main error
                 print(f"[layer2-matrix:{family}] terminate failed: {term_exc!r}")
+        settle_budget(
+            gpu_type=gpu_type,
+            elapsed_seconds=time.monotonic() - start,
+            projected_seconds=max_runtime_seconds,
+        )
 
 
 async def _run_on_pod(pod, family_cfg: dict) -> None:
