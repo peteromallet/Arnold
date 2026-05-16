@@ -2266,6 +2266,9 @@ def build_parser() -> argparse.ArgumentParser:
     from megaplan.auto import build_auto_parser
     build_auto_parser(subparsers)
 
+    from megaplan._pipeline.run_cli import build_run_parser
+    build_run_parser(subparsers)
+
     from megaplan.chain import build_chain_parser
     build_chain_parser(subparsers)
 
@@ -2502,6 +2505,13 @@ def main(argv: list[str] | None = None) -> int:
         from megaplan.auto import run_auto
         try:
             return run_auto(root, args)
+        except CliError as error:
+            return error_response(error, root=root)
+
+    if args.command == "run":
+        from megaplan._pipeline.run_cli import cli_run
+        try:
+            return cli_run(args)
         except CliError as error:
             return error_response(error, root=root)
 
