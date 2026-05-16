@@ -16,6 +16,7 @@ from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd
 from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_widgets
 from vibecomfy.commands.contract import _cmd_contract_inspect, _cmd_contract_doctor
 import vibecomfy.node_packs_install as node_packs_install
+import vibecomfy.commands.workflows as workflows_cmd
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.commands.workflows import _cmd_workflows_contract_validate, _cmd_workflows_enrich_targets, _cmd_workflows_lens, _cmd_workflows_list, _cmd_workflows_source_info
@@ -488,6 +489,90 @@ def test_workflows_list_reports_malformed_index_with_recovery_hint(
     assert "vibecomfy sources sync" in captured.err
 
 
+def test_workflows_list_ready_uses_template_index_without_dynamic_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "id": "image/indexed",
+                        "path": "ready_templates/image/indexed.py",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        workflows_cmd,
+        "dynamic_ready_template_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dynamic discovery should be opt-in")),
+    )
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=True, include_dynamic=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert len(payload) == 1
+    assert payload[0]["id"] == "image/indexed"
+    assert payload[0]["media_type"] == "ready"
+    assert payload[0]["path"] == "ready_templates/image/indexed.py"
+    assert payload[0]["source_scope"] == "repo"
+    assert payload[0]["indexed"] is True
+    assert payload[0]["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert payload[0]["public_inputs"] == []
+    assert payload[0]["public_outputs"] == []
+    assert payload[0]["strict_ready_diagnostic_counts"] == {}
+
+
+def test_workflows_list_ready_include_dynamic_marks_unindexed_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "id": "image/indexed",
+                        "path": "ready_templates/image/indexed.py",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        workflows_cmd,
+        "dynamic_ready_template_rows",
+        lambda *, exclude_ids: [
+            {
+                "id": "image/dynamic",
+                "path": str(tmp_path / "vibecomfy_extras" / "ready_templates" / "image" / "dynamic.py"),
+                "source_scope": "dynamic",
+                "indexed": False,
+            }
+        ],
+    )
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=True, include_dynamic=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert [row["id"] for row in payload] == ["image/indexed", "image/dynamic"]
+    assert payload[0]["source_scope"] == "repo"
+    assert payload[0]["indexed"] is True
+    assert payload[1]["source_scope"] == "dynamic"
+    assert payload[1]["indexed"] is False
+
+
 def test_workflows_source_info_json_reports_pure_python_source(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -795,6 +880,120 @@ def test_strict_ready_template_gate_requires_output_contract() -> None:
     assert "public_outputs" in (report.diagnostics[0].recommendation or "")
 
 
+def test_port_check_strict_ready_json_normalizes_load_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_port_check(
+        argparse.Namespace(
+            workflow="does/not/exist.json",
+            json=True,
+            head_check_models=False,
+            strict_ready_template=True,
+            runtime_object_info=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            server_url=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["strict_ready_ok"] is False
+    assert payload["strict_ready_diagnostics"][0]["code"] == "strict_ready_load_failed"
+    assert payload["diagnostics"][0]["detail"]["target"] == "source"
+
+
+def test_port_check_strict_ready_json_exposes_policy_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    scratchpad = tmp_path / "no_output.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="no_output", source=WorkflowSource(id="no_output"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="LoadImage", inputs={"image": "input.png"})
+    workflow.register_input("image", "1", "image")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_check(
+        argparse.Namespace(
+            workflow=str(scratchpad),
+            json=True,
+            head_check_models=False,
+            strict_ready_template=True,
+            runtime_object_info=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            server_url=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["strict_ready_ok"] is False
+    assert any(
+        item["code"] == "strict_ready_missing_output_contract"
+        for item in payload["strict_ready_diagnostics"]
+    )
+
+
+def test_port_convert_ready_id_json_refuses_strict_ready_candidate_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    scratchpad = tmp_path / "candidate.py"
+    target = tmp_path / "ready.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="candidate", source=WorkflowSource(id="candidate"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="LoadImage", inputs={"image": "input.png"})
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(scratchpad),
+            out=str(target),
+            ready_id="image/candidate",
+            json=True,
+            dry_run=False,
+            diff=False,
+            head_check_models=False,
+            strict_ready_template=False,
+            runtime_object_info=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            server_url=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert not target.exists()
+    assert payload["status"] == "error"
+    assert payload["strict_ready_ok"] is False
+    assert payload["conversion"]["validation"]["strict_ready_ok"] is False
+    assert any(
+        item["code"] == "strict_ready_missing_output_contract"
+        for item in payload["strict_ready_diagnostics"]
+    )
+
+
 def test_inspect_json_exposes_canonical_public_contract_fields(capsys: pytest.CaptureFixture[str]) -> None:
     code = _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=True))
 
@@ -804,6 +1003,12 @@ def test_inspect_json_exposes_canonical_public_contract_fields(capsys: pytest.Ca
     assert payload["public_inputs"] == payload["contract"]["public_inputs"]
     assert payload["public_outputs"] == payload["contract"]["public_outputs"]
     assert payload["graph_contract"] == payload["contract"]["graph_contract"]
+    assert payload["source_scope"] == "repo"
+    assert payload["indexed"] is True
+    assert payload["readiness_class"] == "ready"
+    assert payload["model_count"] == len(payload["model_assets"])
+    assert payload["custom_node_count"] == len(payload["custom_nodes"])
+    assert "strict_ready_diagnostic_counts" in payload
     assert isinstance(payload["inputs"], list)
     assert isinstance(payload["outputs"], list)
 
@@ -848,6 +1053,10 @@ def build():
     assert payload["public_inputs"] == payload["contract"]["public_inputs"]
     assert payload["public_outputs"] == payload["contract"]["public_outputs"]
     assert payload["graph_contract"] == payload["contract"]["graph_contract"]
+    assert "readiness_class" in payload
+    assert "source_scope" in payload
+    assert "indexed" in payload
+    assert "strict_ready_diagnostic_counts" in payload
 
 
 def test_nodes_install_plan_suggests_pack_for_missing_class(
@@ -1058,6 +1267,12 @@ def test_contract_inspect_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert isinstance(payload["runtime_nodes"], list)
     assert isinstance(payload["runtime_class_types"], list)
     assert payload["readiness_level"] == "ready"
+    assert payload["readiness_class"] == "ready"
+    assert payload["source_scope"] == "repo"
+    assert payload["indexed"] is True
+    assert payload["model_count"] == len(payload["model_assets"])
+    assert payload["custom_node_count"] == len(payload["custom_nodes"])
+    assert "strict_ready_diagnostic_counts" in payload
 
 
 def test_contract_text_exposes_public_contract_counts(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1082,10 +1297,52 @@ def test_contract_doctor_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["contract"]["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
     assert isinstance(payload["contract"]["public_inputs"], list)
     assert isinstance(payload["contract"]["public_outputs"], list)
+    assert payload["public_inputs"] == payload["contract"]["public_inputs"]
+    assert payload["public_outputs"] == payload["contract"]["public_outputs"]
+    assert payload["contract_shape"] == payload["contract"]["contract_shape"]
+    assert payload["readiness_class"] == "ready"
+    assert payload["source_scope"] == "repo"
+    assert payload["indexed"] is True
     assert isinstance(payload["diagnostics"], list)
     # No error diagnostics for a clean image/z_image
     error_diags = [d for d in payload["diagnostics"] if d["severity"] == "error"]
     assert error_diags == []
+
+
+def test_public_contract_surfaces_align_across_ready_list_inspect_contract_and_doctor(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _cmd_workflows_list(argparse.Namespace(ready=True, limit=1000, json=True, include_dynamic=False)) == 0
+    ready_rows = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    ready_row = ready_rows["image/z_image"]
+
+    assert _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=True)) == 0
+    inspect_payload = json.loads(capsys.readouterr().out)
+
+    assert _cmd_contract_inspect(argparse.Namespace(workflow="image/z_image", json=True)) == 0
+    contract_payload = json.loads(capsys.readouterr().out)
+
+    assert _cmd_contract_doctor(argparse.Namespace(workflow="image/z_image", json=True)) == 0
+    doctor_payload = json.loads(capsys.readouterr().out)
+
+    for payload in [inspect_payload, contract_payload, doctor_payload]:
+        assert payload["contract_shape"] == ready_row["contract_shape"]
+        assert payload["source_scope"] == ready_row["source_scope"] == "repo"
+        assert payload["indexed"] is ready_row["indexed"] is True
+        assert payload["readiness_class"] == ready_row["readiness_class"] == "ready"
+        assert payload["model_count"] == len(payload["model_assets"])
+        assert payload["custom_node_count"] == len(payload["custom_nodes"])
+        assert "strict_ready_diagnostic_counts" in payload
+
+    ready_input_names = {item["name"] for item in ready_row["public_inputs"]}
+    runtime_input_names = {item["name"] for item in contract_payload["public_inputs"]}
+    ready_output_names = {item["name"] for item in ready_row["public_outputs"]}
+    runtime_output_names = {item["name"] for item in contract_payload["public_outputs"]}
+
+    assert ready_input_names == runtime_input_names
+    assert ready_output_names == runtime_output_names
+    assert inspect_payload["public_inputs"] == contract_payload["public_inputs"] == doctor_payload["public_inputs"]
+    assert inspect_payload["public_outputs"] == contract_payload["public_outputs"] == doctor_payload["public_outputs"]
 
 
 # ── T7: workflows lens / contract-validate CLI tests ──────────────────────────

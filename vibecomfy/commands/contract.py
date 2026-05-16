@@ -5,12 +5,14 @@ import argparse
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.commands._output import emit
 from vibecomfy.contracts import build_contract, doctor_contract
+from vibecomfy.contracts.surface import build_contract_surface
 
 
 def _cmd_contract_inspect(args: argparse.Namespace) -> int:
     workflow = load_workflow_any(args.workflow)
     contract = build_contract(workflow)
     payload = contract.to_dict()
+    payload.update(build_contract_surface(workflow, contract=payload))
     return emit(payload, json=args.json, text_renderer=_render_contract_inspect)
 
 
@@ -37,9 +39,11 @@ def _cmd_contract_doctor(args: argparse.Namespace) -> int:
     workflow = load_workflow_any(args.workflow)
     contract = build_contract(workflow)
     report = doctor_contract(workflow, contract)
+    contract_payload = contract.to_dict()
+    surface = build_contract_surface(workflow, contract=contract_payload)
     payload = {
         "status": report.status,
-        "contract": report.contract,
+        "contract": contract_payload,
         "diagnostics": [
             {
                 "code": d.code,
@@ -52,6 +56,7 @@ def _cmd_contract_doctor(args: argparse.Namespace) -> int:
             }
             for d in report.diagnostics
         ],
+        **surface,
     }
     exit_code = emit(payload, json=args.json, text_renderer=_render_contract_doctor)
     if report.status == "error":

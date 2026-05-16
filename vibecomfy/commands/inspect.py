@@ -4,6 +4,7 @@ import argparse
 from dataclasses import asdict
 
 from vibecomfy.contracts import build_contract
+from vibecomfy.contracts.surface import build_contract_surface
 from vibecomfy.commands._output import emit
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.ingest.normalize import detect_workflow_shape
@@ -22,6 +23,7 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         for patch in find_applicable(workflow)
     ]
     contract = build_contract(workflow).to_dict()
+    surface = build_contract_surface(workflow, contract=contract)
     payload = {
         "id": workflow.id,
         "shape": shape,
@@ -34,12 +36,7 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         "status": "runnable" if report.ok else "unsupported",
         "applicable_patches": applicable_patches,
         "contract": contract,
-        "contract_shape": contract["contract_shape"],
-        "public_inputs": contract["public_inputs"],
-        "public_outputs": contract["public_outputs"],
-        "graph_contract": contract["graph_contract"],
-        "readiness_level": contract["readiness_level"],
-        "model_assets": contract["model_assets"],
+        **surface,
     }
     return emit(payload, json=args.json, text_renderer=_render_inspect)
 

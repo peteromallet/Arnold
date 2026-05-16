@@ -23,14 +23,12 @@ from vibecomfy.porting.emitter import (
     READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
     READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
     READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE,
-    READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
-    READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
-    READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
     READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
     READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
 )
 from vibecomfy.porting.report import NodePackSuggestion, PortIssue, PortReport
-from vibecomfy.porting.widget_aliases import LINK_ONLY_TYPES, widget_alias_analysis, widget_names_for_class
+from vibecomfy.porting.strict_ready import StrictReadyContext, validate_strict_ready_workflow
+from vibecomfy.porting.widget_aliases import widget_alias_analysis, widget_names_for_class
 from vibecomfy.registry.ready import workflow_from_ready
 from vibecomfy.scratchpad_loader import load_scratchpad
 from vibecomfy.schema import schema_for, schema_registry_empty
@@ -211,6 +209,25 @@ def analyze_source(
     report.diagnostics.extend(_readability_diagnostics(workflow, api_prompt=api_prompt))
     # -- strict-template style diagnostics (T5) ---------------------------
     report.diagnostics.extend(_strict_template_style_diagnostics(loaded))
+    if resolved_mode in {"strict_ready", "app_active"}:
+        strict_diagnostics = validate_strict_ready_workflow(
+            workflow,
+            StrictReadyContext(
+                ready_id=loaded.indexed_id or workflow.metadata.get("ready_template") or workflow.id,
+                source_path=loaded.source_path,
+                mode=resolved_mode,
+            ),
+            api_prompt=api_prompt,
+            widget_analysis=widget_analysis,
+        )
+        report.diagnostics = _dedupe_strict_ready_diagnostics(
+            [*report.diagnostics, *strict_diagnostics]
+        )
+        report.metadata["strict_ready"] = {
+            "ok": not any(issue.severity == "error" for issue in strict_diagnostics),
+            "diagnostic_count": len(strict_diagnostics),
+            "error_count": sum(1 for issue in strict_diagnostics if issue.severity == "error"),
+        }
 
     if report.asset_candidates:
         report.recommendations.append(f"Review model assets before RunPod validation; use `vibecomfy fetch {source} --dry-run` for URL-backed assets.")
@@ -218,6 +235,27 @@ def analyze_source(
         report.recommendations.append("Resolve error diagnostics before spending RunPod GPU time.")
 
     return report
+
+
+def _dedupe_strict_ready_diagnostics(diagnostics: list[PortIssue]) -> list[PortIssue]:
+    by_key: dict[tuple[str, str], PortIssue] = {}
+    for issue in diagnostics:
+        key = (issue.code, str((issue.detail or {}).get("target") or issue.node_id or ""))
+        existing = by_key.get(key)
+        if existing is None or _severity_rank(issue.severity) > _severity_rank(existing.severity):
+            by_key[key] = issue
+    return sorted(
+        by_key.values(),
+        key=lambda issue: (
+            _severity_rank(issue.severity) * -1,
+            issue.code,
+            str((issue.detail or {}).get("target") or issue.node_id or ""),
+        ),
+    )
+
+
+def _severity_rank(severity: str) -> int:
+    return {"info": 0, "warning": 1, "error": 2}.get(severity, 1)
 
 
 def _resolve_analysis_mode(

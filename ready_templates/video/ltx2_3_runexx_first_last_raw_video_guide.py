@@ -146,6 +146,7 @@ def build() -> VibeWorkflow:
     wf.register_input("strength", "6102", "value", 1)
     wf.register_input("first_frame_strength", "2110", "value", 0.8)
     wf.register_input("last_frame_strength", "2108", "value", 0.8)
+    wf.register_input("model", "175", "ckpt_name", wf.nodes["175"].inputs.get("ckpt_name", ""))
 
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     bind_output(

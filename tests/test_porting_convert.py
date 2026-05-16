@@ -17,6 +17,7 @@ from vibecomfy.porting.convert import (
     port_convert_and_write,
     port_convert_workflow,
 )
+from vibecomfy.porting.strict_ready import STRICT_READY_MISSING_OUTPUT_CONTRACT
 # parity helpers exercised indirectly through port_convert_workflow
 from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
@@ -485,8 +486,37 @@ def test_port_convert_validation_to_json_contains_all_parity_fields() -> None:
         "source_class_type_counts", "emitted_class_type_counts",
         "source_widget_value_snapshot", "emitted_widget_value_snapshot",
         "source_topology_snapshot", "emitted_topology_snapshot",
+        "strict_ready_ok", "strict_ready_diagnostics",
     ]:
         assert field in vj, f"PortConvertValidation.to_json() missing field: {field}"
+
+
+def test_ready_template_candidate_strict_ready_failure_blocks_write(tmp_path: Path) -> None:
+    workflow = VibeWorkflow(
+        "strict_missing_output",
+        WorkflowSource("source/strict_missing_output", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "input.png"})
+
+    result = port_convert_workflow(
+        workflow,
+        ready_id="image/strict_missing_output",
+        source_path="workflow_corpus/source.json",
+        provenance={"source_hash": "sha256:strict-missing-output"},
+        workflow_shape={"nodes": 1, "runtime_nodes": 1},
+        schema_provider=None,
+    )
+
+    assert result.validation is not None
+    assert result.validation.strict_ready_ok is False
+    assert any(
+        issue.code == STRICT_READY_MISSING_OUTPUT_CONTRACT
+        for issue in result.validation.strict_ready_diagnostics
+    )
+    target = tmp_path / "strict_missing_output.py"
+    with pytest.raises(ConversionWriteError, match="Strict-ready validation failed"):
+        port_convert_and_write(result, target)
+    assert not target.exists()
 
 
 # ---------------------------------------------------------------------------

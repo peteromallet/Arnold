@@ -355,6 +355,42 @@ def test_analyze_source_rejects_opaque_component_nodes(tmp_path: Path) -> None:
     assert issue["class_type"] == component_class
 
 
+def test_analyze_source_opaque_component_is_warning_in_scratchpad_and_error_in_strict_ready(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "opaque_mode.json"
+    component_class = "90db3fa1-b7fd-4c97-90a4-3e9533589dce"
+    path.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+                "2": {"class_type": component_class, "inputs": {"image": ["1", 0]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scratchpad_report = analyze_source(str(path), schema_provider=_provider(), mode="scratchpad")
+    strict_report = analyze_source(str(path), schema_provider=_provider(), mode="strict_ready")
+
+    scratchpad_issue = next(
+        issue for issue in scratchpad_report.diagnostics
+        if issue.code == "opaque_component_node_class"
+    )
+    strict_issue = next(
+        issue for issue in strict_report.diagnostics
+        if issue.code == "opaque_component_node_class"
+    )
+
+    assert scratchpad_issue.severity == "warning"
+    assert strict_issue.severity == "error"
+    assert strict_report.metadata["strict_ready"]["ok"] is False
+    assert any(
+        issue.code == "strict_ready_missing_public_input"
+        for issue in strict_report.diagnostics
+    )
+
+
 def test_analyze_source_resolves_indexed_workflow_references(tmp_path: Path, monkeypatch) -> None:
     workflow_path = tmp_path / "indexed.json"
     workflow = _api_workflow()

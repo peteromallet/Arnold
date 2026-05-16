@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "purpose": "Violation-scoped strict-ready exceptions for protected repo templates.",
+  "match_keys": [
+    "ready_id",
+    "violation_code",
+    "target"
+  ],
+  "required_entry_fields": [
+    "id",
+    "ready_id",
+    "violation_code",
+    "target",
+    "owner",
+    "ticket",
+    "reason",
+    "allowed_until",
+    "removal_condition",
+    "final_category"
+  ],
+  "allowed_final_categories": [
+    "reference",
+    "supplemental",
+    "blocked",
+    "scratchpad-only"
+  ],
+  "default_owner": "workflow-porting",
+  "protected_scope": "ready templates where app_active is true or coverage_tier is required",
+  "exceptions": [
+    {
+      "id": "sre-20260516-ltx23-iclora-hdr-hidden-model-5020-widget3",
+      "ready_id": "video/ltx2_3_lightricks_iclora_hdr",
+      "violation_code": "hidden_model_filename",
+      "target": "node:5020.widget_3",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 IC-LoRA HDR template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:5020.widget_3.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-iclora-hdr-hidden-model-5021-widget2",
+      "ready_id": "video/ltx2_3_lightricks_iclora_hdr",
+      "violation_code": "hidden_model_filename",
+      "target": "node:5021.widget_2",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 IC-LoRA HDR template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:5021.widget_2.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-iclora-hdr-hidden-model-5021-widget3",
+      "ready_id": "video/ltx2_3_lightricks_iclora_hdr",
+      "violation_code": "hidden_model_filename",
+      "target": "node:5021.widget_3",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 IC-LoRA HDR template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:5021.widget_3.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-iclora-motion-hidden-model-5020-widget3",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "violation_code": "hidden_model_filename",
+      "target": "node:5020.widget_3",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 IC-LoRA motion-track template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:5020.widget_3.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-iclora-motion-hidden-model-5021-widget2",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "violation_code": "hidden_model_filename",
+      "target": "node:5021.widget_2",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 IC-LoRA motion-track template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:5021.widget_2.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-iclora-motion-hidden-model-5021-widget3",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "violation_code": "hidden_model_filename",
+      "target": "node:5021.widget_3",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 IC-LoRA motion-track template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:5021.widget_3.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-iclora-motion-widget-5044-widget1",
+      "ready_id": "video/ltx2_3_lightricks_iclora_motion_track",
+      "violation_code": "strict_ready_unresolved_widgets",
+      "target": "node:5044.widget_1",
+      "owner": "workflow-porting",
+      "ticket": "01KRKQGP81Z5XR0FAK19T5CAC8",
+      "reason": "The protected LTX 2.3 IC-LoRA motion-track template still contains a schema-backed positional PrimitiveInt widget without a committed alias.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Rewrite the PrimitiveInt binding with a named input or add committed schema alias evidence so strict-ready no longer emits strict_ready_unresolved_widgets for node:5044.widget_1.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-two-stage-hidden-model-4980-widget2",
+      "ready_id": "video/ltx2_3_lightricks_two_stage",
+      "violation_code": "hidden_model_filename",
+      "target": "node:4980.widget_2",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 two-stage template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:4980.widget_2.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-two-stage-hidden-model-4980-widget3",
+      "ready_id": "video/ltx2_3_lightricks_two_stage",
+      "violation_code": "hidden_model_filename",
+      "target": "node:4980.widget_3",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 two-stage template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:4980.widget_3.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-two-stage-hidden-model-4981-widget3",
+      "ready_id": "video/ltx2_3_lightricks_two_stage",
+      "violation_code": "hidden_model_filename",
+      "target": "node:4981.widget_3",
+      "owner": "workflow-porting",
+      "ticket": "01KRNDP7S3BW6DMNKAWPNVVYMB",
+      "reason": "The protected LTX 2.3 two-stage template still carries the Gemma text encoder model filename in a positional widget.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Expose the Gemma text encoder model selection as a named public input or authored model asset so strict-ready no longer emits hidden_model_filename for node:4981.widget_3.",
+      "final_category": "blocked"
+    },
+    {
+      "id": "sre-20260516-ltx23-two-stage-widget-4988-widget1",
+      "ready_id": "video/ltx2_3_lightricks_two_stage",
+      "violation_code": "strict_ready_unresolved_widgets",
+      "target": "node:4988.widget_1",
+      "owner": "workflow-porting",
+      "ticket": "01KRKQGP81Z5XR0FAK19T5CAC8",
+      "reason": "The protected LTX 2.3 two-stage template still contains a schema-backed positional PrimitiveInt widget without a committed alias.",
+      "allowed_until": "2026-06-30",
+      "removal_condition": "Rewrite the PrimitiveInt binding with a named input or add committed schema alias evidence so strict-ready no longer emits strict_ready_unresolved_widgets for node:4988.widget_1.",
+      "final_category": "blocked"
+    }
+  ]
+}

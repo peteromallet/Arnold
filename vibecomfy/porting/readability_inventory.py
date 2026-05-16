@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.registry.ready import repo_ready_template_id_for_path, repo_ready_template_paths
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 READY_ROOT = REPO_ROOT / "ready_templates"
 COVERAGE_PATH = REPO_ROOT / "workflow_corpus" / "manifests" / "coverage.json"
@@ -111,16 +113,11 @@ def _enumerate_repo_templates() -> list[Path]:
     ``find ready_templates -type f -name '*.py' ! -name '_*' | sort``
     plus explicit ``__init__.py`` exclusion.
     """
-    paths: list[Path] = []
-    for p in sorted(READY_ROOT.rglob("*.py")):
-        if p.name == "__init__.py" or p.name.startswith("_"):
-            continue
-        paths.append(p)
-    return paths
+    return repo_ready_template_paths(READY_ROOT)
 
 
 def _ready_id_for_path(path: Path) -> str:
-    return path.relative_to(READY_ROOT).with_suffix("").as_posix()
+    return repo_ready_template_id_for_path(path, READY_ROOT)
 
 
 # ---------------------------------------------------------------------------

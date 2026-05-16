@@ -13,7 +13,7 @@ from vibecomfy.patches.resolution import resolution
 from vibecomfy.registry import ready as ready_registry
 from vibecomfy.registry.ready import ready_template_ids, ready_template_source_info, workflow_from_ready
 from vibecomfy.registry.ready_template import apply_ready_template_policy
-from vibecomfy.registry.static_contract import extract_ready_template_contract
+from vibecomfy.registry.static_contract import compare_public_contracts, extract_ready_template_contract
 from vibecomfy.runtime.session import SessionConfig, _model_assets_from_workflow
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
@@ -118,6 +118,30 @@ def build():
     assert all(diagnostic["severity"] == "warning" for diagnostic in summary["diagnostics"])
 
 
+def test_static_contract_extractor_infers_finalize_common_inputs(tmp_path: Path) -> None:
+    source = tmp_path / "inferred.py"
+    source.write_text(
+        """
+def build():
+    model = wf.node("UNETLoader", unet_name="model.safetensors")
+    noise = _node(wf, "RandomNoise", "4832", noise_seed=43)
+    prompt = _node(wf, "CLIPTextEncode", "2483", text="hello")
+""",
+        encoding="utf-8",
+    )
+
+    summary = extract_ready_template_contract(source)
+
+    assert [
+        (item["name"], item["node_id"], item["field"], item["source"])
+        for item in summary["public_inputs"]
+    ] == [
+        ("model", "1", "unet_name", "finalize_metadata"),
+        ("prompt", "2483", "text", "finalize_metadata"),
+        ("seed", "4832", "noise_seed", "finalize_metadata"),
+    ]
+
+
 def test_template_index_includes_static_public_contract_fields() -> None:
     from tools.refresh_template_index import build_template_index
 
@@ -130,6 +154,48 @@ def test_template_index_includes_static_public_contract_fields() -> None:
     assert "static_diagnostics" in row
     assert "app_active" in row
     assert any(item["name"] == "prompt" for item in row["public_inputs"])
+
+
+def test_protected_template_index_contracts_match_built_contracts() -> None:
+    from tools.refresh_template_index import build_template_index
+
+    rows = [
+        item
+        for item in build_template_index()["templates"]
+        if item.get("app_active") is True or item.get("coverage_tier") == "required"
+    ]
+    offenders: list[tuple[str, dict[str, list[dict[str, str]]]]] = []
+
+    for row in rows:
+        contract = build_contract(workflow_from_ready(row["id"])).to_dict()
+        comparison = compare_public_contracts(
+            static_inputs=row.get("public_inputs") or [],
+            static_outputs=row.get("public_outputs") or [],
+            built_inputs=contract.get("public_inputs") or [],
+            built_outputs=contract.get("public_outputs") or [],
+        )
+        if any(comparison.values()):
+            offenders.append((row["id"], comparison))
+
+    assert offenders == []
+
+
+def test_ltx_lightricks_templates_static_index_includes_built_public_inputs() -> None:
+    from tools.refresh_template_index import build_template_index
+
+    rows = {item["id"]: item for item in build_template_index()["templates"]}
+    for template_id in [
+        "video/ltx2_3_lightricks_iclora_hdr",
+        "video/ltx2_3_lightricks_iclora_motion_track",
+        "video/ltx2_3_lightricks_two_stage",
+    ]:
+        static_names = {item["name"] for item in rows[template_id]["public_inputs"]}
+        built_names = {
+            item["name"]
+            for item in build_contract(workflow_from_ready(template_id)).to_dict()["public_inputs"]
+        }
+        assert {"model", "prompt", "seed"} <= static_names
+        assert static_names == built_names
 
 
 def test_ready_templates_are_pure_python_builders() -> None:

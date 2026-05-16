@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 import importlib.util
 from pathlib import Path
 import warnings
-from typing import Any
+from typing import Any, Iterable
 
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.workflow import VibeWorkflow
@@ -29,9 +29,53 @@ class ReadyTemplateSourceInfo:
         return asdict(self)
 
 
-def ready_template_ids() -> list[str]:
+def repo_ready_template_paths(root: Path | None = None) -> list[Path]:
+    """Return checked-in repo ready-template paths without loading plugins."""
+    return _template_paths(root or READY_ROOT)
+
+
+def repo_ready_template_id_for_path(path: Path, root: Path | None = None) -> str:
+    """Return the ready-template id for a path under the repo ready root."""
+    return path.relative_to(root or READY_ROOT).with_suffix("").as_posix()
+
+
+def repo_ready_template_ids(root: Path | None = None) -> list[str]:
+    """Return checked-in repo ready-template ids without loading plugins."""
+    ready_root = root or READY_ROOT
+    return sorted(repo_ready_template_id_for_path(path, ready_root) for path in repo_ready_template_paths(ready_root))
+
+
+def dynamic_ready_template_rows(*, exclude_ids: Iterable[str] = ()) -> list[dict[str, Any]]:
+    """Return explicitly discovered plugin/user ready-template rows."""
+    excluded = set(exclude_ids)
     seen: dict[str, Path] = {}
-    for root in _ready_roots():
+    rows: list[dict[str, Any]] = []
+    for root in _dynamic_ready_roots():
+        if not root.exists():
+            continue
+        for path in _template_paths(root):
+            template_id = path.relative_to(root).with_suffix("").as_posix()
+            if template_id in excluded:
+                continue
+            if template_id in seen:
+                _warn_collision(template_id, path, seen[template_id])
+                continue
+            seen[template_id] = path
+            rows.append(
+                {
+                    "id": template_id,
+                    "path": str(path),
+                    "source_scope": "dynamic",
+                    "indexed": False,
+                }
+            )
+    return sorted(rows, key=lambda row: row["id"])
+
+
+def ready_template_ids(*, include_dynamic: bool = True) -> list[str]:
+    seen: dict[str, Path] = {}
+    roots = _ready_roots() if include_dynamic else [READY_ROOT]
+    for root in roots:
         if not root.exists():
             continue
         for path in _template_paths(root):
@@ -228,15 +272,23 @@ def _template_id_for_path(path: Path) -> str:
 
 
 def _ready_roots() -> list[Path]:
+    return _dedupe_roots([READY_ROOT, *_dynamic_ready_roots()])
+
+
+def _dynamic_ready_roots() -> list[Path]:
     from vibecomfy.extras import ensure_plugins_loaded, registered_ready_roots
 
     ensure_plugins_loaded()
-    roots = [
-        READY_ROOT,
-        Path.cwd() / "vibecomfy_extras" / "ready_templates",
-        Path.home() / ".vibecomfy" / "ready_templates",
-        *registered_ready_roots(),
-    ]
+    return _dedupe_roots(
+        [
+            Path.cwd() / "vibecomfy_extras" / "ready_templates",
+            Path.home() / ".vibecomfy" / "ready_templates",
+            *registered_ready_roots(),
+        ]
+    )
+
+
+def _dedupe_roots(roots: Iterable[Path]) -> list[Path]:
     deduped: list[Path] = []
     seen: set[Path] = set()
     for root in roots:

@@ -4,6 +4,15 @@ import ast
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.metadata import (
+    MODEL_KEYS,
+    PROMPT_KEYS,
+    PROMPT_NODE_CLASSES,
+    SEED_KEYS,
+    STEP_KEYS,
+    STEPS_NODE_CLASSES,
+)
+
 
 _UNSUPPORTED = object()
 
@@ -51,6 +60,7 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
             descriptor = _extract_output_call(node, call_name, diagnostics)
             if descriptor is not None:
                 public_outputs.append(descriptor)
+    public_inputs.extend(_infer_common_input_contracts(tree, public_inputs))
 
     marker = _template_marker(source)
     return {
@@ -67,6 +77,42 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
         "reference": _has_marker(metadata, "reference"),
         "supplemental": _has_marker(metadata, "supplemental"),
     }
+
+
+def compare_public_contracts(
+    *,
+    static_inputs: list[dict[str, Any]],
+    static_outputs: list[dict[str, Any]],
+    built_inputs: list[dict[str, Any]],
+    built_outputs: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Compare static and built public contract descriptors by stable keys."""
+    static_input_keys = {_input_key(item) for item in static_inputs}
+    built_input_keys = {_input_key(item) for item in built_inputs}
+    static_output_keys = {_output_key(item) for item in static_outputs}
+    built_output_keys = {_output_key(item) for item in built_outputs}
+    return {
+        "inputs_only_static": [_input_key_to_dict(key) for key in sorted(static_input_keys - built_input_keys)],
+        "inputs_only_built": [_input_key_to_dict(key) for key in sorted(built_input_keys - static_input_keys)],
+        "outputs_only_static": [_output_key_to_dict(key) for key in sorted(static_output_keys - built_output_keys)],
+        "outputs_only_built": [_output_key_to_dict(key) for key in sorted(built_output_keys - static_output_keys)],
+    }
+
+
+def public_contracts_match(
+    *,
+    static_inputs: list[dict[str, Any]],
+    static_outputs: list[dict[str, Any]],
+    built_inputs: list[dict[str, Any]],
+    built_outputs: list[dict[str, Any]],
+) -> bool:
+    comparison = compare_public_contracts(
+        static_inputs=static_inputs,
+        static_outputs=static_outputs,
+        built_inputs=built_inputs,
+        built_outputs=built_outputs,
+    )
+    return all(not values for values in comparison.values())
 
 
 def _module_assignments(tree: ast.Module, diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
@@ -148,6 +194,97 @@ def _extract_output_call(
         if descriptor["name"] is None and positional_name is not _UNSUPPORTED:
             descriptor["name"] = positional_name
     return descriptor
+
+
+def _infer_common_input_contracts(
+    tree: ast.AST,
+    explicit_inputs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    explicit_names = {item.get("name") for item in explicit_inputs if isinstance(item.get("name"), str)}
+    inferred: dict[str, dict[str, Any]] = {}
+    next_auto_id = 1
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _call_name(node.func) in {"_node", "node", "ready_node"}
+    ]
+    for call in sorted(calls, key=lambda item: (getattr(item, "lineno", 0), getattr(item, "col_offset", 0))):
+        node_info = _runtime_node_call(call, next_auto_id)
+        if node_info is None:
+            continue
+        next_auto_id += 1
+        class_type = node_info["class_type"]
+        node_id = node_info["node_id"]
+        for field, value in node_info["inputs"].items():
+            input_name = _common_input_name(class_type, field, value)
+            if input_name is None or input_name in explicit_names or input_name in inferred:
+                continue
+            inferred[input_name] = {
+                "name": input_name,
+                "target": {"node_id": node_id, "field": field},
+                "node_id": node_id,
+                "field": field,
+                "value": value,
+                "type": None,
+                "default": None,
+                "required": False,
+                "range": None,
+                "aliases": [],
+                "media_semantics": None,
+                "status": "static",
+                "source": "finalize_metadata",
+            }
+    return [inferred[name] for name in sorted(inferred)]
+
+
+def _runtime_node_call(node: ast.Call, next_auto_id: int) -> dict[str, Any] | None:
+    call_name = _call_name(node.func)
+    if call_name == "_node":
+        class_type = _literal_arg(node, 1, "class_type", [], call_name, required=False)
+        node_id = _literal_arg(node, 2, "node_id", [], call_name, required=False)
+        keyword_inputs = _literal_keyword_inputs(node)
+    elif call_name == "ready_node":
+        class_type = _literal_arg(node, 1, "class_type", [], call_name, required=False)
+        node_id = _keyword_literal(node, "source_id", [], call_name) or str(next_auto_id)
+        keyword_inputs = _literal_keyword_inputs(node, excluded={"source_id", "outputs", "extras"})
+        extras = _keyword_literal(node, "extras", [], call_name)
+        if isinstance(extras, dict):
+            keyword_inputs.update({str(key): value for key, value in extras.items()})
+    elif call_name == "node":
+        class_type = _literal_arg(node, 0, "class_type", [], call_name, required=False)
+        node_id = str(next_auto_id)
+        keyword_inputs = _literal_keyword_inputs(node)
+    else:
+        return None
+    if not isinstance(class_type, str) or not isinstance(node_id, str):
+        return None
+    return {"class_type": class_type, "node_id": node_id, "inputs": keyword_inputs}
+
+
+def _literal_keyword_inputs(node: ast.Call, *, excluded: set[str] | None = None) -> dict[str, Any]:
+    excluded = excluded or set()
+    result: dict[str, Any] = {}
+    for keyword in node.keywords:
+        if keyword.arg is None or keyword.arg in excluded:
+            continue
+        value = _literal_value(keyword.value, {})
+        if value is _UNSUPPORTED:
+            continue
+        result[keyword.arg] = value
+    return result
+
+
+def _common_input_name(class_type: str, field: str, value: Any) -> str | None:
+    normalized = field.lower()
+    if normalized in PROMPT_KEYS and isinstance(value, str) and class_type in PROMPT_NODE_CLASSES:
+        return "prompt"
+    if normalized in SEED_KEYS and isinstance(value, int) and not isinstance(value, bool):
+        return "seed"
+    if normalized in STEP_KEYS and isinstance(value, int) and not isinstance(value, bool) and class_type in STEPS_NODE_CLASSES:
+        return "steps"
+    if normalized in MODEL_KEYS and isinstance(value, str):
+        return "model"
+    return None
 
 
 def _literal_arg(
@@ -235,6 +372,24 @@ def _literal_value(node: ast.AST, assignments: dict[str, Any]) -> Any:
         return ast.literal_eval(node)
     except (ValueError, TypeError):
         return _UNSUPPORTED
+
+
+def _input_key(item: dict[str, Any]) -> tuple[str, str, str]:
+    return (str(item.get("name") or ""), str(item.get("node_id") or ""), str(item.get("field") or ""))
+
+
+def _output_key(item: dict[str, Any]) -> tuple[str, str, str]:
+    return (str(item.get("name") or ""), str(item.get("node_id") or ""), str(item.get("output_type") or ""))
+
+
+def _input_key_to_dict(key: tuple[str, str, str]) -> dict[str, str]:
+    name, node_id, field = key
+    return {"name": name, "node_id": node_id, "field": field}
+
+
+def _output_key_to_dict(key: tuple[str, str, str]) -> dict[str, str]:
+    name, node_id, output_type = key
+    return {"name": name, "node_id": node_id, "output_type": output_type}
 
 
 def _call_name(func: ast.AST) -> str:

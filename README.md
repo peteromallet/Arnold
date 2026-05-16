@@ -35,13 +35,15 @@ python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<name> --out r
 python -m vibecomfy.cli port inventory --ready --json
 ```
 
-`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, output-contract gaps, and model asset issues while staying offline by default. Use `--strict-ready-template` before promoting or RunPod-testing production/app-parity templates; it turns schema-backed unresolved widgets and missing workflow outputs into hard errors. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies.
+`port check` reports helper/UI nodes, unresolved custom-node packs, missing required inputs, positional widget aliases, output-contract gaps, and model asset issues while staying offline by default. Use `--strict-ready-template` before promoting or RunPod-testing production/app-parity templates; it turns schema-backed unresolved widgets, missing or broken public inputs, missing or unnamed outputs, hidden model filenames, and opaque UUID subgraphs into hard errors. Use `--head-check-models` only when you want URL HEAD checks without downloading model bodies.
 
 `port convert` uses atomic writes (temp file → validate/parity-check → `Path.replace()`), refuses to overwrite `# vibecomfy: manual` templates, and supports `--dry-run` (emit evidence without writing) and `--diff` (unified diff + JSON metadata). Parity evidence includes widget snapshots, output counts, class type counts, and topology snapshots.
 
 `port inventory` scans only checked-in `ready_templates/**/*.py` and reports readability issues (positional `.out(<int>)`, `widget_N` fields, UUID class types, local `_node` copies, missing output contracts), marker classification, and source-provenance flags. The JSON output is deterministic and versioned.
 
 See [docs/template_porting_workbench.md](docs/template_porting_workbench.md) for the command map and live validation loop.
+
+Ready-template discovery is repo-indexed by default. `python -m vibecomfy.cli workflows list --ready --json` reads the checked-in `template_index.json` when it exists and does not import plugin, cwd-extra, or user-global template code. Use `--include-dynamic` only when you explicitly want plugin/user rows; those rows are marked `source_scope: "dynamic"` and `indexed: false` and are excluded from strict-ready CI gates.
 
 When replacing or hand-authoring a node, inspect the node's real accepted inputs first:
 
@@ -71,6 +73,8 @@ python -m vibecomfy.cli doctor ready_templates/<kind>/<id>.py --json
 ```
 
 The manifest/index tests catch missing ready-template rows, stale `template_index.json`, and manifest entries that point at Python templates that do not exist.
+
+Required or app-active ready templates must stay on the clean path: public inputs are named and target real built nodes/fields, public outputs are semantically named, hidden model filenames are exposed through public inputs or model metadata, schema-backed `widget_N` aliases are resolved, and opaque UUID subgraphs are either replaced with transparent graph code or covered by an explicit strict-ready exception. Document any remaining non-compliant template as `reference`, `supplemental`, `blocked`, or `scratchpad-only` with an owner and follow-up ticket.
 
 `doctor` is the local readiness pass for a built workflow. It reports missing
 model assets, node-pack drift, suggested patches, and runtime warnings that

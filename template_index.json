@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-05-08T22:52:12+00:00",
-  "generated_from": "runtime ready template discovery",
+  "generated_from": "repo-only ready template discovery",
   "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' | sort",
   "exclude_rule": "exclude __init__.py and files whose basename starts with '_' to match vibecomfy.registry.ready._template_paths",
   "template_count": 64,
@@ -8,6 +8,8 @@
     {
       "id": "audio/ace_step_1_5_t2a_song",
       "path": "ready_templates/audio/ace_step_1_5_t2a_song.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_audio_song",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -123,6 +125,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "125",
+            "field": "unet_name"
+          },
+          "node_id": "125",
+          "field": "unet_name",
+          "value": "acestep_v1.5_turbo.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -138,6 +158,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "audio",
@@ -154,6 +175,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -164,18 +187,42 @@
     {
       "id": "audio/qwen3_tts_custom_voice",
       "path": "ready_templates/audio/qwen3_tts_custom_voice.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_speech_custom_voice",
       "coverage_tier": "supplemental",
       "custom_nodes": [
         "ComfyUI-QwenTTS"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "1",
+            "field": "seed"
+          },
+          "node_id": "1",
+          "field": "seed",
+          "value": 3327,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 1,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -186,18 +233,42 @@
     {
       "id": "audio/qwen3_tts_voice_clone",
       "path": "ready_templates/audio/qwen3_tts_voice_clone.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_speech_voice_clone",
       "coverage_tier": "supplemental",
       "custom_nodes": [
         "ComfyUI-QwenTTS"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "2",
+            "field": "seed"
+          },
+          "node_id": "2",
+          "field": "seed",
+          "value": 3189,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 1,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -208,18 +279,42 @@
     {
       "id": "audio/qwen3_tts_voice_design",
       "path": "ready_templates/audio/qwen3_tts_voice_design.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_speech_voice_design",
       "coverage_tier": "supplemental",
       "custom_nodes": [
         "ComfyUI-QwenTTS"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "1",
+            "field": "seed"
+          },
+          "node_id": "1",
+          "field": "seed",
+          "value": 3294,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 1,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -230,16 +325,21 @@
     {
       "id": "edit/flux2_klein_4b_image_edit_base",
       "path": "ready_templates/edit/flux2_klein_4b_image_edit_base.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_edit",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
       "model_count": 3,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -250,6 +350,8 @@
     {
       "id": "edit/flux2_klein_4b_image_edit_distilled",
       "path": "ready_templates/edit/flux2_klein_4b_image_edit_distilled.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_edit",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -310,6 +412,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "75:70",
+            "field": "unet_name"
+          },
+          "node_id": "75:70",
+          "field": "unet_name",
+          "value": "flux-2-klein-4b-fp8.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -325,6 +445,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "image",
@@ -341,6 +462,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -351,16 +474,21 @@
     {
       "id": "edit/flux2_klein_9b_image_edit_base",
       "path": "ready_templates/edit/flux2_klein_9b_image_edit_base.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_edit",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
       "model_count": 3,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -371,16 +499,21 @@
     {
       "id": "edit/flux2_klein_9b_image_edit_distilled",
       "path": "ready_templates/edit/flux2_klein_9b_image_edit_distilled.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_edit",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
       "model_count": 3,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -391,6 +524,8 @@
     {
       "id": "edit/qwen_image_edit",
       "path": "ready_templates/edit/qwen_image_edit.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_edit",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -451,6 +586,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "102:37",
+            "field": "unet_name"
+          },
+          "node_id": "102:37",
+          "field": "unet_name",
+          "value": "qwen_image_edit_fp8_e4m3fn.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -466,6 +619,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "image",
@@ -482,6 +636,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -492,16 +648,21 @@
     {
       "id": "image/basic_image_upscale",
       "path": "ready_templates/image/basic_image_upscale.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_upscale",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -512,6 +673,8 @@
     {
       "id": "image/flux2_klein_4b_t2i",
       "path": "ready_templates/image/flux2_klein_4b_t2i.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -608,6 +771,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "75:70",
+            "field": "unet_name"
+          },
+          "node_id": "75:70",
+          "field": "unet_name",
+          "value": "flux-2-klein-base-4b.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -623,6 +804,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "image",
@@ -639,6 +821,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -649,6 +833,8 @@
     {
       "id": "image/flux2_klein_9b_gguf_t2i",
       "path": "ready_templates/image/flux2_klein_9b_gguf_t2i.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -747,6 +933,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "75:70",
+            "field": "unet_name"
+          },
+          "node_id": "75:70",
+          "field": "unet_name",
+          "value": "flux-2-klein-base-9b-fp8.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -762,6 +966,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "image",
@@ -778,6 +983,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 1,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -788,16 +995,21 @@
     {
       "id": "image/flux2_klein_9b_t2i",
       "path": "ready_templates/image/flux2_klein_9b_t2i.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_image",
       "coverage_tier": "supplemental",
       "custom_nodes": [],
       "model_count": 3,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -808,6 +1020,8 @@
     {
       "id": "image/qwen_image_2512",
       "path": "ready_templates/image/qwen_image_2512.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -904,6 +1118,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "238:226",
+            "field": "unet_name"
+          },
+          "node_id": "238:226",
+          "field": "unet_name",
+          "value": "qwen_image_2512_fp8_e4m3fn.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -919,6 +1151,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "image",
@@ -935,6 +1168,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -945,6 +1180,8 @@
     {
       "id": "image/z_image",
       "path": "ready_templates/image/z_image.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_image",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -1059,6 +1296,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "1",
+            "field": "unet_name"
+          },
+          "node_id": "1",
+          "field": "unet_name",
+          "value": "z_image_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -1074,6 +1329,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "image",
@@ -1090,6 +1346,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -1100,16 +1358,76 @@
     {
       "id": "image/z_image_img2img",
       "path": "ready_templates/image/z_image_img2img.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_image",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
       "model_count": 3,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "2",
+            "field": "unet_name"
+          },
+          "node_id": "2",
+          "field": "unet_name",
+          "value": "z_image_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "10",
+            "field": "seed"
+          },
+          "node_id": "10",
+          "field": "seed",
+          "value": 770044821593082,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "10",
+            "field": "steps"
+          },
+          "node_id": "10",
+          "field": "steps",
+          "value": 12,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -1120,16 +1438,21 @@
     {
       "id": "smoke/empty_image_red",
       "path": "ready_templates/smoke/empty_image_red.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "runtime_smoke",
       "coverage_tier": "smoke",
       "custom_nodes": [],
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -1140,6 +1463,8 @@
     {
       "id": "video/basic_video_enhance",
       "path": "ready_templates/video/basic_video_enhance.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "video_enhance",
       "coverage_tier": "production_baseline",
       "custom_nodes": [
@@ -1148,10 +1473,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 1,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -1162,6 +1490,8 @@
     {
       "id": "video/ltx2_3_first_last_frame_travel_iclora_control",
       "path": "ready_templates/video/ltx2_3_first_last_frame_travel_iclora_control.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_last_frame_control_video",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -1425,6 +1755,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "register_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "175",
+            "field": "ckpt_name"
+          },
+          "node_id": "175",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -1440,6 +1788,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -1462,6 +1811,8 @@
       ],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 6,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
       "app_active": true,
@@ -1472,6 +1823,8 @@
     {
       "id": "video/ltx2_3_i2v",
       "path": "ready_templates/video/ltx2_3_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -1628,6 +1981,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "3940",
+            "field": "ckpt_name"
+          },
+          "node_id": "3940",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-dev.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -1654,6 +2025,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -1681,6 +2053,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -1691,6 +2065,8 @@
     {
       "id": "video/ltx2_3_iamccs_audio_extend_low_ram",
       "path": "ready_templates/video/ltx2_3_iamccs_audio_extend_low_ram.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "audio_extended_multisegment_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -1699,12 +2075,70 @@
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "15",
+            "field": "ckpt_name"
+          },
+          "node_id": "15",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "8",
+            "field": "text"
+          },
+          "node_id": "8",
+          "field": "text",
+          "value": "cinematic image to video shot of a singer actor acting and singing a song during a musical, intense expression, coherent motion, smooth camera movement, high detail, stable composition, audio-reactive motion",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "25",
+            "field": "noise_seed"
+          },
+          "node_id": "25",
+          "field": "noise_seed",
+          "value": 851629932274714,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -1715,6 +2149,8 @@
     {
       "id": "video/ltx2_3_iamccs_audio_image_to_video",
       "path": "ready_templates/video/ltx2_3_iamccs_audio_image_to_video.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "audio_image_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -1724,12 +2160,70 @@
         "ComfyUI-VideoHelperSuite"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "311",
+            "field": "ckpt_name"
+          },
+          "node_id": "311",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "165",
+            "field": "text"
+          },
+          "node_id": "165",
+          "field": "text",
+          "value": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (\u201cPNTR\u201d), incorrect t-shirt slogan (\u201cJUST DO IT\u201d), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "238",
+            "field": "steps"
+          },
+          "node_id": "238",
+          "field": "steps",
+          "value": 1,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -1740,6 +2234,8 @@
     {
       "id": "video/ltx2_3_iamccs_long_i2v",
       "path": "ready_templates/video/ltx2_3_iamccs_long_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "long_image_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -1748,12 +2244,34 @@
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "5176",
+            "field": "ckpt_name"
+          },
+          "node_id": "5176",
+          "field": "ckpt_name",
+          "value": "ltx-2-19b-distilled.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -1764,6 +2282,8 @@
     {
       "id": "video/ltx2_3_lightricks_first_last_parity",
       "path": "ready_templates/video/ltx2_3_lightricks_first_last_parity.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_last_frame_video",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -2091,6 +2611,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -2123,6 +2644,8 @@
       ],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 1,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
       "app_active": true,
@@ -2133,6 +2656,8 @@
     {
       "id": "video/ltx2_3_lightricks_first_last_two_stage_lowvram",
       "path": "ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_last_frame_video",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -2551,6 +3076,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -2593,6 +3119,8 @@
       ],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
       "app_active": true,
@@ -2603,6 +3131,8 @@
     {
       "id": "video/ltx2_3_lightricks_iclora_hdr",
       "path": "ready_templates/video/ltx2_3_lightricks_iclora_hdr.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "video_guided_hdr",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -2610,7 +3140,62 @@
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "3940",
+            "field": "ckpt_name"
+          },
+          "node_id": "3940",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-dev-fp8.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2483",
+            "field": "text"
+          },
+          "node_id": "2483",
+          "field": "text",
+          "value": "HDR footage",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "4832",
+            "field": "noise_seed"
+          },
+          "node_id": "4832",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [
         {
           "name": "video",
@@ -2624,6 +3209,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -2638,8 +3224,10 @@
         }
       ],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -2650,6 +3238,8 @@
     {
       "id": "video/ltx2_3_lightricks_iclora_motion_track",
       "path": "ready_templates/video/ltx2_3_lightricks_iclora_motion_track.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "motion_track_control",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -2657,7 +3247,62 @@
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "3940",
+            "field": "ckpt_name"
+          },
+          "node_id": "3940",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-dev-fp8.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2483",
+            "field": "text"
+          },
+          "node_id": "2483",
+          "field": "text",
+          "value": "Man on a small bycicle being chased by a police car. The sirens are blaring and the crowd of bystanders is cheering loudly. As he is pedaling away on the bike, he looks back at the police car and shouts in a taunting tone: \"you can't catch me!\" and waving his fist in the air. He then pedals away on his bike.",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "4832",
+            "field": "noise_seed"
+          },
+          "node_id": "4832",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [
         {
           "name": "preview_video",
@@ -2682,6 +3327,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "preview_video",
@@ -2707,8 +3353,10 @@
         }
       ],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -2719,6 +3367,8 @@
     {
       "id": "video/ltx2_3_lightricks_iclora_union_control",
       "path": "ready_templates/video/ltx2_3_lightricks_iclora_union_control.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "union_control_video_guided_i2v",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -2728,12 +3378,70 @@
         "comfyui_controlnet_aux"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "3940",
+            "field": "ckpt_name"
+          },
+          "node_id": "3940",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-dev-fp8.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2483",
+            "field": "text"
+          },
+          "node_id": "2483",
+          "field": "text",
+          "value": "Apocalyptic landscape with abandoned buildings, overgrown with foliage and trees. The sky is clear and the sun is setting, with the horizon turning bright red. The buildings are delapidated, falling apart and crumbling due to being abandoned for so long.\nThe air is full of silence and the only thing to be heard is a young girl breathing and saying: \"Where is everyone?\"",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "4832",
+            "field": "noise_seed"
+          },
+          "node_id": "4832",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -2744,6 +3452,8 @@
     {
       "id": "video/ltx2_3_lightricks_two_stage",
       "path": "ready_templates/video/ltx2_3_lightricks_two_stage.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_or_image_to_video_upscale",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -2751,7 +3461,62 @@
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "3940",
+            "field": "ckpt_name"
+          },
+          "node_id": "3940",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-dev-fp8.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2483",
+            "field": "text"
+          },
+          "node_id": "2483",
+          "field": "text",
+          "value": "A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "4832",
+            "field": "noise_seed"
+          },
+          "node_id": "4832",
+          "field": "noise_seed",
+          "value": 43,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [
         {
           "name": "video",
@@ -2765,6 +3530,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -2779,8 +3545,10 @@
         }
       ],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -2791,6 +3559,8 @@
     {
       "id": "video/ltx2_3_runexx_custom_audio",
       "path": "ready_templates/video/ltx2_3_runexx_custom_audio.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "custom_audio_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -2801,12 +3571,70 @@
         "rgthree-comfy"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "196",
+            "field": "ckpt_name"
+          },
+          "node_id": "196",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "110",
+            "field": "text"
+          },
+          "node_id": "110",
+          "field": "text",
+          "value": "blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "114",
+            "field": "noise_seed"
+          },
+          "node_id": "114",
+          "field": "noise_seed",
+          "value": 420,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 5,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -2817,6 +3645,8 @@
     {
       "id": "video/ltx2_3_runexx_first_last_frame",
       "path": "ready_templates/video/ltx2_3_runexx_first_last_frame.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_last_frame_video",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -3168,6 +3998,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "register_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "175",
+            "field": "ckpt_name"
+          },
+          "node_id": "175",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -3183,6 +4031,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -3210,6 +4059,8 @@
       ],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
       "app_active": true,
@@ -3220,6 +4071,8 @@
     {
       "id": "video/ltx2_3_runexx_first_last_raw_video_guide",
       "path": "ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_last_frame_raw_video_guide",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -3463,6 +4316,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "register_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "175",
+            "field": "ckpt_name"
+          },
+          "node_id": "175",
+          "field": "ckpt_name",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": null,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "register_input"
         }
       ],
       "public_outputs": [
@@ -3478,6 +4349,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -3505,6 +4377,8 @@
       ],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
       "app_active": true,
@@ -3515,6 +4389,8 @@
     {
       "id": "video/ltx2_3_runexx_first_middle_last_frame",
       "path": "ready_templates/video/ltx2_3_runexx_first_middle_last_frame.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_middle_last_frame_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -3525,8 +4401,64 @@
         "rgthree-comfy"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "175",
+            "field": "ckpt_name"
+          },
+          "node_id": "175",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "11",
+            "field": "text"
+          },
+          "node_id": "11",
+          "field": "text",
+          "value": "blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "14",
+            "field": "noise_seed"
+          },
+          "node_id": "14",
+          "field": "noise_seed",
+          "value": 43,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [
         {
@@ -3535,8 +4467,10 @@
           "message": "READY_METADATA contains dynamic values"
         }
       ],
-      "public_input_status": "partial",
+      "public_input_status": "declared",
       "public_output_status": "partial",
+      "custom_node_count": 5,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
       "app_active": false,
@@ -3547,6 +4481,8 @@
     {
       "id": "video/ltx2_3_runexx_lipsync_custom_audio",
       "path": "ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "voice_to_lipsync_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -3557,12 +4493,88 @@
         "rgthree-comfy"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "471",
+            "field": "ckpt_name"
+          },
+          "node_id": "471",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "110",
+            "field": "text"
+          },
+          "node_id": "110",
+          "field": "text",
+          "value": "text, subtitles, logo, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "115",
+            "field": "noise_seed"
+          },
+          "node_id": "115",
+          "field": "noise_seed",
+          "value": 790774741312584,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "164",
+            "field": "steps"
+          },
+          "node_id": "164",
+          "field": "steps",
+          "value": 1,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 5,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3573,6 +4585,8 @@
     {
       "id": "video/ltx2_3_runexx_motion_transfer_dwpose",
       "path": "ready_templates/video/ltx2_3_runexx_motion_transfer_dwpose.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "dwpose_motion_transfer",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -3584,12 +4598,70 @@
         "rgthree-comfy"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "5127",
+            "field": "ckpt_name"
+          },
+          "node_id": "5127",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "2612",
+            "field": "text"
+          },
+          "node_id": "2612",
+          "field": "text",
+          "value": "low contrast, washed out, text, subtitles, logo, still image, still video, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "4832",
+            "field": "noise_seed"
+          },
+          "node_id": "4832",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 6,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3600,6 +4672,8 @@
     {
       "id": "video/ltx2_3_runexx_music_video_low_ram",
       "path": "ready_templates/video/ltx2_3_runexx_music_video_low_ram.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "music_video_multiscene",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -3610,12 +4684,88 @@
         "rgthree-comfy"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "1567",
+            "field": "ckpt_name"
+          },
+          "node_id": "1567",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "1626",
+            "field": "text"
+          },
+          "node_id": "1626",
+          "field": "text",
+          "value": "text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "2169",
+            "field": "noise_seed"
+          },
+          "node_id": "2169",
+          "field": "noise_seed",
+          "value": 420,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "2173",
+            "field": "steps"
+          },
+          "node_id": "2173",
+          "field": "steps",
+          "value": 1,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 5,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3626,6 +4776,8 @@
     {
       "id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
       "path": "ready_templates/video/ltx2_3_runexx_talking_avatar_qwen_tts.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "tts_talking_avatar",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -3637,12 +4789,88 @@
         "rgthree-comfy"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "1567",
+            "field": "ckpt_name"
+          },
+          "node_id": "1567",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "1626",
+            "field": "text"
+          },
+          "node_id": "1626",
+          "field": "text",
+          "value": "text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "1832",
+            "field": "noise_seed"
+          },
+          "node_id": "1832",
+          "field": "noise_seed",
+          "value": 420,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "1877",
+            "field": "steps"
+          },
+          "node_id": "1877",
+          "field": "steps",
+          "value": 1,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 6,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3653,6 +4881,8 @@
     {
       "id": "video/ltx2_3_runexx_video_to_video_extend",
       "path": "ready_templates/video/ltx2_3_runexx_video_to_video_extend.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "video_to_video_extend",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -3662,12 +4892,88 @@
         "ComfyUI-VideoHelperSuite"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "471",
+            "field": "ckpt_name"
+          },
+          "node_id": "471",
+          "field": "ckpt_name",
+          "value": "LTX23_audio_vae_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "110",
+            "field": "text"
+          },
+          "node_id": "110",
+          "field": "text",
+          "value": "text, subtitles, logo, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "115",
+            "field": "noise_seed"
+          },
+          "node_id": "115",
+          "field": "noise_seed",
+          "value": 42,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "164",
+            "field": "steps"
+          },
+          "node_id": "164",
+          "field": "steps",
+          "value": 1,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3678,6 +4984,8 @@
     {
       "id": "video/ltx2_3_t2v",
       "path": "ready_templates/video/ltx2_3_t2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_video",
       "coverage_tier": "required",
       "custom_nodes": [
@@ -3813,6 +5121,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "3940",
+            "field": "ckpt_name"
+          },
+          "node_id": "3940",
+          "field": "ckpt_name",
+          "value": "ltx-2.3-22b-dev.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -3839,6 +5165,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -3866,6 +5193,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -3876,6 +5205,8 @@
     {
       "id": "video/wan22_animate_native_first_stage",
       "path": "ready_templates/video/wan22_animate_native_first_stage.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "animate_character",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [
@@ -3884,12 +5215,88 @@
         "comfyui_controlnet_aux"
       ],
       "model_count": 9,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "20",
+            "field": "unet_name"
+          },
+          "node_id": "20",
+          "field": "unet_name",
+          "value": "Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "1",
+            "field": "text"
+          },
+          "node_id": "1",
+          "field": "text",
+          "value": "overexposed, static, blurry details, captions, text, watermark, low quality, jpeg artifacts, ugly, deformed, disfigured, bad hands, bad face, malformed limbs, fused fingers, still frame, cluttered background",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "232:63",
+            "field": "seed"
+          },
+          "node_id": "232:63",
+          "field": "seed",
+          "value": 1106558644923357,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "232:63",
+            "field": "steps"
+          },
+          "node_id": "232:63",
+          "field": "steps",
+          "value": 6,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3900,16 +5307,94 @@
     {
       "id": "video/wan22_i2v_comfy_lightx2v",
       "path": "ready_templates/video/wan22_i2v_comfy_lightx2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
       "model_count": 6,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "130:122",
+            "field": "unet_name"
+          },
+          "node_id": "130:122",
+          "field": "unet_name",
+          "value": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "130:107",
+            "field": "text"
+          },
+          "node_id": "130:107",
+          "field": "text",
+          "value": "A felt-style little eagle cashier greeting, waving, and smiling at the camera.",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "130:110",
+            "field": "noise_seed"
+          },
+          "node_id": "130:110",
+          "field": "noise_seed",
+          "value": 0,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "130:110",
+            "field": "steps"
+          },
+          "node_id": "130:110",
+          "field": "steps",
+          "value": 4,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -3920,6 +5405,8 @@
     {
       "id": "video/wan_i2v",
       "path": "ready_templates/video/wan_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -4037,6 +5524,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "37",
+            "field": "unet_name"
+          },
+          "node_id": "37",
+          "field": "unet_name",
+          "value": "wan2.1_i2v_480p_14B_fp16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -4052,6 +5557,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -4068,6 +5574,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -4078,6 +5586,8 @@
     {
       "id": "video/wan_t2v",
       "path": "ready_templates/video/wan_t2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_video",
       "coverage_tier": "required",
       "custom_nodes": [],
@@ -4228,6 +5738,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "37",
+            "field": "unet_name"
+          },
+          "node_id": "37",
+          "field": "unet_name",
+          "value": "wan2.1_t2v_1.3B_fp16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -4243,6 +5771,7 @@
           "source": "bind_output"
         }
       ],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [
         {
           "name": "video",
@@ -4259,6 +5788,8 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
+      "custom_node_count": 0,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": true,
@@ -4269,6 +5800,8 @@
     {
       "id": "video/wanvideo_wrapper_13b_control_lora",
       "path": "ready_templates/video/wanvideo_wrapper_13b_control_lora.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "control_lora_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4279,10 +5812,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4293,6 +5829,8 @@
     {
       "id": "video/wanvideo_wrapper_13b_recammaster",
       "path": "ready_templates/video/wanvideo_wrapper_13b_recammaster.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "camera_control_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4301,12 +5839,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4317,6 +5877,8 @@
     {
       "id": "video/wanvideo_wrapper_13b_vace",
       "path": "ready_templates/video/wanvideo_wrapper_13b_vace.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "vace_video_control",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4328,10 +5890,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4342,6 +5907,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_flf2v",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_flf2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "first_last_frame_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4350,12 +5917,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "CG\u52a8\u753b\u98ce\u683c\uff0c\u4e00\u53ea\u84dd\u8272\u7684\u5c0f\u9e1f\u4ece\u5730\u9762\u8d77\u98de\uff0c\u717d\u52a8\u7fc5\u8180\u3002\u5c0f\u9e1f\u7fbd\u6bdb\u7ec6\u817b\uff0c\u80f8\u524d\u6709\u72ec\u7279\u7684\u82b1\u7eb9\uff0c\u80cc\u666f\u662f\u84dd\u5929\u767d\u4e91\uff0c\u9633\u5149\u660e\u5a9a\u3002\u955c\u8ddf\u968f\u5c0f\u9e1f\u5411\u4e0a\u79fb\u52a8\uff0c\u5c55\u73b0\u51fa\u5c0f\u9e1f\u98de\u7fd4\u7684\u59ff\u6001\u548c\u5929\u7a7a\u7684\u5e7f\u9614\u3002\u8fd1\u666f\uff0c\u4ef0\u89c6\u89c6\u89d2",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4366,6 +5955,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "fun_control_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4375,12 +5966,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4391,6 +6004,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "camera_control_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4399,12 +6014,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4415,6 +6052,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_i2v",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4423,12 +6062,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4439,6 +6100,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_t2v",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_t2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4447,12 +6110,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4463,6 +6148,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_v2v_infinitetalk.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "video_to_video_talking_avatar",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4473,10 +6160,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4487,6 +6177,8 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "motion_track_i2v",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4497,10 +6189,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4511,6 +6206,8 @@
     {
       "id": "video/wanvideo_wrapper_22_14b_i2v_kijai",
       "path": "ready_templates/video/wanvideo_wrapper_22_14b_i2v_kijai.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [
@@ -4519,12 +6216,70 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 6,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "11",
+            "field": "model_name"
+          },
+          "node_id": "11",
+          "field": "model_name",
+          "value": "umt5-xxl-enc-bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "27",
+            "field": "seed"
+          },
+          "node_id": "27",
+          "field": "seed",
+          "value": 43,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4535,6 +6290,8 @@
     {
       "id": "video/wanvideo_wrapper_22_14b_t2i",
       "path": "ready_templates/video/wanvideo_wrapper_22_14b_t2i.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_image_single_frame",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [
@@ -4544,10 +6301,13 @@
       "model_count": 5,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 2,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4558,6 +6318,8 @@
     {
       "id": "video/wanvideo_wrapper_22_14b_vace_cocktail",
       "path": "ready_templates/video/wanvideo_wrapper_22_14b_vace_cocktail.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "video_vace_travel_join",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [
@@ -4566,12 +6328,52 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 6,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "38",
+            "field": "model_name"
+          },
+          "node_id": "38",
+          "field": "model_name",
+          "value": "wanvideo/Wan2_1_VAE_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "27",
+            "field": "seed"
+          },
+          "node_id": "27",
+          "field": "seed",
+          "value": 12345,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4582,6 +6384,8 @@
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v",
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4590,12 +6394,34 @@
         "ComfyUI-WanVideoWrapper"
       ],
       "model_count": 0,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4606,6 +6432,8 @@
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_i2v_controlnet.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "image_to_video_controlnet",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4616,10 +6444,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4630,6 +6461,8 @@
     {
       "id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_ovi_audio_i2v.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "audio_image_to_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4640,10 +6473,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4654,6 +6490,8 @@
     {
       "id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
       "path": "ready_templates/video/wanvideo_wrapper_22_5b_t2v_controlnet.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "text_to_video_controlnet",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4664,10 +6502,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4678,6 +6519,8 @@
     {
       "id": "video/wanvideo_wrapper_22_s2v_context_window",
       "path": "ready_templates/video/wanvideo_wrapper_22_s2v_context_window.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "speech_to_video_context_window",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4688,10 +6531,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 3,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4702,6 +6548,8 @@
     {
       "id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
       "path": "ready_templates/video/wanvideo_wrapper_22_s2v_framepack_pose.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "speech_to_video_pose_control",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4713,10 +6561,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4727,6 +6578,8 @@
     {
       "id": "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai",
       "path": "ready_templates/video/wanvideo_wrapper_22_wan_animate_preprocess_kijai.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "animate_character",
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [
@@ -4738,12 +6591,52 @@
         "comfyui_controlnet_aux"
       ],
       "model_count": 11,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "38",
+            "field": "model_name"
+          },
+          "node_id": "38",
+          "field": "model_name",
+          "value": "wanvideo\\Wan2_1_VAE_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "27",
+            "field": "seed"
+          },
+          "node_id": "27",
+          "field": "seed",
+          "value": 42,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
+      "custom_node_count": 6,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,
@@ -4754,6 +6647,8 @@
     {
       "id": "video/wanvideo_wrapper_wan_animate",
       "path": "ready_templates/video/wanvideo_wrapper_wan_animate.py",
+      "source_scope": "repo",
+      "indexed": true,
       "capability": "animate_reference_video",
       "coverage_tier": "supplemental",
       "custom_nodes": [
@@ -4765,10 +6660,13 @@
       "model_count": 0,
       "public_inputs": [],
       "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
+      "custom_node_count": 4,
+      "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
       "app_active": false,

@@ -17,6 +17,8 @@ python -m vibecomfy.cli port inventory --ready --json
 
 Use `<workflow>` as a ready id, scratchpad path, raw JSON path, or indexed workflow reference. `port check` is offline by default and cheap enough to run before every manual template edit and before every RunPod validation attempt.
 
+There is one promotion path for durable templates: source workflow -> `port check` -> scratchpad when investigation is needed -> `port convert --ready-id <kind>/<name>` or hand-authored Python -> static index refresh -> local validation and strict-ready gates. Raw JSON is retained as source evidence; compiled API JSON is runtime output, not the template source of truth.
+
 ## When To Use Each Command
 
 | Need | Command |
@@ -72,6 +74,8 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
 
 The converter validates emitted Python by importing the module, calling `build()`, compiling API output, and running schema validation when a provider is available.
 
+Ready-template candidates also run strict-ready validation with the target `ready_id` context before writing. Unexcepted strict-ready errors stop replacement before the target path is touched; JSON output includes `conversion.validation.strict_ready_ok`, `conversion.validation.strict_ready_diagnostics`, and top-level strict-ready fields for automation.
+
 ### Dry-Run And Diff Modes
 
 Use `--dry-run` to inspect conversion output and parity evidence without touching the filesystem:
@@ -108,6 +112,8 @@ local `_node` helper copies, missing output contracts, marker classification, co
 joins, and source-provenance flags. It never consults plugin, cwd-extra, or user-global
 paths. The JSON output is deterministic and versioned.
 
+`workflows list --ready --json` is intentionally cheaper than inventory and template loading. When `template_index.json` exists, it returns static repo rows from that index and does not load dynamic plugin/user template roots. Add `--include-dynamic` only for discovery sessions that need plugin/user rows; those rows are marked `source_scope: "dynamic"` and `indexed: false`.
+
 ## From JSON To Checked-In Python
 
 Use this path for workflows that should become reusable templates:
@@ -128,8 +134,11 @@ Then validate the Python template:
 
 ```bash
 python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
+python -m vibecomfy.cli port check ready_templates/<kind>/<id>.py --strict-ready-template --json
 python -m pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_cli.py
 ```
+
+For `coverage_tier: required` or app-active templates, strict-ready gates prohibit hidden schema-backed widgets, missing or broken public input targets, missing or unnamed public outputs, hidden model filenames, and opaque UUID component classes. If a violation cannot be fixed in the same change, document an exact exception with owner, ticket, final category, expiration, and removal condition before relying on it.
 
 Editing internals of a Python template does not require a manifest or index
 change unless its identity, category, task, coverage tier, custom-node

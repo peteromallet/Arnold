@@ -7,7 +7,7 @@ from vibecomfy import extras
 from vibecomfy.ops import registry as op_registry
 from vibecomfy.ops import image
 from vibecomfy.registry import ready as ready_registry
-from vibecomfy.registry.ready import ready_template_ids, workflow_from_ready
+from vibecomfy.registry.ready import dynamic_ready_template_rows, ready_template_ids, workflow_from_ready
 
 
 def test_project_local_plugin_registers_op_route_and_ready_root(tmp_path: Path, monkeypatch) -> None:
@@ -69,6 +69,30 @@ def test_entry_point_plugin_registers_op_and_ready_root(tmp_path: Path, monkeypa
 
     assert image.entry_verb("ok") == ("entry", "ok")
     assert workflow_from_ready("entry_smoke").metadata["ready_template"] == "entry_smoke"
+
+
+def test_dynamic_ready_template_rows_are_explicit_and_unindexed(tmp_path: Path, monkeypatch) -> None:
+    _reset_plugin_state(monkeypatch, tmp_path)
+    root = tmp_path / "dynamic_ready"
+    _write_ready_template(root / "dynamic_smoke.py")
+    plugin = tmp_path / "vibecomfy_extras" / "ops" / "dynamic_plugin.py"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text(
+        "def register(api):\n"
+        "    api.register_ready_root(r'" + str(root) + "')\n",
+        encoding="utf-8",
+    )
+
+    rows = dynamic_ready_template_rows()
+
+    assert rows == [
+        {
+            "id": "dynamic_smoke",
+            "path": str(root / "dynamic_smoke.py"),
+            "source_scope": "dynamic",
+            "indexed": False,
+        }
+    ]
 
 
 def test_plugin_op_override_wins_for_builtin_module_attribute(tmp_path: Path, monkeypatch) -> None:

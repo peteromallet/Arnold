@@ -1,0 +1,50 @@
+name: Strict Ready
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - megaplan/production-parity-templates
+
+permissions:
+  contents: read
+
+jobs:
+  strict-ready:
+    name: Strict-ready gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package with dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Check ready-template static index
+        run: python -m tools.refresh_template_index --check
+
+      - name: Run strict-ready template gate
+        run: python -m tools.check_strict_ready_templates --json
+
+      - name: Run focused strict-ready tests
+        run: >
+          python -m pytest -q
+          tests/test_strict_ready.py
+          tests/test_strict_ready_gate.py
+          tests/test_porting_workbench.py
+          tests/test_porting_inventory.py
+          tests/test_cli.py
+          tests/test_porting_convert.py
+          tests/test_plugin_discovery.py
+          tests/test_agent_acceptance.py

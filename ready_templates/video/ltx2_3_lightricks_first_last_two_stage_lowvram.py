@@ -51,6 +51,13 @@ READY_METADATA = {
         "Use the dedicated distilled fp8 checkpoint rather than the dev checkpoint plus LoRA when possible.",
         "Preserve Wan2GP's two-stage sigma structure for parity checks.",
     ],
+    "runtime_packages": [
+        {
+            "name": "sageattention",
+            "reason": "Required by LTX2MemoryEfficientSageAttentionPatch for the two-stage low-VRAM LTX route.",
+            "source": "SageAttention-ada",
+        }
+    ],
     "comfy_configuration": {"memory_profile": 3, "fp8_e4m3fn_text_enc": True},
 }
 

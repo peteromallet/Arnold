@@ -15,13 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from vibecomfy.registry.ready import ready_template_ids
+from vibecomfy.registry.ready import repo_ready_template_ids
 from vibecomfy.registry.static_contract import extract_ready_template_contract
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPO_ROOT / "template_index.json"
 DEFAULT_COVERAGE = REPO_ROOT / "workflow_corpus" / "manifests" / "coverage.json"
+CONTRACT_SHAPE = "workflow_runtime_contract.v1.public_descriptors.v2"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -50,7 +51,7 @@ def build_template_index(*, generated_at: str | None = None) -> dict[str, Any]:
     generated_at = generated_at or _existing_generated_at(DEFAULT_OUTPUT)
     coverage = _load_coverage_by_template_id(DEFAULT_COVERAGE)
     templates: list[dict[str, Any]] = []
-    for template_id in ready_template_ids():
+    for template_id in repo_ready_template_ids():
         path = _ready_template_path(template_id)
         metadata, requirements = _ready_template_metadata(REPO_ROOT / path)
         static_contract = extract_ready_template_contract(REPO_ROOT / path)
@@ -60,6 +61,8 @@ def build_template_index(*, generated_at: str | None = None) -> dict[str, Any]:
             {
                 "id": template_id,
                 "path": path,
+                "source_scope": "repo",
+                "indexed": True,
                 "capability": metadata.get("capability") or coverage_row.get("task", ""),
                 "coverage_tier": coverage_tier,
                 "custom_nodes": static_contract.get("custom_nodes")
@@ -67,10 +70,16 @@ def build_template_index(*, generated_at: str | None = None) -> dict[str, Any]:
                 "model_count": static_contract.get("model_count", len(_list_items(requirements.get("models")))),
                 "public_inputs": static_contract["public_inputs"],
                 "public_outputs": static_contract["public_outputs"],
+                "contract_shape": CONTRACT_SHAPE,
                 "artifact_expectations": static_contract["artifact_expectations"],
                 "static_diagnostics": static_contract["diagnostics"],
                 "public_input_status": _public_status(static_contract["public_inputs"], static_contract["diagnostics"]),
                 "public_output_status": _public_status(static_contract["public_outputs"], static_contract["diagnostics"]),
+                "custom_node_count": len(
+                    static_contract.get("custom_nodes")
+                    or sorted(_string_items(requirements.get("custom_nodes")))
+                ),
+                "strict_ready_diagnostic_counts": {},
                 "readiness_class": static_contract["readiness_class"],
                 "marker": static_contract["marker"],
                 "app_active": static_contract["app_active"] or coverage_tier == "required",
@@ -82,7 +91,7 @@ def build_template_index(*, generated_at: str | None = None) -> dict[str, Any]:
 
     return {
         "generated_at": generated_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "generated_from": "runtime ready template discovery",
+        "generated_from": "repo-only ready template discovery",
         "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' | sort",
         "exclude_rule": "exclude __init__.py and files whose basename starts with '_' to match vibecomfy.registry.ready._template_paths",
         "template_count": len(templates),

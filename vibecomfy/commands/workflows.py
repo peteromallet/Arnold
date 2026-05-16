@@ -10,14 +10,16 @@ from vibecomfy.commands._output import emit
 from vibecomfy.commands.index_files import IndexReadError, print_index_error
 from vibecomfy.commands._workflow_path import load_workflow_index_rows
 from vibecomfy.registry.ready import (
-    _resolve_ready_path,
-    ready_template_ids,
+    READY_ROOT,
+    dynamic_ready_template_rows,
+    repo_ready_template_ids,
     ready_template_source_info,
     workflow_from_ready,
 )
 from vibecomfy.runtime.session import _model_assets_from_workflow
 
 TEMPLATE_INDEX_PATH = Path("template_index.json")
+CONTRACT_SHAPE = "workflow_runtime_contract.v1.public_descriptors.v2"
 
 def _cmd_workflows_list(args: argparse.Namespace) -> int:
     rows = []
@@ -25,11 +27,11 @@ def _cmd_workflows_list(args: argparse.Namespace) -> int:
         index_rows = _ready_rows_from_template_index()
         if index_rows:
             rows = index_rows[: args.limit]
+            if getattr(args, "include_dynamic", False):
+                indexed_ids = {str(row["id"]) for row in index_rows if isinstance(row.get("id"), str)}
+                rows = [*rows, *_dynamic_ready_rows(indexed_ids)][: args.limit]
         else:
-            rows = [
-                {"id": template_id, "media_type": "ready", "path": str(_resolve_ready_path(template_id))}
-                for template_id in ready_template_ids()[: args.limit]
-            ]
+            rows = _ready_rows_without_index()[: args.limit]
         return emit(rows, json=args.json, text_renderer=_render_workflow_rows)
     try:
         rows.extend(load_workflow_index_rows())
@@ -53,8 +55,82 @@ def _ready_rows_from_template_index() -> list[dict[str, Any]]:
     for item in templates:
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
             continue
-        rows.append({"media_type": "ready", **item})
+        rows.append(
+            {
+                "media_type": "ready",
+                **item,
+                "source_scope": item.get("source_scope", "repo"),
+                "indexed": item.get("indexed", True),
+                "contract_shape": item.get("contract_shape", CONTRACT_SHAPE),
+                "public_inputs": item.get("public_inputs") or [],
+                "public_outputs": item.get("public_outputs") or [],
+                "readiness_class": item.get("readiness_class") or "",
+                "coverage_tier": item.get("coverage_tier") or "",
+                "app_active": item.get("app_active") is True,
+                "blocked": item.get("blocked") is True,
+                "reference": item.get("reference") is True,
+                "supplemental": item.get("supplemental") is True,
+                "model_count": int(item.get("model_count") or 0),
+                "custom_nodes": item.get("custom_nodes") or [],
+                "custom_node_count": int(item.get("custom_node_count") or len(item.get("custom_nodes") or [])),
+                "strict_ready_diagnostic_counts": item.get("strict_ready_diagnostic_counts") or {},
+            }
+        )
     return rows
+
+
+def _ready_rows_without_index() -> list[dict[str, Any]]:
+    rows = [
+        {
+            "id": template_id,
+            "media_type": "ready",
+            "path": str(READY_ROOT / f"{template_id}.py"),
+            "source_scope": "repo",
+            "indexed": False,
+            "contract_shape": CONTRACT_SHAPE,
+            "public_inputs": [],
+            "public_outputs": [],
+            "readiness_class": "",
+            "coverage_tier": "",
+            "app_active": False,
+            "blocked": False,
+            "reference": False,
+            "supplemental": False,
+            "model_count": 0,
+            "custom_nodes": [],
+            "custom_node_count": 0,
+            "strict_ready_diagnostic_counts": {},
+        }
+        for template_id in repo_ready_template_ids()
+    ]
+    repo_ids = {row["id"] for row in rows}
+    rows.extend(_dynamic_ready_rows(repo_ids))
+    return sorted(rows, key=lambda row: str(row["id"]))
+
+
+def _dynamic_ready_rows(exclude_ids: set[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "media_type": "ready",
+            **row,
+            "source_scope": "dynamic",
+            "indexed": False,
+            "contract_shape": CONTRACT_SHAPE,
+            "public_inputs": row.get("public_inputs") or [],
+            "public_outputs": row.get("public_outputs") or [],
+            "readiness_class": row.get("readiness_class") or "",
+            "coverage_tier": row.get("coverage_tier") or "",
+            "app_active": row.get("app_active") is True,
+            "blocked": row.get("blocked") is True,
+            "reference": row.get("reference") is True,
+            "supplemental": row.get("supplemental") is True,
+            "model_count": int(row.get("model_count") or 0),
+            "custom_nodes": row.get("custom_nodes") or [],
+            "custom_node_count": int(row.get("custom_node_count") or len(row.get("custom_nodes") or [])),
+            "strict_ready_diagnostic_counts": row.get("strict_ready_diagnostic_counts") or {},
+        }
+        for row in dynamic_ready_template_rows(exclude_ids=exclude_ids)
+    ]
 
 
 def _cmd_workflows_source_info(args: argparse.Namespace) -> int:
@@ -345,6 +421,11 @@ def register(subparsers) -> None:
     workflows_list = workflows_sub.add_parser("list")
     workflows_list.add_argument("--limit", type=int, default=200)
     workflows_list.add_argument("--ready", action="store_true")
+    workflows_list.add_argument(
+        "--include-dynamic",
+        action="store_true",
+        help="Include plugin/user ready templates as unindexed dynamic rows.",
+    )
     workflows_list.add_argument("--json", action="store_true")
     workflows_list.set_defaults(func=_cmd_workflows_list)
 

@@ -34,6 +34,8 @@ raw Comfy workflow JSON
 
 Raw JSON remains import material. `ready_templates/` is the reusable VibeComfy surface. A ready template is only "ready" after it validates locally and has a plausible runtime path for its node packs and models.
 
+Default ready-template discovery is repo-only and index-backed. `workflows list --ready --json` reads checked-in `template_index.json` when present and does not import plugin, cwd-extra, or user-global ready roots. Use `--include-dynamic` only for explicit plugin/user discovery; dynamic rows are marked `source_scope: "dynamic"` and `indexed: false` and are not part of strict-ready CI gates.
+
 Run the porting workbench before manual edits and before RunPod validation:
 
 ```bash
@@ -70,7 +72,7 @@ Use `--head-check-models` only when you intentionally want model URL HEAD checks
 7. Add a manifest row.
 8. Create the ready template with `port convert --ready-id`, or hand-author it when the reusable template needs clearer runtime behavior.
 9. Refresh the ready-template index.
-10. Run local validation and tests.
+10. Run local validation, strict-ready gates, and tests.
 11. Add or update a focused RunPod scope.
 12. Run the focused RunPod matrix.
 13. Document any new incompatibility or structural issue.
@@ -216,7 +218,9 @@ uv run python -m vibecomfy.cli validate ready_templates/<media>/<id>.py
 uv run python -m vibecomfy.cli port check ready_templates/<media>/<id>.py --strict-ready-template --json
 ```
 
-`--strict-ready-template` is the promotion gate for production/app-parity templates. It fails schema-backed unresolved positional widgets and missing workflow outputs locally, while still reporting unavailable-schema community widgets as porting warnings until object_info or committed widget aliases exist.
+`--strict-ready-template` is the promotion gate for production/app-parity templates. It fails schema-backed unresolved positional widgets, missing or broken public input targets, missing or unnamed public outputs, hidden model filenames, and opaque UUID component classes locally, while still reporting unavailable-schema community widgets as porting warnings until object_info or committed widget aliases exist.
+
+Required and app-active templates cannot regress behind hidden widgets or opaque subgraphs. Either expose named public inputs/outputs and transparent graph structure, or record an exact strict-ready exception with owner, ticket, final category, expiration, and removal condition. Allowed final categories are `reference`, `supplemental`, `blocked`, and `scratchpad-only`.
 
 Then run targeted tests:
 

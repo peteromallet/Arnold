@@ -18,6 +18,14 @@ from vibecomfy.porting.parity import (
     topology_counter,
     widget_value_counter,
 )
+from vibecomfy.porting.report import PortIssue
+from vibecomfy.porting.strict_ready import (
+    STRICT_READY_BUILD_FAILED,
+    STRICT_READY_COMPILE_FAILED,
+    StrictReadyContext,
+    validate_strict_ready_workflow,
+)
+from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 
 # -- model-like value detection ----------------------------------------------
@@ -76,6 +84,11 @@ class PortConvertValidation:
     model_value_diffs: list[str] = field(default_factory=list)
     """Human-readable diffs between source and emitted model values."""
 
+    strict_ready_ok: bool | None = None
+    """Ready-template candidate strict-ready status, if applicable."""
+    strict_ready_diagnostics: list[PortIssue] = field(default_factory=list)
+    """Strict-ready diagnostics for emitted ready-template candidates."""
+
     def to_json(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
@@ -106,6 +119,8 @@ class PortConvertValidation:
             "workflow_requirements_model_snapshot": self.workflow_requirements_model_snapshot,
             "metadata_model_snapshot": self.metadata_model_snapshot,
             "model_value_diffs": self.model_value_diffs,
+            "strict_ready_ok": self.strict_ready_ok,
+            "strict_ready_diagnostics": [issue.to_json() for issue in self.strict_ready_diagnostics],
         }
 
 
@@ -220,6 +235,14 @@ def port_convert_workflow(
     if validate:
         result.validation = validate_emitted_module(text, schema_provider=schema_provider)
         result.validation.emission_diagnostics = emission_diagnostics
+        if ready_id is not None and result.validation is not None:
+            _run_strict_ready_candidate_validation(
+                result.validation,
+                text,
+                ready_id=ready_id,
+                source_path=source_path,
+                schema_provider=schema_provider,
+            )
 
         # Run parity: compile the emitted module and compare against source.
         if source_api is not None and result.validation is not None and result.validation.compile_ok:
@@ -281,6 +304,90 @@ def port_convert_workflow(
                 pass
 
     return result
+
+
+def _run_strict_ready_candidate_validation(
+    validation: PortConvertValidation,
+    text: str,
+    *,
+    ready_id: str,
+    source_path: str | None,
+    schema_provider: Any | None,
+) -> None:
+    if not validation.import_ok or not validation.build_ok or not validation.compile_ok:
+        code = STRICT_READY_BUILD_FAILED
+        if validation.error and validation.error.startswith("compile failed:"):
+            code = STRICT_READY_COMPILE_FAILED
+        validation.strict_ready_diagnostics = [
+            PortIssue(
+                code=code,
+                message=f"Strict ready-template candidate could not be validated: {validation.error or 'unknown error'}",
+                severity="error",
+                detail={
+                    "category": "strict_ready",
+                    "target": "candidate_build",
+                    "ready_id": ready_id,
+                },
+                recommendation="Fix emitted ready-template import/build/compile errors before writing the target file.",
+            )
+        ]
+        validation.strict_ready_ok = False
+        validation.ok = False
+        if validation.error is None:
+            validation.error = "strict-ready candidate validation failed"
+        return
+
+    try:
+        emitted_workflow = _build_emitted_workflow_from_text(text)
+        emitted_api = emitted_workflow.compile("api")
+    except Exception as exc:
+        validation.strict_ready_diagnostics = [
+            PortIssue(
+                code=STRICT_READY_BUILD_FAILED,
+                message=f"Strict ready-template candidate build failed: {type(exc).__name__}: {exc}",
+                severity="error",
+                detail={
+                    "category": "strict_ready",
+                    "target": "candidate_build",
+                    "ready_id": ready_id,
+                },
+                recommendation="Fix emitted ready-template build errors before writing the target file.",
+            )
+        ]
+        validation.strict_ready_ok = False
+        validation.ok = False
+        validation.error = validation.error or "strict-ready candidate validation failed"
+        return
+
+    diagnostics = validate_strict_ready_workflow(
+        emitted_workflow,
+        StrictReadyContext(ready_id=ready_id, source_path=source_path),
+        api_prompt=emitted_api,
+        widget_analysis=widget_alias_analysis(emitted_api, schema_provider=schema_provider),
+    )
+    validation.strict_ready_diagnostics = diagnostics
+    validation.strict_ready_ok = not any(issue.severity == "error" for issue in diagnostics)
+    if not validation.strict_ready_ok:
+        validation.ok = False
+        validation.error = validation.error or "strict-ready candidate validation failed"
+
+
+def _build_emitted_workflow_from_text(text: str) -> VibeWorkflow:
+    with tempfile.TemporaryDirectory(prefix="vibecomfy-port-strict-ready-") as tmp:
+        path = Path(tmp) / "emitted.py"
+        path.write_text(text, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location(f"vibecomfy_port_strict_ready_{path.stem}", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Could not import emitted module {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        build = getattr(module, "build", None)
+        if not callable(build):
+            raise RuntimeError("build() missing")
+        workflow = build()
+        if not isinstance(workflow, VibeWorkflow):
+            raise RuntimeError(f"build() returned {type(workflow).__name__}, expected VibeWorkflow")
+        return workflow
 
 
 def validate_emitted_module(text: str, *, schema_provider: Any | None = None) -> PortConvertValidation:
@@ -481,6 +588,17 @@ def port_convert_and_write(
     validation = result.validation
     if validation is None:
         raise ConversionWriteError("No validation available - conversion may have been skipped.")
+    if validation.strict_ready_ok is False:
+        strict_errors = [
+            issue
+            for issue in validation.strict_ready_diagnostics
+            if issue.severity == "error"
+        ]
+        examples = [f"{issue.code}:{issue.detail.get('target', '')}" for issue in strict_errors[:5]]
+        raise ConversionWriteError(
+            f"Strict-ready validation failed for {target}. "
+            f"Diagnostics: {examples}"
+        )
     if not validation.ok:
         raise ConversionWriteError(
             f"Validation failed for {target}: {validation.error}. "
