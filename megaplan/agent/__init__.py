@@ -2,7 +2,7 @@
 
 Importing this module prepends its directory to sys.path so hermes's
 original top-level imports resolve without rewriting vendored code.
-Activated via `megaplan.hermes_worker._import_hermes_runtime()` only.
+Activated via `megaplan.workers.hermes._import_hermes_runtime()` only.
 """
 
 import os as _os

@@ -23,7 +23,7 @@ from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan._core import creative_form_id, json_dump, read_json, schemas_root
 from megaplan.prompts import create_claude_prompt
 from megaplan.schemas import get_execution_schema_key
-from megaplan.workers import (
+from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _activity_callback_for_state,

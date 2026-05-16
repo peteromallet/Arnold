@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TextIO
 
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
-from megaplan.workers import (
+from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     mock_worker_output,
