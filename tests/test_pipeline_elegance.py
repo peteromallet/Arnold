@@ -43,20 +43,19 @@ def test_subloop_and_override_have_executor_branches() -> None:
     assert "child_pipeline" in subloop_src
 
 
-def test_workflow_dict_derived_from_pipeline() -> None:
-    """The Pipeline is provably sufficient to reconstruct WORKFLOW."""
-    from megaplan._core.workflow_data import WORKFLOW
-    from megaplan._pipeline.planning import (
-        compile_planning_pipeline,
-        workflow_dict_from_pipeline,
-    )
+def test_compiled_pipeline_has_canonical_phase_nodes() -> None:
+    """Sprint 5 Chunk A replaces the byte-for-byte WORKFLOW inversion
+    elegance property with a structural assertion on the canonical
+    phase-name graph: stages are keyed by phase, entry is ``prep``, and
+    the set of phase nodes matches the canonical taxonomy."""
+    from megaplan._pipeline.planning import compile_planning_pipeline
 
-    derived = workflow_dict_from_pipeline(compile_planning_pipeline())
-    assert set(derived.keys()) == set(WORKFLOW.keys())
-    for state_name in WORKFLOW:
-        expected = [(t.next_step, t.next_state, t.condition) for t in WORKFLOW[state_name]]
-        actual = [(t.next_step, t.next_state, t.condition) for t in derived[state_name]]
-        assert actual == expected, state_name
+    pipeline = compile_planning_pipeline()
+    assert pipeline.entry == "prep"
+    assert set(pipeline.stages.keys()) == {
+        "prep", "plan", "critique", "gate", "revise",
+        "finalize", "execute", "review", "tiebreaker",
+    }
 
 
 def test_three_extension_axes_are_orthogonal() -> None:

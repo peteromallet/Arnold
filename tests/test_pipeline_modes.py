@@ -1,58 +1,43 @@
 """Sprint 3 — every megaplan mode compiles into a Pipeline.
 
-The brief asserts joke/doc/creative modes are configurations of the
-parent abstraction. This test pins that: every mode produces a valid
-:class:`Pipeline` whose stage set + edges match what the live
-``_workflow_for_robustness`` resolves for the same mode, across every
-robustness level. Catches regressions if anyone adds a new mode and
-forgets to wire the mode overlay.
+Sprint 5 Chunk A retired the byte-for-byte parity contract against the
+legacy state-name ``_workflow_for_robustness`` view. The canonical
+Pipeline is now keyed by phase names and the mode / robustness / with_*
+overlays are identity transforms (mode dispatch happens at prompt
+resolution time, robustness customisation moves to the Step layer).
+What this module pins now: every mode produces a valid Pipeline whose
+canonical phase-node set survives composition, and the mode overlay
+correctly names the requested mode for downstream introspection.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from megaplan._core.workflow import _workflow_for_robustness
 from megaplan._pipeline.planning import (
     compile_pipeline_for,
     mode_overlay,
 )
 
 
+EXPECTED_PHASE_STAGES = {
+    "prep", "plan", "critique", "gate", "revise",
+    "finalize", "execute", "review", "tiebreaker",
+}
+
+
 @pytest.mark.parametrize("mode", ["code", "doc", "metaplan", "joke", "creative"])
 @pytest.mark.parametrize(
     "robustness", ["tiny", "light", "standard", "robust", "superrobust"]
 )
-def test_mode_pipeline_matches_runtime_workflow(mode: str, robustness: str) -> None:
-    creative = mode in {"creative", "joke"}
+def test_mode_pipeline_preserves_canonical_phase_nodes(mode: str, robustness: str) -> None:
     state_payload = {"config": {"mode": mode}}
-
     pipeline = compile_pipeline_for(
         robustness=robustness, state_payload=state_payload
     )
-    runtime = _workflow_for_robustness(robustness, creative=creative)
 
-    for state_name, transitions in runtime.items():
-        compiled = pipeline.stages[state_name]
-        actual = [(e.label, e.target) for e in compiled.edges]
-        import collections
-        _GATE_RECS = {"gate_proceed": "proceed", "gate_iterate": "iterate",
-                      "gate_tiebreaker": "tiebreaker", "gate_escalate": "escalate"}
-        gate_counts: collections.Counter = collections.Counter()
-        for t in transitions:
-            if t.condition in _GATE_RECS:
-                gate_counts[t.condition] += 1
-        expected = []
-        for t in transitions:
-            if t.condition == "always":
-                expected.append((t.next_step, t.next_state))
-            elif t.condition in _GATE_RECS and gate_counts[t.condition] == 1:
-                expected.append((_GATE_RECS[t.condition], t.next_state))
-            elif t.condition in _GATE_RECS and gate_counts[t.condition] > 1:
-                expected.append((t.next_step, t.next_state))
-            else:
-                expected.append((f"{t.condition}:{t.next_step}", t.next_state))
-        assert actual == expected, (mode, robustness, state_name, actual, expected)
+    assert set(pipeline.stages.keys()) == EXPECTED_PHASE_STAGES
+    assert pipeline.entry == "prep"
 
     # mode_overlay name reflects the requested mode.
     overlay_names = [o.name for o in pipeline.overlays]
