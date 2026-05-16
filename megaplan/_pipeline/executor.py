@@ -85,6 +85,47 @@ def _atomic_write_json(dest: Path, payload: Any) -> None:
     os.replace(tmp, dest)
 
 
+def _merge_state_to_disk(
+    dest: Path,
+    executor_state: dict[str, Any],
+    *,
+    executor_owned_keys: set[str] | None = None,
+) -> None:
+    """Merge the executor's tracked state with on-disk handler-written keys.
+
+    Two scenarios coexist:
+    - Hermetic Steps (demos): only the executor writes state.json.
+      The executor's tracked state is authoritative for every key.
+    - Handler-backed Steps: the in-process handler writes its own
+      state.json with plan_versions, history, meta, etc. The
+      executor's tracked state is stale for those keys.
+
+    Resolution: ``executor_owned_keys`` lists the keys the executor
+    has explicitly mutated via state_patch since the run began. For
+    those keys the executor's value wins; for all other on-disk keys
+    the on-disk value wins. When no executor keys are tracked yet
+    (or no on-disk state exists), the executor's full state is
+    written as the cold-start.
+    """
+    if dest.exists():
+        try:
+            on_disk: dict[str, Any] = json.loads(dest.read_text())
+            if isinstance(on_disk, dict):
+                if executor_owned_keys is None:
+                    # No owned-keys signal — be conservative; on-disk wins.
+                    merged = {**executor_state, **on_disk}
+                else:
+                    merged = dict(on_disk)
+                    for key in executor_owned_keys:
+                        if key in executor_state:
+                            merged[key] = executor_state[key]
+                _atomic_write_json(dest, merged)
+                return
+        except json.JSONDecodeError:
+            pass
+    _atomic_write_json(dest, executor_state)
+
+
 def _verify_outputs(stage_name: str, outputs: Mapping[str, Path]) -> None:
     for label, path in outputs.items():
         if not Path(path).exists():
@@ -124,6 +165,7 @@ def run_pipeline(
     else:
         state = {}
 
+    executor_owned_keys: set[str] = set()
     cursor = pipeline.entry
     while True:
         node = pipeline.stages[cursor]
@@ -157,8 +199,13 @@ def run_pipeline(
 
         _verify_outputs(node.name, result.outputs)
 
-        state.update(dict(result.state_patch))
-        _atomic_write_json(artifact_root / "state.json", state)
+        patch = dict(result.state_patch)
+        state.update(patch)
+        executor_owned_keys.update(patch.keys())
+        _merge_state_to_disk(
+            artifact_root / "state.json", state,
+            executor_owned_keys=executor_owned_keys,
+        )
 
         if result.next == "halt":
             return {"state": state, "final_stage": node.name}
@@ -236,6 +283,7 @@ def run_pipeline_with_policy(
     artifact_root.mkdir(parents=True, exist_ok=True)
 
     state: dict[str, Any] = dict(ctx.state) if isinstance(ctx.state, Mapping) else {}
+    executor_owned_keys: set[str] = set()
     cursor = pipeline.entry
     while True:
         if iterations >= policy.max_iterations:
@@ -267,8 +315,13 @@ def run_pipeline_with_policy(
             raise
 
         _verify_outputs(node.name, result.outputs)
-        state.update(dict(result.state_patch))
-        _atomic_write_json(artifact_root / "state.json", state)
+        patch = dict(result.state_patch)
+        state.update(patch)
+        executor_owned_keys.update(patch.keys())
+        _merge_state_to_disk(
+            artifact_root / "state.json", state,
+            executor_owned_keys=executor_owned_keys,
+        )
 
         # Policy hooks — observation is side-effecting.
         policy.stall.observe(state)
