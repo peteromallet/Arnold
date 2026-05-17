@@ -8,7 +8,8 @@ from vibecomfy.metadata import (
     _infer_requirements,
     _register_common_inputs,
 )
-from vibecomfy.schema import SchemaProvider, schema_for
+from vibecomfy.porting.widget_aliases import widget_names_from_schema
+from vibecomfy.schema import OutputSpec, SchemaProvider, schema_for
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 
@@ -22,20 +23,37 @@ def detect_workflow_shape(raw: dict[str, Any]) -> str:
     return "unknown"
 
 
-def normalize_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | None = None) -> dict[str, Any]:
+def normalize_to_api(
+    raw: dict[str, Any],
+    *,
+    schema_provider: SchemaProvider | None = None,
+    use_comfy_converter: bool = True,
+) -> dict[str, Any]:
     shape = detect_workflow_shape(raw)
     if shape == "api":
         return raw.get("prompt", raw)
     if shape != "ui":
         raise ValueError(f"Unsupported workflow shape: {shape}")
 
-    try:
-        from comfy.component_model.workflow_convert import convert_ui_to_api
-    except ImportError:
-        pass
-    else:
-        return convert_ui_to_api(raw)
+    if use_comfy_converter:
+        try:
+            from comfy.component_model.workflow_convert import convert_ui_to_api
+        except ImportError:
+            pass
+        else:
+            try:
+                converted = convert_ui_to_api(raw)
+            except Exception:
+                pass
+            else:
+                if not _has_unknown_widget_inputs(converted):
+                    return converted
+                return _normalize_ui_to_api(raw, schema_provider=schema_provider)
 
+    return _normalize_ui_to_api(raw, schema_provider=schema_provider)
+
+
+def _normalize_ui_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | None = None) -> dict[str, Any]:
     nodes = {str(node["id"]): node for node in raw.get("nodes", []) if isinstance(node, dict) and "id" in node}
     links = raw.get("links", [])
     link_map: dict[int, tuple[str, int]] = {}
@@ -57,7 +75,12 @@ def normalize_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | N
             if name and link_id in link_map:
                 inputs[name] = [link_map[link_id][0], link_map[link_id][1]]
         widgets = node.get("widgets_values", [])
-        if isinstance(widgets, list):
+        if isinstance(widgets, dict):
+            for name, value in widgets.items():
+                if name in inputs:
+                    continue
+                inputs[str(name)] = value
+        elif isinstance(widgets, list):
             widget_names = _schema_input_names(schema_provider, class_type)
             for idx, value in enumerate(widgets):
                 name = widget_names[idx] if idx < len(widget_names) else f"widget_{idx}"
@@ -66,6 +89,16 @@ def normalize_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider | N
                 inputs[name] = value
         api[node_id] = {"class_type": class_type, "inputs": inputs, "_ui": node}
     return api
+
+
+def _has_unknown_widget_inputs(api: dict[str, Any]) -> bool:
+    for node in api.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if isinstance(inputs, dict) and "UNKNOWN" in inputs:
+            return True
+    return False
 
 
 def convert_to_vibe_format(
@@ -96,12 +129,27 @@ def convert_to_vibe_format(
                 widgets[key] = value
             else:
                 inputs[key] = value
+        class_type = str(node.get("class_type", "Unknown"))
+        metadata = {key: value for key, value in node.items() if key not in {"class_type", "inputs"}}
+        # ── enrich node metadata from schema ──
+        output_names = _schema_output_names(schema_provider, class_type)
+        if output_names:
+            metadata.setdefault("output_names", output_names)
+        output_types = _schema_output_types(schema_provider, class_type)
+        if output_types:
+            metadata.setdefault("output_types", output_types)
+        input_aliases = _schema_input_aliases(schema_provider, class_type)
+        if input_aliases:
+            metadata.setdefault("input_aliases", input_aliases)
+        schema_source = _schema_source_provenance(schema_provider, class_type)
+        if schema_source is not None:
+            metadata.setdefault("schema_source", schema_source)
         workflow.nodes[str(node_id)] = VibeNode(
             id=str(node_id),
-            class_type=str(node.get("class_type", "Unknown")),
+            class_type=class_type,
             inputs=inputs,
             widgets=widgets,
-            metadata={key: value for key, value in node.items() if key not in {"class_type", "inputs"}},
+            metadata=metadata,
         )
         _register_common_inputs(workflow, str(node_id), workflow.nodes[str(node_id)])
         if workflow.nodes[str(node_id)].class_type in OUTPUT_NODE_NAMES:
@@ -125,7 +173,65 @@ def _is_link(value: Any) -> bool:
 
 def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
     schema = schema_for(schema_provider, class_type)
+    return [name for name in widget_names_from_schema(class_type, schema) if name is not None]
+
+
+def _schema_output_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
+    """Return output names from schema, preserving blank entries for partial evidence.
+
+    The emitter will decide per-slot safety later (e.g. blank/duplicate names
+    fall back to numeric ``.out(n)``).  Never drop the whole list just because
+    one entry is missing.
+    """
+    schema = schema_for(schema_provider, class_type)
+    outputs = getattr(schema, "outputs", None) or []
+    names: list[str] = []
+    for output in outputs:
+        name = output.name if isinstance(output, OutputSpec) else getattr(output, "name", None)
+        names.append(name if isinstance(name, str) else "")
+    return names
+
+
+def _schema_output_types(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
+    schema = schema_for(schema_provider, class_type)
+    outputs = getattr(schema, "outputs", None) or []
+    types: list[str] = []
+    for output in outputs:
+        typ = output.type if isinstance(output, OutputSpec) else getattr(output, "type", None)
+        types.append(typ if isinstance(typ, str) else "")
+    return types
+
+
+def _schema_input_aliases(schema_provider: SchemaProvider | None, class_type: str) -> list[str | None]:
+    """Build input aliases from schema, excluding link-only types so widget positions do not shift."""
+    from vibecomfy.porting.widget_aliases import LINK_ONLY_TYPES
+
+    schema = schema_for(schema_provider, class_type)
+    if schema is None:
+        return []
     inputs = getattr(schema, "inputs", None)
     if not isinstance(inputs, dict):
         return []
-    return list(inputs)
+    aliases: list[str | None] = []
+    for name, spec in inputs.items():
+        input_type = str(getattr(spec, "type", "") or "").upper()
+        if input_type in LINK_ONLY_TYPES:
+            continue
+        aliases.append(str(name))
+    return aliases if aliases else []
+
+
+def _schema_source_provenance(schema_provider: SchemaProvider | None, class_type: str) -> dict[str, Any] | None:
+    schema = schema_for(schema_provider, class_type)
+    if schema is None:
+        return None
+    return {
+        "provider": getattr(schema, "source_provider", "unknown"),
+        "path": getattr(schema, "source_path", None),
+        "cache_path": getattr(schema, "source_cache_path", None),
+        "server_url": getattr(schema, "source_server_url", None),
+        "package": getattr(schema, "source_package", None),
+        "version": getattr(schema, "source_version", None),
+        "hash": getattr(schema, "source_hash", None),
+        "confidence": getattr(schema, "confidence", 1.0),
+    }

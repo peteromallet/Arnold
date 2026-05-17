@@ -45,6 +45,13 @@ fi
 
 def _remote_script() -> str:
     scope = os.environ.get("VIBECOMFY_MATRIX_SCOPE", "all")
+    attention_profile = os.environ.get("VIBECOMFY_ATTENTION_PROFILE", "portable").strip().lower() or "portable"
+    if attention_profile in {"default", "sdpa"}:
+        attention_profile = "portable"
+    elif attention_profile in {"optimized", "sageattn", "sageattention"}:
+        attention_profile = "sage"
+    if attention_profile not in {"portable", "sage"}:
+        raise ValueError("VIBECOMFY_ATTENTION_PROFILE must be 'portable' or 'sage'")
     core_stage_phase = "qwen_image" if scope in {"qwen_image", "qwen_image_2512"} else "core"
     ltx_lean_model_scope = scope in {"ltx_official", "ltx_official_public", "ltx_lightricks", "ltx_iclora", "ltx_iclora_public"}
     hf_token = _load_hf_token()
@@ -68,6 +75,7 @@ export PIP_CACHE_DIR=/workspace/.cache/pip
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export VIBECOMFY_ATTENTION_PROFILE={shlex.quote(attention_profile)}
 {registry_legacy_export}
 mkdir -p "$XDG_CACHE_HOME" "$UV_CACHE_DIR" "$HF_HOME" "$PIP_CACHE_DIR"
 find "$HF_HOME" -type f -name '*.incomplete' -delete 2>/dev/null || true
@@ -92,6 +100,17 @@ $PY -m pip install --prefer-binary click rich typer pydantic pydantic-settings p
 $PY -m pip install --no-deps --force-reinstall 'comfyui@git+https://github.com/hiddenswitch/ComfyUI.git'
 if [ "{scope}" = "wan_creation_types" ] || [ "{scope}" = "wan_infinitetalk" ]; then
   $PY -m pip install --index-url https://download.pytorch.org/whl/cu124 --upgrade torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0
+fi
+if [ "{attention_profile}" = "sage" ]; then
+  rm -rf /tmp/sageattention
+  git clone --depth 1 https://github.com/thu-ml/SageAttention.git /tmp/sageattention
+  $PY -m pip install --no-build-isolation /tmp/sageattention
+  "$PY" - <<'PY'
+import sageattention
+if not callable(getattr(sageattention, "sageattn", None)):
+    raise RuntimeError("sageattention import succeeded but sageattn is missing")
+print("sageattention verified")
+PY
 fi
 "$PY" - <<'PY'
 from pathlib import Path
@@ -157,6 +176,45 @@ EOF
 printf 'id\tmedia\tstatus\tbaseline_seconds\tconvert_seconds\tvalidate_seconds\tvibecomfy_seconds\tmedia_files\tbytes\tfailure\n' > out/corpus_matrix/results.tsv
 clean_failure() {{
   tail -80 "$1" | tr '\\t\\n' '  ' | tr -cd '\\11\\12\\15\\40-\\176' | cut -c1-900
+}}
+write_port_report() {{
+  local id="$1"
+  local workflow="$2"
+  local report="out/corpus_matrix/logs/${{id}}.port_report.json"
+  local log="out/corpus_matrix/logs/${{id}}.port_check.log"
+  local status="ok"
+  if ! "$PY" -m vibecomfy.cli port check "$workflow" --json >"$report" 2>"$log"; then
+    status="needs_attention"
+  fi
+  "$PY" - "$id" "$status" "$report" >> out/corpus_matrix/live.log <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+workflow_id, status, path = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+try:
+    report = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"port_report id={{workflow_id}} status=failed error={{type(exc).__name__}}:{{exc}}")
+    raise SystemExit(0)
+counts = {{"error": 0, "warning": 0, "info": 0}}
+for issue in report.get("diagnostics", []):
+    counts[issue.get("severity", "warning")] = counts.get(issue.get("severity", "warning"), 0) + 1
+print(
+    "port_report "
+    f"id={{workflow_id}} status={{status}} "
+    f"errors={{counts.get('error', 0)}} warnings={{counts.get('warning', 0)}} "
+    f"assets={{len(report.get('asset_candidates', []))}} packs={{len(report.get('node_pack_suggestions', []))}}"
+)
+PY
+}}
+run_port_convert_preview() {{
+  local id="$1"
+  local workflow="$2"
+  local out="out/corpus_matrix/logs/${{id}}.port_scratchpad.py"
+  local json_log="out/corpus_matrix/logs/${{id}}.port_convert.json"
+  local err_log="out/corpus_matrix/logs/${{id}}.port_convert.log"
+  "$PY" -m vibecomfy.cli port convert "$workflow" --out "$out" --json >"$json_log" 2>"$err_log" || true
 }}
 count_media_files() {{
   find "$@" -type f \\( -name '*.png' -o -name '*.webp' -o -name '*.mp4' -o -name '*.webm' -o -name '*.mp3' -o -name '*.glb' \\) 2>/dev/null | wc -l | tr -d ' '
@@ -242,6 +300,7 @@ while IFS=$'\\t' read -r id wf media; do
     continue
   fi
   cp "$work_wf" "out/corpus_matrix/logs/${{id}}.prepared.json" || true
+  write_port_report "$id" "$work_wf"
   comfy_extra_args=""
   vibe_config='{{"preview_method":"none"}}'
   workflow_override_args=(--steps 1 --seed 123 --prompt "a compact red cube on a neutral background")
@@ -313,6 +372,7 @@ while IFS=$'\\t' read -r id wf media; do
   if "$PY" -m vibecomfy.cli convert "$work_wf" --out "out/scratchpads/$id.py" >"$convert_log" 2>&1; then
     convert_seconds=$(( $(date +%s) - start ))
     cp "out/scratchpads/$id.py" "out/corpus_matrix/logs/${{id}}.scratchpad.py" || true
+    run_port_convert_preview "$id" "$work_wf"
   else
     convert_seconds=$(( $(date +%s) - start ))
     failure=$(clean_failure "$convert_log")
@@ -647,7 +707,7 @@ $PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external
 if [ "{scope}" = "ltx_official" ] || [ "{scope}" = "ltx_official_public" ] || [ "{scope}" = "ltx_lightricks" ] || [ "{scope}" = "ltx_iclora" ] || [ "{scope}" = "ltx_iclora_public" ]; then
   echo "skipping_remote_ready_materialization_for_lean_ltx_scope={scope}" >> out/corpus_matrix/live.log
 else
-  $PY scripts/materialize_ready_templates.py
+  $PY -m tools.refresh_template_index --check
   validate_ready_set out/corpus_matrix/ready_workflows.tsv
 fi
 run_workflow_set out/corpus_matrix/ltx_workflows.tsv
@@ -780,7 +840,7 @@ for repo, filename, targets, min_size in downloads:
 PY
 {_registry_staging_fallback("wan_wrapper")}
 $PY -m vibecomfy.cli sources sync --official workflow_corpus/official --external workflow_corpus/custom_nodes --custom-nodes custom_nodes
-$PY scripts/materialize_ready_templates.py
+$PY -m tools.refresh_template_index --check
 validate_ready_set out/corpus_matrix/ready_workflows.tsv
 run_workflow_set out/corpus_matrix/wan_wrapper_workflows.tsv
 fi

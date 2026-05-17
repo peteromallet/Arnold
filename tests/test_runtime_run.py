@@ -3,13 +3,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import json
 import sys
 import types
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 
 from vibecomfy.commands.run import _cmd_run
+import vibecomfy.runtime.session as session_module
 from vibecomfy.runtime.session import SessionConfig
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
@@ -134,14 +137,19 @@ def test_run_managed_server_uses_workflow_session_config(
         async def queue_prompt(self, prompt: dict) -> dict:
             return {"prompt_id": "prompt-managed"}
 
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {"9": {"filename": "managed.mp4"}}}}
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(session_module, "ComfyClient", FakeClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     result = asyncio.run(runtime_run_module.run(workflow, server_url=None))
 
     assert result.prompt_id == "prompt-managed"
+    assert result.outputs == ["managed.mp4"]
     assert len(captured_configs) == 1
     config = captured_configs[0]
     assert config.memory_profile == 5
@@ -171,14 +179,19 @@ def test_run_external_server_does_not_apply_workflow_session_config(
         async def queue_prompt(self, prompt: dict) -> dict:
             return {"prompt_id": "prompt-external"}
 
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {"9": {"filename": "external.mp4"}}}}
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(session_module, "ComfyClient", FakeClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     result = asyncio.run(runtime_run_module.run(workflow, server_url="http://external.test"))
 
     assert result.prompt_id == "prompt-external"
+    assert result.outputs == ["external.mp4"]
     assert captured_configs == [None]
 
 
@@ -229,11 +242,115 @@ def test_run_embedded_ignores_hiddenswitch_cleanup_bug_after_success(
     monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
     embedded = types.ModuleType("comfy.client.embedded_comfy_client")
     embedded.Comfy = FakeComfy
+    embedded.default_configuration = lambda: {}
     monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
 
     result = runtime_run_module.run_embedded_sync(_workflow())
 
     assert result.outputs == ["output.mp4"]
+
+
+@pytest.mark.parametrize(
+    "cleanup_error",
+    [
+        RuntimeError("cannot cancel futures in this implementation"),
+        RuntimeError("Abnormal termination"),
+    ],
+)
+def test_run_embedded_ignores_comfy_kitchen_cleanup_bug_after_success(
+    cleanup_error: RuntimeError,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    class FakeComfy:
+        def __init__(self, configuration=None) -> None:
+            self.configuration = configuration
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            raise cleanup_error
+
+        async def queue_prompt_api(self, api_dict):
+            return {"outputs": {"1": {"filename": "output.mp4"}}}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(sys.modules, "comfy", types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
+    embedded = types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = FakeComfy
+    embedded.default_configuration = lambda: {}
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
+
+    result = runtime_run_module.run_embedded_sync(_workflow())
+
+    assert result.outputs == ["output.mp4"]
+
+
+def test_run_embedded_resolves_comfy_filename_outputs_against_configured_output_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    output_dir = tmp_path / "standard-output"
+
+    class FakeComfy:
+        def __init__(self, configuration=None) -> None:
+            self.configuration = configuration
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def queue_prompt_api(self, api_dict):
+            return {
+                "outputs": {
+                    "19": {
+                        "images": [
+                            {
+                                "filename": "Wanimate_00001_.mp4",
+                                "subfolder": "",
+                                "type": "output",
+                            }
+                        ]
+                    }
+                }
+            }
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_COMFY_CONFIGURATION", f'{{"output_directory":"{output_dir}"}}')
+    monkeypatch.setitem(sys.modules, "comfy", types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", types.ModuleType("comfy.client"))
+    embedded = types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = FakeComfy
+    embedded.default_configuration = lambda: {}
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
+
+    result = runtime_run_module.run_embedded_sync(_workflow())
+
+    assert result.outputs == [str(output_dir / "Wanimate_00001_.mp4")]
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+    assert metadata["outputs"] == result.outputs
+    assert metadata["artifact_paths"] == result.outputs
+    assert metadata["artifact_manifest"] == {
+        "schema_version": 1,
+        "by_output": {},
+        "unmapped": result.outputs,
+        "attribution": [],
+    }
+    assert metadata["comfy_outputs"] == {
+        "19": {
+            "images": [
+                {
+                    "filename": "Wanimate_00001_.mp4",
+                    "subfolder": "",
+                    "type": "output",
+                }
+            ]
+        }
+    }
+    assert metadata["compiled_prompt"]["1"]["inputs"]["filename_prefix"] == "test"
 
 
 def test_cmd_run_prints_clear_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -251,7 +368,7 @@ def test_cmd_run_prints_clear_failure(monkeypatch: pytest.MonkeyPatch, capsys: p
     monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: _workflow())
     monkeypatch.setattr(
         "vibecomfy.commands.run.run_embedded_sync",
-        lambda workflow, *, backend: (_ for _ in ()).throw(ValueError("Workflow build failed: bad backend")),
+        lambda workflow, **_kwargs: (_ for _ in ()).throw(ValueError("Workflow build failed: bad backend")),
     )
 
     assert _cmd_run(args) == 1
@@ -328,7 +445,7 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
         steps=None,
     )
     schema_calls: list[tuple[str, str | None]] = []
-    embedded_calls: list[tuple[VibeWorkflow, str]] = []
+    embedded_calls: list[tuple[VibeWorkflow, dict]] = []
 
     monkeypatch.setattr("vibecomfy.commands.run.find_active_session", lambda _id: None)
     monkeypatch.setattr(
@@ -341,8 +458,8 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("server should not run")),
     )
 
-    def fake_run_embedded_sync(workflow: VibeWorkflow, *, backend: str):
-        embedded_calls.append((workflow, backend))
+    def fake_run_embedded_sync(workflow: VibeWorkflow, **kwargs):
+        embedded_calls.append((workflow, kwargs))
         return types.SimpleNamespace(
             run_id="run-embedded",
             prompt_id="prompt-embedded",
@@ -356,7 +473,7 @@ def test_cmd_run_auto_without_active_session_falls_back_to_embedded(
     assert _cmd_run(args) == 0
 
     assert schema_calls == [("auto", None)]
-    assert embedded_calls[0][1] == "api"
+    assert embedded_calls[0][1] == {"backend": "api", "ensure_models": True}
     assert "run_id: run-embedded" in capsys.readouterr().out
 
 
@@ -429,7 +546,15 @@ def test_cmd_run_memory_profile_overrides_embedded_config(
     monkeypatch.setattr("vibecomfy.commands.run.get_schema_provider", lambda prefer, *, server_url=None: object())
     monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: workflow)
 
-    def fake_run_embedded_sync(workflow: VibeWorkflow, *, backend: str, config: SessionConfig):
+    def fake_run_embedded_sync(
+        workflow: VibeWorkflow,
+        *,
+        backend: str,
+        config: SessionConfig,
+        ensure_models: bool,
+    ):
+        assert backend == "api"
+        assert ensure_models is True
         embedded_configs.append(config)
         return types.SimpleNamespace(
             run_id="run-embedded",

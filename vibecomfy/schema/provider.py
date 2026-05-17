@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
-import shutil
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from vibecomfy.comfy_command import has_comfyui_runtime
 from vibecomfy.runtime.client import ComfyClient
 from vibecomfy.runtime.server import comfy_server
 
-from .cache import load_object_info_cache, object_info_cache_path, write_object_info_cache
+from .cache import load_object_info_cache, object_info_cache_path, runtime_fingerprint, write_object_info_cache
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -29,12 +33,57 @@ class OutputSpec:
     name: str | None = None
 
 
+@dataclass
+class SchemaSourceInfo:
+    """Provenance metadata describing where a schema came from and with what confidence.
+
+    This is intentionally a plain (non-frozen) dataclass so callers can
+    mutate it incrementally while merging evidence from multiple providers.
+    """
+
+    provider_name: str = "unknown"
+    source_path: str | None = None
+    cache_path: str | None = None
+    server_url: str | None = None
+    package: str | None = None
+    version: str | None = None
+    hash: str | None = None
+    confidence: float = 1.0
+    conflicts: list[str] = field(default_factory=list)
+    ignored_evidence: list[str] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "provider_name": self.provider_name,
+            "source_path": self.source_path,
+            "cache_path": self.cache_path,
+            "server_url": self.server_url,
+            "package": self.package,
+            "version": self.version,
+            "hash": self.hash,
+            "confidence": self.confidence,
+            "conflicts": list(self.conflicts),
+            "ignored_evidence": list(self.ignored_evidence),
+        }
+
+
 @dataclass(frozen=True)
 class NodeSchema:
     class_type: str
     pack: str | None
     inputs: dict[str, InputSpec]
     outputs: list[OutputSpec]
+    # -- provenance fields (defaults so existing code works unchanged) ------
+    source_provider: str = "unknown"
+    source_path: str | None = None
+    source_cache_path: str | None = None
+    source_server_url: str | None = None
+    source_package: str | None = None
+    source_version: str | None = None
+    source_hash: str | None = None
+    confidence: float = 1.0
+    conflicts: tuple[str, ...] = ()
+    ignored_evidence: tuple[str, ...] = ()
 
 
 class SchemaIndexError(ValueError):
@@ -110,6 +159,294 @@ class LocalSchemaProvider:
         return schemas
 
 
+class SourceSchemaProvider:
+    """Best-effort INPUT_TYPES reader for installed custom-node source trees."""
+
+    def __init__(self, roots: list[str | Path] | None = None) -> None:
+        self.roots = [Path(root) for root in (roots or _default_source_roots())]
+        self._schemas: dict[str, NodeSchema | None] = {}
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.get_schema(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        if class_type not in self._schemas:
+            self._schemas[class_type] = self._find_schema(class_type)
+        return self._schemas[class_type]
+
+    def _find_schema(self, class_type: str) -> NodeSchema | None:
+        for path in _candidate_python_files(self.roots, class_type):
+            schema = _schema_from_python_source(path, class_type)
+            if schema is not None:
+                return schema
+        return None
+
+
+class ObjectInfoSchemaProvider:
+    """Schema provider backed by a captured ComfyUI /object_info JSON file."""
+
+    def __init__(self, object_info_path: str | Path) -> None:
+        self.object_info_path = Path(object_info_path)
+        self._schemas: dict[str, NodeSchema] | None = None
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.schemas().get(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self.get(class_type)
+
+    def schemas(self) -> dict[str, NodeSchema]:
+        if self._schemas is None:
+            data = load_object_info_cache(self.object_info_path)
+            if data is None:
+                raise SchemaIndexError(self.object_info_path, ValueError("expected object_info JSON object"))
+            self._schemas = {
+                class_type: _schema_from_object_info(class_type, info)
+                for class_type, info in data.items()
+                if isinstance(info, dict)
+            }
+        return self._schemas
+
+
+class CompositeSchemaProvider:
+    def __init__(self, *providers: SchemaProvider) -> None:
+        self.providers = providers
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.get_schema(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        for provider in self.providers:
+            schema = provider.get_schema(class_type)
+            if schema is not None:
+                return schema
+        return None
+
+
+class ConversionSchemaProvider:
+    """Deterministic offline schema provider for port check/convert.
+
+    Precedence order (first hit wins):
+
+    1. **Committed node_index.json** - `LocalSchemaProvider` against the
+       pinned `node_index_path`.
+    2. **Provenance-matched object_info cache** - `ObjectInfoSchemaProvider`
+       loaded from `object_info_cache_path` only when its fingerprint
+       metadata matches the expected runtime identity.
+    3. **Source parser** - `SourceSchemaProvider` scanning installed
+       custom-node source trees under `source_roots`.
+    4. **Widget schema fallback** - positional `widget_N` -> named input
+       aliases from the local `WIDGET_SCHEMA` table (lowest priority).
+    5. **Runtime** - `RuntimeSchemaProvider` is consulted *only* when
+       `enable_runtime=True` (off by default).
+
+    Each `get_schema` hit records a `SchemaSourceInfo` provenance note
+    via `_logger.info` so callers can attribute emission decisions.
+
+    Returns `None` for unknown types - never silently falls through to
+    a live network call behind the `enable_runtime` flag.
+    """
+
+    def __init__(
+        self,
+        *,
+        node_index_path: str | Path = "node_index.json",
+        source_roots: list[str | Path] | None = None,
+        object_info_cache_path: str | Path | None = None,
+        widget_schema: dict[str, list[str | None]] | None = None,
+        runtime_server_url: str | None = None,
+        enable_runtime: bool = False,
+    ) -> None:
+        self._local = LocalSchemaProvider(node_index_path)
+        self._source = SourceSchemaProvider(source_roots)
+        self._object_info: ObjectInfoSchemaProvider | None = None
+        if object_info_cache_path is not None:
+            self._object_info = ObjectInfoSchemaProvider(object_info_cache_path)
+        self._widget_schema: dict[str, list[str | None]] = widget_schema or {}
+        self._runtime: RuntimeSchemaProvider | None = None
+        if enable_runtime:
+            self._runtime = RuntimeSchemaProvider(server_url=runtime_server_url)
+        self._enable_runtime = enable_runtime
+        self._expected_cache_fingerprint = runtime_fingerprint(runtime_server_url)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        # 1. Committed node_index.json
+        schema = self._local.get_schema(class_type)
+        if schema is not None:
+            _logger.info(
+                "schema hit: %s provider=node_index path=%s",
+                class_type,
+                self._local.index_path,
+            )
+            return self._with_provenance(
+                schema,
+                SchemaSourceInfo(
+                    provider_name="node_index",
+                    source_path=str(self._local.index_path),
+                    confidence=1.0,
+                ),
+            )
+
+        # 2. Provenance-matched object_info cache
+        if self._object_info is not None:
+            try:
+                schema = self._object_info.get_schema(class_type)
+            except SchemaIndexError:
+                schema = None
+            if schema is not None:
+                cache_info = self._object_info_cache_info()
+                _logger.info(
+                    "schema hit: %s provider=object_info_cache path=%s confidence=%s conflicts=%s",
+                    class_type,
+                    self._object_info.object_info_path,
+                    cache_info.confidence,
+                    cache_info.conflicts,
+                )
+                return self._with_provenance(schema, cache_info)
+            else:
+                _logger.info(
+                    "schema miss in object_info_cache: %s path=%s",
+                    class_type,
+                    self._object_info.object_info_path,
+                )
+
+        # 3. Source parser
+        schema = self._source.get_schema(class_type)
+        if schema is not None:
+            _logger.info(
+                "schema hit: %s provider=source_parser roots=%s",
+                class_type,
+                self._source.roots,
+            )
+            return self._with_provenance(
+                schema,
+                SchemaSourceInfo(
+                    provider_name="source_parser",
+                    source_path=None,  # resolved per-file inside SourceSchemaProvider
+                    confidence=0.9,
+                ),
+            )
+
+        # 4. Widget schema fallback - build a minimal NodeSchema from aliases
+        widget_names = self._widget_schema.get(class_type)
+        if widget_names is not None:
+            _logger.info(
+                "schema hit: %s provider=widget_schema_fallback names=%s",
+                class_type,
+                widget_names,
+            )
+            fallback_schema = self._widget_names_to_schema(class_type, widget_names)
+            return self._with_provenance(
+                fallback_schema,
+                SchemaSourceInfo(
+                    provider_name="widget_schema",
+                    confidence=0.3,
+                ),
+            )
+
+        # 5. Runtime (only when explicitly enabled)
+        if self._runtime is not None:
+            schema = self._runtime.get_schema(class_type)
+            if schema is not None:
+                _logger.info(
+                    "schema hit: %s provider=runtime server=%s",
+                    class_type,
+                    self._runtime.server_url,
+                )
+                return self._with_provenance(
+                    schema,
+                    SchemaSourceInfo(
+                        provider_name="runtime",
+                        server_url=self._runtime.server_url,
+                        cache_path=str(self._runtime.cache_path) if self._runtime.cache_path else None,
+                        confidence=0.6,
+                    ),
+                )
+
+        _logger.info("schema miss: %s (no provider had it)", class_type)
+        return None
+
+    @staticmethod
+    def _widget_names_to_schema(class_type: str, names: list[str | None]) -> NodeSchema:
+        inputs: dict[str, InputSpec] = {}
+        outputs: list[OutputSpec] = []
+        for idx, name in enumerate(names):
+            if name is not None:
+                inputs[name] = InputSpec(type=None, required=False)
+        return NodeSchema(
+            class_type=class_type,
+            pack=None,
+            inputs=inputs,
+            outputs=outputs,
+            source_provider="widget_schema",
+            confidence=0.3,
+        )
+
+    def _object_info_cache_info(self) -> SchemaSourceInfo:
+        if self._object_info is None:
+            return SchemaSourceInfo(provider_name="object_info_cache", confidence=0.0)
+        path = self._object_info.object_info_path
+        data = load_object_info_cache(path) or {}
+        metadata = data.get("_cache_metadata")
+        info = SchemaSourceInfo(
+            provider_name="object_info_cache",
+            cache_path=str(path),
+            confidence=0.8,
+        )
+        metadata_fingerprint: str | None = None
+        if isinstance(metadata, dict):
+            for key in ("runtime_fingerprint", "fingerprint", "cache_fingerprint"):
+                value = metadata.get(key)
+                if isinstance(value, str) and value:
+                    metadata_fingerprint = value
+                    break
+            info.hash = metadata_fingerprint
+            package = metadata.get("package")
+            version = metadata.get("version")
+            if isinstance(package, str):
+                info.package = package
+            if isinstance(version, str):
+                info.version = version
+        else:
+            info.confidence = 0.5
+            info.ignored_evidence.append("metadata_less_cache")
+
+        filename_fingerprint = _cache_fingerprint_for_path(path)
+        if metadata_fingerprint is None and filename_fingerprint is not None:
+            info.hash = filename_fingerprint
+
+        observed = metadata_fingerprint or filename_fingerprint
+        if observed is not None and observed != self._expected_cache_fingerprint:
+            info.confidence = min(info.confidence, 0.4)
+            info.conflicts.append(
+                f"stale_cache_fingerprint:{observed}!={self._expected_cache_fingerprint}"
+            )
+        elif observed is None:
+            info.confidence = min(info.confidence, 0.5)
+            info.ignored_evidence.append("missing_cache_fingerprint")
+        return info
+
+    @staticmethod
+    def _with_provenance(schema: NodeSchema, info: SchemaSourceInfo) -> NodeSchema:
+        # NodeSchema is frozen, so we must construct a new one with provenance.
+        return NodeSchema(
+            class_type=schema.class_type,
+            pack=schema.pack,
+            inputs=schema.inputs,
+            outputs=schema.outputs,
+            source_provider=info.provider_name,
+            source_path=info.source_path,
+            source_cache_path=info.cache_path,
+            source_server_url=info.server_url,
+            source_package=info.package,
+            source_version=info.version,
+            source_hash=info.hash,
+            confidence=info.confidence,
+            conflicts=tuple(info.conflicts),
+            ignored_evidence=tuple(info.ignored_evidence),
+        )
+
+
 class RuntimeSchemaProvider:
     def __init__(
         self,
@@ -162,7 +499,7 @@ def get_schema_provider(
     prefer: Literal["runtime", "local", "auto"] = "auto",
     *,
     server_url: str | None = None,
-) -> RuntimeSchemaProvider | LocalSchemaProvider:
+) -> RuntimeSchemaProvider | LocalSchemaProvider | CompositeSchemaProvider:
     if prefer == "runtime":
         return RuntimeSchemaProvider(server_url=server_url)
     if prefer == "local":
@@ -173,7 +510,7 @@ def get_schema_provider(
         return RuntimeSchemaProvider(server_url=server_url)
     if Path("node_index.json").exists():
         return LocalSchemaProvider()
-    if shutil.which("comfyui"):
+    if has_comfyui_runtime():
         return RuntimeSchemaProvider(server_url=server_url)
     return LocalSchemaProvider()
 
@@ -190,6 +527,16 @@ def _schema_from_object_info(class_type: str, info: dict[str, Any]) -> NodeSchem
     outputs = _parse_outputs(info)
     pack = _first_string(info, "pack", "package", "category")
     return NodeSchema(class_type=class_type, pack=pack, inputs=inputs, outputs=outputs)
+
+
+def _cache_fingerprint_for_path(path: Path) -> str | None:
+    name = path.name
+    if not name.startswith("object_info.") or not name.endswith(".json"):
+        return None
+    middle = name[len("object_info.") : -len(".json")]
+    if not middle:
+        return None
+    return middle
 
 
 def _schema_from_index_row(row: dict[str, Any]) -> NodeSchema | None:
@@ -270,6 +617,136 @@ def _parse_outputs(info: dict[str, Any]) -> list[OutputSpec]:
             name = names[index] if isinstance(names, (list, tuple)) and index < len(names) else None
             outputs.append(OutputSpec(type=str(raw) if raw is not None else None, name=str(name) if name else None))
     return outputs
+
+
+def _default_source_roots() -> list[Path]:
+    roots = [
+        Path("custom_nodes"),
+        Path("vendor") / "ComfyUI",
+    ]
+    tmp = Path("/tmp")
+    if tmp.exists():
+        roots.extend(sorted(path for path in tmp.glob("ComfyUI-*") if path.is_dir()))
+    return roots
+
+
+def _candidate_python_files(roots: list[Path], class_type: str) -> list[Path]:
+    candidates: list[Path] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        direct = root / f"{class_type}.py"
+        if direct.is_file():
+            candidates.append(direct)
+        try:
+            for path in root.rglob("*.py"):
+                if any(part in {".git", "__pycache__", "venv", ".venv"} for part in path.parts):
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                if f"class {class_type}" in text or f'"{class_type}"' in text or f"'{class_type}'" in text:
+                    candidates.append(path)
+        except OSError:
+            continue
+    return sorted(dict.fromkeys(candidates))
+
+
+def _schema_from_python_source(path: Path, class_type: str) -> NodeSchema | None:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"), filename=str(path))
+    except (OSError, SyntaxError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == class_type:
+            class_values = _class_literal_values(node)
+            input_types = _input_types_return(node, class_values)
+            if not isinstance(input_types, dict):
+                return None
+            return _schema_from_object_info(
+                class_type,
+                {
+                    "pack": path.parent.name,
+                    "input": input_types,
+                    "output": _class_literal_attr(node, "RETURN_TYPES") or [],
+                    "output_name": _class_literal_attr(node, "RETURN_NAMES") or [],
+                },
+            )
+    return None
+
+
+def _class_literal_values(node: ast.ClassDef) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for stmt in node.body:
+        targets: list[ast.expr] = []
+        value: ast.expr | None = None
+        if isinstance(stmt, ast.Assign):
+            targets = list(stmt.targets)
+            value = stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.target is not None:
+            targets = [stmt.target]
+            value = stmt.value
+        if value is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                parsed = _literal_eval_node(value, values)
+                if parsed is not _UNPARSEABLE:
+                    values[target.id] = parsed
+    return values
+
+
+def _class_literal_attr(node: ast.ClassDef, name: str) -> Any:
+    values = _class_literal_values(node)
+    return values.get(name)
+
+
+def _input_types_return(node: ast.ClassDef, class_values: dict[str, Any]) -> Any:
+    for stmt in node.body:
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) or stmt.name != "INPUT_TYPES":
+            continue
+        for child in ast.walk(stmt):
+            if isinstance(child, ast.Return) and child.value is not None:
+                parsed = _literal_eval_node(child.value, class_values)
+                return None if parsed is _UNPARSEABLE else parsed
+    return None
+
+
+_UNPARSEABLE = object()
+
+
+def _literal_eval_node(node: ast.AST, class_values: dict[str, Any]) -> Any:
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.List):
+        values = [_literal_eval_node(item, class_values) for item in node.elts]
+        return _UNPARSEABLE if _UNPARSEABLE in values else values
+    if isinstance(node, ast.Tuple):
+        values = [_literal_eval_node(item, class_values) for item in node.elts]
+        return _UNPARSEABLE if _UNPARSEABLE in values else tuple(values)
+    if isinstance(node, ast.Dict):
+        out: dict[Any, Any] = {}
+        for key_node, value_node in zip(node.keys, node.values, strict=False):
+            if key_node is None:
+                return _UNPARSEABLE
+            key = _literal_eval_node(key_node, class_values)
+            value = _literal_eval_node(value_node, class_values)
+            if key is _UNPARSEABLE:
+                return _UNPARSEABLE
+            if value is _UNPARSEABLE:
+                continue
+            out[key] = value
+        return out
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.attr in class_values:
+        return class_values[node.attr]
+    if isinstance(node, ast.Name):
+        return class_values.get(node.id, _UNPARSEABLE)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        value = _literal_eval_node(node.operand, class_values)
+        if isinstance(value, (int, float)):
+            return -value
+    return _UNPARSEABLE
 
 
 def _first_string(row: dict[str, Any], *keys: str) -> str | None:

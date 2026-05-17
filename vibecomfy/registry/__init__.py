@@ -6,7 +6,14 @@ from .library import (
     workflow_from_id,
     workflow_from_template,
 )
-from .ready import ready_template_ids, workflow_from_ready
+from .ready import (
+    dynamic_ready_template_rows,
+    ready_template_ids,
+    repo_ready_template_id_for_path,
+    repo_ready_template_ids,
+    repo_ready_template_paths,
+    workflow_from_ready,
+)
 
 if TYPE_CHECKING:
     from .models_loader import ModelEntry, ModelSource, ModelTarget, canonical_filename, load_registry, normalize_alias, stage_entry, stage_many
@@ -37,6 +44,10 @@ __all__ = [
     "workflow_from_id",
     "workflow_from_template",
     "ready_template_ids",
+    "dynamic_ready_template_rows",
+    "repo_ready_template_id_for_path",
+    "repo_ready_template_ids",
+    "repo_ready_template_paths",
     "workflow_from_ready",
     "ModelEntry",
     "ModelSource",

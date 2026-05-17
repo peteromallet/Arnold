@@ -14,6 +14,7 @@ from scripts.runpod_matrix_remote import (
     LTX_TEXT_PROJECTION,
     LTX_VIDEO_VAE,
     patch_workflow_api,
+    resolve_attention_profile,
 )
 
 
@@ -26,6 +27,52 @@ def test_runpod_matrix_model_constants_match_registry_contract() -> None:
     assert LTX_PREVIEW_VAE == "taeltx2_3.safetensors"
     assert GGUF_MODEL == "flux-2-klein-9b-Q4_K_M.gguf"
     assert FLUX_VAE == "flux2-vae.safetensors"
+
+
+def test_attention_profile_defaults_to_portable_sdpa() -> None:
+    assert resolve_attention_profile(None) == "portable"
+    assert resolve_attention_profile("default") == "portable"
+    assert resolve_attention_profile("optimized") == "sage"
+
+
+def test_wanvideo_wrapper_patch_downgrades_sageattn_for_portable_profile() -> None:
+    api = {
+        "1": {
+            "class_type": "WanVideoModelLoader",
+            "inputs": {
+                "base_precision": "fp16_fast",
+                "widget_1": "fp16_fast",
+                "attention_mode": "sageattn",
+                "widget_4": "sageattn",
+            },
+        }
+    }
+
+    assert patch_workflow_api("wanvideo_wrapper_example", api, attention_profile="portable")
+
+    inputs = api["1"]["inputs"]
+    assert inputs["base_precision"] == "fp16"
+    assert inputs["widget_1"] == "fp16"
+    assert inputs["attention_mode"] == "sdpa"
+    assert inputs["widget_4"] == "sdpa"
+
+
+def test_wanvideo_wrapper_patch_preserves_sageattn_for_sage_profile() -> None:
+    api = {
+        "1": {
+            "class_type": "WanVideoModelLoader",
+            "inputs": {
+                "attention_mode": "sageattn",
+                "widget_4": "sageattn",
+            },
+        }
+    }
+
+    assert patch_workflow_api("wanvideo_wrapper_example", api, attention_profile="sage")
+
+    inputs = api["1"]["inputs"]
+    assert inputs["attention_mode"] == "sageattn"
+    assert inputs["widget_4"] == "sageattn"
 
 
 def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:
@@ -60,6 +107,33 @@ def test_corpus_matrix_plan_splits_required_workflows(tmp_path: Path) -> None:
     assert format_rows(plan.gguf_rows) == "flux2_klein_9b_gguf_t2i\tgguf.json\timage"
     assert format_rows(plan.ltx_rows) == "ltx2_3_t2v\tltx.json\tvideo"
     assert format_ready_rows(plan.ready_rows, tmp_path) == "core\tready_templates/image/core.py\timage"
+
+
+def test_coverage_manifest_ready_template_rows_resolve_to_checked_in_python() -> None:
+    manifest = json.loads(Path("workflow_corpus/manifests/coverage.json").read_text(encoding="utf-8"))
+    ready_ids = {
+        path.relative_to("ready_templates").with_suffix("").as_posix()
+        for path in Path("ready_templates").rglob("*.py")
+        if path.name != "__init__.py" and not path.name.startswith("_")
+    }
+
+    missing: list[tuple[str, object]] = []
+    unmarked: list[tuple[str, str]] = []
+    for item in manifest["workflows"]:
+        ready_template = item.get("ready_template")
+        if ready_template:
+            candidates = _ready_template_candidates(item)
+            if not any(candidate in ready_ids for candidate in candidates):
+                missing.append((item["id"], ready_template))
+        elif item.get("source_only"):
+            consumers = item.get("ready_template_consumers", [])
+            if not consumers or not all(isinstance(consumer, str) and consumer in ready_ids for consumer in consumers):
+                missing.append((item["id"], "source_only consumers"))
+        elif any(candidate in ready_ids for candidate in _ready_template_candidates(item)):
+            unmarked.append((item["id"], item["path"]))
+
+    assert missing == []
+    assert unmarked == []
 
 
 def test_corpus_matrix_plan_scope_can_skip_core_rows(tmp_path: Path) -> None:
@@ -542,6 +616,24 @@ def test_corpus_matrix_patches_wan_headless_preview_crash() -> None:
     assert "node_id = serv.last_node_id or '0'" in script
 
 
+def test_corpus_matrix_records_offline_port_reports_and_preview_artifacts() -> None:
+    script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
+
+    assert 'vibecomfy.cli port check "$workflow" --json' in script
+    assert 'out/corpus_matrix/logs/${{id}}.port_report.json' in script
+    assert "port_report id=" in script
+    assert 'vibecomfy.cli port convert "$workflow" --out "$out" --json' in script
+    assert 'out/corpus_matrix/logs/${{id}}.port_scratchpad.py' in script
+    assert "--head-check-models" not in script
+
+
+def test_corpus_matrix_checks_ready_template_index_instead_of_materializer() -> None:
+    script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
+
+    assert "tools.refresh_template_index --check" in script
+    assert "scripts/materialize_ready_templates.py" not in script
+
+
 def test_corpus_matrix_handles_flux_custom_scheduler_overrides_and_assets() -> None:
     script = Path("scripts/runpod_corpus_matrix.py").read_text(encoding="utf-8")
 
@@ -735,3 +827,20 @@ def _ltx_api() -> dict[str, dict]:
         "3940": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "ltx-2.3-22b-dev.safetensors"}},
         "text_encoder": {"class_type": "CLIPLoader", "inputs": {"clip_name": "comfy_gemma_3_12B_it.safetensors"}},
     }
+
+
+def _ready_template_candidates(item: dict) -> tuple[str, ...]:
+    candidates: list[str] = []
+    ready_template = item.get("ready_template")
+    if isinstance(ready_template, str):
+        candidates.append(ready_template)
+    workflow_id = item.get("id")
+    media = item.get("media")
+    if isinstance(workflow_id, str):
+        candidates.append(workflow_id)
+        if isinstance(media, str):
+            candidates.append(f"{media}/{workflow_id}")
+        path = item.get("path")
+        if isinstance(path, str) and "/edit/" in path:
+            candidates.append(f"edit/{workflow_id}")
+    return tuple(dict.fromkeys(candidates))

@@ -20,7 +20,7 @@ Custom-node handling is now a catalog-backed workflow, not just a doc note.
 
 - `vibecomfy doctor <workflow-or-scratchpad>` reports unknown classes and suggests known packs.
 - `vibecomfy nodes install-plan <workflow-or-scratchpad>` prints the custom-node repos and pip packages needed for a workflow.
-- `scripts/materialize_ready_templates.py` derives `READY_REQUIREMENTS["custom_nodes"]` from the same catalog.
+- Ready templates declare `READY_REQUIREMENTS["custom_nodes"]`; `python -m tools.refresh_template_index` exposes that static evidence to downstream tooling.
 - `scripts/runpod_matrix_remote.py` carries compatibility patches for known stale workflow class names, such as older Video-Depth-Anything nodes that now map to Kijai's `DepthAnything_V2` pack.
 
 The current catalog includes WanVideoWrapper, LTXVideo, KJNodes, VideoHelperSuite, ControlNet Aux, DepthAnythingV2, GGUF, DarioFT Qwen3-TTS, and 1038lab QwenTTS. New workflow failures should generally become catalog entries or compatibility patches, not one-off matrix hacks.

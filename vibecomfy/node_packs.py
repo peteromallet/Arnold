@@ -18,6 +18,8 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         classes=frozenset(
             {
                 "LoadWanVideoT5TextEncoder",
+                "CreateCFGScheduleFloatList",
+                "WanVideoBlockSwap",
                 "WanVideoEncode",
                 "WanVideoVAELoader",
                 "WanVideoTorchCompileSettings",
@@ -29,8 +31,17 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "WanVideoEasyCache",
                 "WanVideoSampler",
                 "WanVideoTextEncode",
+                "WanVideoTextEncodeCached",
+                "WanVideoTextEmbedBridge",
+                "WanVideoLoraSelect",
+                "WanVideoLoraSelectMulti",
+                "WanVideoSetBlockSwap",
+                "WanVideoSetLoRAs",
                 "WanVideoSLG",
                 "WanVideoControlEmbeds",
+                "WanVideoVACEEncode",
+                "WanVideoVACEModelSelect",
+                "WanVideoVACEStartToEndFrame",
             }
         ),
         pip_packages=("onnx", "opencv-python-headless"),
@@ -41,11 +52,22 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         classes=frozenset(
             {
                 "LTXAVTextEncoderLoader",
+                "LTX2AttentionTunerPatch",
+                "LTX2_NAG",
                 "LTXVConditioning",
                 "LTXVImgToVideo",
+                "LTXVImgToVideoInplaceKJ",
                 "EmptyLTXVLatentVideo",
                 "LTXVAudioVAELoader",
+                "LTXVAudioVAEDecode",
+                "LTXVChunkFeedForward",
+                "LTXVConcatAVLatent",
+                "LTXVCropGuides",
                 "LTXVEmptyLatentAudio",
+                "LTXVPreprocess",
+                "LTXVScheduler",
+                "LTXVSeparateAVLatent",
+                "LatentUpscaleModelLoader",
             }
         ),
     ),
@@ -54,10 +76,20 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         repo="https://github.com/kijai/ComfyUI-KJNodes.git",
         classes=frozenset(
             {
+                "BlockifyMask",
+                "DrawMaskOnImage",
                 "ImageResizeKJv2",
                 "PreviewAnimation",
                 "GetImageRangeFromBatch",
+                "GetImageSize",
+                "GetImageSizeAndCount",
                 "INTConstant",
+                "LTXVAddGuide",
+                "PathchSageAttentionKJ",
+                "PointsEditor",
+                "ResizeImagesByLongerEdge",
+                "SimpleCalculatorKJ",
+                "VAELoaderKJ",
             }
         ),
         pip_packages=("matplotlib",),
@@ -66,6 +98,35 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
         name="ComfyUI-VideoHelperSuite",
         repo="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
         classes=frozenset({"VHS_LoadVideo", "VHS_VideoCombine"}),
+    ),
+    CustomNodePack(
+        name="ComfyUI-segment-anything-2",
+        repo="https://github.com/kijai/ComfyUI-segment-anything-2.git",
+        classes=frozenset(
+            {
+                "DownloadAndLoadSAM2Model",
+                "Sam2Segmentation",
+                "Sam2AutoSegmentation",
+                "Sam2VideoSegmentation",
+                "Sam2VideoSegmentationAddPoints",
+                "Florence2toCoordinates",
+            }
+        ),
+        pip_packages=("opencv-python-headless",),
+    ),
+    CustomNodePack(
+        name="ComfyUI-WanAnimatePreprocess",
+        repo="https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git",
+        classes=frozenset(
+            {
+                "OnnxDetectionModelLoader",
+                "PoseAndFaceDetection",
+                "DrawViTPose",
+                "PoseRetargetPromptHelper",
+                "PoseDetectionOneToAllAnimation",
+            }
+        ),
+        pip_packages=("onnx", "onnxruntime-gpu", "opencv-python-headless"),
     ),
     CustomNodePack(
         name="comfyui_controlnet_aux",
@@ -90,8 +151,24 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
     CustomNodePack(
         name="ComfyUI-GGUF",
         repo="https://github.com/city96/ComfyUI-GGUF.git",
-        classes=frozenset({"UnetLoaderGGUF"}),
+        classes=frozenset({"DualCLIPLoaderGGUF", "UnetLoaderGGUF"}),
         pip_packages=("gguf",),
+    ),
+    CustomNodePack(
+        name="rgthree-comfy",
+        repo="https://github.com/rgthree/rgthree-comfy.git",
+        classes=frozenset(
+            {
+                "Any Switch (rgthree)",
+                "Fast Groups Bypasser (rgthree)",
+                "Fast Groups Muter (rgthree)",
+                "GetNode",
+                "Label (rgthree)",
+                "Power Lora Loader (rgthree)",
+                "Seed (rgthree)",
+                "SetNode",
+            }
+        ),
     ),
     CustomNodePack(
         name="ComfyUI-Qwen3-TTS",

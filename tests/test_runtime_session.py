@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import httpx
 
+import vibecomfy.comfy_command as comfy_command_module
 import vibecomfy.runtime.session as session_module
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.memory_profile import MemoryProfile
@@ -22,6 +24,7 @@ from vibecomfy.runtime.session import (
     ServerSession,
     SessionConfig,
     _comfy_server_argv,
+    _comfyui_command,
     _embedded_configuration_for_session,
     _prepare_prompt_async,
     _run_metadata,
@@ -30,9 +33,115 @@ from vibecomfy.runtime.session import (
     model_fingerprint,
 )
 import vibecomfy.runtime.client as client_module
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
+
+
+def test_comfy_client_http_errors_include_response_body() -> None:
+    request = httpx.Request("POST", "http://comfy.test/prompt")
+    response = httpx.Response(400, request=request, text='{"error": "bad prompt", "node_id": "2077"}')
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client_module._raise_for_status_with_body(response)
+
+    message = str(exc_info.value)
+    assert "400 Bad Request" in message
+    assert "bad prompt" in message
+    assert "2077" in message
+
+
+def test_comfy_client_long_http_errors_keep_tail() -> None:
+    request = httpx.Request("POST", "http://comfy.test/prompt")
+    body = "start-" + ("x" * 25000) + "-node_id_2077"
+    response = httpx.Response(400, request=request, text=body)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        client_module._raise_for_status_with_body(response)
+
+    message = str(exc_info.value)
+    assert "start-" in message
+    assert "response body truncated" in message
+    assert "node_id_2077" in message
+
+
+def test_run_metadata_groups_single_artifact_by_semantic_output() -> None:
+    workflow = VibeWorkflow("runtime-test", WorkflowSource("runtime-test"))
+    workflow.outputs.append(VibeOutput(node_id="9", output_type="SaveImage", name="image", artifact_kind="image"))
+    metadata = _run_metadata(
+        run_id="run-1",
+        workflow=workflow,
+        api_dict={},
+        queued={"outputs": {}},
+        outputs=["/tmp/out/image.png"],
+        runtime="embedded",
+    )
+
+    assert metadata["artifact_paths"] == ["/tmp/out/image.png"]
+    assert metadata["outputs"] == ["/tmp/out/image.png"]
+    assert metadata["artifact_manifest"] == {
+        "schema_version": 1,
+        "by_output": {"image": ["/tmp/out/image.png"]},
+        "unmapped": [],
+        "attribution": [
+            {"path": "/tmp/out/image.png", "output": "image", "method": "single_named_output"},
+        ],
+    }
+
+
+def test_run_metadata_uses_filename_prefix_and_keeps_uncertain_artifacts_unmapped() -> None:
+    workflow = VibeWorkflow("runtime-test", WorkflowSource("runtime-test"))
+    workflow.outputs.extend(
+        [
+            VibeOutput(
+                node_id="9",
+                output_type="SaveImage",
+                name="preview",
+                artifact_kind="image",
+                filename_prefix="previews/preview",
+            ),
+            VibeOutput(
+                node_id="10",
+                output_type="VHS_VideoCombine",
+                name="clip",
+                artifact_kind="video",
+                filename_prefix="clips/clip",
+            ),
+        ]
+    )
+    metadata = _run_metadata(
+        run_id="run-1",
+        workflow=workflow,
+        api_dict={},
+        queued={"outputs": {}},
+        outputs=[
+            "/tmp/out/previews/preview_00001.png",
+            "/tmp/out/clips/clip_00001.mp4",
+            "/tmp/out/mystery.bin",
+        ],
+        runtime="embedded",
+    )
+
+    assert metadata["artifact_manifest"] == {
+        "schema_version": 1,
+        "by_output": {
+            "preview": ["/tmp/out/previews/preview_00001.png"],
+            "clip": ["/tmp/out/clips/clip_00001.mp4"],
+        },
+        "unmapped": ["/tmp/out/mystery.bin"],
+        "attribution": [
+            {
+                "path": "/tmp/out/previews/preview_00001.png",
+                "output": "preview",
+                "method": "filename_prefix",
+            },
+            {
+                "path": "/tmp/out/clips/clip_00001.mp4",
+                "output": "clip",
+                "method": "filename_prefix",
+            },
+        ],
+    }
 
 
 class FakeConfiguration(dict):
@@ -254,6 +363,9 @@ def test_one_shot_run_validates_against_active_url(tmp_path: Path, monkeypatch: 
     async def fake_prepare(workflow, *, backend, schema_provider, on_unavailable, cache_only=False):
         return workflow.compile(backend=backend)
 
+    async def fake_history(*args, **kwargs):
+        return {}
+
     class FakeClient:
         def __init__(self, server_url: str) -> None:
             queued_urls.append(server_url)
@@ -265,6 +377,7 @@ def test_one_shot_run_validates_against_active_url(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", fake_build)
     monkeypatch.setattr(runtime_run_module, "_prepare_prompt_async", fake_prepare)
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(runtime_run_module, "_wait_for_server_history", fake_history)
 
     asyncio.run(runtime_run_module.run(_workflow(), server_url="http://configured.test"))
 
@@ -414,6 +527,39 @@ def test_from_workflow_metadata_raw_hiddenswitch_carries_through(
     assert embedded_config.reserve_vram == 12
     assert embedded_config.cache_none is True
     assert embedded_config.fp8_e4m3fn_text_enc is True
+
+
+def test_embedded_configuration_loads_extra_model_paths_from_cwd(
+    fake_comfy, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    extra_model_paths = tmp_path / "extra_model_paths.yaml"
+    extra_model_paths.write_text("reigh_shared:\n  base_path: /workspace/models\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VIBECOMFY_COMFY_CONFIGURATION", raising=False)
+
+    embedded_config = _embedded_configuration_for_session(SessionConfig())
+
+    assert embedded_config is not None
+    assert embedded_config.extra_model_paths_config == [str(extra_model_paths)]
+
+
+def test_embedded_configuration_preserves_explicit_extra_model_paths(
+    fake_comfy, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    extra_model_paths = tmp_path / "extra_model_paths.yaml"
+    explicit_extra_model_paths = tmp_path / "explicit_extra_model_paths.yaml"
+    extra_model_paths.write_text("cwd paths\n", encoding="utf-8")
+    explicit_extra_model_paths.write_text("explicit paths\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(
+        "VIBECOMFY_COMFY_CONFIGURATION",
+        json.dumps({"extra_model_paths_config": [str(explicit_extra_model_paths)]}),
+    )
+
+    embedded_config = _embedded_configuration_for_session(SessionConfig())
+
+    assert embedded_config is not None
+    assert embedded_config.extra_model_paths_config == [str(explicit_extra_model_paths)]
 
 
 def test_session_config_from_dict_raw_hiddenswitch_mirror() -> None:
@@ -596,6 +742,53 @@ def test_memory_profiles_round_trip_to_embedded_config_and_server_argv(fake_comf
             assert "disable_smart_memory" not in embedded
 
 
+def test_sage_attention_profile_maps_to_embedded_config_and_server_argv(
+    fake_comfy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_ATTENTION_PROFILE", "sage")
+
+    embedded = _embedded_configuration_for_session(SessionConfig(port=8200))
+    argv = _comfy_server_argv(SessionConfig(port=8200))
+
+    assert embedded is not None
+    assert embedded.use_sage_attention is True
+    assert "--use-sage-attention" in argv
+
+
+def test_server_argv_includes_configured_io_directories() -> None:
+    config = SessionConfig.from_dict(
+        {
+            "port": 8200,
+            "input_directory": "/tmp/vibe-input",
+            "output_directory": "/tmp/vibe-output",
+            "temp_directory": "/tmp/vibe-temp",
+        }
+    )
+
+    argv = _comfy_server_argv(config)
+
+    assert argv[argv.index("--input-directory") + 1] == "/tmp/vibe-input"
+    assert argv[argv.index("--output-directory") + 1] == "/tmp/vibe-output"
+    assert argv[argv.index("--temp-directory") + 1] == "/tmp/vibe-temp"
+    assert argv[argv.index("--port") + 1] == "8200"
+
+
+def test_comfyui_command_falls_back_to_runnable_python_module_when_script_shim_is_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    python = tmp_path / "python"
+    python.write_text("", encoding="utf-8")
+    monkeypatch.setattr(comfy_command_module.shutil, "which", lambda _name: str(tmp_path / "missing-comfyui"))
+    monkeypatch.setattr(comfy_command_module.sys, "executable", str(python))
+    monkeypatch.setattr(
+        comfy_command_module.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "comfy.cmd.main" else None,
+    )
+
+    assert _comfyui_command() == (str(python), "-m", "comfy.cmd.main")
+
+
 def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> None:
     metadata = _run_metadata(
         run_id="run-test",
@@ -605,10 +798,12 @@ def test_run_metadata_includes_memory_profile_telemetry_when_configured() -> Non
         outputs=[],
         runtime="embedded",
         config=SessionConfig.from_dict({"memory_profile": 3}),
+        timings={"queue_prompt_sec": 1.25},
     )
 
     assert metadata["memory_profile"] == 3
     assert metadata["memory_profile_label"] == "Low VRAM"
+    assert metadata["timings"]["queue_prompt_sec"] == 1.25
 
 
 def test_run_metadata_omits_memory_profile_telemetry_when_unset() -> None:
@@ -761,6 +956,9 @@ class FakeResponse:
 class FakeAsyncClient:
     posts: list[tuple[str, dict[str, Any] | None]] = []
     gets: list[str] = []
+    history_outputs: dict[str, Any] = {
+        "9": {"images": [{"filename": "server-output.png", "subfolder": "", "type": "output"}]}
+    }
 
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -773,6 +971,9 @@ class FakeAsyncClient:
 
     async def get(self, url: str) -> FakeResponse:
         self.gets.append(url)
+        if "/history/" in url:
+            prompt_id = url.rstrip("/").rsplit("/", 1)[-1]
+            return FakeResponse(200, {prompt_id: {"outputs": self.history_outputs}})
         return FakeResponse(200, {"ready": True})
 
     async def post(self, url: str, json: dict[str, Any] | None = None) -> FakeResponse:
@@ -807,6 +1008,9 @@ class FakeProcess:
 def fake_server(monkeypatch: pytest.MonkeyPatch):
     FakeAsyncClient.posts = []
     FakeAsyncClient.gets = []
+    FakeAsyncClient.history_outputs = {
+        "9": {"images": [{"filename": "server-output.png", "subfolder": "", "type": "output"}]}
+    }
     spawned: list[tuple[tuple[str, ...], FakeProcess]] = []
 
     async def fake_create_subprocess_exec(*argv, **kwargs):
@@ -860,6 +1064,29 @@ def test_server_session_two_runs_share_one_subprocess(
 
     assert len(fake_server) == 1
     assert [post[0] for post in FakeAsyncClient.posts].count("http://127.0.0.1:8200/prompt") == 2
+
+
+def test_server_session_waits_for_history_and_records_outputs(
+    fake_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    (output_dir / "server-output.png").write_bytes(b"png")
+
+    async def run_case() -> RunResult:
+        session = ServerSession(SessionConfig(port=8200, extra={"output_directory": str(output_dir)}))
+        try:
+            return await session.run(_workflow())
+        finally:
+            await session.stop()
+
+    result = asyncio.run(run_case())
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+
+    assert result.outputs == [str(output_dir / "server-output.png")]
+    assert metadata["outputs"] == result.outputs
+    assert any(url.endswith("/history/prompt-1") for url in FakeAsyncClient.gets)
 
 
 def test_server_session_flush_posts_api_free_payload(fake_server) -> None:
@@ -997,6 +1224,30 @@ def test_embedded_stop_waits_for_inflight_run(
         release.set()
         await stop_task
         assert task.done()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_stop_exits_comfy_context_directly(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    exit_tasks: list[asyncio.Task[Any] | None] = []
+
+    async def recording_exit(self, exc_type, exc, tb):
+        exit_tasks.append(asyncio.current_task())
+
+    monkeypatch.setattr(fake_comfy, "__aexit__", recording_exit)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        await session.start()
+        task = asyncio.current_task()
+        await session.stop()
+        assert exit_tasks == [task]
+        assert session._context is None
+        assert session._comfy is None
 
     asyncio.run(run_case())
 
@@ -1157,6 +1408,62 @@ def test_embedded_run_ensure_packs_invokes_install_then_reload_then_queue(
     assert calls == ["install:ExamplePack", "reload:ensure_packs", "queue"]
 
 
+def test_embedded_run_ensure_packs_prefers_lockfile_restore(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    pack = CustomNodePack(
+        name="ExamplePack",
+        repo="https://example.test/example.git",
+        classes=frozenset({"ExampleNode"}),
+    )
+    calls: list[str] = []
+
+    Path("custom_nodes.lock").write_text(
+        "ExamplePack pinnedsha https://example.test/example.git\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", lambda workflow: ([pack], []))
+
+    def fail_install_pack(**_kwargs):
+        raise AssertionError("install_pack must not be called when a lockfile pin exists")
+
+    def fake_restore_pack(entry):
+        calls.append(f"restore:{entry.name}:{entry.git_commit_sha}")
+        return node_packs_install.InstallResult(
+            name=entry.name,
+            status="refreshed",
+            git_commit_sha=entry.git_commit_sha,
+            error=None,
+        )
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fail_install_pack)
+    monkeypatch.setattr(node_packs_install, "restore_pack", fake_restore_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["restore:ExamplePack:pinnedsha", "reload:ensure_packs", "queue"]
+
+
 def test_embedded_run_ensure_packs_skips_reload_when_nothing_missing(
     fake_comfy,
     tmp_path: Path,
@@ -1194,23 +1501,451 @@ def test_embedded_run_ensure_packs_skips_reload_when_nothing_missing(
     assert calls == ["queue"]
 
 
-def test_embedded_run_ensure_packs_raises_when_node_index_missing(
+def test_embedded_run_ensure_packs_continues_without_node_index_for_builtin_workflow(
+    fake_comfy,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[str] = []
 
     def missing_index(_workflow):
         raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
 
     monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+    monkeypatch.setattr(session_module, "_node_packs_from_requirements", lambda workflow: [])
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-no-index", "outputs": []}
+
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
 
     async def run_case() -> None:
         session = EmbeddedSession()
-        with pytest.raises(RuntimeError, match="ensure_packs: node_index.json not found"):
+        try:
             await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
 
     asyncio.run(run_case())
+    assert calls == ["queue"]
+
+
+def test_embedded_run_ensure_packs_falls_back_to_declared_requirements(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    pack = CustomNodePack(
+        name="ExamplePack",
+        repo="https://example.test/example.git",
+        classes=frozenset({"ExampleNode"}),
+    )
+    calls: list[str] = []
+
+    def missing_index(_workflow):
+        raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+    monkeypatch.setattr(session_module, "_node_packs_from_requirements", lambda workflow: [pack])
+
+    def fake_install_pack(*, name):
+        calls.append(f"install:{name}")
+        return node_packs_install.InstallResult(name=name, status="installed", git_commit_sha="abc123", error=None)
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(_workflow(), ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["install:ExamplePack", "reload:ensure_packs", "queue"]
+
+
+def test_embedded_run_ensure_packs_falls_back_to_workflow_class_types(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[str] = []
+
+    def missing_index(_workflow):
+        raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
+
+    def fake_install_pack(*, name):
+        calls.append(f"install:{name}")
+        return node_packs_install.InstallResult(name=name, status="installed", git_commit_sha="abc123", error=None)
+
+    async def fake_reload(*, reason: str) -> None:
+        calls.append(f"reload:{reason}")
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure", "outputs": []}
+
+    workflow = _workflow()
+    workflow.nodes["3"] = VibeNode("3", "WanVideoVAELoader")
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+    monkeypatch.setattr(node_packs_install, "install_pack", fake_install_pack)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        session.reload_for_nodepack_change = fake_reload  # type: ignore[method-assign]
+        try:
+            await session.run(workflow, ensure_packs=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == ["install:ComfyUI-WanVideoWrapper", "reload:ensure_packs", "queue"]
+
+
+def test_embedded_run_ensure_models_downloads_declared_assets(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = _workflow()
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "model-a.safetensors",
+            "url": "https://example.test/model.safetensors",
+            "directory": "checkpoints",
+        }
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-ensure-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "model-a.safetensors",
+                "url": "https://example.test/model.safetensors",
+                "subdir": "checkpoints",
+            }
+        ],
+        "queue",
+    ]
+
+
+def test_embedded_run_ensure_models_resolves_registry_assets_from_final_workflow(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-resolution", WorkflowSource("asset-resolution"))
+    workflow.nodes["5011"] = VibeNode(
+        "5011",
+        "LTXICLoRALoaderModelOnly",
+        inputs={"lora_name": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors"},
+    )
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-resolved-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+                "url": "https://huggingface.co/qqceqqq/LTX-2.3-22b-IC-LoRA-Union-Control/resolve/main/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+                "subdir": "loras",
+            }
+        ],
+        "queue",
+    ]
+
+
+def test_embedded_run_ensure_models_does_not_cross_resolve_same_basename_between_model_dirs(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-resolution", WorkflowSource("asset-resolution"))
+    workflow.nodes["175"] = VibeNode(
+        "175",
+        "LTXVAudioVAELoader",
+        inputs={"ckpt_name": "LTX23_audio_vae_bf16.safetensors"},
+    )
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "LTX23_audio_vae_bf16.safetensors",
+            "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
+            "subdir": "checkpoints",
+        }
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-resolved-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [workflow.metadata["model_assets"], "queue"]
+
+
+def test_embedded_run_ensure_models_matches_declared_assets_with_normalized_paths(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-normalization", WorkflowSource("asset-normalization"))
+    workflow.nodes["186"] = VibeNode(
+        "186",
+        "LoraLoaderModelOnly",
+        inputs={"lora_name": r"LTX\v2\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors"},
+    )
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+            "url": "https://example.test/ltx-runexx.safetensors",
+            "subdir": "loras",
+        }
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-normalized-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+                "url": "https://example.test/ltx-runexx.safetensors",
+                "subdir": "loras",
+            }
+        ],
+        "queue",
+    ]
+
+
+def test_embedded_run_ensure_models_matches_custom_node_model_directories(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("wan-custom-assets", WorkflowSource("wan-custom-assets"))
+    workflow.nodes["11"] = VibeNode(
+        "11",
+        "LoadWanVideoT5TextEncoder",
+        inputs={"model_name": "umt5-xxl-enc-bf16.safetensors"},
+    )
+    workflow.nodes["38"] = VibeNode(
+        "38",
+        "WanVideoVAELoader",
+        inputs={"model_name": r"wanvideo\Wan2_1_VAE_bf16.safetensors"},
+    )
+    workflow.nodes["4"] = VibeNode(
+        "4",
+        "CLIPVisionLoader",
+        inputs={"clip_name": "clip_vision_h.safetensors"},
+    )
+    workflow.metadata["model_assets"] = [
+        {
+            "name": "umt5-xxl-enc-bf16.safetensors",
+            "url": "https://example.test/umt5-xxl-enc-bf16.safetensors",
+            "subdir": "text_encoders",
+        },
+        {
+            "name": "Wan2_1_VAE_bf16.safetensors",
+            "url": "https://example.test/Wan2_1_VAE_bf16.safetensors",
+            "subdir": "vae/wanvideo",
+        },
+        {
+            "name": "clip_vision_h.safetensors",
+            "url": "https://example.test/clip_vision_h.safetensors",
+            "subdir": "clip_vision",
+        },
+    ]
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-custom-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [workflow.metadata["model_assets"], "queue"]
+
+
+def test_embedded_run_ensure_models_resolves_cameraman_iclora_override(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+    calls: list[Any] = []
+
+    workflow = VibeWorkflow("asset-cameraman", WorkflowSource("asset-cameraman"))
+    workflow.nodes["5011"] = VibeNode(
+        "5011",
+        "LTXICLoRALoaderModelOnly",
+        inputs={"lora_name": "ltxv/ltx2/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors"},
+    )
+
+    def fake_download_many(entries):
+        calls.append(entries)
+        return []
+
+    async def fake_queue(self, api_dict):
+        calls.append("queue")
+        return {"prompt_id": "prompt-cameraman-models", "outputs": []}
+
+    import vibecomfy.fetch as fetch_assets
+
+    monkeypatch.setattr(fetch_assets, "download_many", fake_download_many)
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", fake_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(workflow, ensure_models=True)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+    assert calls == [
+        [
+            {
+                "name": "ltxv/ltx2/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors",
+                "url": "https://huggingface.co/Cseti/LTX2.3-22B_IC-LoRA-Cameraman_v1/resolve/main/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors",
+                "subdir": "loras",
+            }
+        ],
+        "queue",
+    ]
 
 
 def test_server_reload_calls_stop_then_start() -> None:

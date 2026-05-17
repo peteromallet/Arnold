@@ -16,9 +16,13 @@ from .session import (
     RunResult,
     SessionConfig,
     _build_schema_provider,
+    _collect_output_paths,
+    _configured_output_directory,
     _embedded_configuration,
+    _outputs_from_server_history,
     _prepare_prompt_async,
     _run_metadata,
+    _wait_for_server_history,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,12 +61,20 @@ async def run(
             queued = await ComfyClient(active_url).queue_prompt(api_dict)
         except Exception as exc:
             raise RuntimeError(f"Workflow queue failed: {exc}") from exc
+        prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
+        history = await _wait_for_server_history(active_url, prompt_id, config=resolved_config)
+        comfy_outputs = _outputs_from_server_history(history, prompt_id)
+        outputs = _collect_output_paths(
+            comfy_outputs,
+            output_directory=_configured_output_directory(resolved_config),
+        )
     metadata = _run_metadata(
         run_id=run_id,
         workflow=workflow,
         api_dict=api_dict,
         queued=queued,
-        outputs=[],
+        comfy_outputs=comfy_outputs,
+        outputs=outputs,
         runtime="server",
         config=managed_config,
     )
@@ -70,8 +82,8 @@ async def run(
     metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
     return RunResult(
         run_id=run_id,
-        prompt_id=queued.get("prompt_id") if isinstance(queued, dict) else None,
-        outputs=[],
+        prompt_id=prompt_id,
+        outputs=outputs,
         metadata_path=str(metadata_path),
         log_path=str(log_path),
     )
@@ -92,10 +104,12 @@ async def run_embedded(
     *,
     backend: str = "api",
     config: SessionConfig | None = None,
+    ensure_packs: bool = False,
+    ensure_models: bool = False,
 ) -> RunResult:
     session = EmbeddedSession(config or SessionConfig.from_workflow_metadata(workflow))
     try:
-        return await session.run(workflow, backend=backend)
+        return await session.run(workflow, backend=backend, ensure_packs=ensure_packs, ensure_models=ensure_models)
     finally:
         await session.stop()
 
@@ -105,8 +119,10 @@ def run_embedded_sync(
     *,
     backend: str = "api",
     config: SessionConfig | None = None,
+    ensure_packs: bool = False,
+    ensure_models: bool = False,
 ) -> RunResult:
-    return asyncio.run(run_embedded(workflow, backend=backend, config=config))
+    return asyncio.run(run_embedded(workflow, backend=backend, config=config, ensure_packs=ensure_packs, ensure_models=ensure_models))
 
 
 async def smoke_runtime(*, server_url: str | None = None) -> dict[str, Any]:

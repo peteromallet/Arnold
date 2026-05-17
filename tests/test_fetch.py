@@ -36,6 +36,22 @@ def test_models_root_prefers_vibecomfy_env(monkeypatch: pytest.MonkeyPatch, tmp_
     assert fetch.models_root() == tmp_path / "vibe"
 
 
+def test_models_root_accepts_directory_extra_model_paths_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("VIBECOMFY_MODELS_ROOT", raising=False)
+    monkeypatch.delenv("COMFY_MODELS_ROOT", raising=False)
+    monkeypatch.setenv("COMFYUI_EXTRA_MODEL_PATHS_PATH", str(tmp_path / "shared-models"))
+
+    assert fetch.models_root() == tmp_path / "shared-models"
+
+
+def test_models_root_ignores_yaml_extra_model_paths_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("VIBECOMFY_MODELS_ROOT", raising=False)
+    monkeypatch.delenv("COMFY_MODELS_ROOT", raising=False)
+    monkeypatch.setenv("COMFYUI_EXTRA_MODEL_PATHS_PATH", str(tmp_path / "extra_model_paths.yaml"))
+
+    assert fetch.models_root() != tmp_path / "extra_model_paths.yaml"
+
+
 def test_download_skips_present_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
     path = tmp_path / "checkpoints" / "model.safetensors"
@@ -64,6 +80,29 @@ def test_download_writes_tmp_then_renames(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert requested["method"] == "GET"
     assert requested["url"] == "https://example.test/model.safetensors"
     assert requested["follow_redirects"] is True
+
+
+def test_download_supports_repo_relative_target_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path / "models"))
+    monkeypatch.setattr(fetch.httpx, "stream", lambda *_args, **_kwargs: fake_stream(FakeResponse(chunks=[b"aux"])))
+
+    path = fetch.download(
+        {
+            **ENTRY,
+            "name": "yolox_l.onnx",
+            "target_path": "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx",
+        }
+    )
+
+    assert path == tmp_path / "custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx"
+    assert path.read_bytes() == b"aux"
+
+
+def test_local_path_accepts_ready_template_directory_alias(tmp_path: Path) -> None:
+    assert fetch.local_path(
+        {"name": "model.safetensors", "directory": "diffusion_models"},
+        root=tmp_path,
+    ) == tmp_path / "diffusion_models" / "model.safetensors"
 
 
 def test_download_removes_tmp_after_stream_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

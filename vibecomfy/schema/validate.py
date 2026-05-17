@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import re
 from typing import Any
 
 from vibecomfy.schema.provider import SchemaProvider, schema_for, schema_registry_empty
@@ -18,64 +20,95 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
 
     issues: list[ValidationIssue] = []
     schema_by_node: dict[str, Any] = {}
-    incoming = _incoming_inputs(workflow)
+    try:
+        api_dict = workflow.compile(backend="api")
+    except Exception as exc:
+        return [ValidationIssue("api_compile_failed", str(exc), severity="warning")]
 
-    for node_id, node in workflow.nodes.items():
-        schema = schema_for(provider, node.class_type)
+    return validate_api_against_schema(api_dict, provider)
+
+
+def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvider) -> list[ValidationIssue]:
+    if schema_registry_empty(provider):
+        return []
+
+    issues: list[ValidationIssue] = []
+    schema_by_node: dict[str, Any] = {}
+
+    for node_id, node in api_dict.items():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type")
+        if not isinstance(class_type, str):
+            continue
+        schema = schema_for(provider, class_type)
         if schema is None:
             issues.append(
                 ValidationIssue(
                     "unknown_class_type",
-                    f"Unknown class_type {node.class_type} on node {node_id}.",
-                    detail={"node_id": node_id, "class_type": node.class_type},
+                    f"Unknown class_type {class_type} on node {node_id}.",
+                    detail={"node_id": str(node_id), "class_type": class_type},
                 )
             )
             continue
 
-        schema_by_node[node_id] = schema
+        schema_by_node[str(node_id)] = schema
         raw_schema_inputs = getattr(schema, "inputs", {}) or {}
         declared_inputs = set(raw_schema_inputs)
-        provided_inputs = set(node.inputs) | set(node.widgets)
-        connected_inputs = incoming.get(node_id, set())
+        payload_inputs = node.get("inputs") or {}
+        if not isinstance(payload_inputs, dict):
+            payload_inputs = {}
+        provided_inputs = set(payload_inputs)
 
         if not raw_schema_inputs:
             continue
 
         for name, spec in raw_schema_inputs.items():
-            if getattr(spec, "required", False) and name not in provided_inputs and name not in connected_inputs:
+            if getattr(spec, "required", False) and name not in provided_inputs:
                 issues.append(
                     ValidationIssue(
                         "missing_required_input",
-                        f"Node {node_id} ({node.class_type}) is missing required input {name}.",
-                        detail={"node_id": node_id, "class_type": node.class_type, "input": name},
+                        f"Node {node_id} ({class_type}) is missing required input {name}.",
+                        detail={"node_id": str(node_id), "class_type": class_type, "input": name},
                     )
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
-            if not _issue_suppressed(node.class_type, "unknown_input"):
+            if (
+                not _issue_suppressed(class_type, "unknown_input")
+                and not _is_dynamic_payload_input(class_type, name, payload_inputs)
+            ):
                 issues.append(
                     ValidationIssue(
                         "unknown_input",
-                        f"Node {node_id} ({node.class_type}) has unknown input {name}.",
-                        detail={"node_id": node_id, "class_type": node.class_type, "input": name},
+                        f"Node {node_id} ({class_type}) has unknown input {name}.",
+                        detail={"node_id": str(node_id), "class_type": class_type, "input": name},
                     )
                 )
 
+        issues.extend(_validate_dynamic_payload_inputs(node_id=str(node_id), class_type=class_type, inputs=payload_inputs))
+
         for name in sorted(provided_inputs & declared_inputs):
-            value = node.inputs[name] if name in node.inputs else node.widgets[name]
+            value = payload_inputs[name]
             if _is_api_link(value):
                 continue
             spec = raw_schema_inputs[name]
             choices = getattr(spec, "choices", None) or []
-            if choices and value not in choices and not _issue_suppressed(node.class_type, "value_not_in_enum"):
+            if (
+                choices
+                and value not in choices
+                and _coerce_choice_value(value, choices) is _NO_MATCH
+                and not _issue_suppressed(class_type, "value_not_in_enum")
+                and not _is_dynamic_file_choice(class_type, name)
+            ):
                 issues.append(
                     ValidationIssue(
                         "value_not_in_enum",
-                        f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} is not one of the declared choices.",
+                        f"Node {node_id} ({class_type}) input {name} value {_truncate(value)} is not one of the declared choices.",
                         severity="error",
                         detail={
-                            "node_id": node_id,
-                            "class_type": node.class_type,
+                            "node_id": str(node_id),
+                            "class_type": class_type,
                             "input": name,
                             "value": _truncate(value),
                             "choices": choices,
@@ -85,9 +118,7 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
 
             min_value = getattr(spec, "min", None)
             max_value = getattr(spec, "max", None)
-            if (min_value is not None or max_value is not None) and not _issue_suppressed(
-                node.class_type, "value_out_of_range"
-            ):
+            if (min_value is not None or max_value is not None) and not _issue_suppressed(class_type, "value_out_of_range"):
                 try:
                     numeric_value = float(value)
                 except (TypeError, ValueError):
@@ -98,11 +129,11 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                     issues.append(
                         ValidationIssue(
                             "value_out_of_range",
-                            f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} is outside the declared range.",
+                            f"Node {node_id} ({class_type}) input {name} value {_truncate(value)} is outside the declared range.",
                             severity="error",
                             detail={
-                                "node_id": node_id,
-                                "class_type": node.class_type,
+                                "node_id": str(node_id),
+                                "class_type": class_type,
                                 "input": name,
                                 "value": _truncate(value),
                                 "min": min_value,
@@ -111,34 +142,101 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                         )
                     )
 
-    for edge in workflow.edges:
-        from_schema = schema_by_node.get(edge.from_node)
-        to_schema = schema_by_node.get(edge.to_node)
-        if from_schema is None or to_schema is None:
+    for to_node_id, node in api_dict.items():
+        if not isinstance(node, dict):
             continue
-        output_type = _edge_output_type(from_schema, edge.from_output)
-        input_type = _edge_input_type(to_schema, edge.to_input)
-        if output_type and input_type and not _types_compatible(output_type, input_type):
-            issues.append(
-                ValidationIssue(
-                    "type_mismatch",
-                    (
-                        f"Edge {edge.from_node}.{edge.from_output} -> {edge.to_node}.{edge.to_input} "
-                        f"connects {output_type} to {input_type}."
-                    ),
-                    severity="warning",
-                    detail={
-                        "from_node": edge.from_node,
-                        "from_output": edge.from_output,
-                        "to_node": edge.to_node,
-                        "to_input": edge.to_input,
-                        "output_type": output_type,
-                        "input_type": input_type,
-                    },
+        to_schema = schema_by_node.get(str(to_node_id))
+        inputs = node.get("inputs") or {}
+        if to_schema is None or not isinstance(inputs, dict):
+            continue
+        for input_name, value in inputs.items():
+            if not _is_api_link(value):
+                continue
+            from_node, from_output = str(value[0]), str(value[1])
+            from_schema = schema_by_node.get(from_node)
+            if from_schema is None:
+                continue
+            outputs = getattr(from_schema, "outputs", None) or []
+            try:
+                output_index = int(from_output)
+            except (TypeError, ValueError):
+                output_index = None
+            if output_index is not None and (output_index < 0 or output_index >= len(outputs)):
+                issues.append(
+                    ValidationIssue(
+                        "invalid_output_index",
+                        f"Edge {from_node}.{from_output} -> {to_node_id}.{input_name} references output "
+                        f"{from_output}, but {from_schema.class_type} exposes {len(outputs)} output(s).",
+                        severity="error",
+                        detail={
+                            "from_node": from_node,
+                            "from_class_type": from_schema.class_type,
+                            "from_output": from_output,
+                            "output_count": len(outputs),
+                            "to_node": str(to_node_id),
+                            "to_input": input_name,
+                        },
+                    )
                 )
-            )
+                continue
+            output_type = _edge_output_type(from_schema, from_output)
+            input_type = _edge_input_type(to_schema, input_name)
+            if output_type and input_type and not _types_compatible(output_type, input_type):
+                issues.append(
+                    ValidationIssue(
+                        "type_mismatch",
+                        f"Edge {from_node}.{from_output} -> {to_node_id}.{input_name} connects {output_type} to {input_type}.",
+                        severity="warning",
+                        detail={
+                            "from_node": from_node,
+                            "from_output": from_output,
+                            "to_node": str(to_node_id),
+                            "to_input": input_name,
+                            "output_type": output_type,
+                            "input_type": input_type,
+                        },
+                    )
+                )
 
     return issues
+
+
+def sanitize_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvider | None) -> dict[str, Any]:
+    """Drop schema-unknown payload keys and coerce equivalent choice strings.
+
+    Ready templates often keep UI widget aliases as authoring hints. Runtime API
+    prompts must match the live node schema exactly, so this strips fields the
+    runtime will reject and normalizes portable model paths to the exact choice
+    string exposed by Comfy.
+    """
+    if provider is None or schema_registry_empty(provider):
+        return api_dict
+    sanitized = copy.deepcopy(api_dict)
+    for node in sanitized.values():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type")
+        inputs = node.get("inputs")
+        if not isinstance(class_type, str) or not isinstance(inputs, dict):
+            continue
+        schema = schema_for(provider, class_type)
+        schema_inputs = getattr(schema, "inputs", {}) if schema is not None else {}
+        if not schema_inputs:
+            continue
+        for name in list(inputs):
+            if name not in schema_inputs and not _is_dynamic_payload_input(class_type, name, inputs):
+                del inputs[name]
+                continue
+            value = inputs[name]
+            if _is_api_link(value):
+                continue
+            if name not in schema_inputs:
+                continue
+            choices = getattr(schema_inputs[name], "choices", None) or []
+            coerced = _coerce_choice_value(value, choices)
+            if coerced is not _NO_MATCH:
+                inputs[name] = coerced
+    return sanitized
 
 
 def validate_api_link_shapes(api_dict: dict[str, Any], provider: SchemaProvider) -> list[ValidationIssue]:
@@ -179,6 +277,92 @@ def _incoming_inputs(workflow: VibeWorkflow) -> dict[str, set[str]]:
     for edge in workflow.edges:
         incoming.setdefault(edge.to_node, set()).add(edge.to_input)
     return incoming
+
+
+_LTX_IMAGE_SLOT_RE = re.compile(r"^num_images\.(?:image|index|strength)_(\d+)$")
+
+
+def _is_dynamic_payload_input(class_type: str, input_name: str, inputs: dict[str, Any] | None = None) -> bool:
+    """Return whether an input is generated from a runtime payload count.
+
+    Some custom nodes declare a compact controller input in object_info but
+    validate expanded dotted inputs at queue time. These are not UI aliases:
+    stripping them changes the executable prompt. Keep this list narrow and
+    add class-specific validation below so dynamic inputs remain intentional.
+    """
+
+    if class_type == "LTXVImgToVideoInplaceKJ":
+        return _LTX_IMAGE_SLOT_RE.match(input_name) is not None
+    if class_type == "SimpleCalculatorKJ":
+        return input_name in _simple_calculator_variables(inputs or {})
+    return False
+
+
+def _validate_dynamic_payload_inputs(
+    *,
+    node_id: str,
+    class_type: str,
+    inputs: dict[str, Any],
+) -> list[ValidationIssue]:
+    if class_type != "LTXVImgToVideoInplaceKJ":
+        if class_type == "SimpleCalculatorKJ":
+            return _validate_simple_calculator_variables(node_id=node_id, class_type=class_type, inputs=inputs)
+        return []
+    raw_count = inputs.get("num_images")
+    if raw_count is None or _is_api_link(raw_count):
+        return []
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return [
+            ValidationIssue(
+                "invalid_dynamic_input_count",
+                f"Node {node_id} ({class_type}) input num_images must be an integer count.",
+                severity="error",
+                detail={"node_id": node_id, "class_type": class_type, "input": "num_images", "value": _truncate(raw_count)},
+            )
+        ]
+
+    issues: list[ValidationIssue] = []
+    for index in range(1, count + 1):
+        for suffix in ("image", "index", "strength"):
+            name = f"num_images.{suffix}_{index}"
+            if name not in inputs:
+                issues.append(
+                    ValidationIssue(
+                        "missing_dynamic_input",
+                        f"Node {node_id} ({class_type}) is missing dynamic input {name}.",
+                        severity="error",
+                        detail={"node_id": node_id, "class_type": class_type, "input": name},
+                    )
+                )
+    return issues
+
+
+def _simple_calculator_variables(inputs: dict[str, Any]) -> set[str]:
+    raw = inputs.get("variables")
+    if not isinstance(raw, str):
+        return set()
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _validate_simple_calculator_variables(
+    *,
+    node_id: str,
+    class_type: str,
+    inputs: dict[str, Any],
+) -> list[ValidationIssue]:
+    variables = _simple_calculator_variables(inputs)
+    return [
+        ValidationIssue(
+            "missing_dynamic_input",
+            f"Node {node_id} ({class_type}) is missing dynamic input {name}.",
+            severity="error",
+            detail={"node_id": node_id, "class_type": class_type, "input": name},
+        )
+        for name in sorted(variables)
+        if name not in inputs
+    ]
 
 
 def _edge_output_type(schema, from_output: str) -> str | None:
@@ -235,10 +419,55 @@ def _truncate(value: Any, n: int = 120) -> str:
     return text[: max(0, n - 3)] + "..."
 
 
+_NO_MATCH = object()
+
+
+def _coerce_choice_value(value: Any, choices: list[Any]) -> Any:
+    if value in choices:
+        return _NO_MATCH
+    if not isinstance(value, str):
+        return _NO_MATCH
+    normalized_value = _portable_choice_key(value)
+    basename_value = normalized_value.rsplit("/", 1)[-1]
+    matches = [
+        choice
+        for choice in choices
+        if isinstance(choice, str)
+        and (
+            _portable_choice_key(choice) == normalized_value
+            or _portable_choice_key(choice).rsplit("/", 1)[-1] == basename_value
+        )
+    ]
+    return matches[0] if len(matches) == 1 else _NO_MATCH
+
+
+def _portable_choice_key(value: str) -> str:
+    return value.replace("\\", "/").strip()
+
+
 def _issue_suppressed(class_type: str, code: str) -> bool:
     if class_type not in SCHEMA_VALIDATION_SKIP_CLASSES:
         return False
     return code == "unknown_input" or code.startswith("value_")
+
+
+def _is_dynamic_file_choice(class_type: str, input_name: str) -> bool:
+    """Return whether a Comfy enum is a runtime file picker, not a semantic enum.
+
+    Object-info choices for these inputs reflect files present in the active
+    input directory when object_info was fetched. Task scratchpads often copy
+    images/videos immediately before queueing, so treating stale file-picker
+    choices as hard schema errors rejects valid runs. Model/checkpoint enums are
+    intentionally not listed here.
+    """
+
+    return (class_type, input_name) in {
+        ("LoadImage", "image"),
+        ("LoadVideo", "video"),
+        ("LoadVideo", "file"),
+        ("VHS_LoadVideo", "video"),
+        ("VHS_LoadVideo", "file"),
+    }
 
 
 def _schema_accepts_dict(spec: Any) -> bool:

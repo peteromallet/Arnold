@@ -29,7 +29,7 @@ READY_METADATA = {'model_assets': [],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
 READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+ 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']}
 
 
 def build() -> VibeWorkflow:
@@ -123,10 +123,8 @@ def build() -> VibeWorkflow:
         type='ltxv',
         device='default',
     )
-    vaeloaderkj = _node(wf, 'VAELoaderKJ', '471',
-        widget_0='LTX23_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '471',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     vaeloader_2 = _node(wf, 'VAELoader', '473',
         vae_name='taeltx2_3.safetensors',
@@ -307,11 +305,6 @@ def build() -> VibeWorkflow:
         negative=getnode_19.out(0),
         positive=getnode_18.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '368',
-        widget_0=19,
-        model=getnode_11.out(0),
-        vae=getnode_12.out(0),
-    )
     resizeimagemasknode = _node(wf, 'ResizeImageMaskNode', '436',
         widget_0='scale by multiplier',
         widget_1=256,
@@ -410,20 +403,20 @@ def build() -> VibeWorkflow:
         video_info=vhs_loadvideoffmpeg.out(3),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '520',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )
     modelsamplingsd3 = _node(wf, 'ModelSamplingSD3', '526',
         shift=13,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_11.out(0),
     )
     ltx2_nag = _node(wf, 'LTX2_NAG', '563',
         widget_0=11,
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_11.out(0),
         nag_cond_audio=cliptextencode_3.out(0),
         nag_cond_video=cliptextencode.out(0),
     )
@@ -474,7 +467,7 @@ def build() -> VibeWorkflow:
         widget_20='#222222',
         widget_3=True,
         widget_4=True,
-        widget_5=True,
+        widget_5=False,
         widget_6=True,
         widget_7=True,
         widget_8=True,
@@ -514,10 +507,6 @@ def build() -> VibeWorkflow:
     simplecalculatorkj = _node(wf, 'SimpleCalculatorKJ', '500',
         widget_0='(a > c) or (b > c) ',
         _extras={'variables.a': vhs_videoinfo.out(8), 'variables.b': vhs_videoinfo.out(9), 'variables.c': getnode_15.out(0)},
-    )
-    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '521',
-        widget_0=True,
-        model=pathchsageattentionkj.out(0),
     )
     setnode_18 = _node(wf, 'SetNode', '651',
         widget_0='model_n_nag',
@@ -561,7 +550,7 @@ def build() -> VibeWorkflow:
     ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '522',
         widget_0=2,
         widget_1=4096,
-        model=ltx2memoryefficientsageattentionpatch.out(0),
+        model=pathchsageattentionkj.out(0),
     )
     resizeimagemasknode_2 = _node(wf, 'ResizeImageMaskNode', '717',
         widget_0='match size',
@@ -591,7 +580,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
     ltxvpreprocessmasks = _node(wf, 'LTXVPreprocessMasks', '720',
@@ -831,4 +820,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

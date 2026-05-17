@@ -61,7 +61,7 @@ def _check_symlink(path: Path, expected_target: str) -> str | None:
 def check() -> int:
     source = _read_source()
     errors = []
-    errors.extend(error for target in COPY_TARGETS if (error := _check_copy(target, source)))
+    errors.extend(error for target in (*COPY_TARGETS, *LOCAL_COPY_TARGETS) if (error := _check_copy(target, source)))
     errors.extend(error for target, link in SYMLINK_TARGETS.items() if (error := _check_symlink(target, link)))
     metadata_error = _check_copy(METADATA, EXPECTED_METADATA)
     if metadata_error:

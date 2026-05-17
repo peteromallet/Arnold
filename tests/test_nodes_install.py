@@ -7,7 +7,7 @@ from typing import Sequence
 import pytest
 
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.node_packs_install import _known_schema_classes, install_pack, missing_packs_for_workflow, restore_pack
+from vibecomfy.node_packs_install import _known_schema_classes, _resolve_node_index_path, install_pack, missing_packs_for_workflow, restore_pack
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -269,27 +269,8 @@ def test_install_uses_cm_cli_when_available(tmp_path: Path) -> None:
     ]
 
 
-def test_install_cm_cli_failed_returns_failed(tmp_path: Path) -> None:
-    runner = FakeRunner(fail_cm_cli=True)
-    lockfile = tmp_path / "custom_nodes.lock"
-    original = "Existing abc https://example.test/existing.git\n"
-    lockfile.write_text(original, encoding="utf-8")
-
-    result = install_pack(
-        name="ComfyUI-VideoHelperSuite",
-        install_root=tmp_path / "custom_nodes",
-        lockfile_path=lockfile,
-        runner=runner,
-        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
-    )
-
-    assert result.status == "failed"
-    assert "cm-cli failed" in (result.error or "")
-    assert lockfile.read_text(encoding="utf-8") == original
-
-
-def test_install_cm_cli_succeeded_but_no_git_returns_failed(tmp_path: Path) -> None:
-    runner = FakeRunner()
+def test_install_cm_cli_failure_falls_back_to_clone(tmp_path: Path) -> None:
+    runner = FakeRunner(fail_cm_cli=True, sha="fallbackhead")
     lockfile = tmp_path / "custom_nodes.lock"
 
     result = install_pack(
@@ -300,10 +281,50 @@ def test_install_cm_cli_succeeded_but_no_git_returns_failed(tmp_path: Path) -> N
         cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
     )
 
-    assert result.status == "failed"
-    assert "cm-cli succeeded but" in (result.error or "")
-    assert "is not a git checkout" in (result.error or "")
-    assert read_lockfile(lockfile) == []
+    assert result.status == "installed"
+    assert ["cm-cli", "install", "ComfyUI-VideoHelperSuite"] in runner.calls
+    assert [
+        "git",
+        "clone",
+        "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
+    ] in runner.calls
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-VideoHelperSuite",
+            git_commit_sha="fallbackhead",
+            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        )
+    ]
+
+
+def test_install_cm_cli_succeeded_but_no_git_falls_back_to_clone(tmp_path: Path) -> None:
+    runner = FakeRunner(sha="fallbackhead")
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    result = install_pack(
+        name="ComfyUI-VideoHelperSuite",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: ["cm-cli"],
+    )
+
+    assert result.status == "installed"
+    assert ["cm-cli", "install", "ComfyUI-VideoHelperSuite"] in runner.calls
+    assert [
+        "git",
+        "clone",
+        "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
+    ] in runner.calls
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-VideoHelperSuite",
+            git_commit_sha="fallbackhead",
+            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        )
+    ]
 
 
 def test_install_falls_back_to_clone_when_cm_cli_missing(tmp_path: Path) -> None:
@@ -347,6 +368,26 @@ def test_restore_clones_and_checks_out_pinned_sha(tmp_path: Path) -> None:
         ["git", "clone", "https://example.test/example.git", str(tmp_path / "custom_nodes" / "ExamplePack")],
         ["git", "-C", str(tmp_path / "custom_nodes" / "ExamplePack"), "checkout", "pinnedsha"],
     ]
+
+
+def test_restore_installs_known_pack_pip_dependencies(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    entry = LockEntry(
+        "ComfyUI-WanVideoWrapper",
+        "pinnedsha",
+        "https://github.com/kijai/ComfyUI-WanVideoWrapper.git",
+    )
+
+    result = restore_pack(entry, install_root=tmp_path / "custom_nodes", runner=runner)
+
+    assert result.status == "installed"
+    assert [
+        "git",
+        "clone",
+        "https://github.com/kijai/ComfyUI-WanVideoWrapper.git",
+        str(tmp_path / "custom_nodes" / "ComfyUI-WanVideoWrapper"),
+    ] in runner.calls
+    assert any(call[1:4] == ["-m", "pip", "install"] and "onnx" in call for call in runner.calls)
 
 
 def test_restore_existing_clean_dir_at_correct_sha_is_noop(tmp_path: Path) -> None:
@@ -398,9 +439,125 @@ def test_missing_packs_for_workflow_returns_resolved_and_unresolved(
     assert unresolved == ["UnknownCustomNode"]
 
 
+def test_missing_packs_for_workflow_resolves_sam2_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("sam2", WorkflowSource("sam2"))
+    workflow.nodes["1"] = VibeNode("1", "DownloadAndLoadSAM2Model")
+    workflow.nodes["2"] = VibeNode("2", "Sam2Segmentation")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-segment-anything-2"]
+    assert unresolved == []
+
+
+def test_missing_packs_for_workflow_resolves_wan_animate_preprocess_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("wan-animate-preprocess", WorkflowSource("wan-animate-preprocess"))
+    workflow.nodes["1"] = VibeNode("1", "OnnxDetectionModelLoader")
+    workflow.nodes["2"] = VibeNode("2", "PoseAndFaceDetection")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-WanAnimatePreprocess"]
+    assert unresolved == []
+
+
+def test_missing_packs_for_workflow_resolves_rgthree_pack(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("rgthree", WorkflowSource("rgthree"))
+    workflow.nodes["1"] = VibeNode("1", "Power Lora Loader (rgthree)")
+    workflow.nodes["2"] = VibeNode("2", "Fast Groups Bypasser (rgthree)")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["rgthree-comfy"]
+    assert unresolved == []
+
+
+def test_missing_packs_for_workflow_ignores_core_comfy_classes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("core-classes", WorkflowSource("core-classes"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage")
+    workflow.nodes["2"] = VibeNode("2", "SaveImage")
+    workflow.nodes["3"] = VibeNode("3", "CLIPLoader")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert packs == []
+    assert unresolved == []
+
+
+def test_missing_packs_for_workflow_resolves_wanvideo_i2v_helpers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("wan-i2v", WorkflowSource("wan-i2v"))
+    workflow.nodes["1"] = VibeNode("1", "WanVideoLoraSelect")
+    workflow.nodes["2"] = VibeNode("2", "CreateCFGScheduleFloatList")
+    workflow.nodes["3"] = VibeNode("3", "WanVideoTextEmbedBridge")
+    workflow.nodes["4"] = VibeNode("4", "GetImageSizeAndCount")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-KJNodes", "ComfyUI-WanVideoWrapper"]
+    assert unresolved == []
+
+
+def test_missing_packs_for_workflow_includes_declared_requirements_even_when_schema_knows_nodes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / "node_index.json").write_text(
+        '[{"class_type": "VHS_VideoCombine", "pack": "ComfyUI-VideoHelperSuite", "inputs": {}, "outputs": []}]',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    workflow = VibeWorkflow("declared-pack", WorkflowSource("declared-pack"))
+    workflow.nodes["1"] = VibeNode("1", "VHS_VideoCombine")
+    workflow.requirements.custom_nodes.append("ComfyUI-VideoHelperSuite")
+
+    packs, unresolved = missing_packs_for_workflow(workflow)
+
+    assert [pack.name for pack in packs] == ["ComfyUI-VideoHelperSuite"]
+    assert unresolved == []
+
+
 def test_known_schema_classes_raises_when_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"node_index\.json not found .*vibecomfy sources sync"):
         _known_schema_classes(tmp_path / "node_index.json")
+
+
+def test_resolve_node_index_path_falls_back_to_repo_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    resolved = _resolve_node_index_path(Path("node_index.json"))
+    repo_index = Path(__file__).resolve().parents[1] / "node_index.json"
+
+    assert resolved.name == "node_index.json"
+    if repo_index.exists():
+        assert resolved.exists()
+        assert resolved == repo_index
+    else:
+        assert resolved == Path("node_index.json")
 
 
 @pytest.mark.parametrize("content", ["{", '{"class_type": "SaveImage"}'])

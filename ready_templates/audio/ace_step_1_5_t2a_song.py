@@ -1,11 +1,10 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
 
 
 READY_METADATA = {'model_assets': [{'name': 'qwen_0.6b_ace15.safetensors',
@@ -124,6 +123,13 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_input(wf, 'lyrics', '124', 'lyrics', type='STRING', required=True, media_semantics='text')
+    bind_input(wf, 'tags', '124', 'tags', type='STRING', media_semantics='text')
+    bind_input(wf, 'duration', '124', 'duration', type='FLOAT')
+    bind_input(wf, 'bpm', '124', 'bpm', type='INT')
+    bind_input(wf, 'seed', '124', 'seed', type='INT')
+    bind_input(wf, 'steps', '3', 'steps', type='INT')
+    bind_output(wf, '59', output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', filename_prefix='audio/vibecomfy_ace_step_smoke', expected_cardinality='one')
     return wf
 
 
@@ -153,4 +159,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

@@ -4,6 +4,22 @@
 
 `VibeWorkflow` is the only editable IR. Blocks and patches mutate that object; API JSON is an escape hatch produced by `wf.compile("api")`, not an authoring surface.
 
+## Port Before Manual Editing
+
+When starting from a ComfyUI JSON export, indexed workflow, or failing ready template, run the porting workbench before hand-editing graph code or launching RunPod:
+
+```bash
+python -m vibecomfy.cli port check <workflow> --json
+python -m vibecomfy.cli port convert <workflow> --out out/scratchpads/<name>.py --json
+python -m vibecomfy.cli port inventory --ready --json
+```
+
+`port check` is the cheap preflight for helper/UI nodes, missing custom-node packs, missing required inputs, widget alias drift, and model asset problems. `port convert` turns the source into Python scratchpad form by default; add `--ready-id <kind>/<name>` only when you are intentionally creating a ready-template candidate. `port convert` uses atomic writes (temp file → validate/parity-check → `Path.replace()`), refuses to overwrite `# vibecomfy: manual` templates, and supports `--dry-run` and `--diff` modes. `port inventory` reports readability issues and source-provenance across all checked-in templates.
+
+See [template_porting_workbench.md](template_porting_workbench.md) for the full workflow and when to use `doctor`, `validate`, `nodes install-plan`, `fetch`, and `--head-check-models`.
+
+The canonical promotion path is raw workflow source -> `port check` -> optional scratchpad -> `port convert --ready-id` or hand-authored Python ready template -> `tools.refresh_template_index` -> `validate`/`doctor`/strict-ready checks. Raw JSON and compiled API dictionaries are source/runtime material, not the reusable authoring surface.
+
 ## Blocks
 
 A block is a small function that mutates a workflow and returns `Handles`. Most blocks use `workflow.add_node()` plus `workflow.connect()`, but blocks may use any `VibeWorkflow` method — including `disconnect()` and `replace_edge()` for blocks that splice into existing topology. The contract is "mutate and return handles," not "add_node/connect only."
@@ -24,9 +40,9 @@ Use blocks when the call changes the handles available to the caller: a loader c
 
 ## Typed Handles in P1
 
-P1 ships typed handle metadata, not mypy-grade static validation. New authoring code should prefer `wf.node(...).out(<int_slot>)`, which returns a `Handle` carrying the source node id, output slot, optional output type, and optional name. Blocks should return `Handles({"image": Handle(node_id=node.id, output_slot=0, name="image")})` instead of raw string references.
+P1 ships typed handle metadata, not mypy-grade static validation. New authoring code should prefer `wf.node(...).out(<slot_or_name>)`, which returns a `Handle` carrying the source node id, output slot, optional output type, and optional name. Blocks should return `Handles({"image": Handle(node_id=node.id, output_slot=0, name="image")})` instead of raw string references.
 
-Named output strings such as `.out("IMAGE")` are intentionally gated until MP-6 schema integration can map Comfy output names to slots. In P1, pass an integer slot or digit string; non-numeric output names raise `NotImplementedError`.
+Named output strings such as `.out("image")` are supported when the node has `metadata["output_names"]` and the requested name maps unambiguously to a slot. Use integer slots only when output names are genuinely unavailable or ambiguous. See [readable_ready_template_cleanup_plan.md](readable_ready_template_cleanup_plan.md) for the plan to make named handles the generated-template default.
 
 ## Patches
 
@@ -104,11 +120,13 @@ The block sets `metadata.subgraph_class_type` to the UUID class type. Wire its r
 
 ## Ready Templates and Recipes
 
-Ready templates should be hand-curated Python builders. Retiring `scripts/materialize_ready_templates.py` is intentional: the materializer was useful for bootstrapping, but it hid authoring decisions inside copied API dictionaries.
+Ready templates should be hand-curated Python builders. Do not use `scripts/materialize_ready_templates.py` for new work; the materializer was useful for bootstrapping, but it hid authoring decisions inside copied API dictionaries.
 
 `MarkdownNote` nodes are dropped during refactor because they are ComfyUI UI annotations with no execution effect. Snapshot tests filter them at capture time so runnable graph parity is compared without those notes.
 
 Ready templates change the handles a workflow exposes. Recipes decorate handles by composing ready templates and patches for worked examples. This is the Layer 2 form of the Layer 1 rule: changes-handles -> new template; decorates-handles -> patch.
+
+Required and app-active ready templates must not rely on hidden widgets, unnamed public outputs, missing public inputs, hidden model filenames, or opaque UUID subgraphs. Register public input targets with stable names, bind semantic outputs with artifact metadata where known, and resolve schema-backed `widget_N` aliases before promotion. Remaining non-compliance belongs in the strict-ready exception inventory with an owner, ticket, final category, and removal condition.
 
 ## Artifacts and Ops
 
@@ -153,6 +171,8 @@ result = router.pick("video", "i2v", model="ltx")
 
 Entry-point callbacks receive `PluginAPI`. The API exposes `register_block`, `register_patch`, `register_op`, `register_route`, and `register_ready_root(path)`. Built-in ready-template ids win on collisions; plugin collisions warn instead of raising.
 
+Static ready-template discovery is separate from plugin discovery. The default `workflows list --ready --json` surface is backed by checked-in `template_index.json` and does not load plugin, cwd-extra, or user-global ready roots when that index exists. Pass `--include-dynamic` only when dynamic plugin/user rows are needed; those rows are marked `source_scope: "dynamic"` and `indexed: false`, and they are not protected by repo strict-ready gates.
+
 ## Metadata Contracts
 
 `wf.register_input(name, node_id, field, value=None)` records a public input target when `finalize_metadata()` cannot infer it from the node class alone. `OUTPUT_NODE_NAMES` includes image, video, and audio save nodes (`SaveVideo`, `SaveAudio`, `SaveAudioMP3`), and `finalize_metadata()` sorts outputs deterministically by numeric node id and then string node id.
@@ -172,7 +192,7 @@ The UUID-opaque `flux2_klein_9b_gguf_t2i`, `qwen_image_edit`, and `flux2_klein_4
 
 ## JSON Output
 
-The commands `workflows list`, `nodes list`, `inspect`, `doctor`, `sources sync`, `analyze info`, and `analyze diff` support `--json`. Text output remains the default compatibility surface. `inspect --json` includes `applicable_patches`; `doctor --json` includes `suggested_patches`. For `analyze info` and `analyze diff`, `--json` is an alias for `--format json`, and an explicit `--format` wins.
+The commands `workflows list`, `nodes list`, `inspect`, `port check`, `port convert`, `doctor`, `sources sync`, `analyze info`, and `analyze diff` support `--json`. Text output remains the default compatibility surface. `inspect --json` includes `applicable_patches`; `doctor --json` includes `suggested_patches`; `port check --json` emits the full port report for preflight automation. For `analyze info` and `analyze diff`, `--json` is an alias for `--format json`, and an explicit `--format` wins.
 
 ## Escape Hatches
 

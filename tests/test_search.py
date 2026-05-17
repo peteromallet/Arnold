@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -136,6 +137,75 @@ def test_search_cli_smoke_returns_wan_i2v_hits_after_sources_sync() -> None:
     rows = [line for line in result.stdout.splitlines() if line.strip()]
     assert rows[0] == "id\tclass_type\tpack\tscore\tsource"
     assert len(rows) >= 2
+
+
+def test_search_cli_json_is_agent_readable_after_sources_sync() -> None:
+    sync = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "sources", "sync"],
+        cwd=REPO_ROOT,
+        env=_cli_env(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert sync.returncode == 0, sync.stderr or sync.stdout
+
+    result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "search", "ltx", "--task", "i2v", "--json"],
+        cwd=REPO_ROOT,
+        env=_cli_env(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["query"] == "ltx"
+    assert payload["task"] == "i2v"
+    assert payload["results"]
+    assert {"id", "score", "reasons", "entry"} <= set(payload["results"][0])
+
+
+def test_search_cli_reads_object_info_cache(tmp_path: Path) -> None:
+    cache = tmp_path / "object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "LTXRuntimeScheduler": {
+                    "input": {"required": {"steps": ["INT", {"default": 20}]}},
+                    "output": ["SIGMAS"],
+                    "category": "runtime/ltx",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "vibecomfy.cli",
+            "search",
+            "LTXRuntimeScheduler",
+            "--object-info-cache",
+            str(cache),
+            "--limit",
+            "50",
+            "--json",
+        ],
+        cwd=REPO_ROOT,
+        env=_cli_env(),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    class_types = [item["entry"]["class_type"] for item in payload["results"]]
+    assert "LTXRuntimeScheduler" in class_types
 
 
 def test_build_search_corpus_warns_when_explicit_schema_provider_fails(

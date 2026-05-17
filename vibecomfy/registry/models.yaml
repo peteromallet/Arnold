@@ -205,6 +205,19 @@ models:
       - ltx-2.3-22b-dev.safetensors
     tags: [phase:ltx]
 
+  - id: ltx_2_3_22b_distilled_fp8
+    source:
+      kind: huggingface
+      repo: Lightricks/LTX-2.3-fp8
+      filename: ltx-2.3-22b-distilled-fp8.safetensors
+    min_size: 20_000_000_000
+    targets:
+      - node_pack: ltx
+        path: checkpoints/ltx-2.3-22b-distilled-fp8.safetensors
+    aliases:
+      - ltx-2.3-22b-distilled.safetensors
+    tags: [phase:ltx]
+
   - id: ltx_2_3_text_encoder
     source:
       kind: huggingface
@@ -256,9 +269,13 @@ models:
     targets:
       - node_pack: kijai_ltx
         path: vae/LTX23_audio_vae_bf16.safetensors
+      - node_pack: comfy_core
+        path: checkpoints/LTX23_audio_vae_bf16.safetensors
     aliases:
       - LTX23_audio_vae_bf16_KJ.safetensors
       - LTX23_audio_vae_bf16.safetensors
+      - LTX2_audio_vae_bf16.safetensors
+      - ltx-2.3-22b-dev_audio_vae.safetensors
     tags: [phase:ltx, ltx_lean_excluded]
 
   - id: ltx_2_3_preview_vae
@@ -348,6 +365,19 @@ models:
         path: loras/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors
     tags: [phase:ltx]
 
+  - id: ltx_2_3_ic_lora_cameraman
+    source:
+      kind: huggingface
+      repo: Cseti/LTX2.3-22B_IC-LoRA-Cameraman_v1
+      filename: LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors
+    min_size: 10_000_000
+    targets:
+      - node_pack: ltx
+        path: loras/ltxv/ltx2/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors
+      - node_pack: ltx
+        path: loras/LTX2.3-22B_IC-LoRA-Cameraman_v1_10500.safetensors
+    tags: [phase:ltx]
+
   - id: ltx_2_3_ic_lora_hdr
     source:
       kind: huggingface
@@ -418,6 +448,28 @@ models:
     targets:
       - node_pack: wan_wrapper
         path: diffusion_models/WanVideo/Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors
+    tags: [phase:wan_wrapper]
+
+  - id: wan2_2_i2v_a14b_high_fp8_scaled_kj
+    source:
+      kind: huggingface
+      repo: Kijai/WanVideo_comfy_fp8_scaled
+      filename: I2V/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
+    min_size: 10_000_000_000
+    targets:
+      - node_pack: wan_wrapper
+        path: diffusion_models/WanVideo/2_2/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
+    tags: [phase:wan_wrapper]
+
+  - id: wan2_2_i2v_a14b_low_fp8_scaled_kj
+    source:
+      kind: huggingface
+      repo: Kijai/WanVideo_comfy_fp8_scaled
+      filename: I2V/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
+    min_size: 10_000_000_000
+    targets:
+      - node_pack: wan_wrapper
+        path: diffusion_models/WanVideo/2_2/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
     tags: [phase:wan_wrapper]
 
   - id: wan2_1_flf2v_14b_720p_fp8

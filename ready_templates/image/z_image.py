@@ -25,8 +25,18 @@ Pipeline:
 """
 from __future__ import annotations
 
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
+
+NODE_POSITIVE_PROMPT = "5"
+NODE_NEGATIVE_PROMPT = "6"
+NODE_LATENT = "7"
+NODE_SAMPLER = "8"
+NODE_IMAGE_OUTPUT = "10"
+IMAGE_OUTPUT_NAME = "image"
+IMAGE_OUTPUT_PREFIX = "z-image"
+IMAGE_OUTPUT_MIME = "image/png"
 
 DEFAULT_PROMPT = (
     "A fashion photography work full of surreal romanticism, using a low-angle upward shooting "
@@ -156,8 +166,41 @@ def build() -> VibeWorkflow:
     wf.node(
         "SaveImage",
         images=decoded.out(0),
-        filename_prefix="z-image",
+        filename_prefix=IMAGE_OUTPUT_PREFIX,
     )
 
     wf.finalize_metadata()
+    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_input(
+        wf,
+        "prompt",
+        "5",
+        "text",
+        type="STRING",
+        required=True,
+        media_semantics="text",
+    )
+    bind_input(
+        wf,
+        "negative_prompt",
+        "6",
+        "text",
+        type="STRING",
+        aliases=["negative"],
+        media_semantics="text",
+    )
+    bind_input(wf, "seed", "8", "seed", type="INT")
+    bind_input(wf, "steps", "8", "steps", type="INT")
+    bind_input(wf, "width", "7", "width", type="INT")
+    bind_input(wf, "height", "7", "height", type="INT")
+    bind_output(
+        wf,
+        "10",
+        output_type="SaveImage",
+        name="image",
+        artifact_kind="image",
+        mime_type="image/png",
+        filename_prefix="z-image",
+        expected_cardinality="one",
+    )
     return wf

@@ -63,7 +63,7 @@ Current improvements:
 Policy:
 
 - Use raw JSON as import material, not as the native authoring surface.
-- Normalize to API JSON, then `VibeWorkflow`, then materialize Python ready templates.
+- Normalize to API JSON, then `VibeWorkflow`, then port-convert or hand-author Python ready templates.
 - Prefer node-class and input-name mapping over widget-index mapping.
 - When widget-index mapping is unavoidable, add a regression test using the exact source workflow shape.
 
@@ -305,7 +305,7 @@ Policy:
 
 - For each class, add one of:
   - converter patch
-  - materializer patch
+  - ready-template patch
   - doctor rule
   - matrix setup dependency
   - docs entry with known blocker

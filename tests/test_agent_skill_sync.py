@@ -10,8 +10,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_agent_skill_surfaces_are_synced() -> None:
     source = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    local_skill = (ROOT / ".claude" / "skills" / "vibecomfy" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "name: vibecomfy" in source
+    assert "port check <workflow> --json" in source
+    assert "docs/template_porting_workbench.md" in source
+    assert local_skill == source
     assert (ROOT / "CLAUDE.md").is_symlink()
     assert str((ROOT / "CLAUDE.md").readlink()) == "AGENTS.md"
 
