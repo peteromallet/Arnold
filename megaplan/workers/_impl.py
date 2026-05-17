@@ -961,6 +961,25 @@ def _extract_json_candidates_from_raw(raw: str) -> list[dict[str, Any]]:
                 except json.JSONDecodeError:
                     return []
                 return _iter_nested_json_dicts(parsed)
+            # Prose-wrapped JSON inside a string field — scan for embedded
+            # JSON objects (e.g. assistant message text that prefaces the
+            # structured output with a sentence or two). Mirrors strategy 3
+            # below but scoped to the string content.
+            embedded: list[dict[str, Any]] = []
+            decoder = json.JSONDecoder()
+            cursor = 0
+            while True:
+                brace = text.find("{", cursor)
+                if brace < 0:
+                    break
+                try:
+                    parsed, _end = decoder.raw_decode(text[brace:])
+                except json.JSONDecodeError:
+                    cursor = brace + 1
+                    continue
+                embedded.extend(_iter_nested_json_dicts(parsed))
+                cursor = brace + 1
+            return embedded
         return []
 
     candidates: list[dict[str, Any]] = []
@@ -1065,6 +1084,27 @@ def _normalize_worker_payload(step: str, payload: dict[str, Any]) -> dict[str, A
                 normalized[key] = []
             else:
                 normalized.setdefault(key, [])
+        return normalized
+    # Defensive defaults: Opus occasionally drops top-level array keys even when
+    # the prompt schema lists them as required. Default them to [] so the chain
+    # can proceed; missing string-typed required keys still fail validation.
+    _STEP_OPTIONAL_ARRAY_DEFAULTS: dict[str, tuple[str, ...]] = {
+        "plan": ("questions", "success_criteria", "assumptions"),
+        "critique": ("flags", "verified_flag_ids", "disputed_flag_ids"),
+        "revise": ("flags_addressed", "assumptions", "success_criteria", "questions"),
+        "gate": ("warnings", "settled_decisions", "flag_resolutions", "accepted_tradeoffs"),
+        "finalize": ("watch_items", "sense_checks", "user_actions"),
+        "prep": ("relevant_code", "test_expectations", "constraints"),
+        "loop_plan": ("spec_updates",),
+        "loop_execute": ("files_to_change",),
+        "tiebreaker_challenger": ("missing_options", "hard_cases", "reframings"),
+        "feedback": ("stages",),
+    }
+    if step in _STEP_OPTIONAL_ARRAY_DEFAULTS:
+        normalized = dict(payload)
+        for key in _STEP_OPTIONAL_ARRAY_DEFAULTS[step]:
+            if key not in normalized or normalized.get(key) is None:
+                normalized[key] = []
         return normalized
     return payload
 

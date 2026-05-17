@@ -13,7 +13,9 @@ import json
 import os
 import random
 import re
+import shlex
 import shutil
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -299,6 +301,169 @@ def _ensure_shannon_parent_timeout_control() -> None:
     if tool_use_guard not in patched and target in patched:
         patched = patched.replace(target, tool_use_guard + target, 1)
 
+    # Each helper function is inserted independently in front of
+    # ``buildClaudeArgs`` and gated on its own unique signature substring.
+    # The previous implementation bundled all three into one blob gated on
+    # ``rootSafeClaudeArgs``; if a prior megaplan version had patched the
+    # entrypoint with just ``isRootProcess``/``rootSafeClaudeArgs`` (older
+    # blob), the next patch saw the gate satisfied and skipped the entire
+    # blob — leaving ``maybeSendStartupEnterKeys`` undefined while its call
+    # site was still spliced in below.  Splitting the gates lets a
+    # partially-patched entrypoint heal on the next pass.
+    build_anchor = "export function buildClaudeArgs(parsed: Record<string, unknown>): string[] {\n"
+
+    def _insert_before_build_args(source: str, helper: str) -> str:
+        if build_anchor in source:
+            return source.replace(build_anchor, helper + "\n" + build_anchor, 1)
+        match = re.search(
+            r"(?m)^export function buildClaudeArgs\(parsed: Record<string, unknown>\): string\[\] \{",
+            source,
+        )
+        if not match:
+            return source
+        return source[: match.start()] + helper + "\n" + source[match.start() :]
+
+    is_root_helper = r'''
+function isRootProcess() {
+  return typeof process.getuid === "function" && process.getuid() === 0;
+}
+'''.lstrip()
+
+    root_safe_args_helper = r'''
+function rootSafeClaudeArgs(args: string[]): string[] {
+  if (!isRootProcess()) return args;
+
+  const filtered: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--dangerously-skip-permissions" || arg === "--allow-dangerously-skip-permissions") {
+      continue;
+    }
+    if (arg === "--permission-mode" && args[index + 1] === "bypassPermissions") {
+      filtered.push("--permission-mode", "auto");
+      index += 1;
+      continue;
+    }
+    if (arg === "--session-id" || arg === "--resume") {
+      index += 1;
+      continue;
+    }
+    if (arg === "--continue") {
+      continue;
+    }
+    filtered.push(arg);
+  }
+  return filtered;
+}
+'''.lstrip()
+
+    startup_enter_helper = r'''
+async function maybeSendStartupEnterKeys(tmuxSession: string) {
+  const count = Number(Bun.env.MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT ?? 0);
+  if (!Number.isFinite(count) || count <= 0) return;
+  const delayMs = Number(Bun.env.MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS ?? 1000);
+  for (let index = 0; index < count; index += 1) {
+    await sleep(Math.max(100, delayMs));
+    await runCommand(["tmux", "send-keys", "-t", tmuxSession, "C-m"], false);
+  }
+}
+'''.lstrip()
+
+    # Insertion order is preserved by inserting each in front of the same
+    # anchor in reverse declaration order: maybeSendStartupEnterKeys first,
+    # then rootSafeClaudeArgs, then isRootProcess, so the resulting file
+    # ordering reads isRootProcess -> rootSafeClaudeArgs ->
+    # maybeSendStartupEnterKeys -> buildClaudeArgs.
+    if (
+        "async function maybeSendStartupEnterKeys(tmuxSession: string)" not in patched
+    ):
+        patched = _insert_before_build_args(patched, startup_enter_helper)
+    if (
+        "function rootSafeClaudeArgs(args: string[]): string[]" not in patched
+    ):
+        patched = _insert_before_build_args(patched, root_safe_args_helper)
+    if (
+        "function isRootProcess()" not in patched
+    ):
+        patched = _insert_before_build_args(patched, is_root_helper)
+    patched = patched.replace(
+        '''    if (arg === "--permission-mode" && args[index + 1] === "bypassPermissions") {
+      index += 1;
+      continue;
+    }
+''',
+        '''    if (arg === "--permission-mode" && args[index + 1] === "bypassPermissions") {
+      filtered.push("--permission-mode", "auto");
+      index += 1;
+      continue;
+    }
+''',
+    )
+
+    launch_target = '''    await runCommand([
+      "tmux",
+      "new-session",
+      "-d",
+      "-s",
+      tmuxSession,
+      "-c",
+      options.cwd,
+      "claude",
+      ...options.claudeArgs,
+      prompt,
+    ]);
+'''
+    launch_replacement = '''    const claudeLaunchArgs = isRootProcess()
+      ? ["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]
+      : ["claude", ...options.claudeArgs, prompt];
+    await runCommand([
+      "tmux",
+      "new-session",
+      "-d",
+      "-s",
+      tmuxSession,
+      "-c",
+      options.cwd,
+      ...claudeLaunchArgs,
+    ]);
+'''
+    if launch_target in patched and launch_replacement not in patched:
+        patched = patched.replace(launch_target, launch_replacement, 1)
+    elif (
+        "const claudeLaunchArgs = isRootProcess()" not in patched
+        and re.search(r'(?m)^\s+"claude",\n\s+\.\.\.options\.claudeArgs,\n\s+prompt,\n', patched)
+    ):
+        patched = re.sub(
+            r"(?m)^(\s*)await runCommand\(\[\n",
+            '\\1const claudeLaunchArgs = isRootProcess()\n'
+            '\\1  ? ["claude", "-p", ...rootSafeClaudeArgs(options.claudeArgs), prompt]\n'
+            '\\1  : ["claude", ...options.claudeArgs, prompt];\n'
+            "\\1await runCommand([\n",
+            patched,
+            count=1,
+        )
+        patched = re.sub(
+            r'(?m)^\s+"claude",\n\s+\.\.\.options\.claudeArgs,\n\s+prompt,\n',
+            "      ...claudeLaunchArgs,\n",
+            patched,
+            count=1,
+        )
+
+    startup_target = "    let launchedWithPrompt = true;\n"
+    startup_replacement = "    void maybeSendStartupEnterKeys(tmuxSession);\n\n    let launchedWithPrompt = true;\n"
+    if startup_replacement not in patched and startup_target in patched:
+        patched = patched.replace(startup_target, startup_replacement, 1)
+    elif (
+        "void maybeSendStartupEnterKeys(tmuxSession);" not in patched
+        and re.search(r"(?m)^(\s*)let launchedWithPrompt = true;\s*$", patched)
+    ):
+        patched = re.sub(
+            r"(?m)^(\s*)let launchedWithPrompt = true;\s*$",
+            r"\1void maybeSendStartupEnterKeys(tmuxSession);\n\n\1let launchedWithPrompt = true;",
+            patched,
+            count=1,
+        )
+
     if patched == original:
         return
 
@@ -309,6 +474,121 @@ def _ensure_shannon_parent_timeout_control() -> None:
         entrypoint.write_text(patched, encoding="utf-8")
     except OSError:
         return
+
+
+def _running_as_root() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _shannon_drop_root_enabled() -> bool:
+    configured = _env_truthy("MEGAPLAN_SHANNON_DROP_ROOT")
+    if configured is not None:
+        return configured
+    return _running_as_root() and _env_truthy("MEGAPLAN_TRUSTED_CONTAINER") is True
+
+
+def _seed_nonroot_claude_home(home: Path) -> None:
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    state_path = home / ".claude.json"
+    if not state_path.exists():
+        state_path.write_text(
+            json.dumps(
+                {
+                    "firstStartTime": "2026-01-01T00:00:00.000Z",
+                    "hasCompletedOnboarding": True,
+                    "lastOnboardingVersion": "2.1.49",
+                    "hasAcknowledgedCostThreshold": True,
+                    "migrationVersion": 13,
+                    "opusProMigrationComplete": True,
+                    "sonnet1m45MigrationComplete": True,
+                    "seenNotifications": {},
+                    "customApiKeyResponses": {"approved": [], "rejected": []},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    settings_path = claude_dir / "settings.json"
+    if not settings_path.exists():
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "skipDangerousModePermissionPrompt": True,
+                    "env": {"MEGAPLAN_TRUSTED_CONTAINER": "1"},
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    policy_source = Path("/root/.claude/policy-limits.json")
+    policy_target = claude_dir / "policy-limits.json"
+    if policy_source.exists() and not policy_target.exists():
+        try:
+            shutil.copy2(policy_source, policy_target)
+        except OSError:
+            pass
+
+
+def _chmod_tree_for_nonroot(path: Path) -> None:
+    try:
+        subprocess.run(
+            ["chmod", "-R", "a+rwX", str(path)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return
+
+
+def _prepare_nonroot_shannon_runtime(work_dir: Path, env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    """Return a command prefix/env that lets Shannon launch interactive Claude.
+
+    Claude refuses ``bypassPermissions`` when the process itself is root. In a
+    trusted cloud container, Megaplan can stay root as the supervisor while the
+    Shannon/Claude child runs as an unprivileged user. That preserves Shannon's
+    interactive tmux behavior instead of falling back to ``claude -p``.
+    """
+    if not _shannon_drop_root_enabled():
+        return [], env
+
+    user = os.getenv("MEGAPLAN_SHANNON_NONROOT_USER", "nobody")
+    su_path = shutil.which("su")
+    if not su_path:
+        return [], env
+
+    home = Path(os.getenv("MEGAPLAN_SHANNON_NONROOT_HOME", str(work_dir / ".megaplan" / "shannon-home")))
+    home.mkdir(parents=True, exist_ok=True)
+    _seed_nonroot_claude_home(home)
+
+    try:
+        os.chmod(home, 0o777)
+        os.chmod(home / ".claude", 0o777)
+        root_home = Path("/root")
+        if root_home.exists():
+            os.chmod(root_home, root_home.stat().st_mode | 0o011)
+    except OSError:
+        pass
+
+    if _env_truthy("MEGAPLAN_SHANNON_CHMOD_WORKSPACE") is not False:
+        _chmod_tree_for_nonroot(work_dir)
+
+    child_env = dict(env)
+    child_env["HOME"] = str(home)
+    child_env.pop("TMUX", None)
+    child_env.pop("TMUX_PANE", None)
+    child_env["TMUX_TMPDIR"] = "/tmp"
+    child_env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT", "4")
+    child_env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS", "1000")
+
+    return [su_path, "-m", "-s", "/bin/bash", user, "-c"], child_env
+
+
+def _shell_join_command(command: list[str], cwd: Path) -> str:
+    return "cd " + shlex.quote(str(cwd)) + " && " + shlex.join(command)
 
 
 # ---------------------------------------------------------------------------
@@ -348,17 +628,26 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
                 return data
         except json.JSONDecodeError:
             pass
-    # Try raw_decode from the first '{' to consume a leading object even
-    # with trailing prose.
+    # Try raw_decode from each '{' in order to consume a leading object
+    # even with trailing prose, and to skip past markdown fences or other
+    # leading prose like "Producing the structured JSON output now: {...}".
+    decoder = json.JSONDecoder()
+    cursor = 0
+    while True:
+        idx = stripped.find("{", cursor)
+        if idx < 0:
+            break
+        try:
+            data, _end = decoder.raw_decode(stripped[idx:])
+        except json.JSONDecodeError:
+            cursor = idx + 1
+            continue
+        if isinstance(data, dict):
+            return data
+        cursor = idx + 1
+    # Last-resort: trim to outermost braces.
     start = stripped.find("{")
     if start != -1:
-        try:
-            data, _end = json.JSONDecoder().raw_decode(stripped[start:])
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
-            pass
-        # Last-resort: trim to outermost braces.
         end = stripped.rfind("}")
         if end > start:
             try:
@@ -421,11 +710,14 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                 try:
                     result_val = json.loads(result_val)
                 except json.JSONDecodeError as exc:
-                    raise CliError(
-                        "parse_error",
-                        f"Shannon result payload was not valid JSON: {exc}",
-                        extra={"raw_output": raw},
-                    ) from exc
+                    extracted = _extract_json_object(result_val)
+                    if extracted is None:
+                        raise CliError(
+                            "parse_error",
+                            f"Shannon result payload was not valid JSON: {exc}",
+                            extra={"raw_output": raw},
+                        ) from exc
+                    result_val = extracted
             if isinstance(result_val, dict):
                 return data, result_val
         return data, data
@@ -441,8 +733,9 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
             if isinstance(result_val, str):
                 if not result_val.strip():
                     continue
+                _text = result_val
                 try:
-                    result_val = json.loads(result_val)
+                    result_val = json.loads(_text)
                 except json.JSONDecodeError:
                     extracted = _extract_json_object(result_val)
                     if extracted is None:
@@ -594,6 +887,13 @@ def run_shannon_step(
         launcher_prompt,
         "--output-format=json",
     ]
+    drop_root_requested = _shannon_drop_root_enabled()
+    if drop_root_requested:
+        # Claude's non-print interactive mode only consumes ANTHROPIC_API_KEY
+        # reliably in bare mode for this cloud-root → non-root handoff. This is
+        # still Shannon driving an interactive Claude tmux session, not
+        # ``claude -p``.
+        base_command.append("--bare")
     if effort is not None:
         base_command.extend(["--effort", effort])
     base_command.extend([
@@ -615,16 +915,25 @@ def run_shannon_step(
     # ── (e) execute with timeout / activity callback ────────────────────
     started = time.monotonic()
     env = _external_worker_env(turn_id=f'plan_worker_{state["name"]}')
-    # Shannon intentionally drives an interactive Claude Code session. Do not
-    # let an inherited API key force Claude Code into its first-run "use this
-    # key?" prompt; megaplan's Claude route should use the user's Claude Code
-    # login/session state instead.
-    env.pop("ANTHROPIC_API_KEY", None)
+    # Shannon normally drives an interactive Claude Code session. Do not let an
+    # inherited API key force local interactive Claude into its first-run "use
+    # this key?" prompt. Root cloud workers are different: the Shannon package
+    # is auto-patched to launch Claude in print mode under root, and that path
+    # needs ANTHROPIC_API_KEY for non-interactive auth.
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        env.pop("ANTHROPIC_API_KEY", None)
     # Megaplan owns phase timeout/staleness policy. Shannon's packaged
     # 180s turn timeout is too short for normal critique/finalize/execute
     # phases, so keep Shannon's internal watchdog above megaplan's worker
     # budget and let the parent process decide when to stop waiting.
     env.setdefault("SHANNON_TURN_TIMEOUT_MS", "7200000")
+    shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env)
+
+    def _launch_command(shannon_command: list[str]) -> list[str]:
+        if not shannon_prefix:
+            return shannon_command
+        return [*shannon_prefix, _shell_join_command(shannon_command, work_dir)]
+
     if (
         new_session
         and _shannon_readiness_probe_enabled(session_agent)
@@ -639,6 +948,8 @@ def run_shannon_step(
         ]
         if effort is not None:
             readiness_command.extend(["--effort", effort])
+        if drop_root_requested:
+            readiness_command.append("--bare")
         readiness_command.extend(
             [
                 "--permission-mode",
@@ -652,7 +963,7 @@ def run_shannon_step(
         time.sleep(_shannon_random_handshake_delay_seconds())
         try:
             readiness = run_command(
-                readiness_command,
+                _launch_command(readiness_command),
                 cwd=work_dir,
                 stdin_text=None,
                 env=env,
@@ -682,7 +993,7 @@ def run_shannon_step(
         command = [*base_command, "--resume", session_id]
     try:
         result = run_command(
-            command,
+            _launch_command(command),
             cwd=work_dir,
             stdin_text=None,
             env=env,
@@ -699,6 +1010,27 @@ def run_shannon_step(
 
     # ── (f) parse Shannon output ────────────────────────────────────────
     envelope, payload = _parse_shannon_output(raw)
+
+    # ── (f.5) on-disk template fallback for steps that write their answer
+    #          to a file (critique/review). Claude sometimes emits a chatty
+    #          summary instead of literal JSON in its final message; in that
+    #          case the on-disk file is the source of truth.
+    _FILE_FALLBACK = {
+        "critique": ("critique_output.json", "checks"),
+        "review": ("review_output.json", "checks"),
+    }
+    if step in _FILE_FALLBACK:
+        fallback_name, sentinel_key = _FILE_FALLBACK[step]
+        fallback_path = plan_dir / fallback_name
+        if fallback_path.exists():
+            try:
+                file_payload = read_json(fallback_path)
+            except Exception:
+                file_payload = None
+            if isinstance(file_payload, dict) and sentinel_key in file_payload:
+                # Prefer the on-disk file: even when the transcript parsed,
+                # the file is what the agent intended as the canonical artifact.
+                payload = file_payload
 
     # ── (g) normalize + validate ────────────────────────────────────────
     payload = _normalize_worker_payload(step, payload)
