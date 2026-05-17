@@ -804,7 +804,7 @@ def _codex_step_cost(
     model, current_total_usage)``. Any failure to read the JSONL or compute
     the delta returns zeros and a ``None`` usage blob — never raises.
     """
-    from megaplan.pricing.codex import cost_from_usage
+    from megaplan.pricing.codex import cost_from_codex_usage_dict
 
     if not session_id:
         return 0.0, 0, 0, None, None
@@ -833,7 +833,7 @@ def _codex_step_cost(
         "reasoning_output_tokens": _delta("reasoning_output_tokens"),
     }
     model = _read_codex_default_model()
-    cost = cost_from_usage(delta_usage, model)
+    cost = cost_from_codex_usage_dict(delta_usage, model)
     prompt_tokens = delta_usage["input_tokens"]  # already includes cached
     completion_tokens = (
         delta_usage["output_tokens"] + delta_usage["reasoning_output_tokens"]
