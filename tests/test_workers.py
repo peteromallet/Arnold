@@ -3130,6 +3130,43 @@ def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
         assert _is_agent_available("claude") is False
 
 
+def test_is_agent_available_hermes_when_runtime_importable() -> None:
+    """_is_agent_available('hermes') is True when megaplan.agent + run_agent + hermes_state import.
+
+    Regression for a path-mismatch bug where the legacy filesystem probe
+    pointed at megaplan/workers/agent/run_agent.py — which never existed
+    (run_agent.py lives at megaplan/agent/run_agent.py). The probe therefore
+    always returned False on every install and the downstream phase wrongly
+    raised agent_deps_missing even when the agent runtime was fully present.
+    """
+    from megaplan.workers import _is_agent_available
+
+    # The bundled agent runtime should import cleanly in the megaplan venv.
+    assert _is_agent_available("hermes") is True
+
+
+def test_is_agent_available_hermes_when_runtime_missing() -> None:
+    """_is_agent_available('hermes') is False if the runtime can't be imported.
+
+    Simulates the case where megaplan was installed without the agent runtime
+    (e.g. a slim wheel that excludes megaplan/agent/). Patches the import via
+    sys.modules to force ImportError on run_agent.
+    """
+    import sys
+
+    from megaplan.workers import _is_agent_available
+
+    saved_run_agent = sys.modules.pop("run_agent", None)
+    sys.modules["run_agent"] = None  # type: ignore[assignment]  # sentinel: forces ImportError
+    try:
+        assert _is_agent_available("hermes") is False
+    finally:
+        if saved_run_agent is not None:
+            sys.modules["run_agent"] = saved_run_agent
+        else:
+            sys.modules.pop("run_agent", None)
+
+
 # ---------------------------------------------------------------------------
 # Routing explicitness tests
 # ---------------------------------------------------------------------------

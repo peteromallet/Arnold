@@ -2290,7 +2290,21 @@ def run_codex_step(
 def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
-        return (Path(__file__).resolve().parent / "agent" / "run_agent.py").is_file()
+        # The legacy filesystem probe pointed at megaplan/workers/agent/, which
+        # has never existed — run_agent.py lives one directory up at
+        # megaplan/agent/. The probe therefore always returned False on every
+        # install, and the downstream "pip install 'megaplan-harness[agent]'"
+        # error message fired even when the agent runtime was fully present.
+        # Importing megaplan.agent triggers the sys.path side effect at
+        # megaplan/agent/__init__.py that makes run_agent / hermes_state
+        # resolvable; we probe both so a partial install also fails closed.
+        try:
+            import megaplan.agent  # noqa: F401
+            from run_agent import AIAgent  # noqa: F401
+            from hermes_state import SessionDB  # noqa: F401
+        except ImportError:
+            return False
+        return True
     if agent in {"claude", "shannon"}:
         from megaplan._core.io import is_shannon_available
         return is_shannon_available()
