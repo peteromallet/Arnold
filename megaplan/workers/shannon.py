@@ -1030,7 +1030,30 @@ def run_shannon_step(
             if isinstance(file_payload, dict) and sentinel_key in file_payload:
                 # Prefer the on-disk file: even when the transcript parsed,
                 # the file is what the agent intended as the canonical artifact.
-                payload = file_payload
+                # BUT: if the on-disk file is still the unpopulated template
+                # (every check has zero findings) and the parsed transcript
+                # payload carries populated findings, prefer the transcript.
+                # Otherwise an agent that returned its JSON in the final
+                # result message instead of editing the file would have its
+                # work silently discarded.
+                def _has_populated_findings(p: Any) -> bool:
+                    if not isinstance(p, dict):
+                        return False
+                    checks = p.get(sentinel_key)
+                    if not isinstance(checks, list) or not checks:
+                        return False
+                    for check in checks:
+                        if not isinstance(check, dict):
+                            continue
+                        findings = check.get("findings")
+                        if isinstance(findings, list) and findings:
+                            return True
+                    return False
+
+                file_has_findings = _has_populated_findings(file_payload)
+                parsed_has_findings = _has_populated_findings(payload)
+                if file_has_findings or not parsed_has_findings:
+                    payload = file_payload
 
     # ── (g) normalize + validate ────────────────────────────────────────
     payload = _normalize_worker_payload(step, payload)
