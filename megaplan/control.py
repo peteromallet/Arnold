@@ -26,7 +26,7 @@ from megaplan._core import read_json, save_state, slugify
 from megaplan._core.workflow import resume_plan
 from megaplan.auto import drive as drive_auto
 from megaplan.handlers import handle_init, handle_override
-from megaplan.progress import ProgressContext, ProgressEmitter
+from megaplan.orchestration.progress import ProgressContext, ProgressEmitter
 from megaplan.schemas import ControlMessage, Sprint
 from megaplan.store import Store
 from megaplan.types import CliError

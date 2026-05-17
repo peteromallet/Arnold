@@ -11,8 +11,8 @@ import pytest
 
 from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
 from megaplan.audits.robustness import checks_for_robustness
-from megaplan.hermes_worker import parse_agent_output
-from megaplan.parallel_critique import _run_check, run_parallel_critique
+from megaplan.workers.hermes import parse_agent_output
+from megaplan.orchestration.parallel_critique import _run_check, run_parallel_critique
 from megaplan.prompts.critique import write_single_check_template
 from megaplan.types import PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES
@@ -111,7 +111,7 @@ def test_run_parallel_critique_merges_in_original_order(monkeypatch: pytest.Monk
             0.25, 0, 0, 0,
         )
 
-    monkeypatch.setattr("megaplan.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
 
     result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks)
 
@@ -141,7 +141,7 @@ def test_run_parallel_critique_disputed_flags_override_verified(
             0, 0, 0,
         )
 
-    monkeypatch.setattr("megaplan.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
 
     result = run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks[:2])
 
@@ -241,7 +241,7 @@ def test_run_parallel_critique_reraises_subagent_failures(
             0, 0, 0,
         )
 
-    monkeypatch.setattr("megaplan.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
 
     with pytest.raises(RuntimeError, match="boom"):
         run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks)
@@ -275,7 +275,7 @@ def test_run_parallel_critique_does_not_mutate_session_state(
             0, 0, 0,
         )
 
-    monkeypatch.setattr("megaplan.parallel_critique._run_check", fake_run_check)
+    monkeypatch.setattr("megaplan.orchestration.parallel_critique._run_check", fake_run_check)
 
     run_parallel_critique(state, plan_dir, root=REPO_ROOT, model="mock-model", checks=checks)
 

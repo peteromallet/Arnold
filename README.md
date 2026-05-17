@@ -234,7 +234,7 @@ megaplan config reset
 
 ## Code Health
 
-<img src="scorecard.png" width="100%">
+<img src="docs/assets/scorecard.png" width="100%">
 
 ## License
 

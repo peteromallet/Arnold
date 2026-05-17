@@ -347,7 +347,7 @@ def _emit_phase_result(
         # can happen in tests that mock _run_worker at the module level.
         # Log a warning and skip emission rather than crashing.
         import logging
-        log = logging.getLogger("megaplan.phase_result")
+        log = logging.getLogger("megaplan.orchestration.phase_result")
         log.warning(
             "set_active_step was bypassed for phase=%r — "
             "skipping phase_result.json emission",

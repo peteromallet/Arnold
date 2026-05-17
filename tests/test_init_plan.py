@@ -17,7 +17,7 @@ import megaplan.execute.core
 import megaplan.handlers
 import megaplan.workers
 from megaplan._core import WORKFLOW, _ROBUSTNESS_OVERRIDES, clear_active_step, save_state, set_active_step, workflow_next
-from megaplan.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
+from megaplan.orchestration.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
 from megaplan.types import STATE_PREPPED, CliError
 from megaplan.workers import WorkerResult, _build_mock_payload
 from tests.conftest import (

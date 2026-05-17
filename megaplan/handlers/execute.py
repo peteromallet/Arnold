@@ -37,7 +37,7 @@ from megaplan._core import (
 from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
 from .shared import _emit_phase_notice, attach_agent_fallback, worker_module
-from megaplan.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""
@@ -142,7 +142,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             response["next_step"] = None
             response.pop("next_step_runtime", None)
         if is_prose_mode(state) and response.get("state") == STATE_EXECUTED:
-            from megaplan.doc_assembly import assemble_doc
+            from megaplan.runtime.doc_assembly import assemble_doc
             output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]
             finalize_data = read_json(plan_dir / "finalize.json")
             assemble_doc(plan_dir, output_path, finalize_data)

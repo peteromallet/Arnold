@@ -17,7 +17,7 @@ from megaplan._core.io import (
     plan_search_roots,
     read_json,
 )
-from megaplan.feedback import load_feedback
+from megaplan.orchestration.feedback import load_feedback
 from megaplan.schemas import Plan, PlanArtifact
 from megaplan.store.base import ProgressEventInput
 

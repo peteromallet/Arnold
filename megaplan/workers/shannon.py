@@ -25,7 +25,7 @@ from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan._core import creative_form_id, json_dump, read_json, schemas_root
 from megaplan.prompts import create_claude_prompt
 from megaplan.schemas import get_execution_schema_key
-from megaplan.workers import (
+from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _activity_callback_for_state,
@@ -597,28 +597,66 @@ def _shell_join_command(command: list[str], cwd: Path) -> str:
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
-    """Try to extract the first valid JSON object embedded in ``text``.
+    """Best-effort recovery of a JSON object embedded in free-form text.
 
-    Opus sometimes prepends prose like "Producing the structured JSON output now."
-    or appends commentary after the closing ``}``. ``json.loads`` fails on either,
-    but ``JSONDecoder().raw_decode`` accepts trailing garbage after a complete
-    object. We locate every ``{`` in order and try ``raw_decode`` from each, returning
-    the first dict that parses.
+    Handles the common cases that bare ``json.loads`` rejects:
+
+    * Claude responses wrapped in markdown code fences::
+
+          ```json
+          {"plan": "..."}
+          ```
+
+    * Prose preceding the JSON object (``Here is the plan: {...}``).
+    * JSON followed by trailing prose (``{...}  Hope that helps!``).
+
+    Returns the decoded dict on success, or ``None`` when no JSON object
+    could be recovered. Non-object payloads (lists, scalars) also return
+    ``None`` since callers expect a mapping.
     """
-    decoder = json.JSONDecoder()
-    start = 0
-    while True:
-        idx = text.find("{", start)
-        if idx < 0:
-            return None
+
+    if not isinstance(text, str):
+        return None
+    stripped = text.strip()
+    if not stripped:
+        return None
+    # Already-valid JSON object.
+    if stripped.startswith("{"):
         try:
-            obj, _end = decoder.raw_decode(text[idx:])
+            data = json.loads(stripped)
+            if isinstance(data, dict):
+                return data
         except json.JSONDecodeError:
-            start = idx + 1
+            pass
+    # Try raw_decode from each '{' in order to consume a leading object
+    # even with trailing prose, and to skip past markdown fences or other
+    # leading prose like "Producing the structured JSON output now: {...}".
+    decoder = json.JSONDecoder()
+    cursor = 0
+    while True:
+        idx = stripped.find("{", cursor)
+        if idx < 0:
+            break
+        try:
+            data, _end = decoder.raw_decode(stripped[idx:])
+        except json.JSONDecodeError:
+            cursor = idx + 1
             continue
-        if isinstance(obj, dict):
-            return obj
-        start = idx + 1
+        if isinstance(data, dict):
+            return data
+        cursor = idx + 1
+    # Last-resort: trim to outermost braces.
+    start = stripped.find("{")
+    if start != -1:
+        end = stripped.rfind("}")
+        if end > start:
+            try:
+                data = json.loads(stripped[start : end + 1])
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                return None
+    return None
 
 
 def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -699,25 +737,10 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                 try:
                     result_val = json.loads(_text)
                 except json.JSONDecodeError:
-                    # Prose-prefixed JSON (e.g. "All checks green: ...\n\n{...}").
-                    _dec = json.JSONDecoder()
-                    _cursor = 0
-                    result_val = None
-                    while True:
-                        _brace = _text.find("{", _cursor)
-                        if _brace < 0:
-                            break
-                        try:
-                            _parsed, _end = _dec.raw_decode(_text[_brace:])
-                        except json.JSONDecodeError:
-                            _cursor = _brace + 1
-                            continue
-                        if isinstance(_parsed, dict):
-                            result_val = _parsed
-                            break
-                        _cursor = _brace + 1
-                    if result_val is None:
+                    extracted = _extract_json_object(result_val)
+                    if extracted is None:
                         continue
+                    result_val = extracted
             if isinstance(result_val, dict):
                 return msg, result_val
 
@@ -743,7 +766,10 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                     try:
                         result_val = json.loads(result_val)
                     except json.JSONDecodeError:
-                        continue
+                        extracted = _extract_json_object(result_val)
+                        if extracted is None:
+                            continue
+                        result_val = extracted
                 if isinstance(result_val, dict):
                     return inner, result_val
             # content blocks that might embed JSON
@@ -757,31 +783,18 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
                             if isinstance(parsed, dict):
                                 return inner, parsed
                         except json.JSONDecodeError:
-                            pass
-                        # Fallback: prose-prefixed JSON, e.g.
-                        # "All checks green: ...\n\n{...}". Scan for the
-                        # first decodable embedded object.
-                        _dec = json.JSONDecoder()
-                        _cursor = 0
-                        while True:
-                            _brace = text.find("{", _cursor)
-                            if _brace < 0:
-                                break
-                            try:
-                                _parsed, _end = _dec.raw_decode(text[_brace:])
-                            except json.JSONDecodeError:
-                                _cursor = _brace + 1
-                                continue
-                            if isinstance(_parsed, dict):
-                                return inner, _parsed
-                            _cursor = _brace + 1
+                            extracted = _extract_json_object(text)
+                            if isinstance(extracted, dict):
+                                return inner, extracted
             elif isinstance(content, str):
                 try:
                     parsed = json.loads(content)
                     if isinstance(parsed, dict):
                         return inner, parsed
                 except json.JSONDecodeError:
-                    pass
+                    extracted = _extract_json_object(content)
+                    if isinstance(extracted, dict):
+                        return inner, extracted
 
         # Fallback: return the last dict in the array
         if data and isinstance(data[-1], dict):

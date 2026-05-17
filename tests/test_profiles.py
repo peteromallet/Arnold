@@ -195,7 +195,7 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
 
     assert args.phase_model == expanded_once
 
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
     assert agent == "claude"
     assert model is None
@@ -203,7 +203,7 @@ def test_apply_profile_expansion_preserves_ad_hoc_precedence_and_is_idempotent(
     profile_only = _worker_args(profile="all-open")
     apply_profile_expansion(profile_only, None)
 
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", profile_only)
     assert agent == "hermes"
     assert model == "glm-5.1"
@@ -231,7 +231,7 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     apply_profile_expansion(init_args, None)
 
     # init resolves plan -> claude in-process (first-match-wins).
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("plan", init_args)
     assert agent == "claude"
     assert model is None
@@ -250,7 +250,7 @@ def test_apply_profile_expansion_persisted_cli_override_beats_profile_default_on
     apply_profile_expansion(step_args, None, state=persisted_state)
 
     # Persisted CLI override must beat the profile default.
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("plan", step_args)
     assert agent == "claude", (
         f"Step subprocess clobbered persisted CLI override: resolved plan to "
@@ -283,7 +283,7 @@ def test_apply_profile_expansion_falls_back_to_state_profile(
 
     apply_profile_expansion(args, None, state=state)
 
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
     assert agent == "hermes"
     assert model == "glm-5.1"
@@ -303,7 +303,7 @@ def test_all_deepseek_pro_profile_defaults_to_direct_deepseek_v4_pro(
     args = _worker_args(profile="all-deepseek-pro")
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
 
     assert agent == "hermes"
@@ -323,7 +323,7 @@ def test_all_deepseek_pro_profile_can_explicitly_use_fireworks_deepseek_v4_pro(
     args = _worker_args(profile="all-deepseek-pro", deepseek_provider="fireworks")
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
 
     assert agent == "hermes"
@@ -355,7 +355,7 @@ def test_provider_profiles_use_expected_native_model(
     args = _worker_args(profile=profile_name)
     apply_profile_expansion(args, None)
 
-    with patch("megaplan.workers._is_agent_available", return_value=True):
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
         agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
 
     assert agent == "hermes"

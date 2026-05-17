@@ -3,6 +3,7 @@ __pycache__/
 .megaplan/
 chain_state.json
 .desloppify/
+.desloppify.bak-*
 .doubledip/
 .env
 .env.*

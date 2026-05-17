@@ -449,7 +449,7 @@ def test_run_auto_without_outcome_file_preserves_stdout_only_behavior(
 
 
 def test_run_auto_passes_progress_env_to_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from megaplan.progress import ProgressContext
+    from megaplan.orchestration.progress import ProgressContext
 
     captured: dict[str, dict[str, str] | None] = {}
     env = ProgressContext(
@@ -885,7 +885,7 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     # Write phase_result.json with blocked_by_quality so the auto driver
     # sees the structured outcome directly — replaces the old state.json
     # history + execution_batch_*.json globbing path.
-    from megaplan.phase_result import Deviation
+    from megaplan.orchestration.phase_result import Deviation
     from tests.conftest import make_fake_phase_result
 
     make_fake_phase_result(
@@ -977,7 +977,7 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     plan_dir = _make_plan_dir(tmp_path, plan)
     # Write phase_result.json with blocked_by_prereq + BlockedTask entries
     # so the auto driver reads the structured outcome directly.
-    from megaplan.phase_result import BlockedTask
+    from megaplan.orchestration.phase_result import BlockedTask
     from tests.conftest import make_fake_phase_result
 
     make_fake_phase_result(

@@ -115,7 +115,7 @@ Current proof:
   `resume_plan`, `approve_gate`, and `reject_gate`.
 - `megaplan/control.py:369` registers `_default_handlers` only for those four
   supported intents.
-- `megaplan/tests/store_contract.py:365` creates a `pause_plan` control message
+- `tests/contract/store_contract.py:365` creates a `pause_plan` control message
   in the store contract, so `pause_plan` is still a serialized store-contract
   value even though it has no processor handler.
 

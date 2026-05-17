@@ -24,13 +24,13 @@ import pytest
 
 from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
 from megaplan.audits.robustness import checks_for_robustness
-from megaplan.hermes_worker import (
+from megaplan.workers.hermes import (
     _no_op_stream,
     _provider_requires_streaming,
     _streaming_run_kwargs,
     parse_agent_output,
 )
-from megaplan.parallel_critique import _run_check
+from megaplan.orchestration.parallel_critique import _run_check
 from megaplan.prompts.critique import write_single_check_template
 from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES

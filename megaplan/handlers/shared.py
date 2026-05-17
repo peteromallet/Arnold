@@ -15,9 +15,9 @@ from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.receipts import build_receipt
 from megaplan.receipts.writer import write_receipt
-from megaplan.step_edit import next_plan_artifact_name
+from megaplan.execute.step_edit import next_plan_artifact_name
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
-from megaplan.phase_result import (
+from megaplan.orchestration.phase_result import (
     _emit_phase_result,
     phase_result_guard,
     BlockedTask,
@@ -49,7 +49,7 @@ from megaplan._core.phase_runtime import (
     PHASE_RUNTIME_POLICY,
     format_duration_hint,
 )
-from megaplan.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
+from megaplan.orchestration.evaluation import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE, validate_plan_structure
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger("megaplan")

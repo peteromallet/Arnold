@@ -84,7 +84,7 @@ from megaplan.profiles import (
     load_profiles,
     resolve_profile,
 )
-from megaplan.step_edit import handle_step
+from megaplan.execute.step_edit import handle_step
 
 _PROGRESS_PHASE_COMMANDS = {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
 
@@ -1246,7 +1246,7 @@ def _collect_feedback_rows(
     """
 
     from megaplan._core.io import read_json
-    from megaplan.feedback import feedback_path, load_feedback
+    from megaplan.orchestration.feedback import feedback_path, load_feedback
 
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -1404,7 +1404,7 @@ def _parse_ai_feedback(payload: Any, raw_output: str) -> Any:
     Returns None when neither source yields a parseable feedback structure.
     Reads ``overall.rating/comment`` and ``stages.<name>.rating/comment``.
     """
-    from megaplan.feedback import PlanFeedback, StageFeedback
+    from megaplan.orchestration.feedback import PlanFeedback, StageFeedback
 
     data: Any = payload if isinstance(payload, dict) and payload else None
     if data is None:
@@ -1452,7 +1452,7 @@ def _merge_feedback(existing: Any, ai_fb: Any) -> Any:
     Either or both may be None. User ``rating`` / ``comment`` always win; AI
     fields are taken from ``ai_fb`` when present, else fall back to existing.
     """
-    from megaplan.feedback import PlanFeedback, StageFeedback
+    from megaplan.orchestration.feedback import PlanFeedback, StageFeedback
 
     merged = PlanFeedback()
 
@@ -1527,7 +1527,7 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
     import subprocess
 
     from megaplan._core.io import atomic_write_text
-    from megaplan.feedback import (
+    from megaplan.orchestration.feedback import (
         FEEDBACK_FILENAME,
         PlanFeedback,
         StageFeedback,
@@ -2536,7 +2536,7 @@ def main(argv: list[str] | None = None) -> int:
         # Ticket handler has a different signature (no root, returns int)
         if args.command == "ticket":
             return handler(args)
-        from megaplan.progress import ProgressEmitter
+        from megaplan.orchestration.progress import ProgressEmitter
         args.progress_emitter = ProgressEmitter.from_env()
         if args.command == "override" and remaining:
             if not args.note:

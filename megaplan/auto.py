@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import find_plan_dir
-from megaplan.phase_result import (
+from megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
     read_phase_result,
@@ -667,7 +667,7 @@ def drive(
     # reliable "forward progress" marker — each advance means a real
     # review cycle finished since we last observed the state.
     plan_dir = _resolve_plan_dir(plan, cwd)
-    from megaplan.progress import ProgressEmitter
+    from megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)
     last_review_marker = _get_review_marker(plan_dir)
     rework_cycles_observed = 0
@@ -1648,7 +1648,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 def run_auto(root: Path, args: argparse.Namespace) -> int:
     """CLI entry point. Returns a POSIX exit code suitable for ``sys.exit``."""
-    from megaplan.progress import ProgressContext
+    from megaplan.orchestration.progress import ProgressContext
 
     progress_context = ProgressContext.from_env()
     progress_env = progress_context.to_env() if progress_context is not None else None

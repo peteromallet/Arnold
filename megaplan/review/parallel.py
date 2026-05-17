@@ -4,7 +4,7 @@ The preloaded-template-ID convention is the preferred way to get structured
 output from focused review agents: write the exact slot shape first, then have
 each agent fill that file instead of inventing IDs in free-form JSON.
 
-This module intentionally mirrors `megaplan.parallel_critique` so the two phase
+This module intentionally mirrors `megaplan.orchestration.parallel_critique` so the two phase
 runners remain easy to compare and later extract into a shared utility.
 """
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import get_effective, read_json, schemas_root
-from megaplan.hermes_worker import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
+from megaplan.workers.hermes import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
 from megaplan.prompts.review import (
     _write_criteria_verdict_review_template,
     _write_single_check_review_template,
@@ -28,7 +28,7 @@ from megaplan.prompts.review import (
 from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
-from megaplan.key_pool import (
+from megaplan.runtime.key_pool import (
     _load_hermes_env,
     _get_api_credential,
     resolve_model as _resolve_model,
@@ -77,7 +77,7 @@ def _run_check(
     project_dir: Path,
     pre_check_flags: list[dict[str, Any]],
 ) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
-    from megaplan.hermes_worker import _import_hermes_runtime
+    from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
@@ -157,7 +157,7 @@ def _run_check(
         if model and model.startswith("minimax:"):
             or_key = acquire_key("openrouter")
             if or_key:
-                from megaplan.key_pool import minimax_openrouter_model
+                from megaplan.runtime.key_pool import minimax_openrouter_model
 
                 fallback_model = minimax_openrouter_model(model[len("minimax:"):])
                 fallback_kwargs = {"base_url": "https://openrouter.ai/api/v1", "api_key": or_key}
@@ -207,7 +207,7 @@ def _run_criteria_verdict(
     schema: dict[str, Any],
     project_dir: Path,
 ) -> tuple[dict[str, Any], float, int, int, int]:
-    from megaplan.hermes_worker import _import_hermes_runtime
+    from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
@@ -274,7 +274,7 @@ def _run_criteria_verdict(
         if model and model.startswith("minimax:"):
             or_key = acquire_key("openrouter")
             if or_key:
-                from megaplan.key_pool import minimax_openrouter_model
+                from megaplan.runtime.key_pool import minimax_openrouter_model
 
                 fallback_model = minimax_openrouter_model(model[len("minimax:"):])
                 fallback_kwargs = {"base_url": "https://openrouter.ai/api/v1", "api_key": or_key}

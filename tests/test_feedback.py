@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from megaplan.feedback import (
+from megaplan.orchestration.feedback import (
     FEEDBACK_FILENAME,
     PlanFeedback,
     STAGES,

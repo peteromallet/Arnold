@@ -14,7 +14,7 @@ import megaplan
 import megaplan.cli
 import megaplan._core
 import megaplan._core.io as io_module
-from megaplan.phase_result import (
+from megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     PhaseResult,
