@@ -804,7 +804,7 @@ def _codex_step_cost(
     model, current_total_usage)``. Any failure to read the JSONL or compute
     the delta returns zeros and a ``None`` usage blob — never raises.
     """
-    from megaplan.pricing.codex import cost_from_usage
+    from megaplan.pricing.codex import cost_from_codex_usage_dict
 
     if not session_id:
         return 0.0, 0, 0, None, None
@@ -833,7 +833,7 @@ def _codex_step_cost(
         "reasoning_output_tokens": _delta("reasoning_output_tokens"),
     }
     model = _read_codex_default_model()
-    cost = cost_from_usage(delta_usage, model)
+    cost = cost_from_codex_usage_dict(delta_usage, model)
     prompt_tokens = delta_usage["input_tokens"]  # already includes cached
     completion_tokens = (
         delta_usage["output_tokens"] + delta_usage["reasoning_output_tokens"]
@@ -1697,69 +1697,44 @@ def _build_mock_payload(step: str, state: dict[str, Any], plan_dir: Path, **over
     return _deep_merge(builder(state, plan_dir), overrides)
 
 
-def _mock_plan(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("plan", state, plan_dir))
-
-
-def _mock_prep(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("prep", state, plan_dir))
-
-
-def _mock_loop_plan(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("loop_plan", state, plan_dir))
-
-
-
-def _mock_critique(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("critique", state, plan_dir))
-
-
-def _mock_revise(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("revise", state, plan_dir))
-
-
-def _mock_gate(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("gate", state, plan_dir))
-
-
-def _mock_finalize(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("finalize", state, plan_dir))
-
-
-def _mock_execute(state: PlanState, plan_dir: Path, *, prompt_override: str | None = None) -> WorkerResult:
-    target = Path(state["config"]["project_dir"]) / "IMPLEMENTED_BY_MEGAPLAN.txt"
-    target.write_text("mock execution completed\n", encoding="utf-8")
-    return _mock_result(
-        _build_mock_payload("execute", state, plan_dir, prompt_override=prompt_override),
-        trace_output='{"event":"mock-execute"}\n',
-    )
-
-
-def _mock_loop_execute(state: PlanState, plan_dir: Path, *, prompt_override: str | None = None) -> WorkerResult:
-    return _mock_result(
-        _build_mock_payload("loop_execute", state, plan_dir, prompt_override=prompt_override),
-        trace_output='{"event":"mock-loop-execute"}\n',
-    )
-
-
-def _mock_review(state: PlanState, plan_dir: Path) -> WorkerResult:
-    return _mock_result(_build_mock_payload("review", state, plan_dir))
-
-
-_MockHandler = Callable[..., WorkerResult]
-
-_MOCK_DISPATCH: dict[str, _MockHandler] = {
-    "plan": _mock_plan,
-    "prep": _mock_prep,
-    "loop_plan": _mock_loop_plan,
-    "critique": _mock_critique,
-    "revise": _mock_revise,
-    "gate": _mock_gate,
-    "finalize": _mock_finalize,
-    "execute": _mock_execute,
-    "loop_execute": _mock_loop_execute,
-    "review": _mock_review,
+# Steps the mock worker supports, in declaration order. The trace stub
+# only fires for the two execute-shaped steps; everything else gets an
+# empty trace. Update both sets to add a new step.
+_MOCK_SUPPORTED_STEPS: tuple[str, ...] = (
+    "plan", "prep", "loop_plan",
+    "critique", "revise", "gate", "finalize",
+    "execute", "loop_execute", "review",
+)
+_MOCK_TRACE_OUTPUTS: dict[str, str] = {
+    "execute": '{"event":"mock-execute"}\n',
+    "loop_execute": '{"event":"mock-loop-execute"}\n',
 }
+
+
+def _mock_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    prompt_override: str | None = None,
+) -> WorkerResult:
+    """Build the canonical mock WorkerResult for ``step``.
+
+    ``step == "execute"`` writes the IMPLEMENTED_BY_MEGAPLAN.txt sentinel
+    into the project directory — the only side effect any of the mock
+    handlers performed. Execute-shaped steps thread ``prompt_override``
+    through; the rest ignore it.
+    """
+    if step not in _MOCK_SUPPORTED_STEPS:
+        raise CliError("unsupported_step", f"Mock worker does not support '{step}'")
+    if step == "execute":
+        target = Path(state["config"]["project_dir"]) / "IMPLEMENTED_BY_MEGAPLAN.txt"
+        target.write_text("mock execution completed\n", encoding="utf-8")
+    if step in _EXECUTE_STEPS:
+        payload = _build_mock_payload(step, state, plan_dir, prompt_override=prompt_override)
+    else:
+        payload = _build_mock_payload(step, state, plan_dir)
+    return _mock_result(payload, trace_output=_MOCK_TRACE_OUTPUTS.get(step))
 
 
 def mock_worker_output(
@@ -1771,13 +1746,7 @@ def mock_worker_output(
     prompt_kwargs: dict[str, Any] | None = None,
 ) -> WorkerResult:
     del prompt_kwargs
-    handler = _MOCK_DISPATCH.get(step)
-    if handler is None:
-        raise CliError("unsupported_step", f"Mock worker does not support '{step}'")
-    if step in _EXECUTE_STEPS:
-        result = handler(state, plan_dir, prompt_override=prompt_override)
-    else:
-        result = handler(state, plan_dir)
+    result = _mock_step(step, state, plan_dir, prompt_override=prompt_override)
     try:
         root = _resolve_prompt_root(plan_dir, None)
         side_effect_paths = (
@@ -2290,7 +2259,21 @@ def run_codex_step(
 def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
-        return (Path(__file__).resolve().parent / "agent" / "run_agent.py").is_file()
+        # The legacy filesystem probe pointed at megaplan/workers/agent/, which
+        # has never existed — run_agent.py lives one directory up at
+        # megaplan/agent/. The probe therefore always returned False on every
+        # install, and the downstream "pip install 'megaplan-harness[agent]'"
+        # error message fired even when the agent runtime was fully present.
+        # Importing megaplan.agent triggers the sys.path side effect at
+        # megaplan/agent/__init__.py that makes run_agent / hermes_state
+        # resolvable; we probe both so a partial install also fails closed.
+        try:
+            import megaplan.agent  # noqa: F401
+            from run_agent import AIAgent  # noqa: F401
+            from hermes_state import SessionDB  # noqa: F401
+        except ImportError:
+            return False
+        return True
     if agent in {"claude", "shannon"}:
         from megaplan._core.io import is_shannon_available
         return is_shannon_available()

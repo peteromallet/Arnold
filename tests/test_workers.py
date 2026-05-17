@@ -2822,6 +2822,7 @@ def test_codex_pricing_table() -> None:
     from megaplan.pricing.codex import (
         DEFAULT_MODEL,
         PRICING,
+        cost_from_codex_usage_dict,
         cost_from_usage,
     )
 
@@ -2837,18 +2838,31 @@ def test_codex_pricing_table() -> None:
         + 4864 * 0.50
         + (1089 + 230) * 30.00
     ) / 1_000_000
-    assert cost_from_usage(usage, "gpt-5.5") == pytest.approx(expected)
+    # Dict-form helper preserves the old API for callers with the raw blob.
+    assert cost_from_codex_usage_dict(usage, "gpt-5.5") == pytest.approx(expected)
     # Unknown model falls back to default rates.
-    assert cost_from_usage(usage, "totally-made-up") == pytest.approx(expected)
+    assert cost_from_codex_usage_dict(usage, "totally-made-up") == pytest.approx(expected)
     # Default model resolves the same way.
     assert DEFAULT_MODEL in PRICING
-    assert cost_from_usage(usage) == pytest.approx(expected)
+    assert cost_from_codex_usage_dict(usage) == pytest.approx(expected)
     # Empty / None usage -> 0.
-    assert cost_from_usage(None) == 0.0
-    assert cost_from_usage({}) == 0.0
+    assert cost_from_codex_usage_dict(None) == 0.0
+    assert cost_from_codex_usage_dict({}) == 0.0
     # gpt-5 cheaper rates apply.
-    cheap = cost_from_usage(usage, "gpt-5")
+    cheap = cost_from_codex_usage_dict(usage, "gpt-5")
     assert 0 < cheap < expected
+
+    # Unified signature matches claude/fireworks shape.
+    via_unified = cost_from_usage(
+        prompt_tokens=66607,
+        completion_tokens=1089 + 230,
+        model="gpt-5.5",
+        cached_prompt_tokens=4864,
+    )
+    assert via_unified == pytest.approx(expected)
+    # Defaults: no cached tokens, unknown model falls back to default rate.
+    assert cost_from_usage(0, 0, None) == 0.0
+    assert cost_from_usage(1_000_000, 0, "gpt-5.5") == pytest.approx(5.0)
 
 
 def test_codex_step_extracts_token_usage_from_session_jsonl(
@@ -3128,6 +3142,43 @@ def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
         assert _is_agent_available("claude") is True
     with patch("megaplan._core.io.shutil", FakeShutil("claude")):
         assert _is_agent_available("claude") is False
+
+
+def test_is_agent_available_hermes_when_runtime_importable() -> None:
+    """_is_agent_available('hermes') is True when megaplan.agent + run_agent + hermes_state import.
+
+    Regression for a path-mismatch bug where the legacy filesystem probe
+    pointed at megaplan/workers/agent/run_agent.py — which never existed
+    (run_agent.py lives at megaplan/agent/run_agent.py). The probe therefore
+    always returned False on every install and the downstream phase wrongly
+    raised agent_deps_missing even when the agent runtime was fully present.
+    """
+    from megaplan.workers import _is_agent_available
+
+    # The bundled agent runtime should import cleanly in the megaplan venv.
+    assert _is_agent_available("hermes") is True
+
+
+def test_is_agent_available_hermes_when_runtime_missing() -> None:
+    """_is_agent_available('hermes') is False if the runtime can't be imported.
+
+    Simulates the case where megaplan was installed without the agent runtime
+    (e.g. a slim wheel that excludes megaplan/agent/). Patches the import via
+    sys.modules to force ImportError on run_agent.
+    """
+    import sys
+
+    from megaplan.workers import _is_agent_available
+
+    saved_run_agent = sys.modules.pop("run_agent", None)
+    sys.modules["run_agent"] = None  # type: ignore[assignment]  # sentinel: forces ImportError
+    try:
+        assert _is_agent_available("hermes") is False
+    finally:
+        if saved_run_agent is not None:
+            sys.modules["run_agent"] = saved_run_agent
+        else:
+            sys.modules.pop("run_agent", None)
 
 
 # ---------------------------------------------------------------------------

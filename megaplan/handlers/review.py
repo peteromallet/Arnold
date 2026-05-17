@@ -316,6 +316,126 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
             )
     return rework_items
 
+
+def _finalize_review_outcome(
+    *,
+    root: Path,
+    args: argparse.Namespace,
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    refreshed: bool,
+    robustness: str,
+) -> StepResponse:
+    """Post-worker bookkeeping shared by both review paths.
+
+    The single-worker (claude/codex/mock) and parallel-hermes branches of
+    :func:`handle_review` previously inlined the same ~100-line block of
+    verdict-merging, state advancement, receipt emission, and response
+    construction. This helper is the single owner of that flow.
+    """
+    issues = list(worker.payload.get("issues", []))
+    finalize_data = read_json(plan_dir / "finalize.json")
+
+    review_verdict = worker.payload.get("review_verdict")
+    if review_verdict not in {"approved", "needs_rework"}:
+        issues.append("Invalid review_verdict; expected 'approved' or 'needs_rework'.")
+        review_verdict = "needs_rework"
+
+    verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
+        worker.payload, finalize_data, issues,
+    )
+    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="review"))
+    finalize_hash = sha256_file(plan_dir / "finalize.json")
+
+    result, next_state, next_step = _resolve_review_outcome(
+        plan_dir,
+        review_verdict, verdict_count, total_tasks,
+        check_count, total_checks, missing_evidence,
+        robustness,
+        state, issues,
+        criteria=worker.payload.get("criteria", []),
+    )
+    state["current_state"] = next_state
+
+    clear_active_step(state)
+    apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
+    append_history(
+        state,
+        make_history_entry(
+            "review",
+            duration_ms=worker.duration_ms, cost_usd=worker.cost_usd,
+            result=result,
+            worker=worker, agent=agent, mode=mode,
+            output_file="review.json",
+            prompt_tokens=worker.prompt_tokens,
+            completion_tokens=worker.completion_tokens,
+            total_tokens=worker.total_tokens,
+            artifact_hash=sha256_file(plan_dir / "review.json"),
+            finalize_hash=finalize_hash,
+        ),
+    )
+    try:
+        artifact_hash = sha256_file(plan_dir / "review.json")
+        receipt = build_receipt(
+            phase="review",
+            state=state,
+            plan_dir=plan_dir,
+            args=args,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            output_file="review.json",
+            artifact_hash=artifact_hash,
+            verdict=review_verdict,
+        )
+        write_receipt(
+            plan_dir,
+            receipt,
+            project_dir=Path(state["config"]["project_dir"]),
+        )
+    except Exception:
+        log.warning("Review receipt emission failed", exc_info=True)
+    save_state_merge_meta(plan_dir, state)
+
+    passed = sum(1 for c in worker.payload.get("criteria", []) if c.get("pass") in (True, "pass"))
+    total = len(worker.payload.get("criteria", []))
+    if result == "blocked":
+        summary = _build_review_blocked_message(
+            verdict_count=verdict_count, total_tasks=total_tasks,
+            check_count=check_count, total_checks=total_checks,
+            missing_reviewer_evidence=missing_evidence,
+        )
+    elif result == "needs_rework":
+        summary = "Review requested another execute pass. Re-run execute using the review findings as context."
+    else:
+        summary = f"Review complete: {passed}/{total} success criteria passed."
+
+    response: StepResponse = {
+        "success": result == "success",
+        "step": "review",
+        "summary": summary,
+        "artifacts": ["review.json", "finalize.json", "final.md"],
+        "monitor_hint": build_monitor_hint(plan_dir),
+        "next_step": next_step,
+        "state": next_state,
+        "issues": issues,
+        "rework_items": list(worker.payload.get("rework_items", [])),
+    }
+    _emit_phase_result(
+        phase="review",
+        state=state,
+        plan_dir=plan_dir,
+        exit_kind="success",
+    )
+    _attach_next_step_runtime(response)
+    attach_agent_fallback(response, args)
+    return response
+
+
 def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="review") as (plan_dir, state):
         require_state(state, "review", {STATE_EXECUTED})
@@ -371,104 +491,17 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     resolved=(agent_type, mode, refreshed, model),
                 )
                 atomic_write_json(plan_dir / "review.json", worker.payload)
-                issues = list(worker.payload.get("issues", []))
-                finalize_data = read_json(plan_dir / "finalize.json")
-
-                review_verdict = worker.payload.get("review_verdict")
-                if review_verdict not in {"approved", "needs_rework"}:
-                    issues.append("Invalid review_verdict; expected 'approved' or 'needs_rework'.")
-                    review_verdict = "needs_rework"
-
-                verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
-                    worker.payload, finalize_data, issues,
-                )
-                atomic_write_json(plan_dir / "finalize.json", finalize_data)
-                atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="review"))
-                finalize_hash = sha256_file(plan_dir / "finalize.json")
-
-                result, next_state, next_step = _resolve_review_outcome(
-                    plan_dir,
-                    review_verdict, verdict_count, total_tasks,
-                    check_count, total_checks, missing_evidence,
-                    robustness,
-                    state, issues,
-                    criteria=worker.payload.get("criteria", []),
-                )
-                state["current_state"] = next_state
-
-                clear_active_step(state)
-                apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
-                append_history(
-                    state,
-                    make_history_entry(
-                        "review",
-                        duration_ms=worker.duration_ms, cost_usd=worker.cost_usd,
-                        result=result,
-                        worker=worker, agent=agent, mode=mode,
-                        output_file="review.json",
-                        prompt_tokens=worker.prompt_tokens,
-                        completion_tokens=worker.completion_tokens,
-                        total_tokens=worker.total_tokens,
-                        artifact_hash=sha256_file(plan_dir / "review.json"),
-                        finalize_hash=finalize_hash,
-                    ),
-                )
-                try:
-                    artifact_hash = sha256_file(plan_dir / "review.json")
-                    receipt = build_receipt(
-                        phase="review",
-                        state=state,
-                        plan_dir=plan_dir,
-                        args=args,
-                        worker=worker,
-                        agent=agent,
-                        mode=mode,
-                        output_file="review.json",
-                        artifact_hash=artifact_hash,
-                        verdict=review_verdict,
-                    )
-                    write_receipt(
-                        plan_dir,
-                        receipt,
-                        project_dir=Path(state["config"]["project_dir"]),
-                    )
-                except Exception:
-                    log.warning("Review receipt emission failed", exc_info=True)
-                save_state_merge_meta(plan_dir, state)
-
-                passed = sum(1 for c in worker.payload.get("criteria", []) if c.get("pass") in (True, "pass"))
-                total = len(worker.payload.get("criteria", []))
-                if result == "blocked":
-                    summary = _build_review_blocked_message(
-                        verdict_count=verdict_count, total_tasks=total_tasks,
-                        check_count=check_count, total_checks=total_checks,
-                        missing_reviewer_evidence=missing_evidence,
-                    )
-                elif result == "needs_rework":
-                    summary = "Review requested another execute pass. Re-run execute using the review findings as context."
-                else:
-                    summary = f"Review complete: {passed}/{total} success criteria passed."
-
-                response: StepResponse = {
-                    "success": result == "success",
-                    "step": "review",
-                    "summary": summary,
-                    "artifacts": ["review.json", "finalize.json", "final.md"],
-                    "monitor_hint": build_monitor_hint(plan_dir),
-                    "next_step": next_step,
-                    "state": next_state,
-                    "issues": issues,
-                    "rework_items": list(worker.payload.get("rework_items", [])),
-                }
-                _emit_phase_result(
-                    phase="review",
-                    state=state,
+                return _finalize_review_outcome(
+                    root=root,
+                    args=args,
                     plan_dir=plan_dir,
-                    exit_kind="success",
+                    state=state,
+                    worker=worker,
+                    agent=agent,
+                    mode=mode,
+                    refreshed=refreshed,
+                    robustness=robustness,
                 )
-                _attach_next_step_runtime(response)
-                attach_agent_fallback(response, args)
-                return response
 
             run_id = None
             try:
@@ -528,102 +561,14 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 save_state_merge_meta(plan_dir, state)
                 raise
 
-        issues = list(worker.payload.get("issues", []))
-        finalize_data = read_json(plan_dir / "finalize.json")
-
-        review_verdict = worker.payload.get("review_verdict")
-        if review_verdict not in {"approved", "needs_rework"}:
-            issues.append("Invalid review_verdict; expected 'approved' or 'needs_rework'.")
-            review_verdict = "needs_rework"
-
-        verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
-            worker.payload, finalize_data, issues,
-        )
-
-        atomic_write_json(plan_dir / "finalize.json", finalize_data)
-        atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="review"))
-        finalize_hash = sha256_file(plan_dir / "finalize.json")
-
-        result, next_state, next_step = _resolve_review_outcome(
-            plan_dir,
-            review_verdict, verdict_count, total_tasks,
-            check_count, total_checks, missing_evidence,
-            robustness,
-            state, issues,
-            criteria=worker.payload.get("criteria", []),
-        )
-        state["current_state"] = next_state
-
-        clear_active_step(state)
-        apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
-        append_history(
-            state,
-            make_history_entry(
-                "review",
-                duration_ms=worker.duration_ms, cost_usd=worker.cost_usd,
-                result=result,
-                worker=worker, agent=agent, mode=mode,
-                output_file="review.json",
-                prompt_tokens=worker.prompt_tokens,
-                completion_tokens=worker.completion_tokens,
-                total_tokens=worker.total_tokens,
-                artifact_hash=sha256_file(plan_dir / "review.json"),
-                finalize_hash=finalize_hash,
-            ),
-        )
-        try:
-            artifact_hash = sha256_file(plan_dir / "review.json")
-            receipt = build_receipt(
-                phase="review",
-                state=state,
-                plan_dir=plan_dir,
-                args=args,
-                worker=worker,
-                agent=agent,
-                mode=mode,
-                output_file="review.json",
-                artifact_hash=artifact_hash,
-                verdict=review_verdict,
-            )
-            write_receipt(
-                plan_dir,
-                receipt,
-                project_dir=Path(state["config"]["project_dir"]),
-            )
-        except Exception:
-            log.warning("Review receipt emission failed", exc_info=True)
-        save_state_merge_meta(plan_dir, state)
-
-        passed = sum(1 for c in worker.payload.get("criteria", []) if c.get("pass") in (True, "pass"))
-        total = len(worker.payload.get("criteria", []))
-        if result == "blocked":
-            summary = _build_review_blocked_message(
-                verdict_count=verdict_count, total_tasks=total_tasks,
-                check_count=check_count, total_checks=total_checks,
-                missing_reviewer_evidence=missing_evidence,
-            )
-        elif result == "needs_rework":
-            summary = "Review requested another execute pass. Re-run execute using the review findings as context."
-        else:
-            summary = f"Review complete: {passed}/{total} success criteria passed."
-
-        response: StepResponse = {
-            "success": result == "success",
-            "step": "review",
-            "summary": summary,
-            "artifacts": ["review.json", "finalize.json", "final.md"],
-            "monitor_hint": build_monitor_hint(plan_dir),
-            "next_step": next_step,
-            "state": next_state,
-            "issues": issues,
-            "rework_items": list(worker.payload.get("rework_items", [])),
-        }
-        _emit_phase_result(
-            phase="review",
-            state=state,
+        return _finalize_review_outcome(
+            root=root,
+            args=args,
             plan_dir=plan_dir,
-            exit_kind="success",
+            state=state,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            refreshed=refreshed,
+            robustness=robustness,
         )
-        _attach_next_step_runtime(response)
-        attach_agent_fallback(response, args)
-        return response

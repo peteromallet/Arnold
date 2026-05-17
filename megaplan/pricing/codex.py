@@ -9,6 +9,19 @@ Rates are USD per 1M tokens. ``cached`` covers OpenAI's prefix-cache hit price
 (input prefix that the API already saw), which is roughly 90% off the full
 input rate. ``reasoning_output_tokens`` is billed at the same rate as regular
 output, so we add the two before applying the output rate.
+
+## API shape
+
+``cost_from_usage(prompt_tokens, completion_tokens, model, *,
+cached_prompt_tokens=0)`` matches :mod:`megaplan.pricing.claude` and
+:mod:`megaplan.pricing.fireworks`. ``prompt_tokens`` is the full input
+count (including any cached prefix) and ``cached_prompt_tokens`` is the
+portion of that input billed at the cheaper cached rate.
+
+If a caller has the raw codex ``total_token_usage`` dict (with
+``input_tokens`` / ``cached_input_tokens`` / ``output_tokens`` /
+``reasoning_output_tokens``), use :func:`cost_from_codex_usage_dict` to
+extract counts and bill in one call.
 """
 
 from __future__ import annotations
@@ -25,7 +38,46 @@ PRICING: dict[str, dict[str, float]] = {
 DEFAULT_MODEL = "gpt-5.5"
 
 
-def cost_from_usage(usage: dict[str, Any] | None, model: str | None = None) -> float:
+def cost_from_usage(
+    prompt_tokens: int,
+    completion_tokens: int,
+    model: str | None,
+    *,
+    cached_prompt_tokens: int = 0,
+) -> float:
+    """Compute USD cost from a token count + model name.
+
+    ``prompt_tokens`` is the full input token count (including any cached
+    prefix). ``cached_prompt_tokens`` is the portion of that input billed
+    at the cheaper cached rate; if unset, everything in ``prompt_tokens``
+    is billed at the full input rate.
+
+    ``completion_tokens`` should be the sum of regular output and any
+    reasoning-output tokens (both billed at the output rate).
+
+    Unknown ``model`` falls back to :data:`DEFAULT_MODEL`. ``None`` /
+    empty model also falls back. Returns ``0.0`` on parse error.
+    """
+    rates = PRICING.get(model or DEFAULT_MODEL, PRICING[DEFAULT_MODEL])
+    try:
+        prompt = int(prompt_tokens or 0)
+        completion = int(completion_tokens or 0)
+        cached = int(cached_prompt_tokens or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    cached = max(0, min(cached, prompt))  # cached can't exceed prompt total
+    uncached = prompt - cached
+    return (
+        uncached * rates["input"]
+        + cached * rates["cached"]
+        + completion * rates["output"]
+    ) / 1_000_000
+
+
+def cost_from_codex_usage_dict(
+    usage: dict[str, Any] | None,
+    model: str | None = None,
+) -> float:
     """Return the USD cost for a codex ``total_token_usage`` blob.
 
     ``usage`` is the dict under ``info.total_token_usage`` in a codex
@@ -35,24 +87,20 @@ def cost_from_usage(usage: dict[str, Any] | None, model: str | None = None) -> f
          "output_tokens": 1089, "reasoning_output_tokens": 230,
          "total_tokens": 67696}
 
-    Missing keys default to 0. Unknown ``model`` falls back to
-    :data:`DEFAULT_MODEL`. Returns ``0.0`` for ``None`` / empty input.
+    Missing keys default to 0. Returns ``0.0`` for ``None`` / empty input.
     """
     if not isinstance(usage, dict):
         return 0.0
-    rates = PRICING.get(model or DEFAULT_MODEL, PRICING[DEFAULT_MODEL])
     try:
-        input_tokens = int(usage.get("input_tokens", 0) or 0)
-        cached = int(usage.get("cached_input_tokens", 0) or 0)
+        prompt_tokens = int(usage.get("input_tokens", 0) or 0)
+        cached_prompt_tokens = int(usage.get("cached_input_tokens", 0) or 0)
         output_tokens = int(usage.get("output_tokens", 0) or 0)
-        reasoning = int(usage.get("reasoning_output_tokens", 0) or 0)
+        reasoning_tokens = int(usage.get("reasoning_output_tokens", 0) or 0)
     except (TypeError, ValueError):
         return 0.0
-    full_in = max(input_tokens - cached, 0)
-    out = output_tokens + reasoning
-    cost = (
-        full_in * rates["input"]
-        + cached * rates["cached"]
-        + out * rates["output"]
-    ) / 1_000_000
-    return float(cost)
+    return cost_from_usage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=output_tokens + reasoning_tokens,
+        model=model,
+        cached_prompt_tokens=cached_prompt_tokens,
+    )
