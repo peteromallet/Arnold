@@ -631,7 +631,13 @@ def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     output_path = plan_dir / "plan_output.json"
-    output_path.write_text(json.dumps({"plan": "# Plan\nDo it."}), encoding="utf-8")
+    # Optional array keys present so the payload "looks like" a plan, but the
+    # required string `plan` key is missing — the defensive-defaults block
+    # only fills array keys, so validation still surfaces the gap.
+    output_path.write_text(
+        json.dumps({"questions": ["?"], "success_criteria": ["ok"], "assumptions": ["x"]}),
+        encoding="utf-8",
+    )
 
     with pytest.raises(CliError) as exc_info:
         _recover_codex_payload(
@@ -1244,9 +1250,14 @@ def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
-    # Missing required keys for "plan" step
+    # Missing required string key `plan` for "plan" step (array keys would
+    # be auto-defaulted by `_normalize_worker_payload`).
     claude_output = json.dumps({
-        "structured_output": {"plan": "x"},
+        "structured_output": {
+            "questions": ["?"],
+            "success_criteria": ["ok"],
+            "assumptions": ["x"],
+        },
         "total_cost_usd": 0.0,
     })
     fake_result = CommandResult(
@@ -1395,7 +1406,12 @@ def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_pat
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         output_idx = command.index("-o") + 1
         output_path = Path(command[output_idx])
-        output_path.write_text(json.dumps({"plan": "# Plan\nDo it."}), encoding="utf-8")
+        # Required string key `plan` is omitted — array keys default; the
+        # missing string key is what surfaces.
+        output_path.write_text(
+            json.dumps({"questions": ["?"], "success_criteria": ["ok"], "assumptions": ["x"]}),
+            encoding="utf-8",
+        )
         return CommandResult(
             command=command,
             cwd=tmp_path,
@@ -3571,13 +3587,13 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setattr("megaplan.shannon_worker.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
@@ -3602,7 +3618,7 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
         duration_ms=123,
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -3619,7 +3635,7 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3627,8 +3643,8 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
     monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
-    monkeypatch.setattr("megaplan.shannon_worker.os.geteuid", lambda: 0)
-    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
@@ -3653,7 +3669,7 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
         duration_ms=123,
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -3991,7 +4007,7 @@ def test_shannon_worker_heals_partially_patched_entrypoint(
     helpers were bundled behind a single gate.  The next patch pass must
     insert the missing helper so the dangling call site resolves.
     """
-    from megaplan.shannon_worker import _ensure_shannon_parent_timeout_control
+    from megaplan.workers.shannon import _ensure_shannon_parent_timeout_control
 
     package_dir = tmp_path / "shannon-package"
     bin_dir = package_dir / "bin"
@@ -4050,7 +4066,7 @@ def test_shannon_worker_heals_partially_patched_entrypoint(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: str(executable))
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: str(executable))
 
     _ensure_shannon_parent_timeout_control()
 
