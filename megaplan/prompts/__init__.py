@@ -207,37 +207,74 @@ def _resolve_builder(
     return builder
 
 
+# Steps that accept a ``root`` keyword (project root). ``review`` doesn't —
+# it threads extra prompt kwargs (e.g. pre_check_flags) instead.
+_ROOT_BEARING_STEPS = {"prep", "critique", "gate", "finalize", "execute"}
+
+# Maps the agent name used by callers to the (builder_dict, display_label)
+# tuple used internally. Adding a new agent means appending one entry.
+_AGENT_REGISTRY: dict[str, tuple[dict[str, "_PromptBuilder"], str]] = {
+    "claude": (_CLAUDE_PROMPT_BUILDERS, "Claude"),
+    "codex": (_CODEX_PROMPT_BUILDERS, "Codex"),
+    "hermes": (_HERMES_PROMPT_BUILDERS, "Hermes"),
+}
+
+
+def create_prompt(
+    agent: str,
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    **prompt_kwargs: object,
+) -> str:
+    """Render the prompt for ``(agent, step)``.
+
+    ``agent`` is one of ``"claude"`` / ``"codex"`` / ``"hermes"``. All
+    three resolve to the same shape:
+
+    * ``step == "review"`` forwards ``prompt_kwargs`` to the builder.
+    * Root-bearing steps forward ``root``.
+    * Everything else calls the builder with just ``(state, plan_dir)``.
+
+    The output always carries the harness-guard prefix.
+
+    Thin per-agent wrappers — ``create_claude_prompt``, ``create_codex_prompt``,
+    ``create_hermes_prompt`` — preserve the historical API used by 80+
+    call sites across the codebase.
+    """
+    try:
+        builders, label = _AGENT_REGISTRY[agent]
+    except KeyError as exc:
+        raise CliError(
+            "unsupported_agent",
+            f"create_prompt: unknown agent {agent!r}; "
+            f"expected one of {sorted(_AGENT_REGISTRY)}",
+        ) from exc
+    builder = _resolve_builder(builders, step, state, label)
+    if step == "review":
+        return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
+    if step in _ROOT_BEARING_STEPS:
+        return _prepend_harness_guard(builder(state, plan_dir, root=root))
+    return _prepend_harness_guard(builder(state, plan_dir))
+
+
 def create_claude_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
-    builder = _resolve_builder(_CLAUDE_PROMPT_BUILDERS, step, state, "Claude")
-    if step == "review":
-        return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
-    if step in {"prep", "critique", "gate", "finalize", "execute"}:
-        return _prepend_harness_guard(builder(state, plan_dir, root=root))
-    return _prepend_harness_guard(builder(state, plan_dir))
+    return create_prompt("claude", step, state, plan_dir, root=root, **prompt_kwargs)
 
 
 def create_codex_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
-    builder = _resolve_builder(_CODEX_PROMPT_BUILDERS, step, state, "Codex")
-    if step == "review":
-        return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
-    if step in {"prep", "critique", "gate", "finalize", "execute"}:
-        return _prepend_harness_guard(builder(state, plan_dir, root=root))
-    return _prepend_harness_guard(builder(state, plan_dir))
+    return create_prompt("codex", step, state, plan_dir, root=root, **prompt_kwargs)
 
 
 def create_hermes_prompt(
     step: str, state: PlanState, plan_dir: Path, root: Path | None = None, **prompt_kwargs: object
 ) -> str:
-    builder = _resolve_builder(_HERMES_PROMPT_BUILDERS, step, state, "Hermes")
-    if step == "review":
-        return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
-    if step in {"prep", "critique", "gate", "finalize", "execute"}:
-        return _prepend_harness_guard(builder(state, plan_dir, root=root))
-    return _prepend_harness_guard(builder(state, plan_dir))
+    return create_prompt("hermes", step, state, plan_dir, root=root, **prompt_kwargs)
 
 
 __all__ = [
@@ -289,4 +326,5 @@ __all__ = [
     "create_claude_prompt",
     "create_codex_prompt",
     "create_hermes_prompt",
+    "create_prompt",
 ]
