@@ -35,7 +35,7 @@ from megaplan._core import (
     unresolved_significant_flags,
     workflow_next,
 )
-from megaplan.evaluation import build_gate_artifact, build_gate_signals, run_gate_checks
+from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, run_gate_checks
 
 from .shared import _append_to_meta, _attach_next_step_runtime
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import get_effective, read_json, schemas_root
-from megaplan.hermes_worker import (
+from megaplan.workers.hermes import (
     _streaming_run_kwargs,
     _toolsets_for_phase,
     clean_parsed_payload,
@@ -23,7 +23,7 @@ from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 
 
-from megaplan.key_pool import (
+from megaplan.runtime.key_pool import (
     _load_hermes_env,
     _get_api_credential,
     resolve_model as _resolve_model,
@@ -54,7 +54,7 @@ def _run_check(
     schema: dict[str, Any],
     project_dir: Path,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float]:
-    from megaplan.hermes_worker import _import_hermes_runtime
+    from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
@@ -157,7 +157,7 @@ def _run_check(
         if model and model.startswith("minimax:"):
             or_key = acquire_key("openrouter")
             if or_key:
-                from megaplan.key_pool import minimax_openrouter_model
+                from megaplan.runtime.key_pool import minimax_openrouter_model
                 fallback_model = minimax_openrouter_model(model[len("minimax:"):])
                 fallback_kwargs = {"base_url": "https://openrouter.ai/api/v1", "api_key": or_key}
                 if isinstance(exc, CliError):

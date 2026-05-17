@@ -9,7 +9,7 @@ from typing import Any
 from megaplan import handlers as _pkg
 from megaplan.review import checks as review_checks
 from megaplan.execute.core import _check_done_task_evidence, build_monitor_hint
-from megaplan.evaluation import is_rubber_stamp
+from megaplan.orchestration.evaluation import is_rubber_stamp
 from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.profiles import apply_profile_expansion
@@ -62,7 +62,7 @@ from .shared import (
     attach_agent_fallback,
     worker_module,
 )
-from megaplan.phase_result import _emit_phase_result
+from megaplan.orchestration.phase_result import _emit_phase_result
 
 log = logging.getLogger(__name__)
 

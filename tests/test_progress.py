@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 
-from megaplan.progress import (
+from megaplan.orchestration.progress import (
     ENV_ACTOR_ID,
     ENV_BACKEND,
     ENV_DSN_ENV,

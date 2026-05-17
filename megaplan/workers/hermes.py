@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TextIO
 
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
-from megaplan.workers import (
+from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     mock_worker_output,
@@ -500,7 +500,7 @@ def run_hermes_step(
     # Resolve model provider — support direct API providers via prefix
     # e.g. "zhipu:glm-5.1" → base_url=Zhipu API, model="glm-5.1"
     # Uses the key pool for key rotation and cooldown on 429s.
-    from megaplan.key_pool import resolve_model as _resolve_model, acquire_key, report_429
+    from megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)
 
     toolsets = _toolsets_for_phase(step)
@@ -624,7 +624,7 @@ def run_hermes_step(
     from contextlib import ExitStack
     _sandbox_stack = ExitStack()
     if toolsets:
-        from megaplan.sandbox import install_sandbox
+        from megaplan.runtime.sandbox import install_sandbox
         _sandbox_stack.enter_context(install_sandbox(project_dir))
 
     # Run — with fallback to OpenRouter for MiniMax if primary API fails
@@ -657,7 +657,7 @@ def run_hermes_step(
                         )
                     else:
                         print(f"[hermes-worker] MiniMax failed ({exc}), falling back to OpenRouter", file=sys.stderr)
-                    from megaplan.key_pool import minimax_openrouter_model
+                    from megaplan.runtime.key_pool import minimax_openrouter_model
                     fallback_model = minimax_openrouter_model(model[len("minimax:"):])
                     output_path = _rewrite_output_template(output_path)
                     agent = _make_agent(
@@ -713,7 +713,7 @@ def run_hermes_step(
     if cost_usd == 0.0 and (prompt_tokens > 0 or completion_tokens > 0):
         model_actual = result.get("model")
         if model_actual:
-            from megaplan import fireworks_pricing
+            from megaplan.pricing import fireworks as fireworks_pricing
 
             cost_usd = fireworks_pricing.cost_from_usage(
                 prompt_tokens, completion_tokens, model_actual

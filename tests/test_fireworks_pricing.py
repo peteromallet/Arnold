@@ -1,10 +1,10 @@
-"""Unit tests for megaplan.fireworks_pricing.cost_from_usage."""
+"""Unit tests for megaplan.pricing.fireworks.cost_from_usage."""
 
 from __future__ import annotations
 
 import pytest
 
-from megaplan.fireworks_pricing import FIREWORKS_PRICING, cost_from_usage
+from megaplan.pricing.fireworks import FIREWORKS_PRICING, cost_from_usage
 
 
 def test_cost_from_usage_known_model() -> None:

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from megaplan.evaluation import validate_plan_structure
+from megaplan.orchestration.evaluation import validate_plan_structure
 from megaplan._core import PHASE_RUNTIME_POLICY
 from megaplan.types import CliError
 from megaplan.workers import (
@@ -631,7 +631,13 @@ def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     output_path = plan_dir / "plan_output.json"
-    output_path.write_text(json.dumps({"plan": "# Plan\nDo it."}), encoding="utf-8")
+    # Optional array keys present so the payload "looks like" a plan, but the
+    # required string `plan` key is missing — the defensive-defaults block
+    # only fills array keys, so validation still surfaces the gap.
+    output_path.write_text(
+        json.dumps({"questions": ["?"], "success_criteria": ["ok"], "assumptions": ["x"]}),
+        encoding="utf-8",
+    )
 
     with pytest.raises(CliError) as exc_info:
         _recover_codex_payload(
@@ -646,9 +652,9 @@ def test_recover_codex_payload_reports_missing_required_keys_for_json_object(tmp
 
 
 def test_resolve_agent_mode_uses_configured_fallback() -> None:
-    with patch("megaplan.workers.shutil.which", side_effect=lambda name: None if name == "claude" else "/usr/bin/codex"):
-        with patch("megaplan.workers.detect_available_agents", return_value=["codex"]):
-            with patch("megaplan.workers.load_config", return_value={"agents": {"plan": "claude"}}):
+    with patch("megaplan.workers._impl.shutil.which", side_effect=lambda name: None if name == "claude" else "/usr/bin/codex"):
+        with patch("megaplan.workers._impl.detect_available_agents", return_value=["codex"]):
+            with patch("megaplan.workers._impl.load_config", return_value={"agents": {"plan": "claude"}}):
                 args = _make_args()
                 agent, mode, refreshed, model = resolve_agent_mode("plan", args)
     assert agent == "codex"
@@ -977,40 +983,40 @@ def test_step_schema_filenames_reference_existing_schemas() -> None:
 
 
 def test_resolve_agent_mode_cli_flag_override() -> None:
-    with patch("megaplan.workers.shutil.which", return_value="/usr/bin/codex"):
+    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
         agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args(agent="codex"))
     assert agent == "codex"
 
 
 def test_resolve_agent_mode_config_override() -> None:
-    with patch("megaplan.workers.shutil.which", return_value="/usr/bin/codex"):
-        with patch("megaplan.workers.load_config", return_value={"agents": {"plan": "codex"}}):
+    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
+        with patch("megaplan.workers._impl.load_config", return_value={"agents": {"plan": "codex"}}):
             agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args())
     assert agent == "codex"
 
 
 def test_resolve_agent_mode_explicit_missing_raises() -> None:
-    with patch("megaplan.workers.shutil.which", return_value=None):
+    with patch("megaplan.workers._impl.shutil.which", return_value=None):
         with pytest.raises(CliError, match="not found"):
             resolve_agent_mode("plan", _make_args(agent="nosuchagent"))
 
 
 def test_resolve_agent_mode_no_agents_raises() -> None:
-    with patch("megaplan.workers.shutil.which", return_value=None):
-        with patch("megaplan.workers.load_config", return_value={}):
-            with patch("megaplan.workers.detect_available_agents", return_value=[]):
+    with patch("megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("megaplan.workers._impl.load_config", return_value={}):
+            with patch("megaplan.workers._impl.detect_available_agents", return_value=[]):
                 with pytest.raises(CliError, match="No supported agents"):
                     resolve_agent_mode("plan", _make_args())
 
 
 def test_resolve_agent_mode_conflicting_flags_raises() -> None:
-    with patch("megaplan.workers.shutil.which", return_value="/usr/bin/claude"):
+    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/claude"):
         with pytest.raises(CliError, match="Cannot combine"):
             resolve_agent_mode("plan", _make_args(fresh=True, ephemeral=True))
 
 
 def test_resolve_agent_mode_ephemeral_mode() -> None:
-    with patch("megaplan.workers.shutil.which", return_value="/usr/bin/claude"):
+    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/claude"):
         agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args(agent="claude", ephemeral=True))
     assert mode == "ephemeral"
     assert refreshed is True
@@ -1108,7 +1114,7 @@ def test_run_claude_step_parses_structured_output(tmp_path: Path) -> None:
         stderr="",
         duration_ms=500,
     )
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result):
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
         result = run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     assert result.payload == plan_payload
     assert result.cost_usd == 0.05
@@ -1144,7 +1150,7 @@ def test_run_claude_step_passes_effort_flag(tmp_path: Path) -> None:
         stderr="",
         duration_ms=10,
     )
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, effort="low")
     invoked_cmd = run_command.call_args.args[0]
     assert "--effort" in invoked_cmd
@@ -1189,7 +1195,7 @@ def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
             duration_ms=10,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True, effort="low",
         )
@@ -1225,8 +1231,8 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
         stderr="",
         duration_ms=10,
     )
-    with patch("megaplan.shannon_worker.create_claude_prompt", side_effect=AssertionError("builder should not run")):
-        with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.create_claude_prompt", side_effect=AssertionError("builder should not run")):
+        with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True, prompt_override="custom prompt")
     command = run_command.call_args.args[0]
     assert command[0:2] == ["shannon", "-p"]
@@ -1244,9 +1250,14 @@ def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
-    # Missing required keys for "plan" step
+    # Missing required string key `plan` for "plan" step (array keys would
+    # be auto-defaulted by `_normalize_worker_payload`).
     claude_output = json.dumps({
-        "structured_output": {"plan": "x"},
+        "structured_output": {
+            "questions": ["?"],
+            "success_criteria": ["ok"],
+            "assumptions": ["x"],
+        },
         "total_cost_usd": 0.0,
     })
     fake_result = CommandResult(
@@ -1257,7 +1268,7 @@ def test_run_claude_step_raises_on_invalid_payload(tmp_path: Path) -> None:
         stderr="",
         duration_ms=100,
     )
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result):
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
         with pytest.raises(CliError, match="missing required keys"):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
 
@@ -1277,7 +1288,7 @@ def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
     }
 
     timeout_error = CliError("worker_timeout", "Claude timed out", extra={"raw_output": "partial"})
-    with patch("megaplan.shannon_worker.run_command", side_effect=timeout_error):
+    with patch("megaplan.workers.shannon.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
@@ -1315,9 +1326,9 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
             duration_ms=10,
         )
 
-    with patch("megaplan.workers.create_codex_prompt", side_effect=AssertionError("builder should not run")):
-        with patch("megaplan.workers.tempfile.NamedTemporaryFile", side_effect=fake_named_tempfile):
-            with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.create_codex_prompt", side_effect=AssertionError("builder should not run")):
+        with patch("megaplan.workers._impl.tempfile.NamedTemporaryFile", side_effect=fake_named_tempfile):
+            with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
                 run_codex_step(
                     "plan",
                     state,
@@ -1334,7 +1345,7 @@ def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
     plan_dir, state = _mock_state(tmp_path)
     payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
     with patch(
-        "megaplan.workers.run_codex_step",
+        "megaplan.workers._impl.run_codex_step",
         return_value=type("Result", (), {"payload": payload, "raw_output": "", "duration_ms": 1, "cost_usd": 0.0, "session_id": "sess", "trace_output": None})(),
     ) as run_codex:
         run_step_with_worker(
@@ -1376,7 +1387,7 @@ def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
             duration_ms=300,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
         )
@@ -1395,7 +1406,12 @@ def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_pat
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         output_idx = command.index("-o") + 1
         output_path = Path(command[output_idx])
-        output_path.write_text(json.dumps({"plan": "# Plan\nDo it."}), encoding="utf-8")
+        # Required string key `plan` is omitted — array keys default; the
+        # missing string key is what surfaces.
+        output_path.write_text(
+            json.dumps({"questions": ["?"], "success_criteria": ["ok"], "assumptions": ["x"]}),
+            encoding="utf-8",
+        )
         return CommandResult(
             command=command,
             cwd=tmp_path,
@@ -1405,7 +1421,7 @@ def test_run_codex_step_reports_schema_validation_error_for_json_payload(tmp_pat
             duration_ms=300,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         with pytest.raises(CliError) as exc_info:
             run_codex_step(
                 "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
@@ -1456,8 +1472,8 @@ def test_run_codex_step_uses_full_auto_for_critique_template_writes(tmp_path: Pa
             duration_ms=1,
         )
 
-    with patch("megaplan.workers._trusted_container", return_value=False), \
-         patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl._trusted_container", return_value=False), \
+         patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -1507,7 +1523,7 @@ def test_run_codex_step_trusted_container_bypasses_sandbox_for_critique(
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -1548,7 +1564,7 @@ def test_run_codex_step_grants_plan_dir_when_project_dir_differs(tmp_path: Path)
         )
 
     try:
-        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
             result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -1582,7 +1598,7 @@ def test_run_codex_step_accepts_empty_light_critique_payload(tmp_path: Path) -> 
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -1615,7 +1631,7 @@ def test_run_codex_step_normalizes_revise_payload_missing_changes_summary(tmp_pa
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("revise", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload["changes_summary"] == "No critique flags were raised; refined the plan for execution."
@@ -1638,7 +1654,7 @@ def test_run_codex_step_raises_on_nonzero_exit(tmp_path: Path) -> None:
             duration_ms=100,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         with pytest.raises(CliError, match="failed with exit code"):
             run_codex_step(
                 "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
@@ -1657,7 +1673,7 @@ def test_run_codex_step_extracts_session_id_from_timeout_output(tmp_path: Path) 
         extra={"raw_output": '{"type":"thread.started","thread_id":"codex-timeout-session"}\n'},
     )
 
-    with patch("megaplan.workers.run_command", side_effect=timeout_error):
+    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_codex_step("execute", state, plan_dir, root=tmp_path, persistent=True, fresh=True, json_trace=True)
 
@@ -1674,7 +1690,7 @@ def test_run_command_decodes_timeout_byte_streams(tmp_path: Path) -> None:
         stderr=b"\nextra stderr",
     )
 
-    with patch("megaplan.workers.subprocess.run", side_effect=timeout_error):
+    with patch("megaplan.workers._impl.subprocess.run", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_command(["codex", "exec", "-"], cwd=tmp_path, stdin_text="prompt", timeout=300)
 
@@ -1721,7 +1737,7 @@ def test_run_codex_step_recovers_critique_payload_from_timeout_raw_output(tmp_pa
         },
     )
 
-    with patch("megaplan.workers.run_command", side_effect=timeout_error):
+    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
         result = run_codex_step("critique", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == critique_payload
@@ -1774,7 +1790,7 @@ def test_run_codex_step_recovers_gate_payload_from_mixed_raw_output(tmp_path: Pa
             duration_ms=25,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "gate",
             state,
@@ -1852,7 +1868,7 @@ def test_run_codex_step_recovers_execute_payload_from_jsonl_agent_message(tmp_pa
             duration_ms=25,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -1928,7 +1944,7 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
             duration_ms=25,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "execute",
             state,
@@ -1985,7 +2001,7 @@ def test_run_codex_step_resume_omits_add_dir_for_current_codex_cli(tmp_path: Pat
             duration_ms=12,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "gate",
             state,
@@ -2093,7 +2109,7 @@ def test_run_codex_step_uses_step_timeout_for_plan(tmp_path: Path) -> None:
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == plan_payload
@@ -2111,7 +2127,7 @@ def test_run_codex_step_reclassifies_timeout_connection_errors(tmp_path: Path) -
         extra={"raw_output": "failed to connect to websocket: failed to lookup address information"},
     )
 
-    with patch("megaplan.workers.run_command", side_effect=timeout_error):
+    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
@@ -2132,7 +2148,7 @@ def test_run_codex_step_timeout_guidance_prefers_same_step_retry(tmp_path: Path)
         extra={"raw_output": ""},
     )
 
-    with patch("megaplan.workers.run_command", side_effect=timeout_error):
+    with patch("megaplan.workers._impl.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
@@ -2166,7 +2182,7 @@ def test_run_step_with_worker_retries_non_execute_codex_timeout_once(tmp_path: P
         session_id="retry-session",
     )
 
-    with patch("megaplan.workers.run_codex_step", side_effect=[timeout_error, worker]) as mocked:
+    with patch("megaplan.workers._impl.run_codex_step", side_effect=[timeout_error, worker]) as mocked:
         result, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,
@@ -2195,7 +2211,7 @@ def test_run_step_with_worker_does_not_retry_execute_codex_timeout(tmp_path: Pat
         extra={"raw_output": "", "session_id": "execute-session"},
     )
 
-    with patch("megaplan.workers.run_codex_step", side_effect=timeout_error) as mocked:
+    with patch("megaplan.workers._impl.run_codex_step", side_effect=timeout_error) as mocked:
         with pytest.raises(CliError) as exc_info:
             run_step_with_worker(
                 "execute",
@@ -2232,10 +2248,10 @@ def test_run_step_with_worker_falls_back_from_claude_auth_error_to_codex(tmp_pat
         session_id="codex-fallback-session",
     )
 
-    with patch("megaplan.workers.resolve_agent_mode", return_value=("claude", "persistent", False, None)):
-        with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
-            with patch("megaplan.shannon_worker.run_shannon_step", side_effect=auth_error) as mocked_shannon:
-                with patch("megaplan.workers.run_codex_step", return_value=worker) as mocked_codex:
+    with patch("megaplan.workers._impl.resolve_agent_mode", return_value=("claude", "persistent", False, None)):
+        with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
+            with patch("megaplan.workers.shannon.run_shannon_step", side_effect=auth_error) as mocked_shannon:
+                with patch("megaplan.workers._impl.run_codex_step", return_value=worker) as mocked_codex:
                     result, agent, mode, refreshed = run_step_with_worker(
                         "plan",
                         state,
@@ -2268,8 +2284,8 @@ def test_run_step_with_worker_does_not_fallback_for_explicit_agent_runtime_error
         extra={"raw_output": "failed to lookup address information"},
     )
 
-    with patch("megaplan.workers.resolve_agent_mode", return_value=("codex", "persistent", False, None)):
-        with patch("megaplan.workers.run_codex_step", side_effect=connection_error) as mocked_codex:
+    with patch("megaplan.workers._impl.resolve_agent_mode", return_value=("codex", "persistent", False, None)):
+        with patch("megaplan.workers._impl.run_codex_step", side_effect=connection_error) as mocked_codex:
             with pytest.raises(CliError) as exc_info:
                 run_step_with_worker(
                     "plan",
@@ -2318,7 +2334,7 @@ def test_run_codex_step_sanitizes_codex_child_env(tmp_path: Path, monkeypatch: p
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
 
     assert result.payload == plan_payload
@@ -2371,7 +2387,7 @@ def test_run_claude_step_uses_cwd_for_add_dir_when_worktree_differs(
         )
 
     try:
-        with patch("megaplan.shannon_worker.run_command", side_effect=fake_run_command):
+        with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -2420,7 +2436,7 @@ def test_run_claude_step_honors_explicit_work_dir_override(
         )
 
     try:
-        with patch("megaplan.shannon_worker.run_command", side_effect=fake_run_command):
+        with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -2468,7 +2484,7 @@ def test_run_codex_step_uses_work_dir_for_dash_c_not_project_dir(
         )
 
     try:
-        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
             run_codex_step("plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True)
     finally:
         set_work_dir_override(None)
@@ -2705,8 +2721,8 @@ def test_run_codex_step_resumed_session_retries_fresh_on_poisoned_output(
             duration_ms=5,
         )
 
-    with patch("megaplan.workers.create_codex_prompt", return_value="prompt"):
-        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.create_codex_prompt", return_value="prompt"):
+        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
             result = run_codex_step(
                 "execute",
                 state,
@@ -2747,8 +2763,8 @@ def test_run_codex_step_skips_poison_retry_when_fresh_already(
             duration_ms=1,
         )
 
-    with patch("megaplan.workers.create_codex_prompt", return_value="prompt"):
-        with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.create_codex_prompt", return_value="prompt"):
+        with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
             with pytest.raises(CliError):
                 run_codex_step(
                     "execute",
@@ -2803,7 +2819,7 @@ def _write_codex_rollout(
 
 
 def test_codex_pricing_table() -> None:
-    from megaplan.codex_pricing import (
+    from megaplan.pricing.codex import (
         DEFAULT_MODEL,
         PRICING,
         cost_from_usage,
@@ -2876,7 +2892,7 @@ def test_codex_step_extracts_token_usage_from_session_jsonl(
             duration_ms=300,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
         )
@@ -2924,7 +2940,7 @@ def test_codex_step_handles_missing_session_jsonl_gracefully(
             duration_ms=300,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
         )
@@ -2978,7 +2994,7 @@ def test_codex_step_incremental_cost_within_session(
             duration_ms=200,
         )
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         first = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=True,
         )
@@ -3003,7 +3019,7 @@ def test_codex_step_incremental_cost_within_session(
     # Pre-seed session id so the second call resumes (mirroring real flow).
     state["sessions"][session_key]["id"] = session_id
 
-    with patch("megaplan.workers.run_command", side_effect=fake_run_command):
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         second = run_codex_step(
             "plan", state, plan_dir, root=tmp_path, persistent=True, fresh=False,
         )
@@ -3121,29 +3137,29 @@ def test_is_agent_available_claude_routes_through_shannon_deps() -> None:
 
 def test_resolve_agent_mode_agent_shannon_explicit_fails_on_missing_deps() -> None:
     """--agent shannon when deps missing → CliError('agent_deps_missing')."""
-    with patch("megaplan.workers.shutil.which", return_value=None):
-        with patch("megaplan.workers.load_config", return_value={}):
-            with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
+    with patch("megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("megaplan.workers._impl.load_config", return_value={}):
+            with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
                 with pytest.raises(CliError, match="Shannon requires"):
                     resolve_agent_mode("plan", _make_args(agent="shannon"))
 
 
 def test_resolve_agent_mode_phase_model_shannon_explicit_fails_on_missing_deps() -> None:
     """--phase-model plan=shannon when deps missing → CliError('agent_deps_missing')."""
-    with patch("megaplan.workers.shutil.which", return_value=None):
-        with patch("megaplan.workers.load_config", return_value={}):
-            with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
+    with patch("megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("megaplan.workers._impl.load_config", return_value={}):
+            with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
                 with pytest.raises(CliError, match="Shannon requires"):
                     resolve_agent_mode("plan", _make_args(phase_model=["plan=shannon"]))
 
 
 def test_resolve_agent_mode_non_explicit_shannon_can_fallback() -> None:
     """When Shannon is not explicitly requested, it can fall back to another agent."""
-    with patch("megaplan.workers.shutil.which", side_effect=lambda name: "/usr/bin/claude" if name == "claude" else None):
-        with patch("megaplan.workers.load_config", return_value={"agents": {"plan": "shannon"}}):
+    with patch("megaplan.workers._impl.shutil.which", side_effect=lambda name: "/usr/bin/claude" if name == "claude" else None):
+        with patch("megaplan.workers._impl.load_config", return_value={"agents": {"plan": "shannon"}}):
             # Shannon isn't available, and the config default isn't explicit via --agent,
             # so fallback to the next available.
-            with patch("megaplan.workers.detect_available_agents", return_value=["claude", "codex"]):
+            with patch("megaplan.workers._impl.detect_available_agents", return_value=["claude", "codex"]):
                 agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args())
     # Falls back to claude because shannon is unavailable and not explicit
     assert agent == "claude"
@@ -3160,8 +3176,8 @@ def test_resolve_agent_mode_shannon_mock_mode_bypasses_availability_check(
     """MEGAPLAN_MOCK_WORKERS=1 + --agent shannon must skip availability checks."""
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
     # shutil.which returns None for everything — Shannon deps are missing
-    with patch("megaplan.workers.shutil.which", return_value=None):
-        with patch("megaplan.workers.load_config", return_value={}):
+    with patch("megaplan.workers._impl.shutil.which", return_value=None):
+        with patch("megaplan.workers._impl.load_config", return_value={}):
             agent, mode, refreshed, model = resolve_agent_mode("plan", _make_args(agent="shannon"))
     assert agent == "shannon"
     assert mode == "persistent"
@@ -3195,7 +3211,7 @@ def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> 
         completion_tokens=5,
         total_tokens=15,
     )
-    with patch("megaplan.shannon_worker.run_shannon_step", return_value=fake_worker) as run_shannon:
+    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
         run_step_with_worker(
             "plan",
             state,
@@ -3231,7 +3247,7 @@ def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> N
         completion_tokens=0,
         total_tokens=0,
     )
-    with patch("megaplan.shannon_worker.run_shannon_step", return_value=fake_worker):
+    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker):
         result, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,
@@ -3264,7 +3280,7 @@ def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> N
         session_id="shannon-backed-claude",
         rendered_prompt="p",
     )
-    with patch("megaplan.shannon_worker.run_shannon_step", return_value=fake_worker) as run_shannon:
+    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
         result, agent, mode, refreshed = run_step_with_worker(
             "plan",
             state,
@@ -3301,7 +3317,7 @@ def test_session_key_for_shannon_steps() -> None:
 
 
 def test_parse_shannon_output_structured_output() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     envelope, payload = _parse_shannon_output(json.dumps({
         "structured_output": {"plan": "# Plan", "questions": []},
@@ -3312,7 +3328,7 @@ def test_parse_shannon_output_structured_output() -> None:
 
 
 def test_parse_shannon_output_result_string() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     envelope, payload = _parse_shannon_output(json.dumps({
         "result": json.dumps({"output": "done"}),
@@ -3321,7 +3337,7 @@ def test_parse_shannon_output_result_string() -> None:
 
 
 def test_parse_shannon_output_transcript_array() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     transcript = [
         {"type": "user", "message": {"content": "Do X"}},
@@ -3335,7 +3351,7 @@ def test_parse_shannon_output_transcript_array() -> None:
 
 
 def test_parse_shannon_output_transcript_with_result_string() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     transcript = [
         {"type": "user", "message": {"content": "Do X"}},
@@ -3348,7 +3364,7 @@ def test_parse_shannon_output_transcript_with_result_string() -> None:
 
 
 def test_parse_shannon_output_prefers_result_event() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     transcript = [
         {"type": "assistant", "message": {"content": [{"type": "text", "text": "ignore"}]}},
@@ -3368,15 +3384,88 @@ def test_parse_shannon_output_prefers_result_event() -> None:
     assert envelope["total_cost_usd"] == 0.01
 
 
+def test_parse_shannon_output_result_event_markdown_fenced_json() -> None:
+    """Regression: Claude commonly wraps structured JSON in ```json ... ``` fences.
+
+    Prior to the fix, _parse_shannon_output called json.loads on the result
+    field and `continue`d on JSONDecodeError, so fenced responses fell through
+    and downstream gates surfaced "parse_error: <step> output missing required
+    keys: plan". The parser should now fall back to _extract_json_object.
+    """
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    plan_payload = {
+        "plan": "Step 1: do the thing.",
+        "questions": [],
+        "success_criteria": ["it works"],
+        "assumptions": ["env is sane"],
+    }
+    fenced = "```json\n" + json.dumps(plan_payload) + "\n```"
+    transcript = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking..."}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": fenced,
+            "session_id": "shannon-fenced-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 12, "output_tokens": 8},
+        },
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert isinstance(payload, dict)
+    assert payload == plan_payload
+    assert set(payload.keys()) == {"plan", "questions", "success_criteria", "assumptions"}
+    assert envelope["session_id"] == "shannon-fenced-session"
+
+
+def test_parse_shannon_output_assistant_message_markdown_fenced_json() -> None:
+    """Regression: fenced JSON in an assistant message's `result` field should also parse."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    plan_payload = {
+        "plan": "Do it.",
+        "questions": ["q?"],
+        "success_criteria": ["ok"],
+        "assumptions": [],
+    }
+    fenced = "```json\n" + json.dumps(plan_payload) + "\n```"
+    transcript = [
+        {"type": "user", "message": {"content": "Plan this"}},
+        {"type": "assistant", "message": {"result": fenced}},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == plan_payload
+
+
+def test_parse_shannon_output_assistant_content_block_fenced_json() -> None:
+    """Regression: fenced JSON inside an assistant content-block text should also parse."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    plan_payload = {
+        "plan": "P",
+        "questions": [],
+        "success_criteria": [],
+        "assumptions": [],
+    }
+    fenced = "Here is the plan:\n\n```json\n" + json.dumps(plan_payload) + "\n```"
+    transcript = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": fenced}]}},
+    ]
+    envelope, payload = _parse_shannon_output(json.dumps(transcript))
+    assert payload == plan_payload
+
+
 def test_parse_shannon_output_invalid_json() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     with pytest.raises(CliError, match="not valid JSON"):
         _parse_shannon_output("not json")
 
 
 def test_parse_shannon_output_auth_error() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     with pytest.raises(CliError, match="Shannon step failed"):
         _parse_shannon_output(json.dumps({
@@ -3386,7 +3475,7 @@ def test_parse_shannon_output_auth_error() -> None:
 
 
 def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
-    from megaplan.shannon_worker import _parse_shannon_output
+    from megaplan.workers.shannon import _parse_shannon_output
 
     # Transcript with no structured_output → falls back to last element
     transcript = [
@@ -3407,7 +3496,7 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
     tmp_path: Path,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
@@ -3420,7 +3509,7 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
     }
 
     timeout_error = CliError("worker_timeout", "Shannon timed out", extra={"raw_output": "partial"})
-    with patch("megaplan.shannon_worker.run_command", side_effect=timeout_error):
+    with patch("megaplan.workers.shannon.run_command", side_effect=timeout_error):
         with pytest.raises(CliError) as exc_info:
             run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
@@ -3429,7 +3518,7 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
 
 def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3461,7 +3550,7 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
         duration_ms=123,
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         result = run_shannon_step(
             "execute",
             state,
@@ -3498,13 +3587,13 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-    monkeypatch.setattr("megaplan.shannon_worker.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
@@ -3529,7 +3618,7 @@ def test_run_shannon_step_preserves_anthropic_api_key_for_root_cloud(
         duration_ms=123,
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -3546,7 +3635,7 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3554,8 +3643,8 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
     monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
-    monkeypatch.setattr("megaplan.shannon_worker.os.geteuid", lambda: 0)
-    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
     payload = {
         "plan": "# Plan\nDo it.",
         "questions": [],
@@ -3580,7 +3669,7 @@ def test_run_shannon_step_drops_root_for_trusted_cloud(
         duration_ms=123,
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -3606,7 +3695,7 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
     tmp_path: Path,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3652,11 +3741,11 @@ def test_run_shannon_step_readiness_probe_resumes_before_real_prompt(
         )
 
     with (
-        patch("megaplan.shannon_worker.random.choice", return_value="Handshake test prompt. Reply READY."),
-        patch("megaplan.shannon_worker.random.random", return_value=0.0),
-        patch("megaplan.shannon_worker.random.randrange", side_effect=[13, 149]),
-        patch("megaplan.shannon_worker.time.sleep", side_effect=sleeps.append),
-        patch("megaplan.shannon_worker.run_command", side_effect=fake_run_command),
+        patch("megaplan.workers.shannon.random.choice", return_value="Handshake test prompt. Reply READY."),
+        patch("megaplan.workers.shannon.random.random", return_value=0.0),
+        patch("megaplan.workers.shannon.random.randrange", side_effect=[13, 149]),
+        patch("megaplan.workers.shannon.time.sleep", side_effect=sleeps.append),
+        patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command),
     ):
         result = run_shannon_step(
             "plan",
@@ -3683,7 +3772,7 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     tmp_path: Path,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3714,9 +3803,9 @@ def test_run_shannon_step_can_skip_readiness_probe_for_new_claude_session(
     )
 
     with (
-        patch("megaplan.shannon_worker.random.random", return_value=0.99),
-        patch("megaplan.shannon_worker.time.sleep") as sleep,
-        patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command,
+        patch("megaplan.workers.shannon.random.random", return_value=0.99),
+        patch("megaplan.workers.shannon.time.sleep") as sleep,
+        patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command,
     ):
         result = run_shannon_step(
             "plan",
@@ -3741,7 +3830,7 @@ def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
     tmp_path: Path,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3780,7 +3869,7 @@ def test_run_shannon_step_repeats_execute_batch_scope_after_schema(
         ]
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result):
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result):
         run_shannon_step(
             "execute",
             state,
@@ -3800,7 +3889,7 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     tmp_path: Path,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
@@ -3830,7 +3919,7 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
         duration_ms=123,
     )
 
-    with patch("megaplan.shannon_worker.run_command", return_value=fake_result) as run_command:
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
         run_shannon_step(
             "plan",
             state,
@@ -3850,7 +3939,7 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
 def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from megaplan.shannon_worker import _ensure_shannon_parent_timeout_control
+    from megaplan.workers.shannon import _ensure_shannon_parent_timeout_control
 
     package_dir = tmp_path / "shannon-package"
     bin_dir = package_dir / "bin"
@@ -3892,7 +3981,7 @@ def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: str(executable))
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: str(executable))
 
     _ensure_shannon_parent_timeout_control()
 
@@ -3918,7 +4007,7 @@ def test_shannon_worker_heals_partially_patched_entrypoint(
     helpers were bundled behind a single gate.  The next patch pass must
     insert the missing helper so the dangling call site resolves.
     """
-    from megaplan.shannon_worker import _ensure_shannon_parent_timeout_control
+    from megaplan.workers.shannon import _ensure_shannon_parent_timeout_control
 
     package_dir = tmp_path / "shannon-package"
     bin_dir = package_dir / "bin"
@@ -3977,7 +4066,7 @@ def test_shannon_worker_heals_partially_patched_entrypoint(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("megaplan.shannon_worker.shutil.which", lambda name: str(executable))
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: str(executable))
 
     _ensure_shannon_parent_timeout_control()
 
@@ -4003,7 +4092,7 @@ def test_run_shannon_step_mock_worker_no_deps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
-    from megaplan.shannon_worker import run_shannon_step
+    from megaplan.workers.shannon import run_shannon_step
 
     monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
     ensure_runtime_layout(tmp_path)
@@ -4028,7 +4117,7 @@ def test_shannon_accepted_in_agent_choice_surfaces() -> None:
 
 
 def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> None:
-    from megaplan.hermes_worker import _streaming_run_kwargs
+    from megaplan.workers.hermes import _streaming_run_kwargs
 
     assert _streaming_run_kwargs("fireworks:accounts/fireworks/models/deepseek-v4-pro", 32768)
     assert _streaming_run_kwargs("deepseek:deepseek-v4-pro", 32768)
@@ -4036,7 +4125,7 @@ def test_hermes_high_token_streaming_matches_fireworks_for_direct_deepseek() -> 
 
 
 def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
-    from megaplan.hermes_worker import _reasoning_config_for_model
+    from megaplan.workers.hermes import _reasoning_config_for_model
 
     assert _reasoning_config_for_model("deepseek-v4-pro") is None
     assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None

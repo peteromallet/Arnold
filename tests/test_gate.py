@@ -5,7 +5,7 @@ import json
 import pytest
 
 import megaplan
-import megaplan.evaluation
+import megaplan.orchestration.evaluation
 import megaplan.handlers
 import megaplan.workers
 from megaplan._core import load_plan
@@ -129,7 +129,7 @@ def test_gate_proceed_with_accepted_tradeoffs_creates_debt(
     assert len(registry["entries"]) == 1
     assert registry["entries"][0]["flag_ids"] == [flag["id"]]
     # Verify phase_result.json is written via _finish_step
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after gate"
     assert pr.exit_kind == "success"
@@ -168,7 +168,7 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
     assert response["debt_entries_added"] == 0
     assert not debt_registry_path(plan_fixture.root).exists()
     # Verify phase_result.json is written for ITERATE gate too
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after gate"
     assert pr.exit_kind == "success"
@@ -1001,7 +1001,7 @@ def test_build_gate_signals_includes_debt_overlaps_when_flags_match(plan_fixture
     megaplan._core.save_debt_registry(plan_fixture.root, registry)
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
 
-    signals = megaplan.evaluation.build_gate_signals(plan_fixture.plan_dir, state, plan_fixture.root)
+    signals = megaplan.orchestration.evaluation.build_gate_signals(plan_fixture.plan_dir, state, plan_fixture.root)
 
     assert signals["signals"]["debt_overlaps"]
     assert signals["signals"]["debt_overlaps"][0]["flag_id"] == flag["id"]

@@ -2448,7 +2448,7 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
     # Verify phase_result.json is written with correct exit_kind
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "blocked_by_prereq"
@@ -2503,7 +2503,7 @@ def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
     )
     assert last_execute["result"] != "blocked"
     # Verify phase_result.json is written with success exit_kind
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "success"
@@ -2548,7 +2548,7 @@ def test_execute_auto_loop_short_circuits_when_flag_unset(
     assert response["blocked_task_ids"] == ["T1"]
     assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
     # Verify phase_result.json is written with blocked_by_prereq exit_kind
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "blocked_by_prereq"
@@ -2612,7 +2612,7 @@ def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
     assert "task(s) reported status=blocked by the worker: T1" in response["summary"]
     assert state["history"][-1]["result"] == "blocked"
     # Verify phase_result.json is written with blocked_by_prereq and blocked_task_ids
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written for every execute exit"
     assert pr.exit_kind == "blocked_by_prereq"

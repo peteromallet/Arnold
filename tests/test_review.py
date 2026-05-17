@@ -346,7 +346,7 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     assert "Reviewer verdicts pending: 1" in blocked_md
     assert "Sense-check verdicts pending: 1" in blocked_md
     # Verify phase_result.json is written with success (review always emits success)
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr_blocked = read_phase_result(plan_fixture.plan_dir)
     assert pr_blocked is not None, "phase_result.json must be written after review"
     assert pr_blocked.exit_kind == "success"
@@ -431,7 +431,7 @@ def test_review_blocks_empty_evidence_files_without_substantive_verdict(
     assert response["next_step"] == "review"
     assert "missing reviewer evidence_files" in response["summary"]
     # Verify phase_result.json is written
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -501,7 +501,7 @@ def test_review_softens_substantive_verdict_without_evidence_files_and_can_kick_
     assert state["history"][-1]["result"] == "needs_rework"
     assert stored_review["review_verdict"] == "needs_rework"
     # Verify phase_result.json emission
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"
@@ -644,7 +644,7 @@ def test_review_works_after_batch_by_batch_execution(
     )
     assert review["state"] == megaplan.STATE_DONE
     # Verify phase_result.json is written after this review too
-    from megaplan.phase_result import read_phase_result
+    from megaplan.orchestration.phase_result import read_phase_result
     pr = read_phase_result(plan_fixture.plan_dir)
     assert pr is not None, "phase_result.json must be written after review"
     assert pr.exit_kind == "success"

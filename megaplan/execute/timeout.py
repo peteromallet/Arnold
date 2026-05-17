@@ -19,7 +19,7 @@ from megaplan._core import (
     is_prose_mode,
     store_raw_worker_output,
 )
-from megaplan.evaluation import validate_execution_evidence
+from megaplan.orchestration.evaluation import validate_execution_evidence
 from megaplan.execute.quality import (
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,

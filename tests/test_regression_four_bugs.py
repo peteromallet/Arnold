@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan.phase_result import (
+from megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,

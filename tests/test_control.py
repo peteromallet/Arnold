@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from megaplan.control import ControlProcessor, ControlTarget, ControlTargetResolver, process_pending_control_messages
-from megaplan.progress import ProgressContext
+from megaplan.orchestration.progress import ProgressContext
 from megaplan.schemas import ControlMessage
 from megaplan.store import ControlMessageInput, FileStore, SprintItemInput
 from megaplan.types import CliError

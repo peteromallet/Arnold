@@ -271,7 +271,7 @@ def run_tiebreaker_cli(root: Path, args: argparse.Namespace) -> int:
 
 
 def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
-    from megaplan.audit import (
+    from megaplan.orchestration.plan_audit import (
         aggregate_tiebreaker_audit,
         load_tiebreaker_audit,
         render_audit_report,
@@ -279,7 +279,7 @@ def _run_tiebreaker_audit(root: Path, plan_name: str | None) -> int:
     if plan_name:
         plan_dir = resolve_plan_dir(root, plan_name)
         records = load_tiebreaker_audit(plan_dir)
-        from megaplan.audit import _compute_totals
+        from megaplan.orchestration.plan_audit import _compute_totals
         data = {"plans": [{"plan_dir": plan_dir.name, "tiebreaker_count": len(records),
                            "tokens_spent": sum(r.get("tokens_spent", 0) for r in records),
                            "time_seconds": sum(r.get("time_seconds", 0) for r in records),

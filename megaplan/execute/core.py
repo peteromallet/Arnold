@@ -30,7 +30,7 @@ from megaplan._core import (
     sha256_file,
     store_raw_worker_output,
 )
-from megaplan.evaluation import validate_execution_evidence
+from megaplan.orchestration.evaluation import validate_execution_evidence
 from megaplan.execute.quality import (
     AttributionResult,
     _auto_attribute_unclaimed_paths,

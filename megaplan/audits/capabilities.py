@@ -1,66 +1,23 @@
-"""Closed capability registry and worker discovery for verifiability contracts."""
+"""Re-export shim — canonical implementation lives in :mod:`megaplan.runtime.capabilities`.
+
+This module used to hold a byte-identical copy of the capability registry. The
+duplicate was deduped (T12 of the file-organization plan); the file is kept as
+a thin re-export so external callers like
+``from megaplan.audits.capabilities import X`` keep working.
+"""
 
 from __future__ import annotations
 
-from typing import Any
+from megaplan.runtime.capabilities import *  # noqa: F401,F403
 
-from megaplan.types import DEFAULT_AGENT_ROUTING
-
-CONTAINER_CAPABILITIES: frozenset[str] = frozenset({
-    "run_shell",
-    "read_files",
-    "run_tests",
-    "parse_diff",
-    "read_build_output",
-    "run_linter",
-})
-
-HUMAN_CAPABILITIES: frozenset[str] = frozenset({
-    "drive_browser",
-    "inspect_runtime_ui",
-    "observe_runtime_logs",
-    "subjective_judgment",
-    "verify_physical_device",
-})
-
-ALL_CAPABILITIES: frozenset[str] = CONTAINER_CAPABILITIES | HUMAN_CAPABILITIES
-
-DEFAULT_CONTAINER_CAPABILITIES: frozenset[str] = CONTAINER_CAPABILITIES
-DEFAULT_HUMAN_CAPABILITIES: frozenset[str] = HUMAN_CAPABILITIES
-
-
-def validate_capabilities(caps: list[str] | set[str]) -> list[str]:
-    """Return unknown capability strings not in the closed registry."""
-    return [c for c in caps if c not in ALL_CAPABILITIES]
-
-
-def get_worker_capabilities(state: dict[str, Any]) -> dict[str, set[str]]:
-    """Build worker-name → capabilities mapping from state config.
-
-    Falls back to DEFAULT_CONTAINER_CAPABILITIES for agents listed in
-    DEFAULT_AGENT_ROUTING that have no explicit config.
-    """
-    config = state.get("config", {})
-    workers_cfg: dict[str, Any] = config.get("workers", {})
-
-    result: dict[str, set[str]] = {}
-
-    if workers_cfg:
-        for name, wcfg in workers_cfg.items():
-            verifies = wcfg.get("verifies", [])
-            result[name] = set(verifies)
-    else:
-        seen_agents = set(DEFAULT_AGENT_ROUTING.values())
-        for agent in seen_agents:
-            result[agent] = set(DEFAULT_CONTAINER_CAPABILITIES)
-
-    return result
-
-
-def union_verifies(state: dict[str, Any]) -> set[str]:
-    """Return the union of all workers' verifies sets."""
-    caps = get_worker_capabilities(state)
-    result: set[str] = set()
-    for v in caps.values():
-        result |= v
-    return result
+__all__ = [
+    "ALL_CAPABILITIES",
+    "CONTAINER_CAPABILITIES",
+    "DEFAULT_AGENT_ROUTING",
+    "DEFAULT_CONTAINER_CAPABILITIES",
+    "DEFAULT_HUMAN_CAPABILITIES",
+    "HUMAN_CAPABILITIES",
+    "get_worker_capabilities",
+    "union_verifies",
+    "validate_capabilities",
+]
