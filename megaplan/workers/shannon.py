@@ -921,7 +921,12 @@ def run_shannon_step(
     # is auto-patched to launch Claude in print mode under root, and that path
     # needs ANTHROPIC_API_KEY for non-interactive auth.
     if not (hasattr(os, "geteuid") and os.geteuid() == 0):
-        env.pop("ANTHROPIC_API_KEY", None)
+        # Setting to empty (rather than popping) defeats Bun's dotenv auto-load
+        # in shannon's launcher: Bun's loader skips vars that are already set,
+        # so an empty value blocks re-injection from a project-local .env file.
+        # Claude Code treats empty as no key and falls back to OAuth credentials.
+        # See megaplan ticket 01KRXNZZGRV17PHZRJ2Q56SPS3.
+        env["ANTHROPIC_API_KEY"] = ""
     # Megaplan owns phase timeout/staleness policy. Shannon's packaged
     # 180s turn timeout is too short for normal critique/finalize/execute
     # phases, so keep Shannon's internal watchdog above megaplan's worker
