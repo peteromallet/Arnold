@@ -1,0 +1,37 @@
+name: writing-panel-strict
+version: 1
+description: "Adversarial review of prose drafts by N reviewers, then revise. Not for code."
+inputs:
+  - name: draft
+    kind: file
+    required: true
+supported_modes: [polish, restructure, provoke]
+default_profile: "@writing-panel-strict:standard"
+recommended_profiles: ["@writing-panel-strict:premium", "@writing-panel-strict:standard", "@writing-panel-strict:cheap"]
+stages:
+  - id: panel_review
+    kind: panel
+    reviewers:
+      - {id: pessimist, prompt: prompts/pessimist.md}
+      - {id: optimist, prompt: prompts/optimist.md}
+      - {id: structuralist, prompt: prompts/structuralist.md}
+    inputs: [draft]
+    produces: markdown
+    merge: none
+  - id: synth
+    kind: agent
+    prompt: prompts/synth.md
+    inputs: [panel_review.*]
+    produces: markdown
+  - id: revise
+    kind: agent
+    prompt: prompts/revise.md
+    inputs: [draft, synth]
+    produces: markdown
+  - id: human_decide
+    kind: human_gate
+    artifact: revise
+    choices: [continue, stop]
+edges:
+  - {from: human_decide, when: continue, to: panel_review}
+  - {from: human_decide, when: stop, to: done}

@@ -208,6 +208,8 @@ def run_pipeline(
         )
 
         if result.next == "halt":
+            if state.get("_pipeline_paused"):
+                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
             return {"state": state, "final_stage": node.name}
 
         # Verdict-first edge dispatch:
@@ -331,6 +333,8 @@ def run_pipeline_with_policy(
             return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap"}
 
         if result.next == "halt":
+            if state.get("_pipeline_paused"):
+                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
             return {"state": state, "final_stage": node.name}
 
         edge = None

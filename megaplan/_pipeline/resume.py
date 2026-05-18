@@ -15,6 +15,10 @@ Usage::
 
     # After each stage:
     ResumeCursor(stage=node.name).save(plan_dir)
+
+Sprint A addition: ``check_awaiting_user`` inspects ``awaiting_user.json``
+so callers (e.g. ``handle_resume``) can dispatch to the human-gate resume
+flow before falling through to ``state.json::resume_cursor`` recovery.
 """
 
 from __future__ import annotations
@@ -98,3 +102,22 @@ def with_entry(pipeline: Pipeline, stage_name: str) -> Pipeline:
         entry=stage_name,
         overlays=pipeline.overlays,
     )
+
+
+def check_awaiting_user(plan_dir: Path) -> dict[str, Any] | None:
+    """Check if ``plan_dir`` contains an ``awaiting_user.json`` pause file.
+
+    Returns the parsed data if present and valid, ``None`` otherwise.
+    This is the dispatch gate — callers check this before falling through
+    to ``state.json::resume_cursor`` recovery.
+    """
+    awaiting_path = Path(plan_dir) / "awaiting_user.json"
+    if not awaiting_path.exists():
+        return None
+    try:
+        data = json.loads(awaiting_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data

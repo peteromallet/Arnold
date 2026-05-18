@@ -1,5 +1,6 @@
 # kimi-k2p6 (Fireworks): plan/prep/revise/gate/finalize/loop_plan - glm-5.1: critique/execute/review/loop_execute/tiebreakers
 [profiles.all-open]
+default = "partnered"
 plan     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 prep     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 critique = "hermes:glm-5.1"

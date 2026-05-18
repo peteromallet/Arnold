@@ -1,5 +1,6 @@
 # DeepSeek V4 Pro (via Fireworks) for every megaplan phase.
 [profiles.all-deepseek-pro]
+default = "partnered"
 plan     = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 prep     = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
