@@ -30,6 +30,7 @@ from megaplan.types import STATE_INITIALIZED
 
 
 DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+DEEPSEEK_DIRECT = "hermes:deepseek:deepseek-v4-pro"
 KIMI = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 
 
@@ -87,62 +88,63 @@ def _resolved_phase_map(profile: str, **flag_overrides: object) -> dict[str, str
 
 
 MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
-    # --- basic (tier 1) — no premium slots ---
+    # --- solo (tier 1) — no premium slots ---
     (
-        "basic-default",
-        "basic",
+        "solo-default",
+        "solo",
         {},
-        {"plan": DEEPSEEK, "critique": KIMI, "review": KIMI, "execute": DEEPSEEK},
+        # solo runs DeepSeek end-to-end (including critique/review); no Kimi.
+        {"plan": DEEPSEEK_DIRECT, "critique": DEEPSEEK_DIRECT, "review": DEEPSEEK_DIRECT, "execute": DEEPSEEK_DIRECT},
     ),
     (
-        "basic-vendor-codex-noop",
-        "basic",
+        "solo-vendor-codex-noop",
+        "solo",
         {"vendor": "codex"},
         # No premium slots — vendor flip is a silent no-op.
-        {"plan": DEEPSEEK, "critique": KIMI, "review": KIMI},
+        {"plan": DEEPSEEK_DIRECT, "critique": DEEPSEEK_DIRECT, "review": DEEPSEEK_DIRECT},
     ),
-    # --- led (tier 2) — premium plan only ---
+    # --- directed (tier 2) — premium plan only ---
     (
-        "led-default",
-        "led",
+        "directed-default",
+        "directed",
         {},
         {
             "plan": "claude:low",
             "loop_plan": "claude:low",
-            "critique": KIMI,
-            "review": KIMI,
-            "revise": DEEPSEEK,
+            "critique": DEEPSEEK_DIRECT,
+            "review": DEEPSEEK_DIRECT,
+            "revise": DEEPSEEK_DIRECT,
         },
     ),
     (
-        "led-vendor-codex",
-        "led",
+        "directed-vendor-codex",
+        "directed",
         {"vendor": "codex"},
-        {"plan": "codex:low", "loop_plan": "codex:low", "critique": KIMI, "review": KIMI},
+        {"plan": "codex:low", "loop_plan": "codex:low", "critique": DEEPSEEK_DIRECT, "review": DEEPSEEK_DIRECT},
     ),
     (
-        "led-depth-high",
-        "led",
+        "directed-depth-high",
+        "directed",
         {"depth": "high"},
-        {"plan": "claude:high", "loop_plan": "claude:high", "critique": KIMI},
+        {"plan": "claude:high", "loop_plan": "claude:high", "critique": DEEPSEEK_DIRECT},
     ),
-    # --- thoughtful (tier 3) — full reasoning loop premium ---
+    # --- partnered (tier 3) — full reasoning loop premium ---
     (
-        "thoughtful-default",
-        "thoughtful",
+        "partnered-default",
+        "partnered",
         {},
         {
             "plan": "claude:low",
             "critique": "claude:low",
             "revise": "claude:low",
             "review": "claude:low",
-            "prep": DEEPSEEK,
-            "execute": DEEPSEEK,
+            "prep": DEEPSEEK_DIRECT,
+            "execute": DEEPSEEK_DIRECT,
         },
     ),
     (
-        "thoughtful-critic-kimi",
-        "thoughtful",
+        "partnered-critic-kimi",
+        "partnered",
         {"critic": "kimi"},
         {
             "plan": "claude:low",
@@ -152,8 +154,8 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         },
     ),
     (
-        "thoughtful-vendor-codex-depth-medium-critic-cross",
-        "thoughtful",
+        "partnered-vendor-codex-depth-medium-critic-cross",
+        "partnered",
         {"vendor": "codex", "depth": "medium", "critic": "cross"},
         {
             # Author phases: codex at the depth tier.
@@ -166,8 +168,8 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         },
     ),
     (
-        "thoughtful-depth-high-with-prep-flag",
-        "thoughtful",
+        "partnered-depth-high-with-prep-flag",
+        "partnered",
         {"depth": "high", "with_prep": True},
         # with_prep doesn't touch phase resolutions — it changes the
         # workflow shape. Phase map should still be tier-3 at :high.
@@ -175,7 +177,7 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
             "plan": "claude:high",
             "revise": "claude:high",
             "critique": "claude:low",
-            "prep": DEEPSEEK,
+            "prep": DEEPSEEK_DIRECT,
         },
     ),
     # --- premium (tier 4) — single-vendor premium end-to-end ---
@@ -209,19 +211,19 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         # Legal at tier 4: keep premium author, swap critic to Kimi.
         {"plan": "claude:low", "critique": KIMI, "review": KIMI, "execute": "claude:low"},
     ),
-    # --- super-premium (tier 5) — vendor-locked; --vendor and --critic
+    # --- apex (tier 5) — vendor-locked; --vendor and --critic
     # are silent no-ops; --depth still applies. ---
     (
-        "super-premium-default",
-        "super-premium",
+        "apex-default",
+        "apex",
         {},
         # Vendor-locked Claude+Codex split: Claude on author/repo-reading
         # side, Codex on critique/structural-analysis side.
         {"plan": "claude", "critique": "codex", "execute": "codex", "review": "codex"},
     ),
     (
-        "super-premium-depth-high-honored-on-locked",
-        "super-premium",
+        "apex-depth-high-honored-on-locked",
+        "apex",
         {"depth": "high"},
         # --depth still applies on vendor-locked profiles; rewrites the
         # author-side claude slots to claude:high. Critic / mechanical
@@ -257,15 +259,15 @@ def test_profile_flag_matrix(
         )
 
 
-def test_super_premium_vendor_and_critic_are_silent_noops(
+def test_apex_vendor_and_critic_are_silent_noops(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """--vendor and --critic on a vendor-locked profile must produce the
     same phase map as no flags at all."""
     _pin_user_config(tmp_path, monkeypatch)
-    baseline = _resolved_phase_map("super-premium")
-    with_flags = _resolved_phase_map("super-premium", vendor="claude", critic="kimi")
+    baseline = _resolved_phase_map("apex")
+    with_flags = _resolved_phase_map("apex", vendor="claude", critic="kimi")
     assert baseline == with_flags
 
 
@@ -352,7 +354,7 @@ def test_handle_init_persists_full_dial_set_into_state(
         root,
         _init_args(
             project_dir,
-            profile="thoughtful",
+            profile="partnered",
             vendor="codex",
             depth="medium",
             critic="kimi",
@@ -364,7 +366,7 @@ def test_handle_init_persists_full_dial_set_into_state(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     config = state["config"]
 
-    assert config["profile"] == "thoughtful"
+    assert config["profile"] == "partnered"
     assert config["vendor"] == "codex"
     assert config["critic"] == "kimi"
     assert config["depth"] == "medium"
@@ -402,7 +404,7 @@ def test_handle_init_without_dials_omits_them_from_state(
 
     response = megaplan.handle_init(
         root,
-        _init_args(project_dir, profile="basic"),
+        _init_args(project_dir, profile="solo"),
     )
     state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
     config = json.loads(state_path.read_text(encoding="utf-8"))["config"]
