@@ -207,6 +207,7 @@ def parse_agent_output(
     step: str,
     project_dir: Path,
     plan_dir: Path,
+    plan_mode: str = "code",
     run_kwargs: dict | None = None,
 ) -> tuple[dict, str]:
     """Parse a Hermes agent result into a structured payload.
@@ -583,6 +584,7 @@ def run_hermes_step(
             step=step,
             project_dir=project_dir,
             plan_dir=plan_dir,
+            plan_mode=plan_mode,
             run_kwargs=run_kwargs,
         )
         clean_parsed_payload(current_payload, schema, step)
