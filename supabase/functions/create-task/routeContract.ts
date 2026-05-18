@@ -47,29 +47,55 @@ function buildRouteContractJSON(
   selectorNamespace: string,
   existing: Record<string, unknown> | undefined,
   topLevel: TaskInsertObject,
+  params: Record<string, unknown>,
 ): RouteContractJSON {
-  // Workers pass route fields as top-level TaskInsertObject columns (via
-  // route_snapshot_fields → create-task input). Prefer those, then fall back
-  // to an existing params.route_contract (e.g. when an upstream caller has
-  // already stamped one), then null.
+  // Workers pass route fields as `route_snapshot_fields` flattened into the
+  // create-task input. The workerPassthrough resolver dumps the entire input
+  // into params (so they end up at task.params.selected_backend), while
+  // frontend resolvers tend to lift them to top-level TaskInsertObject
+  // columns. Look in all three places, preferring top-level, then
+  // params.*, then params.route_contract.* (legacy), then null.
   return {
     route_key: routeKey,
     selector_namespace: selectorNamespace,
-    selected_backend: firstString(topLevel.selected_backend, existing?.selected_backend),
-    selector_version: firstString(topLevel.selector_version, existing?.selector_version),
+    selected_backend: firstString(
+      topLevel.selected_backend,
+      params.selected_backend,
+      existing?.selected_backend,
+    ),
+    selector_version: firstString(
+      topLevel.selector_version,
+      params.selector_version,
+      existing?.selector_version,
+    ),
     route_selection_snapshot: firstRecord(
       topLevel.route_selection_snapshot,
+      params.route_selection_snapshot,
       existing?.route_selection_snapshot,
     ),
-    support_state: firstString(topLevel.support_state, existing?.support_state),
-    selected_profile: firstString(topLevel.selected_profile, existing?.selected_profile),
+    support_state: firstString(
+      topLevel.support_state,
+      params.support_state,
+      existing?.support_state,
+    ),
+    selected_profile: firstString(
+      topLevel.selected_profile,
+      params.selected_profile,
+      existing?.selected_profile,
+    ),
     selected_template_id: firstString(
       topLevel.selected_template_id,
+      params.selected_template_id,
       existing?.selected_template_id,
     ),
-    route_run_id: firstString(topLevel.route_run_id, existing?.route_run_id),
+    route_run_id: firstString(
+      topLevel.route_run_id,
+      params.route_run_id,
+      existing?.route_run_id,
+    ),
     worker_contract_version: firstString(
       topLevel.worker_contract_version,
+      params.worker_contract_version,
       existing?.worker_contract_version,
     ),
     derived_at: new Date().toISOString(),
@@ -114,7 +140,7 @@ export async function stampTaskRouteContract(
     ? (params.route_contract as Record<string, unknown>)
     : undefined;
 
-  const contract = buildRouteContractJSON(routeKey, selectorNamespace, existingContract, task);
+  const contract = buildRouteContractJSON(routeKey, selectorNamespace, existingContract, task, params);
 
   return {
     ...task,
