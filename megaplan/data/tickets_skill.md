@@ -1,3 +1,8 @@
+---
+name: megaplan-tickets
+description: File and manage megaplan tickets — short, repo-scoped notes on problems or observations that get folded into epics and auto-addressed when the resolving epic completes.
+---
+
 # Megaplan tickets
 
 Tickets are short, repo-scoped notes on problems, bugs, or "we should look at this" observations against a codebase. They live as committed `.md` files under `<repo>/.megaplan/tickets/` and (when a cloud store is configured) mirror to `tickets` / `ticket_epics` tables. Tickets are inert until folded into an epic — they capture problems, not work.

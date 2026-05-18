@@ -716,22 +716,6 @@ description: AI agent harness for coordinating Claude and GPT to make and execut
 
 """
 
-_TICKETS_SKILL_HEADER = """\
----
-name: megaplan-tickets
-description: File and manage megaplan tickets — short, repo-scoped notes on problems or observations that get folded into epics and auto-addressed when the resolving epic completes.
----
-
-"""
-
-_DECISION_SKILL_HEADER = """\
----
-name: megaplan-decision
-description: Pick the right megaplan profile, thinking-strength tier, and robustness level for the work in front of you — for both Codex and Claude harnesses. Consult before invoking megaplan.
----
-
-"""
-
 _CURSOR_HEADER = """\
 ---
 description: Use megaplan for high-rigor planning on complex, high-risk, or multi-stage tasks.
@@ -775,12 +759,16 @@ def _canonical_decision_skill() -> str:
 
 
 def bundled_global_file(name: str) -> str:
+    # Single-source skills: the canonical file already carries its frontmatter,
+    # so this function just returns the canonical content unchanged. Do not
+    # prepend headers — that's how the May 2026 megaplan-decision shadow-doc
+    # regression happened (double frontmatter, drift between header and doc).
     if name == "tickets_skill.md":
-        return _TICKETS_SKILL_HEADER + _canonical_tickets_skill()
+        return _canonical_tickets_skill()
     # `decision_skill.md` is the canonical bundle name; `rubric_skill.md`
     # is accepted for back-compat with any in-flight callers.
     if name in {"decision_skill.md", "rubric_skill.md"}:
-        return _DECISION_SKILL_HEADER + _canonical_decision_skill()
+        return _canonical_decision_skill()
     content = _canonical_instructions()
     if name == "claude_skill.md":
         return _SKILL_HEADER + content + "\n\n" + _claude_subagent_appendix()
@@ -793,24 +781,81 @@ def bundled_global_file(name: str) -> str:
     return content
 
 
+# Single-source skills install as symlinks pointing to the canonical bundle file
+# inside the package. Multi-source skills (megaplan/SKILL.md, cursor_rule.mdc)
+# are composed from several files at setup time and install as regular files —
+# but they're regenerated from canonical sources on every setup run, so they
+# can't drift if `megaplan setup` is run regularly.
+#
+# To prevent shadow-doc drift forever, the rule is: any skill whose target
+# content is *identical* to one bundled file (no header prepending, no
+# concatenation) MUST install as a symlink. Adding a copy-mode entry that
+# duplicates a single-source canonical is a regression — the test
+# `tests/test_setup_no_shadow_skills.py` enforces this invariant.
 _GLOBAL_TARGETS = [
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "claude_skill.md"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan/SKILL.md", "data": "codex_skill.md"},
-    {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "cursor_rule.mdc"},
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md"},
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "claude_skill.md", "install": "copy"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan/SKILL.md", "data": "codex_skill.md", "install": "copy"},
+    {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "cursor_rule.mdc", "install": "copy"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
 ]
 
 
 def _install_owned_file(path: Path, content: str, *, force: bool = False) -> dict[str, bool | str]:
     existed = path.exists()
     if existed and not force:
+        # If the target is a symlink pointing at the canonical source, leave it
+        # alone. Replacing a symlink with a regular-file copy would reintroduce
+        # the shadow-doc problem.
+        if path.is_symlink():
+            return {"path": str(path), "skipped": True, "existed": True, "reason": "symlinked"}
         if path.read_text(encoding="utf-8") == content:
             return {"path": str(path), "skipped": True, "existed": True}
+    if path.is_symlink() or path.exists():
+        path.unlink()
     atomic_write_text(path, content)
     return {"path": str(path), "skipped": False, "existed": existed}
+
+
+def _install_owned_symlink(path: Path, target_path: Path, *, force: bool = False) -> dict[str, bool | str]:
+    """Install a symlink at `path` pointing at the canonical `target_path`.
+
+    Replaces existing regular files or stale symlinks so the install code can
+    never leave a shadow copy behind. The canonical bundle path is resolved
+    through `importlib.resources`, so this works for both dev installs
+    (live link into the repo) and pip installs (link into site-packages).
+    """
+    try:
+        canonical = target_path.resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        return {"path": str(path), "skipped": True, "existed": path.exists() or path.is_symlink(), "reason": f"canonical missing: {exc}"}
+    existed = path.exists() or path.is_symlink()
+    if existed and not force and path.is_symlink():
+        try:
+            if path.resolve(strict=True) == canonical:
+                return {"path": str(path), "target": str(canonical), "skipped": True, "existed": True, "symlink": True}
+        except (FileNotFoundError, OSError):
+            pass  # stale symlink — fall through and replace
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    path.symlink_to(canonical)
+    return {"path": str(path), "target": str(canonical), "skipped": False, "existed": existed, "symlink": True}
+
+
+def _resolve_bundle_path(data_name: str) -> Path:
+    """Resolve the absolute filesystem path of a bundled data file.
+
+    importlib.resources can return a Traversable that isn't a real Path
+    (e.g. when reading from a zipped wheel), but for source/wheel-unpacked
+    installs it resolves to a regular Path. Symlink installation requires a
+    real path, so callers must invoke this only for installs that have an
+    on-disk canonical (which is true for every install method megaplan
+    currently supports).
+    """
+    return Path(str(resources.files("megaplan").joinpath("data", data_name)))
 
 
 def handle_setup_global(force: bool = False, home: Path | None = None) -> StepResponse:
@@ -824,7 +869,19 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
             installed.append({"agent": target["agent"], "path": str(home / target["path"]), "skipped": True, "reason": "not installed"})
             continue
         detected_count += 1
-        result = _install_owned_file(home / target["path"], bundled_global_file(target["data"]), force=force)
+        mode = target.get("install", "copy")
+        if mode == "symlink":
+            result = _install_owned_symlink(
+                home / target["path"],
+                _resolve_bundle_path(target["data"]),
+                force=force,
+            )
+        else:
+            result = _install_owned_file(
+                home / target["path"],
+                bundled_global_file(target["data"]),
+                force=force,
+            )
         result["agent"] = target["agent"]
         installed.append(result)
     if detected_count == 0:
