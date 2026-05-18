@@ -69,7 +69,7 @@ def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
         if entry.is_file()
     }
     assert {
-        "standard.toml",
+        "apex.toml",
         "all-open.toml",
         "all-deepseek-pro.toml",
         "all-deepseek-pro-direct.toml",
@@ -81,7 +81,7 @@ def test_profiles_package_layout_and_builtins_only(tmp_path: Path) -> None:
 
     assert imported_apply_profile_expansion is apply_profile_expansion
     assert {
-        "standard",
+        "apex",
         "all-open",
         "all-deepseek-pro",
         "all-deepseek-pro-direct",
@@ -97,7 +97,7 @@ def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(t
 
     builtins_only = load_profiles(home=home, project_dir=project_dir)
     assert {
-        "standard",
+        "apex",
         "all-open",
         "all-deepseek-pro",
         "all-deepseek-pro-direct",
@@ -109,7 +109,7 @@ def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(t
     _write_profiles(
         user_path,
         """
-        [profiles.standard]
+        [profiles.apex]
         execute = "codex"
 
         [profiles.user-only]
@@ -118,14 +118,14 @@ def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(t
     )
 
     user_layer = load_profiles(home=home, project_dir=project_dir)
-    assert user_layer["standard"] == {"execute": "codex"}
+    assert user_layer["apex"] == {"execute": "codex"}
     assert user_layer["user-only"] == {"review": "claude"}
 
     project_path = project_dir / ".megaplan" / "profiles.toml"
     _write_profiles(
         project_path,
         """
-        [profiles.standard]
+        [profiles.apex]
         execute = "hermes:deepseek/deepseek-v3"
 
         [profiles.project-only]
@@ -134,7 +134,7 @@ def test_load_profiles_user_and_project_layers_replace_lower_priority_profiles(t
     )
 
     project_layer = load_profiles(home=home, project_dir=project_dir)
-    assert project_layer["standard"] == {"execute": "hermes:deepseek/deepseek-v3"}
+    assert project_layer["apex"] == {"execute": "hermes:deepseek/deepseek-v3"}
     assert project_layer["user-only"] == {"review": "claude"}
     assert project_layer["project-only"] == {"plan": "codex"}
 
@@ -377,7 +377,7 @@ def test_apply_profile_expansion_unknown_profile_lists_known_profiles(
 
     assert exc_info.value.code == "unknown_profile"
     assert "all-open" in exc_info.value.message
-    assert "standard" in exc_info.value.message
+    assert "apex" in exc_info.value.message
 
 
 def test_handle_init_persists_profile_name_in_state(
@@ -420,7 +420,7 @@ def test_handle_init_persists_deepseek_provider_in_state(
 
     response = megaplan.handle_init(
         root,
-        _init_args(project_dir, profile="thoughtful", deepseek_provider="direct"),
+        _init_args(project_dir, profile="partnered", deepseek_provider="direct"),
     )
     state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -525,17 +525,51 @@ def test_vendor_codex_preserves_effort_tier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--vendor codex on holmes-claude (claude:medium across the board)
-    should produce codex:medium everywhere — effort tier preserved."""
+    """--vendor codex on an inline claude:medium profile should produce
+    codex:medium everywhere — effort tier preserved through the swap."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="holmes-claude")
+    fake_home_config = tmp_path / ".config" / "megaplan"
+    _write_profiles(
+        fake_home_config / "profiles.toml",
+        """
+        [profiles.medium-claude]
+        plan = "claude:medium"
+        prep = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        critique = "codex:medium"
+        revise = "claude:medium"
+        gate = "claude:medium"
+        finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        loop_plan = "claude:medium"
+        loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        review = "codex:medium"
+        tiebreaker_researcher = "claude:medium"
+        tiebreaker_challenger = "codex:medium"
+
+        [profiles.medium-codex]
+        plan = "codex:medium"
+        prep = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        critique = "claude:medium"
+        revise = "codex:medium"
+        gate = "codex:medium"
+        finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        loop_plan = "codex:medium"
+        loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        review = "claude:medium"
+        tiebreaker_researcher = "codex:medium"
+        tiebreaker_challenger = "claude:medium"
+        """,
+    )
+
+    args = _worker_args(profile="medium-claude")
     args.vendor = "codex"
 
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # plan/revise/gate were claude:medium in holmes-claude → codex:medium.
+    # plan/revise/gate were claude:medium → codex:medium.
     assert resolved["plan"] == "codex:medium"
     assert resolved["revise"] == "codex:medium"
     assert resolved["gate"] == "codex:medium"
@@ -545,9 +579,9 @@ def test_vendor_codex_preserves_effort_tier(
     # Hermes deepseek prep stays on the default direct provider.
     assert resolved["prep"] == "hermes:deepseek:deepseek-v4-pro"
 
-    # Sanity check on the inverse: holmes-codex --vendor claude should
+    # Sanity check on the inverse: medium-codex --vendor claude should
     # collapse everything premium to claude:medium.
-    args2 = _worker_args(profile="holmes-codex")
+    args2 = _worker_args(profile="medium-codex")
     args2.vendor = "claude"
     apply_profile_expansion(args2, None)
     resolved2 = _phase_models_to_map(args2.phase_model)
@@ -714,13 +748,38 @@ def test_vendor_locked_profile_runs_without_flags(
     assert resolved["critique"] == "codex"
 
 
+def _write_medium_claude_profile(tmp_path: Path) -> None:
+    """Write an inline claude:medium-author / codex:medium-critic profile
+    used by the vendor/critic rewrite tests below."""
+    fake_home_config = tmp_path / ".config" / "megaplan"
+    _write_profiles(
+        fake_home_config / "profiles.toml",
+        """
+        [profiles.medium-claude]
+        plan = "claude:medium"
+        prep = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        critique = "codex:medium"
+        revise = "claude:medium"
+        gate = "claude:medium"
+        finalize = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        loop_plan = "claude:medium"
+        loop_execute = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+        review = "codex:medium"
+        tiebreaker_researcher = "claude:medium"
+        tiebreaker_challenger = "codex:medium"
+        """,
+    )
+
+
 def test_critic_kimi_rewrites_critique_and_review_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
+    _write_medium_claude_profile(tmp_path)
 
-    args = _worker_args(profile="holmes-claude")
+    args = _worker_args(profile="medium-claude")
     args.critic = "kimi"
 
     apply_profile_expansion(args, None)
@@ -742,8 +801,9 @@ def test_critic_cross_uses_opposite_of_resolved_vendor(
     then critic 'cross' flips just critique+review back to the *other*
     premium (claude). Effort tier preserved on each phase."""
     _isolate_user_config(tmp_path, monkeypatch)
+    _write_medium_claude_profile(tmp_path)
 
-    args = _worker_args(profile="holmes-claude")
+    args = _worker_args(profile="medium-claude")
     args.vendor = "codex"
     args.critic = "cross"
 
@@ -754,12 +814,10 @@ def test_critic_cross_uses_opposite_of_resolved_vendor(
     assert resolved["plan"] == "codex:medium"
     assert resolved["revise"] == "codex:medium"
     assert resolved["gate"] == "codex:medium"
-    # Critic phases: vendor pass made them claude:medium (the cross of codex),
-    # then critic=cross flips them back to claude:medium. Wait — actually:
-    # holmes-claude has critique=codex:medium. --vendor codex would *not*
-    # flip codex (same vendor). So critique stays codex:medium after vendor
-    # pass. Then --critic cross: vendor="codex", so other="claude", so
-    # critique becomes claude:medium.
+    # Critic phases: medium-claude has critique=codex:medium. --vendor codex
+    # leaves codex slots alone, so critique stays codex:medium after the
+    # vendor pass. Then --critic cross: vendor="codex", so other="claude",
+    # flipping critique+review to claude:medium.
     assert resolved["critique"] == "claude:medium"
     assert resolved["review"] == "claude:medium"
 
@@ -852,13 +910,14 @@ def test_cli_vendor_flag_overrides_config_default(
     )
 
     # Config says codex, CLI says claude → CLI wins.
-    args = _worker_args(profile="standard")
+    # Use all-claude so vendor swap is exercised — apex is vendor-locked.
+    args = _worker_args(profile="all-claude")
     args.vendor = "claude"
     apply_profile_expansion(args, None)
 
     resolved = _phase_models_to_map(args.phase_model)
-    # 'standard' has both claude and codex slots; with --vendor claude
-    # everything premium should be claude.
+    # all-claude has all claude slots; --vendor claude is a no-op so they stay
+    # claude even though the config default would have flipped them to codex.
     assert resolved["plan"] == "claude"
     assert resolved["critique"] == "claude"
     assert resolved["execute"] == "claude"
@@ -916,7 +975,7 @@ def test_unknown_metadata_key_is_rejected(
 
 
 # ---------------------------------------------------------------------------
-# Tier-named catalog (basic / led / thoughtful / premium / super-premium)
+# Tier-named catalog (solo / directed / partnered / premium / apex)
 # ---------------------------------------------------------------------------
 
 
@@ -924,7 +983,7 @@ DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 DEEPSEEK_DIRECT = "hermes:deepseek:deepseek-v4-pro"
 KIMI = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 
-_TIER_NAMES = ("basic", "led", "thoughtful", "premium", "super-premium")
+_TIER_NAMES = ("solo", "directed", "partnered", "premium", "apex")
 
 
 def test_new_tier_profiles_all_load(
@@ -938,44 +997,45 @@ def test_new_tier_profiles_all_load(
         assert name in catalog, f"missing tier profile {name!r}: catalog={sorted(catalog)}"
 
 
-def test_basic_profile_resolves_to_deepseek_author_kimi_critic(
+def test_solo_profile_resolves_to_deepseek_end_to_end(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="basic")
+    args = _worker_args(profile="solo")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
+    # solo runs DeepSeek end-to-end (including critique/review); no Kimi slot.
     for phase in (
         "plan",
         "prep",
+        "critique",
         "revise",
         "gate",
         "finalize",
         "execute",
         "loop_plan",
         "loop_execute",
+        "review",
         "tiebreaker_researcher",
         "tiebreaker_challenger",
     ):
-        assert resolved[phase] == DEEPSEEK_DIRECT, f"basic.{phase} should be DeepSeek, got {resolved[phase]!r}"
-    assert resolved["critique"] == KIMI
-    assert resolved["review"] == KIMI
+        assert resolved[phase] == DEEPSEEK_DIRECT, f"solo.{phase} should be DeepSeek, got {resolved[phase]!r}"
 
 
-def test_basic_profile_is_noop_under_vendor_codex(
+def test_solo_profile_is_noop_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """basic has no premium slots, so --vendor codex must not change anything."""
+    """solo has no premium slots, so --vendor codex must not change anything."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    baseline = _worker_args(profile="basic")
+    baseline = _worker_args(profile="solo")
     apply_profile_expansion(baseline, None)
 
-    flagged = _worker_args(profile="basic")
+    flagged = _worker_args(profile="solo")
     flagged.vendor = "codex"
     apply_profile_expansion(flagged, None)
 
@@ -984,13 +1044,13 @@ def test_basic_profile_is_noop_under_vendor_codex(
     )
 
 
-def test_led_profile_default_resolves_with_claude_plan_only(
+def test_directed_profile_default_resolves_with_claude_plan_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="led")
+    args = _worker_args(profile="directed")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
@@ -999,47 +1059,41 @@ def test_led_profile_default_resolves_with_claude_plan_only(
     assert resolved["loop_plan"] == "claude:low"
     assert resolved["tiebreaker_researcher"] == "claude:low"
     assert resolved["tiebreaker_challenger"] == "claude:low"
-    # DeepSeek on the mechanical block.
-    for phase in ("prep", "revise", "gate", "finalize", "execute", "loop_execute"):
+    # DeepSeek on the mechanical block + critique + review.
+    for phase in ("prep", "critique", "revise", "gate", "finalize", "execute", "loop_execute", "review"):
         assert resolved[phase] == DEEPSEEK_DIRECT
-    # Kimi on critique + review.
-    assert resolved["critique"] == KIMI
-    assert resolved["review"] == KIMI
 
 
-def test_led_profile_flips_to_codex_under_vendor_codex(
+def test_directed_profile_flips_to_codex_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="led")
+    args = _worker_args(profile="directed")
     args.vendor = "codex"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
     assert resolved["plan"] == "codex:low", (
-        f"led + --vendor codex should flip plan from claude:low to codex:low; "
+        f"directed + --vendor codex should flip plan from claude:low to codex:low; "
         f"got {resolved['plan']!r}"
     )
     assert resolved["loop_plan"] == "codex:low"
     assert resolved["tiebreaker_researcher"] == "codex:low"
     assert resolved["tiebreaker_challenger"] == "codex:low"
-    # Mechanical phases untouched.
-    for phase in ("prep", "revise", "gate", "finalize", "execute", "loop_execute"):
+    # Mechanical phases + critique + review untouched (DeepSeek).
+    for phase in ("prep", "critique", "revise", "gate", "finalize", "execute", "loop_execute", "review"):
         assert resolved[phase] == DEEPSEEK_DIRECT
-    # Kimi critic untouched.
-    assert resolved["critique"] == KIMI
-    assert resolved["review"] == KIMI
 
 
-def test_thoughtful_profile_default_resolves_with_claude_reasoning(
+def test_partnered_profile_default_resolves_with_claude_reasoning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful")
+    args = _worker_args(profile="partnered")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
@@ -1053,19 +1107,19 @@ def test_thoughtful_profile_default_resolves_with_claude_reasoning(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == "claude:low", (
-            f"thoughtful.{phase} should be claude:low, got {resolved[phase]!r}"
+            f"partnered.{phase} should be claude:low, got {resolved[phase]!r}"
         )
     for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 
-def test_thoughtful_profile_flips_all_premium_under_vendor_codex(
+def test_partnered_profile_flips_all_premium_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful")
+    args = _worker_args(profile="partnered")
     args.vendor = "codex"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
@@ -1080,20 +1134,20 @@ def test_thoughtful_profile_flips_all_premium_under_vendor_codex(
         "tiebreaker_challenger",
     ):
         assert resolved[phase] == "codex:low", (
-            f"thoughtful.{phase} under --vendor codex should be codex:low, got {resolved[phase]!r}"
+            f"partnered.{phase} under --vendor codex should be codex:low, got {resolved[phase]!r}"
         )
     # Mechanical phases stay DeepSeek.
     for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 
-def test_thoughtful_critic_kimi_overrides_critique_and_review(
+def test_partnered_critic_kimi_overrides_critique_and_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful")
+    args = _worker_args(profile="partnered")
     args.critic = "kimi"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
@@ -1105,7 +1159,7 @@ def test_thoughtful_critic_kimi_overrides_critique_and_review(
     assert resolved["revise"] == "claude:low"
 
 
-def test_thoughtful_critic_cross_with_default_claude_flips_critic_to_codex(
+def test_partnered_critic_cross_with_default_claude_flips_critic_to_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1113,7 +1167,7 @@ def test_thoughtful_critic_cross_with_default_claude_flips_critic_to_codex(
     review should flip to codex while everything else stays claude."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful")
+    args = _worker_args(profile="partnered")
     args.critic = "cross"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
@@ -1127,13 +1181,13 @@ def test_thoughtful_critic_cross_with_default_claude_flips_critic_to_codex(
     assert resolved["execute"] == DEEPSEEK_DIRECT
 
 
-def test_deepseek_provider_direct_rewrites_thoughtful_mechanical_phases(
+def test_deepseek_provider_direct_rewrites_partnered_mechanical_phases(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful", deepseek_provider="direct")
+    args = _worker_args(profile="partnered", deepseek_provider="direct")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
@@ -1150,7 +1204,7 @@ def test_deepseek_provider_direct_composes_with_vendor_and_depth(
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful", deepseek_provider="direct")
+    args = _worker_args(profile="partnered", deepseek_provider="direct")
     args.vendor = "codex"
     args.depth = "high"
     apply_profile_expansion(args, None)
@@ -1178,7 +1232,7 @@ def test_persisted_deepseek_provider_in_state_picked_up_by_subprocess(
 
     persisted_state = {
         "config": {
-            "profile": "thoughtful",
+            "profile": "partnered",
             "deepseek_provider": "direct",
         }
     }
@@ -1248,47 +1302,39 @@ def test_premium_profile_flips_to_codex_under_vendor_codex(
         assert resolved[phase] == "codex:low"
 
 
-def test_super_premium_resolves_to_canonical_claude_codex_split(
+def test_apex_resolves_to_canonical_claude_codex_split(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """super-premium must produce the same phase map as poirot (the canonical
-    Claude-author / Codex-critic split). vendor_locked is metadata, not a
-    phase, and must not leak into the resolved map."""
+    """apex (tier 5) is the canonical Claude-author / Codex-critic split.
+    vendor_locked is metadata, not a phase, and must not leak into the
+    resolved map."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    sp_args = _worker_args(profile="super-premium")
-    apply_profile_expansion(sp_args, None)
-    sp_resolved = _phase_models_to_map(sp_args.phase_model)
+    args = _worker_args(profile="apex")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
 
-    p_args = _worker_args(profile="poirot")
-    apply_profile_expansion(p_args, None)
-    p_resolved = _phase_models_to_map(p_args.phase_model)
-
-    assert sp_resolved == p_resolved, (
-        f"super-premium and poirot should resolve identically; "
-        f"super-premium={sp_resolved!r}, poirot={p_resolved!r}"
-    )
     # Spot-check the canonical split.
-    assert sp_resolved["plan"] == "claude"
-    assert sp_resolved["critique"] == "codex"
-    assert sp_resolved["execute"] == "codex"
-    assert sp_resolved["review"] == "codex"
+    assert resolved["plan"] == "claude"
+    assert resolved["critique"] == "codex"
+    assert resolved["execute"] == "codex"
+    assert resolved["review"] == "codex"
     # vendor_locked must not be a phase entry.
-    assert "vendor_locked" not in sp_resolved
+    assert "vendor_locked" not in resolved
 
 
-def test_super_premium_silently_ignores_vendor_flag(
+def test_apex_silently_ignores_vendor_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--vendor against super-premium is a silent no-op (vendor_locked)."""
+    """--vendor against apex is a silent no-op (vendor_locked)."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    baseline = _worker_args(profile="super-premium")
+    baseline = _worker_args(profile="apex")
     apply_profile_expansion(baseline, None)
 
-    flagged = _worker_args(profile="super-premium")
+    flagged = _worker_args(profile="apex")
     flagged.vendor = "codex"
     apply_profile_expansion(flagged, None)
 
@@ -1297,17 +1343,17 @@ def test_super_premium_silently_ignores_vendor_flag(
     )
 
 
-def test_super_premium_silently_ignores_critic_flag(
+def test_apex_silently_ignores_critic_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--critic against super-premium is a silent no-op (vendor_locked)."""
+    """--critic against apex is a silent no-op (vendor_locked)."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    baseline = _worker_args(profile="super-premium")
+    baseline = _worker_args(profile="apex")
     apply_profile_expansion(baseline, None)
 
-    flagged = _worker_args(profile="super-premium")
+    flagged = _worker_args(profile="apex")
     flagged.critic = "kimi"
     apply_profile_expansion(flagged, None)
 
@@ -1316,53 +1362,15 @@ def test_super_premium_silently_ignores_critic_flag(
     )
 
 
-def test_poirot_silently_ignores_vendor_flag(
+def test_apex_runs_without_flags(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--vendor against poirot is a silent no-op (vendor_locked)."""
-    _isolate_user_config(tmp_path, monkeypatch)
-
-    baseline = _worker_args(profile="poirot")
-    apply_profile_expansion(baseline, None)
-
-    flagged = _worker_args(profile="poirot")
-    flagged.vendor = "codex"
-    apply_profile_expansion(flagged, None)
-
-    assert _phase_models_to_map(baseline.phase_model) == _phase_models_to_map(
-        flagged.phase_model
-    )
-
-
-def test_poirot_silently_ignores_critic_flag(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """--critic against poirot is a silent no-op (vendor_locked)."""
-    _isolate_user_config(tmp_path, monkeypatch)
-
-    baseline = _worker_args(profile="poirot")
-    apply_profile_expansion(baseline, None)
-
-    flagged = _worker_args(profile="poirot")
-    flagged.critic = "cross"
-    apply_profile_expansion(flagged, None)
-
-    assert _phase_models_to_map(baseline.phase_model) == _phase_models_to_map(
-        flagged.phase_model
-    )
-
-
-def test_poirot_runs_without_flags(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """vendor-locking is opt-out only: poirot must still resolve when no
+    """vendor-locking is opt-out only: apex must still resolve when no
     --vendor / --critic flag is passed."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="poirot")
+    args = _worker_args(profile="apex")
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
@@ -1387,23 +1395,23 @@ _CRITIC_PHASES = ("critique", "gate", "review")
 _MECHANICAL_PHASES = ("prep", "finalize", "execute", "loop_execute")
 
 
-def test_depth_rewrites_author_phases_on_thoughtful(
+def test_depth_rewrites_author_phases_on_partnered(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--depth high on thoughtful: every author-side claude:low becomes
+    """--depth high on partnered: every author-side claude:low becomes
     claude:high; critic phases (critique, review) stay claude:low;
     mechanical phases (DeepSeek) untouched."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful")
+    args = _worker_args(profile="partnered")
     args.depth = "high"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
     for phase in _AUTHOR_PHASES:
         assert resolved[phase] == "claude:high", (
-            f"--depth high on thoughtful should rewrite {phase} to claude:high; "
+            f"--depth high on partnered should rewrite {phase} to claude:high; "
             f"got {resolved[phase]!r}"
         )
     # critique + review plateau at the existing depth.
@@ -1447,18 +1455,18 @@ def test_depth_rewrites_author_phases_on_premium(
         )
 
 
-def test_depth_is_noop_on_basic(
+def test_depth_is_noop_on_solo(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """basic has no claude/codex slots on author phases — --depth must be a
+    """solo has no claude/codex slots on author phases — --depth must be a
     silent no-op."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    baseline = _worker_args(profile="basic")
+    baseline = _worker_args(profile="solo")
     apply_profile_expansion(baseline, None)
 
-    flagged = _worker_args(profile="basic")
+    flagged = _worker_args(profile="solo")
     flagged.depth = "high"
     apply_profile_expansion(flagged, None)
 
@@ -1471,11 +1479,11 @@ def test_depth_after_vendor_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--vendor codex --depth high on thoughtful: vendor flips claude→codex
+    """--vendor codex --depth high on partnered: vendor flips claude→codex
     first, then depth rewrites author phases to codex:high."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="thoughtful")
+    args = _worker_args(profile="partnered")
     args.vendor = "codex"
     args.depth = "high"
     apply_profile_expansion(args, None)
@@ -1491,22 +1499,22 @@ def test_depth_after_vendor_swap(
     assert resolved["review"] == "codex:low"
 
 
-def test_depth_honored_on_vendor_locked_poirot(
+def test_depth_honored_on_vendor_locked_apex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--depth max on poirot (vendor_locked): author phases bump while
+    """--depth max on apex (vendor_locked): author phases bump while
     critic + mechanical stay at default effort. vendor_locked is about
     vendor identity, not depth.
 
-    Note: poirot's tiebreaker_* slots are bare ``codex`` (critic side of
+    Note: apex's tiebreaker_* slots are bare ``codex`` (critic side of
     the Claude/Codex split), so --depth still rewrites them — depth runs
     on author phases regardless of *which* premium vendor occupies the
     slot. The critic-vs-author asymmetry is enforced by phase name, not
     by which vendor is filling it."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="poirot")
+    args = _worker_args(profile="apex")
     args.depth = "max"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
@@ -1515,7 +1523,7 @@ def test_depth_honored_on_vendor_locked_poirot(
     assert resolved["plan"] == "claude:max"
     assert resolved["revise"] == "claude:max"
     assert resolved["loop_plan"] == "claude:max"
-    # tiebreaker_* slots are bare "codex" in poirot — author-phase rewrite
+    # tiebreaker_* slots are bare "codex" in apex — author-phase rewrite
     # bumps them to codex:max (depth is by-phase, not by-vendor).
     assert resolved["tiebreaker_researcher"] == "codex:max"
     assert resolved["tiebreaker_challenger"] == "codex:max"
@@ -1541,7 +1549,7 @@ def test_depth_invalid_value_rejected_at_argparse(
         parser.parse_args([
             "init",
             "--project-dir", str(tmp_path),
-            "--profile", "thoughtful",
+            "--profile", "partnered",
             "--depth", "ultra",
             "an idea",
         ])
@@ -1558,7 +1566,7 @@ def test_deepseek_provider_invalid_value_rejected_at_argparse(
         parser.parse_args([
             "init",
             "--project-dir", str(tmp_path),
-            "--profile", "thoughtful",
+            "--profile", "partnered",
             "--deepseek-provider", "openrouter",
             "an idea",
         ])
