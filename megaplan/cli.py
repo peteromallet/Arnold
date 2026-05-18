@@ -537,6 +537,12 @@ def _collect_megaplan_roots(root: Path, *, tree: bool = False, all_system: bool 
 
 def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
     ensure_runtime_layout(root)
+
+    # Dispatch to pipeline listing when 'pipelines' subcommand is used
+    list_target = getattr(args, "list_target", None)
+    if list_target == "pipelines":
+        return _handle_list_pipelines(args)
+
     filter_status = getattr(args, "filter_status", None)
     no_tree = getattr(args, "no_tree", False)
     include_done = getattr(args, "include_done", False)
@@ -1223,6 +1229,14 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
 
 
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
+    # Check for awaiting_user.json first (YAML pipeline human_gate pause).
+    # When present, enter the human-gate resume flow consuming --choice.
+    # When absent, fall through to existing state.json::resume_cursor recovery.
+    from megaplan._core.io import find_plan_dir
+    plan_dir = find_plan_dir(root, args.plan)
+    if plan_dir is not None and (plan_dir / "awaiting_user.json").exists():
+        return _resume_yaml_human_gate(root, plan_dir, args)
+
     store = None
     if getattr(args, "actor", None) or getattr(args, "backend", None) == "db" or os.environ.get("MEGAPLAN_ACTOR_ID"):
         store = build_epic_store(root, actor_id=getattr(args, "actor", None) or os.environ.get("MEGAPLAN_ACTOR_ID"))
@@ -1232,6 +1246,89 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
         close = getattr(store, "close", None)
         if callable(close):
             close()
+
+
+def _resume_yaml_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> dict[str, Any]:
+    """Resume a YAML pipeline paused at a human_gate stage.
+
+    Re-reads ``awaiting_user.json``, validates the ``--choice`` argument,
+    and re-enters the pipeline at the paused stage so all artifact paths
+    are read fresh from disk on resume.
+    """
+    awaiting_path = plan_dir / "awaiting_user.json"
+    try:
+        data = json.loads(awaiting_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        raise CliError("bad_awaiting_user",
+                       f"Cannot read awaiting_user.json: {exc}") from exc
+
+    pipeline_name = data.get("pipeline")
+    if not pipeline_name:
+        raise CliError("bad_awaiting_user",
+                       "awaiting_user.json is missing 'pipeline' field")
+
+    choices = data.get("choices", [])
+    choice = getattr(args, "choice", None)
+    if not choice:
+        raise CliError("missing_choice",
+                       f"Pipeline '{pipeline_name}' is paused at human_gate stage "
+                       f"'{data.get('stage', '?')}'. "
+                       f"Use --choice with one of: {', '.join(choices)}")
+
+    if choice not in choices:
+        raise CliError("invalid_choice",
+                       f"Invalid choice '{choice}'. "
+                       f"Valid choices: {', '.join(choices)}")
+
+    from megaplan._pipeline.loader import load_pipeline
+    from megaplan._pipeline.compiler import compile_pipeline, inject_pipeline_context
+    from megaplan._pipeline.executor import run_pipeline
+    from megaplan._pipeline.resume import with_entry
+    from megaplan._pipeline.types import StepContext
+
+    lp = load_pipeline(pipeline_name)
+
+    # Build pipeline with resume_choice so HumanGateStep returns it.
+    pipeline = compile_pipeline(
+        lp.spec,
+        pipeline_dir=lp.dir,
+        resume_choice=choice,
+    )
+
+    # Re-enter at the paused stage so prior stages are not re-run.
+    paused_stage = data.get("stage")
+    if paused_stage and paused_stage in pipeline.stages:
+        pipeline = with_entry(pipeline, paused_stage)
+
+    # Re-read state from disk (fresh artifact paths).
+    state: dict[str, Any] = {}
+    state_path = plan_dir / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+        except json.JSONDecodeError:
+            pass
+
+    # Clear pause flags so the executor doesn't immediately halt again.
+    state.pop("_pipeline_paused", None)
+    state.pop("_pipeline_paused_stage", None)
+
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state=state,
+        profile={},
+        mode=state.get("mode", "code"),
+        inputs={},
+    )
+    ctx = inject_pipeline_context(ctx, lp.spec.name)
+
+    result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
+
+    # Clean up awaiting_user.json after successful resume
+    if awaiting_path.exists():
+        awaiting_path.unlink()
+
+    return result
 
 
 def _collect_feedback_rows(
@@ -1925,6 +2022,24 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Filter by state (e.g. 'done', 'finalized', 'executed', or comma-separated 'planned,critiqued')")
     list_parser.add_argument("--summary", action="store_true",
                              help="Show count breakdown by state")
+    list_parser.add_argument(
+        "list_target", nargs="?",
+        choices=["pipelines"],
+        help="List pipelines instead of plans (use 'pipelines')",
+    )
+    list_parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Show verbose pipeline listing (description, version, profile)",
+    )
+
+    describe_parser = subparsers.add_parser(
+        "describe", help="Show metadata and SKILL.md for a YAML pipeline"
+    )
+    describe_parser.add_argument(
+        "pipeline_name",
+        help="Name of the pipeline to describe (e.g. 'writing-panel-strict')",
+    )
+    describe_parser.set_defaults(func=handle_describe)
 
     epic_parser = subparsers.add_parser("epic", help="Inspect or migrate Arnold epics")
     epic_parser.add_argument("--project-dir", default=None)
@@ -2109,6 +2224,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume_parser = subparsers.add_parser("resume", help="Resume a failed or blocked plan from its stored cursor")
     resume_parser.add_argument("--plan", required=True)
+    resume_parser.add_argument("--choice", default=None,
+                               help="For YAML pipelines paused at human_gate: the choice to resume with (e.g. continue, stop)")
 
     audit_parser = subparsers.add_parser("audit")
     audit_parser.add_argument("--plan")
@@ -2594,6 +2711,69 @@ def _find_git_root(start: Path) -> Path | None:
         current = parent
 
 
+def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
+    """Handle ``megaplan list pipelines`` — list YAML + registered pipelines."""
+    from megaplan._pipeline.loader import list_pipeline_names
+    from megaplan._pipeline.registry import registered_pipelines
+
+    verbose = getattr(args, "verbose", False)
+
+    yaml_names = list(list_pipeline_names())
+    reg_names = list(registered_pipelines())
+
+    all_names = sorted(set(yaml_names) | set(reg_names))
+
+    items: list[dict[str, Any]] = []
+    for name in all_names:
+        kind = "yaml" if name in yaml_names else "python"
+        if name in yaml_names and name in reg_names:
+            kind = "both"
+        entry: dict[str, Any] = {"name": name, "kind": kind}
+        if verbose and name in yaml_names:
+            from megaplan._pipeline.loader import describe_pipeline
+            desc = describe_pipeline(name)
+            # Extract first line of description
+            first_line = desc.split("\n")[0] if desc else ""
+            entry["description"] = first_line
+            # Get profile info
+            from megaplan._pipeline.loader import load_pipeline
+            lp = load_pipeline(name)
+            entry["version"] = lp.spec.version
+            entry["default_profile"] = lp.spec.default_profile
+            if lp.spec.supported_modes:
+                entry["modes"] = lp.spec.supported_modes
+        items.append(entry)
+
+    return {
+        "success": True,
+        "step": "list",
+        "summary": f"Found {len(items)} pipeline(s): {', '.join(n['name'] for n in items)}",
+        "pipelines": items,
+    }
+
+
+def handle_describe(args: argparse.Namespace) -> StepResponse:
+    """Handle ``megaplan describe <pipeline>`` command."""
+    from megaplan._pipeline.loader import describe_pipeline
+
+    try:
+        desc = describe_pipeline(args.pipeline_name)
+    except KeyError as exc:
+        return {
+            "success": False,
+            "step": "describe",
+            "error": str(exc),
+        }
+
+    # For CLI rendering, print directly (descriptions are long-form text)
+    print(desc)
+    return {
+        "success": True,
+        "step": "describe",
+        "pipeline": args.pipeline_name,
+    }
+
+
 def _auto_sync_installed_skills() -> None:
     try:
         for target in _GLOBAL_TARGETS:
@@ -2700,6 +2880,13 @@ def main(argv: list[str] | None = None) -> int:
         from megaplan._pipeline.run_cli import cli_run
         try:
             return cli_run(args)
+        except CliError as error:
+            return error_response(error, root=root)
+
+    if args.command == "describe":
+        try:
+            response = handle_describe(args)
+            return render_response(response)
         except CliError as error:
             return error_response(error, root=root)
 

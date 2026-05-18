@@ -32,6 +32,7 @@
 # See docs/megaplan-decision.md for the full rubric.
 [profiles.apex]
 vendor_locked         = true
+default = "partnered"
 plan                  = "claude"
 prep                  = "claude"
 critique              = "codex"

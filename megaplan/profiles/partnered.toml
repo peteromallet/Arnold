@@ -29,6 +29,7 @@
 #
 # See docs/megaplan-decision.md for the full rubric.
 [profiles.partnered]
+default = "partnered"
 plan                  = "claude:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "claude:low"

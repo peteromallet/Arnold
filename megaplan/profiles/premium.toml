@@ -27,6 +27,7 @@
 #
 # See docs/megaplan-decision.md for the full rubric.
 [profiles.premium]
+default = "partnered"
 plan                  = "claude:low"
 prep                  = "claude:low"
 critique              = "claude:low"

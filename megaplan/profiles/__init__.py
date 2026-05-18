@@ -27,7 +27,7 @@ VALID_PHASE_KEYS = frozenset(DEFAULT_AGENT_ROUTING.keys())
 # stripped before validation so the loader doesn't complain about them,
 # and surfaced via ``ProfileSource.metadata`` for downstream consumers
 # (currently just ``--vendor`` / ``--critic`` rejection on locked profiles).
-PROFILE_METADATA_KEYS = frozenset({"vendor_locked"})
+PROFILE_METADATA_KEYS = frozenset({"vendor_locked", "default", "extends"})
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
@@ -101,6 +101,24 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
                     f"expected a boolean for 'vendor_locked', got {type(value).__name__}",
                 )
             validated["vendor_locked"] = value
+        elif key == "default":
+            if not isinstance(value, str):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"expected a string for 'default', got {type(value).__name__}",
+                )
+            validated["default"] = value
+        elif key == "extends":
+            if not isinstance(value, str):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"expected a string for 'extends', got {type(value).__name__}",
+                )
+            validated["extends"] = value
         # Future metadata keys go here.
     return validated
 
@@ -257,6 +275,441 @@ def resolve_profile(name: str, profiles: dict[str, dict[str, str]]) -> dict[str,
             "unknown_profile",
             f"Unknown profile '{name}'. Known profiles: {_known_profiles_text(profiles)}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Pipeline-local profile loading
+# ---------------------------------------------------------------------------
+
+
+def _flatten_profile_keys(
+    d: dict[str, Any], prefix: str, out: dict[str, Any]
+) -> None:
+    """Flatten nested dicts into dotted compound keys.
+
+    ``{"panel_review": {"pessimist": "claude:low"}}`` becomes
+    ``{"panel_review.pessimist": "claude:low"}``.
+    """
+    for key, value in d.items():
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict) and not any(
+            isinstance(v, dict) for v in value.values()
+        ):
+            # Shallow dict of scalar values → flatten to dotted keys
+            for sub_key, sub_value in value.items():
+                out[f"{full_key}.{sub_key}"] = sub_value
+        elif isinstance(value, dict):
+            _flatten_profile_keys(value, full_key, out)
+        else:
+            out[full_key] = value
+
+
+def _pipeline_local_profiles_dir(pipeline_name: str, *, builtin: bool = True) -> Path | None:
+    """Return the pipeline-local profiles directory if it exists."""
+    import megaplan._pipeline
+
+    if builtin:
+        package_file = Path(megaplan._pipeline.__file__).resolve()
+        base = package_file.parent.parent / "pipelines" / pipeline_name / "profiles"
+    else:
+        base = Path.home() / ".megaplan" / "pipelines" / pipeline_name / "profiles"
+    return base if base.is_dir() else None
+
+
+def _load_pipeline_local_profiles(
+    pipeline_name: str,
+) -> dict[str, dict[str, str]]:
+    """Load pipeline-local profiles for *pipeline_name*.
+
+    Pipeline-local profiles define their own TOML slot keys matching YAML
+    stage IDs. They bypass ``DEFAULT_AGENT_ROUTING`` validation — the keys
+    are validated against the pipeline's stage definitions at compile time,
+    not against the fixed planning phase keys.
+
+    Dotted keys (e.g. ``panel_review.pessimist``) are flattened into
+    compound keys (``panel_review.pessimist``) so the flat ``dict[str, str]``
+    shape is preserved.
+
+    Discovery order: built-in first, then user (~/.megaplan/...).
+    User profiles with the same name shadow built-in ones.
+    """
+    import tomllib as _tomllib
+
+    profiles: dict[str, dict[str, str]] = {}
+
+    for is_builtin in (True, False):
+        profiles_dir = _pipeline_local_profiles_dir(pipeline_name, builtin=is_builtin)
+        if profiles_dir is None:
+            continue
+        for toml_file in sorted(profiles_dir.iterdir()):
+            if not toml_file.is_file() or not toml_file.name.endswith(".toml"):
+                continue
+            try:
+                raw_text = toml_file.read_text(encoding="utf-8")
+                data = _tomllib.loads(raw_text)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            raw_profiles = data.get("profiles", {})
+            if not isinstance(raw_profiles, dict):
+                continue
+            for profile_name, raw_profile in raw_profiles.items():
+                if not isinstance(raw_profile, dict):
+                    continue
+                # Flatten nested dicts from dotted TOML keys
+                flat: dict[str, Any] = {}
+                _flatten_profile_keys(raw_profile, "", flat)
+                # Split metadata from phase slots
+                phase_map, _raw_meta = _split_profile_dict(
+                    toml_file, profile_name, flat
+                )
+                # Validate agent specs only — allow any slot keys
+                validated: dict[str, str] = {}
+                for slot, raw_spec in phase_map.items():
+                    if not isinstance(raw_spec, str):
+                        continue
+                    agent, _model = parse_agent_spec(raw_spec)
+                    if agent not in KNOWN_AGENTS:
+                        continue
+                    validated[str(slot)] = raw_spec
+                if validated:
+                    profiles[profile_name] = validated
+
+    return profiles
+
+
+def _load_pipeline_local_metadata(
+    pipeline_name: str,
+) -> dict[str, dict[str, Any]]:
+    """Load metadata for pipeline-local profiles."""
+    import tomllib as _tomllib
+
+    metadata: dict[str, dict[str, Any]] = {}
+
+    for is_builtin in (True, False):
+        profiles_dir = _pipeline_local_profiles_dir(pipeline_name, builtin=is_builtin)
+        if profiles_dir is None:
+            continue
+        for toml_file in sorted(profiles_dir.iterdir()):
+            if not toml_file.is_file() or not toml_file.name.endswith(".toml"):
+                continue
+            try:
+                raw_text = toml_file.read_text(encoding="utf-8")
+                data = _tomllib.loads(raw_text)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            raw_profiles = data.get("profiles", {})
+            if not isinstance(raw_profiles, dict):
+                continue
+            for profile_name, raw_profile in raw_profiles.items():
+                if not isinstance(raw_profile, dict):
+                    continue
+                _phase_map, raw_meta = _split_profile_dict(
+                    toml_file, profile_name, raw_profile
+                )
+                validated_meta = _validate_metadata(
+                    toml_file, profile_name, raw_meta
+                )
+                if validated_meta:
+                    metadata[profile_name] = validated_meta
+
+    return metadata
+
+
+# ---------------------------------------------------------------------------
+# Profile inheritance with cycle detection
+# ---------------------------------------------------------------------------
+
+
+def _resolve_extends_ref(
+    ref: str,
+    *,
+    system_profiles: dict[str, dict[str, str]],
+    system_metadata: dict[str, dict[str, Any]],
+    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_metadata: dict[str, dict[str, Any]],
+    _visited: set[str] | None = None,
+) -> dict[str, str]:
+    """Resolve an ``extends`` reference to a concrete profile map.
+
+    Supported formats:
+    * ``system:<profile>`` — look up in system profiles.
+    * ``@<pipeline>:<profile>`` — look up in pipeline-local profiles.
+    """
+    if ref.startswith("system:"):
+        profile_name = ref[len("system:"):]
+        if profile_name in system_profiles:
+            return _resolve_with_inheritance(
+                profile_name,
+                system_profiles=system_profiles,
+                system_metadata=system_metadata,
+                pipeline_local_profiles=pipeline_local_profiles,
+                pipeline_local_metadata=pipeline_local_metadata,
+                _visited=_visited,
+            )
+        raise CliError(
+            "unknown_profile",
+            f"extends references unknown system profile '{profile_name}' "
+            f"(from '{ref}')",
+        )
+    elif ref.startswith("@"):
+        # @<pipeline>:<profile>
+        rest = ref[1:]  # strip @
+        if ":" in rest:
+            pipeline_name, profile_name = rest.split(":", 1)
+            # Load that pipeline's local profiles
+            pl_profiles = _load_pipeline_local_profiles(pipeline_name)
+            if profile_name in pl_profiles:
+                return _resolve_with_inheritance(
+                    profile_name,
+                    system_profiles=system_profiles,
+                    system_metadata=system_metadata,
+                    pipeline_local_profiles=pl_profiles,
+                    pipeline_local_metadata=_load_pipeline_local_metadata(pipeline_name),
+                    _visited=_visited,
+                )
+            raise CliError(
+                "unknown_profile",
+                f"extends references unknown pipeline-local profile "
+                f"'{profile_name}' in pipeline '{pipeline_name}' (from '{ref}')",
+            )
+        raise CliError(
+            "invalid_profile",
+            f"Invalid extends reference '{ref}': "
+            f"@<pipeline>:<profile> format requires a colon",
+        )
+    else:
+        raise CliError(
+            "invalid_profile",
+            f"Invalid extends reference '{ref}': "
+            f"must be 'system:<profile>' or '@<pipeline>:<profile>'",
+        )
+
+
+def _resolve_with_inheritance(
+    profile_name: str,
+    *,
+    system_profiles: dict[str, dict[str, str]],
+    system_metadata: dict[str, dict[str, Any]],
+    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_metadata: dict[str, dict[str, Any]],
+    _visited: set[str] | None = None,
+) -> dict[str, str]:
+    """Resolve a profile, applying ``extends`` inheritance with cycle detection.
+
+    The child profile's keys override the parent's. Inheritance chains are
+    resolved depth-first. Cycle detection uses a visited set.
+    """
+    if _visited is None:
+        _visited = set()
+
+    if profile_name in _visited:
+        raise CliError(
+            "invalid_profile",
+            f"Cycle detected in profile inheritance: "
+            f"{' -> '.join(sorted(_visited))} -> {profile_name}",
+        )
+    _visited.add(profile_name)
+
+    # Find the profile in pipeline-local first, then system
+    profile: dict[str, str] | None = None
+    metadata: dict[str, Any] | None = None
+
+    if profile_name in pipeline_local_profiles:
+        profile = pipeline_local_profiles[profile_name]
+        metadata = pipeline_local_metadata.get(profile_name, {})
+    elif profile_name in system_profiles:
+        profile = system_profiles[profile_name]
+        metadata = system_metadata.get(profile_name, {})
+
+    if profile is None:
+        raise CliError(
+            "unknown_profile",
+            f"Unknown profile '{profile_name}'",
+        )
+
+    extends_ref = metadata.get("extends") if metadata else None
+    if extends_ref and isinstance(extends_ref, str):
+        parent = _resolve_extends_ref(
+            extends_ref,
+            system_profiles=system_profiles,
+            system_metadata=system_metadata,
+            pipeline_local_profiles=pipeline_local_profiles,
+            pipeline_local_metadata=pipeline_local_metadata,
+            _visited=_visited,
+        )
+        # Child overrides parent
+        merged = dict(parent)
+        merged.update(profile)
+        return merged
+
+    return dict(profile)
+
+
+# ---------------------------------------------------------------------------
+# 4-layer profile resolution for YAML pipelines
+# ---------------------------------------------------------------------------
+
+
+def resolve_pipeline_profile(
+    cli_profile: str | None,
+    *,
+    pipeline_name: str,
+    system_profiles: dict[str, dict[str, str]] | None = None,
+    system_metadata: dict[str, dict[str, Any]] | None = None,
+    pipeline_local_profiles: dict[str, dict[str, str]] | None = None,
+    pipeline_local_metadata: dict[str, dict[str, Any]] | None = None,
+    default_profile: str | None = None,
+) -> dict[str, str]:
+    """Resolve a profile for a YAML pipeline using the locked 4-layer order.
+
+    Resolution order (locked decision #8):
+    1. CLI flag (e.g. ``--profile @writing-panel-strict:premium``).
+    2. Pipeline-local profiles (``pipelines/<name>/profiles/*.toml``).
+    3. System profiles (``megaplan/profiles/*.toml``).
+    4. Profile ``default`` field → fail-loud.
+
+    Parameters
+    ----------
+    cli_profile:
+        The raw ``--profile`` value from the CLI. May be a plain name
+        (``"partnered"``) or a pipeline-scoped name (``"@writing-panel-strict:premium"``).
+    pipeline_name:
+        The pipeline name from ``pipeline.yaml`` (``spec.name``).
+    system_profiles:
+        Pre-loaded system profiles. Loaded lazily if None.
+    system_metadata:
+        Pre-loaded system profile metadata.
+    pipeline_local_profiles:
+        Pre-loaded pipeline-local profiles.
+    pipeline_local_metadata:
+        Pre-loaded pipeline-local profile metadata.
+    default_profile:
+        The ``default_profile`` field from ``pipeline.yaml``.
+
+    Returns
+    -------
+    dict[str, str]
+        The resolved profile map (slot → agent spec).
+    """
+    if system_profiles is None:
+        system_profiles = load_profiles()
+    if system_metadata is None:
+        system_metadata = load_profile_metadata()
+    if pipeline_local_profiles is None:
+        pipeline_local_profiles = _load_pipeline_local_profiles(pipeline_name)
+    if pipeline_local_metadata is None:
+        pipeline_local_metadata = _load_pipeline_local_metadata(pipeline_name)
+
+    # ── Layer 1: CLI flag ──────────────────────────────────────────
+    if cli_profile:
+        profile_name = cli_profile
+        # Parse @pipeline:profile syntax
+        if cli_profile.startswith("@"):
+            rest = cli_profile[1:]
+            if ":" in rest:
+                ref_pipeline, ref_profile = rest.split(":", 1)
+                if ref_pipeline == pipeline_name or not ref_pipeline:
+                    profile_name = ref_profile
+                else:
+                    # Cross-pipeline reference — load that pipeline's profiles
+                    cross_local = _load_pipeline_local_profiles(ref_pipeline)
+                    cross_meta = _load_pipeline_local_metadata(ref_pipeline)
+                    return _resolve_with_inheritance(
+                        ref_profile,
+                        system_profiles=system_profiles,
+                        system_metadata=system_metadata,
+                        pipeline_local_profiles=cross_local,
+                        pipeline_local_metadata=cross_meta,
+                    )
+            else:
+                profile_name = rest
+
+        # Try pipeline-local first for unscoped names, then system
+        if profile_name in pipeline_local_profiles:
+            return _resolve_with_inheritance(
+                profile_name,
+                system_profiles=system_profiles,
+                system_metadata=system_metadata,
+                pipeline_local_profiles=pipeline_local_profiles,
+                pipeline_local_metadata=pipeline_local_metadata,
+            )
+        if profile_name in system_profiles:
+            return _resolve_with_inheritance(
+                profile_name,
+                system_profiles=system_profiles,
+                system_metadata=system_metadata,
+                pipeline_local_profiles=pipeline_local_profiles,
+                pipeline_local_metadata=pipeline_local_metadata,
+            )
+        raise CliError(
+            "unknown_profile",
+            f"Unknown profile '{cli_profile}'. "
+            f"Known pipeline-local: {_known_profiles_text(pipeline_local_profiles)}. "
+            f"Known system: {_known_profiles_text(system_profiles)}",
+        )
+
+    # ── Layer 2: Pipeline-local profiles ───────────────────────────
+    if pipeline_local_profiles:
+        # Use the first pipeline-local profile as default
+        first_name = next(iter(pipeline_local_profiles))
+        return _resolve_with_inheritance(
+            first_name,
+            system_profiles=system_profiles,
+            system_metadata=system_metadata,
+            pipeline_local_profiles=pipeline_local_profiles,
+            pipeline_local_metadata=pipeline_local_metadata,
+        )
+
+    # ── Layer 3: System profiles (match by name from default_profile) ──
+    if default_profile:
+        # Parse @pipeline:profile syntax in default_profile
+        if default_profile.startswith("@"):
+            rest = default_profile[1:]
+            if ":" in rest:
+                _ref_pipeline, ref_profile = rest.split(":", 1)
+                if ref_profile in pipeline_local_profiles:
+                    return _resolve_with_inheritance(
+                        ref_profile,
+                        system_profiles=system_profiles,
+                        system_metadata=system_metadata,
+                        pipeline_local_profiles=pipeline_local_profiles,
+                        pipeline_local_metadata=pipeline_local_metadata,
+                    )
+                if ref_profile in system_profiles:
+                    return _resolve_with_inheritance(
+                        ref_profile,
+                        system_profiles=system_profiles,
+                        system_metadata=system_metadata,
+                        pipeline_local_profiles=pipeline_local_profiles,
+                        pipeline_local_metadata=pipeline_local_metadata,
+                    )
+
+    # ── Layer 4: Profile default field ─────────────────────────────
+    # Scan system profiles for one with a "default" metadata field
+    for pname, pmeta in system_metadata.items():
+        default_ref = pmeta.get("default")
+        if default_ref and isinstance(default_ref, str) and default_ref in system_profiles:
+            return _resolve_with_inheritance(
+                default_ref,
+                system_profiles=system_profiles,
+                system_metadata=system_metadata,
+                pipeline_local_profiles=pipeline_local_profiles,
+                pipeline_local_metadata=pipeline_local_metadata,
+            )
+
+    # ── Fail loud ──────────────────────────────────────────────────
+    raise CliError(
+        "unknown_profile",
+        f"Cannot resolve profile for pipeline '{pipeline_name}'. "
+        f"No CLI flag, no pipeline-local profiles, no matching system profile, "
+        f"and no system profile with a 'default' field. "
+        f"Pipeline-local: {_known_profiles_text(pipeline_local_profiles)}. "
+        f"System: {_known_profiles_text(system_profiles)}.",
+    )
 
 
 def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
@@ -586,4 +1039,8 @@ __all__ = [
     "load_profiles",
     "profile_to_phase_models",
     "resolve_profile",
+    "resolve_pipeline_profile",
+    "_load_pipeline_local_profiles",
+    "_load_pipeline_local_metadata",
+    "_resolve_with_inheritance",
 ]

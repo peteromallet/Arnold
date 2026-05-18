@@ -1,4 +1,5 @@
 [profiles.all-codex]
+default = "partnered"
 plan = "codex"
 prep = "codex"
 critique = "codex"
