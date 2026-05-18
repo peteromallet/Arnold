@@ -1177,7 +1177,8 @@ def test_build_gate_signals_includes_loop_summary_and_previous_version_lookup(tm
     ]
     plan_dir, state = _scaffold(tmp_path, iteration=2, flags=flags)
     result = build_gate_signals(plan_dir, state)
-    assert result["robustness"] == "standard"
+    # ``standard`` stored in state normalizes to the canonical ``full``.
+    assert result["robustness"] == "full"
     assert result["signals"]["weighted_score"] == 2.0
     assert result["signals"]["plan_delta_from_previous"] is not None
     assert result["signals"]["recurring_critiques"] == ["same issue"]

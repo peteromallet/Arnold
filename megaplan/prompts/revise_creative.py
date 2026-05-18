@@ -79,7 +79,7 @@ def _revise_creative_prompt(
         settled_decisions = decisions_data if isinstance(decisions_data, list) else decisions_data.get("decisions", [])
 
     contrast_instruction = ""
-    if configured_robustness(state) == "standard" and int(state.get("iteration") or 1) > 1:
+    if configured_robustness(state) == "full" and int(state.get("iteration") or 1) > 1:
         contrast_instruction = "- The revised stance must explicitly contrast the prior stance: say what you now refuse or keep differently.\n"
 
     return textwrap.dedent(

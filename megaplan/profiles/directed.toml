@@ -1,10 +1,13 @@
-# `led` — tier 2 (led). One premium model writes the plan; everything else
+# `directed` — tier 2. One premium model writes the plan; everything else
 # stays cheap.
+#
+# Canonical name for the tier-2 profile (legacy alias: `led` — both names
+# remain loadable while consumers migrate).
 #
 # Claude (default vendor) handles `plan`, `loop_plan`, and the two tiebreaker
 # slots — the phases where real architectural thinking maps the work. DeepSeek
 # V4 Pro handles every mechanical phase (prep, revise, gate, finalize,
-# execute, loop_execute). Kimi critiques+reviews.
+# execute, loop_execute) and also critiques+reviews.
 #
 # Use when the *planning* is the hard part but the implementation is mechanical
 # once mapped out — complex schema migrations where step ordering matters,
@@ -17,18 +20,17 @@
 #   * `--vendor codex` — flips the four `claude:low` slots (plan, loop_plan,
 #     tiebreakers) to `codex:low`. Everything else stays put.
 #   * `--vendor claude` — explicit no-op (matches the default).
-#   * `--critic kimi` — Kimi already critiques+reviews; no-op.
 #   * `--critic cross` — flips critique+review to the *other* premium relative
 #     to the resolved vendor. Note: this brings a premium into the critic
-#     role at tier 2, which is heavier than `led`'s usual shape; consider
-#     `thoughtful` if you want premium reasoning end-to-end.
+#     role at tier 2, which is heavier than `directed`'s usual shape; consider
+#     `partnered` if you want premium reasoning end-to-end.
 #   * `--phase-model phase=spec` — always honored.
 #
-# See docs/megaplan-rubric.md for the full rubric.
-[profiles.led]
+# See docs/megaplan-decision.md for the full rubric.
+[profiles.directed]
 plan                  = "claude:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-critique              = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
@@ -36,6 +38,6 @@ execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 feedback              = "claude:low"
 loop_plan             = "claude:low"
 loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-review                = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
+review                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 tiebreaker_researcher = "claude:low"
 tiebreaker_challenger = "claude:low"
