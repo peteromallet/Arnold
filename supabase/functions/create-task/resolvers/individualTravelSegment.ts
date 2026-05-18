@@ -111,32 +111,52 @@ async function resolveSegmentGenerationRoute(
 ): Promise<{ parentGenerationId: string; childGenerationId?: string }> {
   const parentGenerationId = await ensureShotParentGenerationId(context, input);
 
+  // When the frontend provides a specific child_generation_id (the lightbox is
+  // pointing at a row), trust it after verifying it actually belongs to this
+  // parent and pair position. This ensures the new variant lands on the same
+  // generation row the UI is rendering — without it, a pair-lookup against
+  // historical duplicates can pick a different row than the one shown.
+  if (input.child_generation_id) {
+    const { data: candidate, error: candidateError } = await context.supabaseAdmin
+      .from("generations")
+      .select("id, parent_generation_id, pair_shot_generation_id")
+      .eq("id", input.child_generation_id)
+      .maybeSingle();
+    if (candidateError) {
+      throw new Error(`validateChildGenerationId failed: ${candidateError.message}`);
+    }
+    if (
+      candidate
+      && candidate.parent_generation_id === parentGenerationId
+      && (!input.pair_shot_generation_id
+        || candidate.pair_shot_generation_id === input.pair_shot_generation_id)
+    ) {
+      return { parentGenerationId, childGenerationId: candidate.id };
+    }
+    // Fall through: candidate is stale, missing, or doesn't match this slot.
+  }
+
   if (input.pair_shot_generation_id) {
-    // pair_shot_generation_id is the authoritative position identifier.
-    // Always look up by pair first — even when child_generation_id is provided,
-    // the frontend may send a stale child_generation_id from variant params
-    // that no longer corresponds to the current timeline position.
-    const { data: pairMatch, error: pairError } = await context.supabaseAdmin
+    // Recovery path when no valid child_generation_id was supplied. Order by
+    // created_at DESC so historical duplicates (legacy slots with >1 row for
+    // the same pair) at least resolve deterministically to the newest, which
+    // is the one buildSegmentSlots also picks for display.
+    const { data: pairMatches, error: pairError } = await context.supabaseAdmin
       .from("generations")
       .select("id")
       .eq("parent_generation_id", parentGenerationId)
       .eq("pair_shot_generation_id", input.pair_shot_generation_id)
-      .limit(1)
-      .maybeSingle();
+      .order("created_at", { ascending: false })
+      .limit(1);
     if (pairError) {
       throw new Error(`lookupChildGenerationIdByPair failed: ${pairError.message}`);
     }
+    const pairMatch = pairMatches?.[0];
     if (typeof pairMatch?.id === "string") {
       return { parentGenerationId, childGenerationId: pairMatch.id };
     }
     // No child at this pair position — this is a new segment.
-    // Don't use the frontend's child_generation_id or fall back to child_order,
-    // which may point to a child at a different timeline position.
     return { parentGenerationId };
-  }
-
-  if (input.child_generation_id) {
-    return { parentGenerationId, childGenerationId: input.child_generation_id };
   }
 
   // Only fall back to child_order when no pair_shot_generation_id was provided
