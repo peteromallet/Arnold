@@ -1815,7 +1815,41 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--force", action="store_true", help="Overwrite existing files")
 
     init_parser = subparsers.add_parser("init")
-    init_parser.add_argument("--project-dir", required=True)
+    # --project-dir is normally required; the special case is --in-worktree,
+    # which supplies the project-dir itself (the newly-created worktree).
+    # We validate the mutual relationship in main() after parsing.
+    init_parser.add_argument("--project-dir", required=False)
+    init_parser.add_argument(
+        "--in-worktree",
+        default=None,
+        metavar="NAME",
+        help="Create a new git worktree at ~/Documents/.megaplan-worktrees/<name>/ "
+             "on a new branch and initialize the plan inside it. Name must match "
+             "^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir.",
+    )
+    init_parser.add_argument(
+        "--worktree-from",
+        default=None,
+        metavar="GITREF",
+        help="Base ref for the new worktree (default: current HEAD of the repo "
+             "where `megaplan init` was invoked). Only valid with --in-worktree.",
+    )
+    init_parser.add_argument(
+        "--clean-worktree",
+        action="store_true",
+        default=False,
+        help="With --in-worktree: fork from a clean base ref and leave any "
+             "uncommitted state behind in the source repo (no carry).",
+    )
+    init_parser.add_argument(
+        "--carry-dirty",
+        action="store_true",
+        default=False,
+        help="With --in-worktree: explicitly opt into carrying uncommitted "
+             "state from the source repo into the new worktree (this is the "
+             "default already when the source is dirty; the flag exists for "
+             "test/script clarity). Mutually exclusive with --clean-worktree.",
+    )
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument(
@@ -2409,6 +2443,140 @@ def _find_megaplan_root(start: Path) -> Path:
         current = parent
 
 
+def _setup_init_worktree(args: argparse.Namespace) -> None:
+    """When ``--in-worktree`` is set on ``megaplan init``, create the worktree
+    and rewrite ``args`` so the rest of the init flow lands inside it.
+
+    Safety contract: this function MUST be strictly additive. It may only
+    create one new branch + one new worktree directory. It never modifies the
+    invoking repo, its branches (other than the one it creates), its remotes,
+    its stash, or any other worktree. If anything looks ambiguous, it raises.
+    """
+    from megaplan.bakeoff.worktree import (
+        branch_exists,
+        carry_dirty_state_atomic,
+        create_named_worktree,
+        ensure_no_inprogress_op,
+        has_dirty_state,
+        resolve_ref,
+        validate_worktree_name,
+        worktree_registered,
+    )
+
+    name = getattr(args, "in_worktree", None)
+    clean_worktree = bool(getattr(args, "clean_worktree", False))
+    carry_dirty_flag = bool(getattr(args, "carry_dirty", False))
+    if clean_worktree and carry_dirty_flag:
+        raise CliError(
+            "invalid_args",
+            "--clean-worktree and --carry-dirty are mutually exclusive",
+        )
+    if name is None:
+        if getattr(args, "worktree_from", None):
+            raise CliError(
+                "invalid_args",
+                "--worktree-from is only valid alongside --in-worktree",
+            )
+        if clean_worktree or carry_dirty_flag:
+            raise CliError(
+                "invalid_args",
+                "--clean-worktree / --carry-dirty are only valid with --in-worktree",
+            )
+        return
+
+    if getattr(args, "project_dir", None):
+        raise CliError(
+            "invalid_args",
+            "pass either --project-dir or --in-worktree, not both",
+        )
+
+    validate_worktree_name(name)
+
+    # Locate the invoking repo. We deliberately do NOT use --project-dir here
+    # (we just rejected it above); we use cwd-walk-up so the user can run
+    # `megaplan init --in-worktree foo` from anywhere inside the repo.
+    invoking_repo = _find_git_root(Path.cwd().resolve())
+    if invoking_repo is None:
+        raise CliError(
+            "not_a_git_repo",
+            "--in-worktree requires running from inside a git repository",
+        )
+
+    ensure_no_inprogress_op(invoking_repo)
+
+    target = (Path.home() / "Documents" / ".megaplan-worktrees" / name).resolve()
+    if target.exists():
+        raise CliError(
+            "worktree_target_exists",
+            f"refusing to create worktree: target path already exists: {target}",
+        )
+    if worktree_registered(invoking_repo, target):
+        raise CliError(
+            "worktree_already_registered",
+            f"git already has a worktree registered at {target} "
+            "(run `git worktree prune` manually if it's stale)",
+        )
+    if branch_exists(invoking_repo, name):
+        raise CliError(
+            "worktree_branch_exists",
+            f"branch {name!r} already exists locally or on a remote; "
+            "pick a different --in-worktree name",
+        )
+
+    base_ref = getattr(args, "worktree_from", None) or "HEAD"
+    base_sha = resolve_ref(invoking_repo, base_ref)
+
+    create_named_worktree(invoking_repo, target, base_sha, name)
+
+    # Carry uncommitted state from the source repo into the new worktree
+    # unless the caller explicitly opted out via --clean-worktree. The source
+    # repo is read-only throughout: we only capture a diff and copy untracked
+    # files; we never run stash/checkout/reset/clean on it.
+    tracked_carried = 0
+    untracked_carried = 0
+    if not clean_worktree:
+        should_carry = carry_dirty_flag or has_dirty_state(invoking_repo)
+        if should_carry:
+            tracked_carried, untracked_carried = carry_dirty_state_atomic(
+                invoking_repo, target
+            )
+
+    # Rewrite args so the rest of the init flow lands inside the worktree.
+    args.project_dir = str(target)
+    # Stash audit data on args so handle_init can persist it into plan state.
+    args._worktree_meta = {
+        "name": name,
+        "path": str(target),
+        "branch": name,
+        "base_ref": base_ref,
+        "base_sha": base_sha,
+        "source_repo": str(invoking_repo),
+        "carried_tracked": tracked_carried,
+        "carried_untracked": untracked_carried,
+    }
+    # Update work-dir override so subprocess workers run in the worktree.
+    from megaplan.workers import set_work_dir_override
+    set_work_dir_override(target)
+
+    print(
+        f"Created worktree at {target} on branch {name} "
+        f"(base {base_sha[:12]}); initializing plan inside it...",
+        file=sys.stderr,
+    )
+    if tracked_carried or untracked_carried:
+        print(
+            f"warning: carried {tracked_carried} uncommitted file change(s) "
+            f"and {untracked_carried} untracked file(s) from {invoking_repo} "
+            f"into {target}. Source worktree is unchanged.\n"
+            f"  * To start the worktree from a clean base instead, commit your "
+            f"changes first or re-run with --clean-worktree.\n"
+            f"  * Files were carried as unstaged in the new worktree (staging "
+            f"information is not preserved). Run `git diff` or `git status` "
+            f"inside the worktree to inspect.",
+            file=sys.stderr,
+        )
+
+
 def _find_git_root(start: Path) -> Path | None:
     """Walk up to find the directory containing ``.git``."""
     current = start
@@ -2494,6 +2662,21 @@ def main(argv: list[str] | None = None) -> int:
     from megaplan.workers import set_work_dir_override
     work_dir_override = getattr(args, "work_dir", None)
     set_work_dir_override(Path(work_dir_override) if work_dir_override else None)
+
+    # Handle --in-worktree on `init` *before* resolving project root. This
+    # creates the worktree and rewrites args.project_dir to point at it, so
+    # everything downstream behaves as if the user had passed --project-dir
+    # <worktree> manually.
+    if args.command == "init":
+        try:
+            _setup_init_worktree(args)
+        except CliError as error:
+            return error_response(error)
+        if not getattr(args, "project_dir", None):
+            return error_response(CliError(
+                "invalid_args",
+                "megaplan init requires --project-dir or --in-worktree",
+            ))
 
     try:
         root = _resolve_project_root(args)

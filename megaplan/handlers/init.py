@@ -168,6 +168,11 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["with_prep"] = True
     if getattr(args, "with_feedback", False):
         state["config"]["with_feedback"] = True
+    # If the plan was initialized inside a freshly-created worktree
+    # (via `megaplan init --in-worktree <name>`), persist the audit trail.
+    worktree_meta = getattr(args, "_worktree_meta", None)
+    if worktree_meta:
+        state["meta"]["worktree"] = dict(worktree_meta)
     if normalized_output_path is not None:
         state["config"]["output_path"] = normalized_output_path
     if raw_form:
@@ -210,17 +215,27 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     )
     save_state(plan_dir, state)
     next_steps = workflow_next(state)
+    if worktree_meta:
+        summary = (
+            f"Created worktree at {worktree_meta['path']} on branch "
+            f"{worktree_meta['branch']}; plan initialized at "
+            f"{plan_dir}."
+        )
+    else:
+        summary = f"Initialized plan '{plan_name}' for project {project_dir}"
     response: StepResponse = {
         "success": True,
         "step": "init",
         "plan": plan_name,
         "state": STATE_INITIALIZED,
-        "summary": f"Initialized plan '{plan_name}' for project {project_dir}",
+        "summary": summary,
         "artifacts": ["state.json"],
         "next_step": next_steps[0] if next_steps else None,
         "auto_approve": auto_approve,
         "robustness": robustness,
     }
+    if worktree_meta:
+        response["worktree"] = dict(worktree_meta)
     if parse_warnings:
         response["warnings"] = parse_warnings
     if bool(getattr(args, "auto_start", False)):
