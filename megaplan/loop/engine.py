@@ -445,7 +445,7 @@ def init_loop(name: str, goal: str, command: str, project_dir: str, args: argpar
     observe_break_patterns = _string_list(getattr(normalized, "observe_break_patterns", None))
     if observe_break_patterns:
         spec["observe_break_patterns"] = observe_break_patterns
-    config = {"project_dir": str(Path(project_dir).resolve()), "robustness": getattr(normalized, "robustness", "robust")}
+    config = {"project_dir": str(Path(project_dir).resolve()), "robustness": getattr(normalized, "robustness", "thorough")}
     if getattr(normalized, "agent", None):
         config["agents"] = {
             "loop_plan": normalized.agent,

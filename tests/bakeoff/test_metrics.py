@@ -38,7 +38,7 @@ def _state(worktree: Path) -> dict:
 
 def _record(worktree: Path, outcome: dict | None = None) -> dict:
     return {
-        "name": "standard",
+        "name": "apex",
         "worktree": str(worktree),
         "plan_id": "exp-1",
         "pid": None,

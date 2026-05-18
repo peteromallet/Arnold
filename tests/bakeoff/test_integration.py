@@ -137,23 +137,23 @@ def test_bakeoff_happy_path_compare_pick_merge_with_untracked_file(
 ) -> None:
     root = _prepare_repo(tmp_path, monkeypatch)
     calls: list[str] = []
-    _install_fake_spawn(monkeypatch, calls=calls, write_untracked_for={"standard"})
+    _install_fake_spawn(monkeypatch, calls=calls, write_untracked_for={"apex"})
 
     state = asyncio.run(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard", "all-open", "extra"],
+            ["apex", "all-open", "extra"],
             "code",
             "exp-happy",
         )
     )
 
-    assert sorted(calls) == ["all-open", "extra", "standard"]
+    assert sorted(calls) == ["all-open", "apex", "extra"]
     assert state["phase"] == "running"
     assert handle_status(root, Namespace(exp="exp-happy")) == 0
     status_output = capsys.readouterr().out
-    assert "standard" in status_output
+    assert "apex" in status_output
     assert "all-open" in status_output
     assert "extra" in status_output
 
@@ -161,24 +161,24 @@ def test_bakeoff_happy_path_compare_pick_merge_with_untracked_file(
     comparison_path = root / ".megaplan" / "bakeoffs" / "exp-happy" / "comparison.json"
     comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
     assert comparison["judge_verdict"] is None
-    assert {profile["name"] for profile in comparison["profiles"]} == {"standard", "all-open", "extra"}
+    assert {profile["name"] for profile in comparison["profiles"]} == {"apex", "all-open", "extra"}
 
-    assert handle_pick(root, Namespace(exp="exp-happy", profile="standard", rationale="best")) == 0
+    assert handle_pick(root, Namespace(exp="exp-happy", profile="apex", rationale="best")) == 0
     assert handle_merge(root, Namespace(exp="exp-happy")) == 0
 
     merged_state = load_bakeoff_state(root, "exp-happy")
     assert merged_state["phase"] == "merged"
-    assert (root / "src" / "standard_generated.py").read_text(encoding="utf-8") == "VALUE = 7\n"
+    assert (root / "src" / "apex_generated.py").read_text(encoding="utf-8") == "VALUE = 7\n"
     winner_patch = (root / ".megaplan" / "bakeoffs" / "exp-happy" / "winner.patch").read_text(
         encoding="utf-8"
     )
     assert "--- /dev/null" in winner_patch
-    for profile in ["standard", "all-open", "extra"]:
+    for profile in ["apex", "all-open", "extra"]:
         assert (root / ".megaplan" / "bakeoffs" / "exp-happy" / profile / "plan").is_dir()
         record = next(item for item in merged_state["profiles"] if item["name"] == profile)
         assert not Path(record["worktree"]).exists()
     live_plans = sorted(path.name for path in (root / ".megaplan" / "plans").iterdir() if path.is_dir())
-    assert live_plans == ["exp-happy-standard"]
+    assert live_plans == ["exp-happy-apex"]
 
 
 def test_bakeoff_crash_isolation_still_compares_siblings(
@@ -193,7 +193,7 @@ def test_bakeoff_crash_isolation_still_compares_siblings(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard", "all-open", "extra"],
+            ["apex", "all-open", "extra"],
             "code",
             "exp-crash",
         )
@@ -252,7 +252,7 @@ def test_bakeoff_init_tolerates_missing_project_profiles_file(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard"],
+            ["apex"],
             "code",
             "exp-no-proj-profile",
         )
@@ -290,7 +290,7 @@ def test_bakeoff_detach_returns_without_awaiting_profile_outcomes(
             orchestrator.run_bakeoff(
                 root,
                 root / "idea.md",
-                ["standard"],
+                ["apex"],
                 "code",
                 "exp-detach",
                 detach=True,
@@ -321,12 +321,12 @@ def test_bakeoff_resume_relaunches_only_nonterminal_profile(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard", "all-open"],
+            ["apex", "all-open"],
             "code",
             "exp-resume",
         )
     )
-    assert sorted(initial_calls) == ["all-open", "standard"]
+    assert sorted(initial_calls) == ["all-open", "apex"]
 
     resume_calls: list[str] = []
     _install_fake_spawn(monkeypatch, calls=resume_calls)
@@ -376,7 +376,7 @@ def test_bakeoff_run_robustness_propagation(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard"],
+            ["apex"],
             "code",
             "exp-robust",
             robustness="light",
@@ -395,7 +395,7 @@ def test_bakeoff_run_robustness_propagation(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard"],
+            ["apex"],
             "code",
             "exp-no-robust",
         )

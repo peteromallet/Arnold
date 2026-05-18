@@ -710,7 +710,7 @@ def _append_scope_drift_blocker(
     drift: Any,
 ) -> None:
     robustness = configured_robustness(state)
-    if drift.severity == "high" and robustness in {"robust", "superrobust"}:
+    if drift.severity == "high" and robustness in {"thorough", "extreme"}:
         blocking_reasons.append(
             f"scope_drift_severity=high: unclaimed files {sorted(drift.files_added)} "
             f"with {drift.loc_added_outside_claimed} LOC outside the claimed set"

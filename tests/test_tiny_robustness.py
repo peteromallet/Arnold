@@ -67,7 +67,7 @@ def test_tiny_robustness_rejects_manual_critique(
     fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="tiny")
     megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
 
-    with pytest.raises(CliError, match="tiny robustness skips critique"):
+    with pytest.raises(CliError, match="bare robustness skips critique"):
         megaplan.handle_critique(fixture.root, fixture.make_args(plan=fixture.plan_name))
 
 

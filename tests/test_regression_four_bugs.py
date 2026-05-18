@@ -36,7 +36,7 @@ def test_bug1_cli_provenance_roundtrips(tmp_path: Path) -> None:
 
     provenance = {
         "phase_model": ["openai/gpt-4.1"],
-        "profile": "standard",
+        "profile": "apex",
         "auto_approve": True,
         "mode": "code",
         "robustness": "standard",
@@ -55,7 +55,7 @@ def test_bug1_cli_provenance_roundtrips(tmp_path: Path) -> None:
     assert rehydrated is not None
     assert rehydrated.cli_provenance == provenance
     assert rehydrated.cli_provenance["phase_model"] == ["openai/gpt-4.1"]
-    assert rehydrated.cli_provenance["profile"] == "standard"
+    assert rehydrated.cli_provenance["profile"] == "apex"
 
 
 # ---------------------------------------------------------------------------

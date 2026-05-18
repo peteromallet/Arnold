@@ -224,7 +224,7 @@ def _resolve_review_outcome(
                 return "success", STATE_DONE, None
         cap_key = (
             "max_robust_review_rework_cycles"
-            if robustness in {"robust", "superrobust"}
+            if robustness in {"thorough", "extreme"}
             else "max_review_rework_cycles"
         )
         max_review_rework_cycles = get_effective("execution", cap_key)
@@ -447,13 +447,13 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         robustness = configured_robustness(state)
         plan_mode = state["config"].get("mode", "code")
         pre_check_flags: list[dict[str, Any]] = []
-        if robustness in {"standard", "robust", "superrobust"} and not is_prose_mode(state):
+        if robustness in {"full", "thorough", "extreme"} and not is_prose_mode(state):
             pre_check_flags = _pkg.run_pre_checks(plan_dir, state, Path(state["config"]["project_dir"]))
-        if robustness in {"standard", "light", "robust"}:
+        if robustness in {"full", "light", "thorough"}:
             resolved = None
             prompt_override = None
             prompt_kwargs = None
-            if robustness in {"standard", "robust"}:
+            if robustness in {"full", "thorough"}:
                 resolved = _pkg.resolve_agent_mode("review", args)
                 if _supports_prompt_kwargs(worker_module.run_step_with_worker):
                     prompt_kwargs = {"pre_check_flags": pre_check_flags}
@@ -475,7 +475,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
             )
-            if robustness in {"standard", "robust"}:
+            if robustness in {"full", "thorough"}:
                 worker.payload["pre_check_flags"] = pre_check_flags
                 _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
             atomic_write_json(plan_dir / "review.json", worker.payload)
@@ -508,7 +508,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 run_id = set_active_step(state, step="review", agent=agent_type, mode=mode, model=model)
                 _emit_phase_notice("review")
                 save_state_merge_meta(plan_dir, state)
-                checks = review_checks.checks_for_robustness("superrobust")
+                checks = review_checks.checks_for_robustness("extreme")
                 parallel_result = _pkg.run_parallel_review(
                     state,
                     plan_dir,

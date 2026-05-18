@@ -149,8 +149,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         robustness = configured_robustness(state)
         with_feedback = state.get("config", {}).get("with_feedback", False)
         if not workflow_includes_step(robustness, "review") and not workflow_includes_step(robustness, "feedback", with_feedback=with_feedback) and response.get("state") == STATE_EXECUTED:
-            if robustness == "tiny":
-                # tiny skips review entirely — no stub artifact, no deferred-must check.
+            if robustness == "bare":
+                # bare skips review entirely — no stub artifact, no deferred-must check.
                 # If any success criteria need human verification, they'll surface
                 # through the normal awaiting-human path on the next run.
                 state["current_state"] = STATE_DONE

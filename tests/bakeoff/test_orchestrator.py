@@ -56,7 +56,7 @@ def test_init_profile_appends_robustness(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     record = asyncio.run(
         orchestrator._init_profile(
-            root, state, "standard", "exp", "abc", idea, robustness="light"
+            root, state, "apex", "exp", "abc", idea, robustness="light"
         )
     )
 
@@ -65,7 +65,7 @@ def test_init_profile_appends_robustness(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert "--robustness" in cmd
     rob_idx = cmd.index("--robustness")
     assert cmd[rob_idx + 1] == "light"
-    assert record["name"] == "standard"
+    assert record["name"] == "apex"
 
 
 def test_init_profile_threads_doc_mode_and_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -107,7 +107,7 @@ def test_init_profile_threads_doc_mode_and_output(monkeypatch: pytest.MonkeyPatc
 
     record = asyncio.run(
         orchestrator._init_profile(
-            root, state, "standard", "exp", "abc", idea,
+            root, state, "apex", "exp", "abc", idea,
             mode="doc", output="docs/foo.md",
         )
     )
@@ -120,7 +120,7 @@ def test_init_profile_threads_doc_mode_and_output(monkeypatch: pytest.MonkeyPatc
     assert "--output" in cmd
     out_idx = cmd.index("--output")
     assert cmd[out_idx + 1] == "docs/foo.md"
-    assert record["name"] == "standard"
+    assert record["name"] == "apex"
 
 
 def test_init_profile_doc_mode_requires_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -152,7 +152,7 @@ def test_init_profile_doc_mode_requires_output(monkeypatch: pytest.MonkeyPatch, 
     with pytest.raises(CliError) as excinfo:
         asyncio.run(
             orchestrator._init_profile(
-                root, state, "standard", "exp", "abc", idea,
+                root, state, "apex", "exp", "abc", idea,
                 mode="doc", output=None,
             )
         )
@@ -216,7 +216,7 @@ def test_run_bakeoff_persists_doc_mode_and_output_in_state(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard"],
+            ["apex"],
             "doc",
             "exp-doc",
             output="docs/foo.md",
@@ -283,7 +283,7 @@ def test_run_bakeoff_metaplan_alias_normalizes_to_doc(
         orchestrator.run_bakeoff(
             root,
             root / "idea.md",
-            ["standard"],
+            ["apex"],
             "metaplan",
             "exp-meta",
             output="docs/foo.md",
@@ -331,11 +331,11 @@ def test_init_profile_omits_robustness_when_none(monkeypatch: pytest.MonkeyPatch
 
     record = asyncio.run(
         orchestrator._init_profile(
-            root, state, "standard", "exp", "abc", idea
+            root, state, "apex", "exp", "abc", idea
         )
     )
 
     assert len(captured_args) == 1
     cmd = captured_args[0]
     assert "--robustness" not in cmd
-    assert record["name"] == "standard"
+    assert record["name"] == "apex"

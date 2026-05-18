@@ -22,7 +22,7 @@ def _init_repo(repo: Path) -> None:
 def test_worktree_lifecycle_detached_outside_repo_and_crash_marker(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
-    target = tmp_path / ".megaplan-worktrees" / "exp-1" / "standard"
+    target = tmp_path / ".megaplan-worktrees" / "exp-1" / "apex"
     branches_before = _git(repo, "branch", "--list").stdout.strip()
 
     create_worktree(repo, target, capture_base_sha(repo))

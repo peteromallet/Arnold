@@ -1,4 +1,4 @@
-"""Cheap advisory pre-checks for robust/superrobust review."""
+"""Cheap advisory pre-checks for thorough/extreme review."""
 
 from __future__ import annotations
 

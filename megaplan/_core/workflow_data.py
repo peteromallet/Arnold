@@ -86,9 +86,9 @@ WORKFLOW: dict[str, list[Transition]] = {
 
 
 _ROBUSTNESS_OVERRIDES: dict[str, dict[str, list[Transition]]] = {
-    "superrobust": {},
-    "robust": {},
-    "standard": {
+    "extreme": {},
+    "thorough": {},
+    "full": {
         STATE_INITIALIZED: [
             Transition("plan", STATE_PLANNED),
         ],
@@ -102,7 +102,7 @@ _ROBUSTNESS_OVERRIDES: dict[str, dict[str, list[Transition]]] = {
         ],
         STATE_EXECUTED: [],
     },
-    "tiny": {
+    "bare": {
         STATE_PLANNED: [
             Transition("finalize", STATE_GATED),
         ],
@@ -111,9 +111,9 @@ _ROBUSTNESS_OVERRIDES: dict[str, dict[str, list[Transition]]] = {
 
 
 _ROBUSTNESS_WORKFLOW_LEVELS: dict[str, tuple[str, ...]] = {
-    "superrobust": ("superrobust",),
-    "robust": ("robust",),
-    "standard": ("standard",),
-    "light": ("standard", "light"),
-    "tiny": ("standard", "light", "tiny"),
+    "extreme": ("extreme",),
+    "thorough": ("thorough",),
+    "full": ("full",),
+    "light": ("full", "light"),
+    "bare": ("full", "light", "bare"),
 }
