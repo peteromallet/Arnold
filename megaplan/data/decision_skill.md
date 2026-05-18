@@ -1,8 +1,3 @@
----
-name: megaplan-rubric
-description: Pick the right megaplan profile, thinking-strength tier, and robustness level for the work in front of you — for both Codex and Claude harnesses. Consult before invoking megaplan.
----
-
 # Megaplan rubric — three questions, three dials
 
 Every piece of work answered with three questions. Each question points at one dial. The dials are **independent** — work through each one ignoring the others — then **weigh the three together** holistically to land on a coherent judgment.
@@ -87,13 +82,16 @@ The `--robustness` flag. Picks how many phases run and how many critique passes 
 
 | Setting | Workflow | When to use |
 |---|---|---|
-| (skip megaplan) | — | Single-file fix, anything you can hold in your head. Just do the work directly. |
-| `light` | plan → critique → revise → finalize → execute (no prep, no gate, no review) | Small/scoped, well-known feature, low blast radius. ~5 phases instead of 8. |
+| (skip megaplan) | — | Single-file fix, anything you can hold in your head. Just do the work directly — or delegate to a subagent if the work is too big to hold in context but doesn't need any harness rigor. |
+| `tiny` | plan → finalize → execute (no prep, no critique, no gate, no review) | Crisp, well-scoped task where you mostly just want the planner to lay out the steps before the executor runs. No second opinion, no post-mortem. 3 phases. **Strictly cheaper than `light`.** Reach for it when the brief is unambiguous and the work is mechanical enough that critique would be a no-op. |
+| `light` | plan → critique → revise → finalize → execute (no prep, no gate, no review) | Small/scoped, well-known feature, low blast radius — but you want **one** sense-check pass on the plan before committing. ~5 phases instead of 8. |
 | `standard` *(default)* | prep → plan → critique → gate → revise → finalize → execute → review; 4 critique checks | Cross-cutting, unfamiliar code, ambiguous brief. **Fine for almost everything.** |
 | `robust` | Same shape as `standard`, 8 critique checks + parallel critique | Security, data migration, public API contract — anything where a regression = production incident. **Extremely rare.** You should be able to name the specific stakes that warrant it. |
 | `superrobust` | `robust` + parallel review | Both deep critique *and* concurrent review matter. **Vanishingly rare.** Only when the user specifically asks for it. |
 
-`standard` is home base. `light` is a cost optimization for cleanly-scoped work. `robust` should feel exceptional — you're saying "this regression would page someone." `superrobust` is a user-requested override, never a default.
+`standard` is home base. `light` is a cost optimization for cleanly-scoped work that still wants a sense-check. `tiny` is for when even one critique pass is overkill — you're paying for the planner-then-executor split and nothing else. `robust` should feel exceptional — you're saying "this regression would page someone." `superrobust` is a user-requested override, never a default.
+
+**Where `tiny` slots in:** between "skip megaplan" and `light`. Skip megaplan when you can do it inline or hand it to a subagent. Pick `tiny` when the work is multi-step enough to deserve a written plan + an executor pass, but the plan doesn't need a critic. Pick `light` when you want one critique pass on the plan before execution. The hops are real — don't reach past `tiny` reflexively.
 
 Cost bands in the tier table above are at `light`. Roughly 1.5-2× the per-phase cost going from `light` → `standard`, and another ~1.3× going to `robust`.
 
@@ -157,7 +155,7 @@ The auto driver runs this non-interactively — never blocks on human input, nev
 
 ---
 
-## Notation for recording profile choices
+## Notation for recording profile choices</
 
 For sprint notes, brief headers, commit messages, or anywhere you need to write down a profile choice compactly, use the slash form: **`profile/robustness/depth`** — defaults can be omitted.
 
@@ -204,7 +202,7 @@ The shorthand is for **recording**, not for the CLI. Use it in:
 - Commit messages ("ran as `thoughtful`, defaults")
 - Slack / chat references when describing a sprint setup at a glance
 
-The actual invocation is still `megaplan init --profile … --robustness … --depth …` — see "Running it" below for the mapping.
+The actual invocation is still `megaplan init --profile … --robustness … --depth …` — see "Running it" below for the mapping.</
 
 ---
 
@@ -222,11 +220,10 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 - **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it (no premium phases); tier 5 silently ignores it (vendor-locked).
 - **`--critic kimi|cross`** — overrides the critique+review pair (preserving the invariant — see below). `kimi` swaps in Kimi for both phases; `cross` swaps to the other premium vendor relative to `--vendor`. Silently ignored at tier 5.
-- **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `robust`/`superrobust`. See "When to add a prep phase" above.
-- **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "When to add a feedback phase" above.</
+- **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "When to add a feedback phase" above.
 
-### The escape hatch
+### The escape hatch</
 
 **`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it.
 
@@ -246,7 +243,6 @@ For when the work turns out different than expected:
 - `megaplan override set-profile --profile NAME --plan ID` — swap tier mid-run. Started on `thoughtful`, hit something gnarlier, escalate to `premium` for the remainder.
 - `megaplan override set-robustness --robustness LEVEL --plan ID` — same for the planning-complexity dial.
 - `megaplan override replan --plan ID` — back up to planning and redo with whatever models / robustness are now active.
-- `megaplan override add-note --plan ID --note "..."` — inject guidance into an active plan without restarting any phase. Read by every subsequent phase. The brief is snapshotted at `init`; later edits to the idea-file are NOT re-read, so this is the verb for "I missed something." `--source user` (default) blocks `force-proceed` under `--strict-notes`; `--source driver` doesn't. **`megaplan feedback` is end-of-run rating, not in-flight guidance** — common confusion.
 
 **If a run is struggling, escalate mid-flight rather than letting it grind.** Common signals: the plan keeps missing concerns the critique surfaces; revise doesn't actually resolve the critique's flags; the executor produces work the review can't accept; iteration cycles through the same defects without converging. Don't sit through a degenerate run — `override set-profile` to the next tier up (or bump `--robustness`), and let the remainder benefit from the better setup. One wasted phase costs much less than restarting the sprint. The same applies to depth: if the planner is clearly under-deliberating, `override` with a higher `--depth` rather than accepting a thin plan.
 
@@ -381,29 +377,29 @@ The canonical Kimi spec changed from `hermes:moonshotai/kimi-k2.6` (OpenRouter-r
 - **Scripts that don't pin the spec** keep working without changes — the rewrite is internal.
 - **Scripts that pin the old spec via `--phase-model critique=hermes:moonshotai/kimi-k2.6`** still parse and run *as strings*, but they'll be calling a model that may no longer be available on OpenRouter. Replace the pinned spec with `hermes:fireworks:accounts/fireworks/models/kimi-k2p6`, or — usually cleaner — drop the `--phase-model` pin in favor of `--critic kimi`, which always tracks the canonical Kimi spec.
 
-### DeepSeek spec migrated to Fireworks `deepseek-v4-pro`
+### DeepSeek v4-pro defaults to direct API
 
-The canonical DeepSeek spec changed from `hermes:deepseek/deepseek-v4-pro` (DeepSeek's direct API via OpenRouter) and `hermes:deepseek:deepseek-v4-pro` (direct-provider form) to `hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro` (Fireworks-direct). Every built-in profile that used DeepSeek (`basic`, `led`, `thoughtful`, `marlowe`, `holmes`, `nancy`, the detective cluster, `all-deepseek-pro`) has been updated.
+Canonical DeepSeek v4-pro slots in built-in profiles are provider-swapped at runtime. The default route is `hermes:deepseek:deepseek-v4-pro` through `DEEPSEEK_API_KEY`; pass `--deepseek-provider fireworks` to route those same canonical slots through `hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro`.
 
 - **Scripts that don't pin the spec** keep working without changes — the rewrite is internal.
-- **Scripts that pin the old spec via `--phase-model`** still parse and run *as strings*; they'll route via the previous provider as long as those routes remain configured. Migrate the pinned spec to `hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro` to match the new canonical routing.
+- **Scripts that pin a spec via `--phase-model`** run that exact string; provider rewriting only applies to profile slots.
 
 ---
 
 ## Skill installation
 
-This doc doubles as the SKILL.md body for the `megaplan-rubric` skill. Wire it up so Claude Code and Codex consult it automatically:
+This doc doubles as the SKILL.md body for the `megaplan-decision` skill (legacy name: `megaplan-rubric`). Wire it up so Claude Code and Codex consult it automatically:
 
 ```bash
-DOC="$(pwd)/docs/megaplan-rubric.md"   # run from the megaplan repo root
+DOC="$(pwd)/docs/megaplan-decision.md"   # run from the megaplan repo root
 
 # Claude Code skill
-mkdir -p ~/.claude/skills/megaplan-rubric
-ln -sf "$DOC" ~/.claude/skills/megaplan-rubric/SKILL.md
+mkdir -p ~/.claude/skills/megaplan-decision
+ln -sf "$DOC" ~/.claude/skills/megaplan-decision/SKILL.md
 
 # Codex skill
-mkdir -p ~/.codex/skills/megaplan-rubric
-ln -sf "$DOC" ~/.codex/skills/megaplan-rubric/SKILL.md
+mkdir -p ~/.codex/skills/megaplan-decision
+ln -sf "$DOC" ~/.codex/skills/megaplan-decision/SKILL.md
 ```
 
 Restart Claude Code / Codex after symlinking. Edits to this file propagate to both skills. Multiple people on a team each run the same commands against their own checkout — never share a symlink to someone else's path.

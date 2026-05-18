@@ -8,7 +8,7 @@ from typing import Any
 from megaplan.runtime.doc_assembly import extract_settled_decisions
 from megaplan.forms import available_form_ids
 from megaplan.profiles import apply_profile_expansion
-from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse
+from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse, normalize_robustness
 from megaplan._core import (
     append_history,
     ensure_runtime_layout,
@@ -97,8 +97,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     robustness = getattr(args, "robustness", None)
     if robustness is None:
         robustness = get_effective("execution", "robustness")
-    if robustness not in ROBUSTNESS_LEVELS:
-        robustness = "standard"
+    # Accept canonical or legacy names; normalize to canonical for storage.
+    robustness = normalize_robustness(robustness)
     auto_approve_value = getattr(args, "auto_approve", None)
     if auto_approve_value is None:
         auto_approve_value = get_effective("execution", "auto_approve")

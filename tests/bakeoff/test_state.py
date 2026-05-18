@@ -21,15 +21,15 @@ def test_bakeoff_state_round_trip_atomic_and_schema_pinned(tmp_path: Path) -> No
         "mode": "code",
         "profiles": [
             {
-                "name": "standard",
-                "worktree": str(worktree_root(root, "exp-1") / "standard"),
+                "name": "apex",
+                "worktree": str(worktree_root(root, "exp-1") / "apex"),
                 "plan_id": "exp-1",
                 "pid": None,
                 "launched_at": None,
                 "terminated_at": None,
                 "outcome": None,
-                "log_path": str(root / ".megaplan" / "bakeoffs" / "exp-1" / "standard" / "auto.log"),
-                "outcome_path": str(root / ".megaplan" / "bakeoffs" / "exp-1" / "standard" / "outcome.json"),
+                "log_path": str(root / ".megaplan" / "bakeoffs" / "exp-1" / "apex" / "auto.log"),
+                "outcome_path": str(root / ".megaplan" / "bakeoffs" / "exp-1" / "apex" / "outcome.json"),
             }
         ],
         "phase": "running",

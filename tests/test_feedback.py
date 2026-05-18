@@ -134,7 +134,7 @@ def test_filter_by_profile_substring() -> None:
 
     rows = [
         _row("a", "all-claude", "/r1", overall=8),
-        _row("b", "poirot", "/r2", overall=7),
+        _row("b", "apex", "/r2", overall=7),
         _row("c", None, "/r3", overall=9),
     ]
     out = _filter_feedback_rows(rows, Namespace(profile="claude", repo=None, min_rating=None, max_rating=None, stage=None, has_comment=False))
@@ -182,9 +182,9 @@ def test_render_feedback_table_empty_and_populated() -> None:
     from megaplan.cli import _render_feedback_table
 
     assert _render_feedback_table([]) == "(no matches)"
-    out = _render_feedback_table([_row("demo", "poirot", "/repo/x", overall=8, comment="solid run")])
+    out = _render_feedback_table([_row("demo", "apex", "/repo/x", overall=8, comment="solid run")])
     assert "demo" in out
-    assert "poirot" in out
+    assert "apex" in out
     assert "8/10" in out
     assert "solid run" in out
 
@@ -199,13 +199,13 @@ def test_collect_feedback_rows_walks_plan_tree(tmp_path: Path, monkeypatch) -> N
     project = tmp_path / "proj"
     plan_dir = project / ".megaplan" / "plans" / "my-plan"
     plan_dir.mkdir(parents=True)
-    atomic_write_text(plan_dir / "state.json", '{"name":"my-plan","idea":"i","current_state":"done","iteration":1,"created_at":"2026-01-01T00:00:00Z","config":{"profile":"poirot","project_dir":"/work/proj"},"sessions":{},"plan_versions":[],"history":[],"meta":{},"last_gate":{}}')
+    atomic_write_text(plan_dir / "state.json", '{"name":"my-plan","idea":"i","current_state":"done","iteration":1,"created_at":"2026-01-01T00:00:00Z","config":{"profile":"apex","project_dir":"/work/proj"},"sessions":{},"plan_versions":[],"history":[],"meta":{},"last_gate":{}}')
     atomic_write_text(plan_dir / "feedback.md", "## Overall\n\nrating: 8\ncomment: nice\n")
 
     rows = _collect_feedback_rows(project, all_system=False, include_db=False)
     assert len(rows) == 1
     row = rows[0]
     assert row["plan"] == "my-plan"
-    assert row["profile"] == "poirot"
+    assert row["profile"] == "apex"
     assert row["repo"] == "/work/proj"
     assert row["feedback"]["overall"]["rating"] == 8

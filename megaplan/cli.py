@@ -16,6 +16,7 @@ from megaplan.types import (
     DEFAULT_AGENT_ROUTING,
     DEFAULTS,
     KNOWN_AGENTS,
+    ROBUSTNESS_ACCEPTED,
     ROBUSTNESS_LEVELS,
     STATE_DONE,
     STATE_REVIEWED,
@@ -723,9 +724,9 @@ description: File and manage megaplan tickets — short, repo-scoped notes on pr
 
 """
 
-_RUBRIC_SKILL_HEADER = """\
+_DECISION_SKILL_HEADER = """\
 ---
-name: megaplan-rubric
+name: megaplan-decision
 description: Pick the right megaplan profile, thinking-strength tier, and robustness level for the work in front of you — for both Codex and Claude harnesses. Consult before invoking megaplan.
 ---
 
@@ -769,15 +770,17 @@ def _canonical_tickets_skill() -> str:
     return resources.files("megaplan").joinpath("data", "tickets_skill.md").read_text(encoding="utf-8")
 
 
-def _canonical_rubric_skill() -> str:
-    return resources.files("megaplan").joinpath("data", "rubric_skill.md").read_text(encoding="utf-8")
+def _canonical_decision_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "decision_skill.md").read_text(encoding="utf-8")
 
 
 def bundled_global_file(name: str) -> str:
     if name == "tickets_skill.md":
         return _TICKETS_SKILL_HEADER + _canonical_tickets_skill()
-    if name == "rubric_skill.md":
-        return _RUBRIC_SKILL_HEADER + _canonical_rubric_skill()
+    # `decision_skill.md` is the canonical bundle name; `rubric_skill.md`
+    # is accepted for back-compat with any in-flight callers.
+    if name in {"decision_skill.md", "rubric_skill.md"}:
+        return _DECISION_SKILL_HEADER + _canonical_decision_skill()
     content = _canonical_instructions()
     if name == "claude_skill.md":
         return _SKILL_HEADER + content + "\n\n" + _claude_subagent_appendix()
@@ -796,8 +799,8 @@ _GLOBAL_TARGETS = [
     {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "cursor_rule.mdc"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md"},
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-rubric/SKILL.md", "data": "rubric_skill.md"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-rubric/SKILL.md", "data": "rubric_skill.md"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md"},
 ]
 
 
@@ -1784,11 +1787,11 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
         default=False,
         help="Force the visible prep phase into the workflow regardless of "
              "--robustness. By default, prep only runs at --robustness "
-             "robust|superrobust; this flag adds prep to standard / light / "
-             "tiny so the planner can do explicit research before committing "
+             "thorough|extreme; this flag adds prep to full / light / "
+             "bare so the planner can do explicit research before committing "
              "to a plan. Useful for unfamiliar libraries, novel external "
              "APIs, research-heavy briefs, or ambiguous requirements. "
-             "Redundant on --robustness robust|superrobust (no-op).",
+             "Redundant on --robustness thorough|extreme (no-op).",
     )
     parser.add_argument(
         "--with-feedback",
@@ -1827,7 +1830,9 @@ def build_parser() -> argparse.ArgumentParser:
             "guidance into a hard human-required signal. Auto-on for --mode metaplan/doc."
         ),
     )
-    init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
+    # Accept canonical names plus legacy aliases (tiny|standard|robust|superrobust);
+    # ``normalize_robustness`` collapses them downstream.
+    init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None)
     init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke", "creative"], default=None,
                              help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
                                   "(design/spec artifact — 'metaplan' is an alias for 'doc'), or "
@@ -2059,7 +2064,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="workflow: re-run the AI rating pass even if feedback.md already has user fields. "
              "Overwrites ai_rating/ai_comment only; never touches user rating:/comment:.",
     )
-    feedback_parser.add_argument("--profile", default=None, help="search: substring match on plan profile (e.g. 'claude', 'poirot')")
+    feedback_parser.add_argument("--profile", default=None, help="search: substring match on plan profile (e.g. 'claude', 'apex')")
     feedback_parser.add_argument("--repo", default=None, help="search: substring match on plan project_dir / repo path")
     feedback_parser.add_argument("--min-rating", type=int, default=None, help="search: only show plans with Overall rating >= N")
     feedback_parser.add_argument("--max-rating", type=int, default=None, help="search: only show plans with Overall rating <= N")
@@ -2168,7 +2173,7 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--plan")
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
-    override_parser.add_argument("--robustness", choices=list(ROBUSTNESS_LEVELS), default=None)
+    override_parser.add_argument("--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None)
     override_parser.add_argument("--profile", default=None)
     # strict-notes plumbing. Only meaningful for specific override_action values, but
     # the override parser is flat (single positional + flags), so the flags live here.
@@ -2547,7 +2552,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "override" and args.override_action == "add-note" and not args.note:
             raise CliError("invalid_args", "override add-note requires a note")
         if args.command == "override" and args.override_action == "set-robustness" and not args.robustness:
-            raise CliError("invalid_args", f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_LEVELS)}")
+            raise CliError("invalid_args", f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_ACCEPTED)}")
         if args.command == "override" and args.override_action == "set-profile" and not args.profile:
             raise CliError("invalid_args", "override set-profile requires --profile NAME")
         if args.command == "init" and getattr(args, "from_arnold_epic", None):

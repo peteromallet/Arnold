@@ -109,9 +109,12 @@ def build_check_category_map() -> dict[str, str]:
 
 
 def checks_for_robustness(robustness: str) -> tuple[ReviewCheckSpec, ...]:
-    if robustness in {"robust", "superrobust"}:
+    from megaplan.types import normalize_robustness
+
+    robustness = normalize_robustness(robustness)
+    if robustness in {"thorough", "extreme"}:
         return REVIEW_CHECKS
-    if robustness in {"light", "tiny"}:
+    if robustness in {"light", "bare"}:
         return ()
     return _CORE_REVIEW_CHECKS
 

@@ -242,7 +242,7 @@ def _add_common_agent_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help="Force the visible prep phase into the workflow regardless of "
-             "--robustness. Off by default (only robust/superrobust include prep). "
+             "--robustness. Off by default (only thorough/extreme include prep). "
              "Use when the planner needs explicit discovery before committing.",
     )
     parser.add_argument("--fresh", action="store_true")

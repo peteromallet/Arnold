@@ -52,7 +52,7 @@ def _save_state(root: Path, profiles: list[str]) -> dict:
 
 def test_compare_without_judge_skips_run_judge(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / "repo"
-    _save_state(root, ["standard"])
+    _save_state(root, ["apex"])
 
     async def forbidden(*_args: object, **_kwargs: object) -> dict:
         raise AssertionError("run_judge should not be called when --judge is omitted")

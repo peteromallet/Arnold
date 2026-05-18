@@ -1,12 +1,14 @@
-# `super-premium` — tier 5 (super-premium). Both Claude *and* Codex
-# contributing to the same job. Apex tier; vendor-locked.
+# `apex` — tier 5. Both Claude *and* Codex contributing to the same job.
+# Vendor-locked.
 #
-# This is the canonical Claude/Codex split, mirroring `poirot` (kept as a
-# personality-named alias). Claude handles the author/repo-reading roles
-# (plan, prep, revise, gate, finalize, loop_plan); Codex handles the
-# critique/structural-analysis roles (critique, execute, review,
-# loop_execute, tiebreakers). The whole point of this tier is combining
-# their different strengths, so vendor choice doesn't apply.
+# Canonical name for the tier-5 profile (legacy alias: `super-premium` — both
+# names remain loadable while consumers migrate). This is also the canonical
+# Claude/Codex split, mirroring `poirot` (kept as a personality-named alias).
+# Claude handles the author/repo-reading roles (plan, prep, revise, gate,
+# finalize, loop_plan); Codex handles the critique/structural-analysis roles
+# (critique, execute, review, loop_execute, tiebreakers). The whole point of
+# this tier is combining their different strengths, so vendor choice doesn't
+# apply.
 #
 # Use when one premium model's depth isn't enough and you want two minds
 # working together: concurrency primitives, schemas downstream sprints will
@@ -21,14 +23,14 @@
 #   * `--vendor claude|codex` — REJECTED. This tier is vendor-locked; the
 #     Claude/Codex split is the whole rationale and can't be collapsed to a
 #     single vendor. The loader raises `vendor_locked_profile`.
-#   * `--critic kimi|cross` — REJECTED for the same reason. The Codex critic
+#   * `--critic cross` — REJECTED for the same reason. The Codex critic
 #     is structural to the recipe; swapping it would change the tier's
 #     identity, not its tuning.
 #   * `--phase-model phase=spec` — still honored; it's the legitimate way to
 #     bump depth on a specific phase (e.g. `plan=claude:high` for hard plans).
 #
-# See docs/megaplan-rubric.md for the full rubric.
-[profiles.super-premium]
+# See docs/megaplan-decision.md for the full rubric.
+[profiles.apex]
 vendor_locked         = true
 plan                  = "claude"
 prep                  = "claude"

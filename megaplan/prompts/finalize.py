@@ -40,7 +40,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             - Do NOT include `files_changed` or `commands_run` in task descriptions — the executor writes to a single output file.
             - Do NOT include `baseline_test_failures` or `baseline_test_command` — there are no tests for doc mode.
             - The FINAL task should be a review/polish pass over the assembled document, not a test run.
-            {"- Tiny robustness doc-mode exception: emit exactly one task that both authors and verifies the document, so execution stays single-batch." if robustness == "tiny" else ""}
+            {"- Bare robustness doc-mode exception: emit exactly one task that both authors and verifies the document, so execution stays single-batch." if robustness == "bare" else ""}
             """
         ).strip()
     else:

@@ -267,12 +267,15 @@ def _override_replan(root: Path, plan_dir: Path, state: PlanState, args: argpars
     return response
 
 def _override_set_robustness(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
-    new_level = getattr(args, "robustness", None)
-    if new_level not in ROBUSTNESS_LEVELS:
+    from megaplan.types import ROBUSTNESS_ACCEPTED, normalize_robustness
+
+    raw_level = getattr(args, "robustness", None)
+    if raw_level not in ROBUSTNESS_ACCEPTED:
         raise CliError(
             "invalid_args",
-            f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_LEVELS)}",
+            f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_ACCEPTED)}",
         )
+    new_level = normalize_robustness(raw_level)
     if state["current_state"] in {STATE_DONE, STATE_ABORTED}:
         raise CliError(
             "invalid_transition",

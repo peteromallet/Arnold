@@ -41,7 +41,7 @@ _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 # Author-side phases that ``--depth`` rewrites. Critic phases (critique,
 # gate, review) and mechanical phases (prep, finalize, execute,
 # loop_execute) are intentionally excluded — see the asymmetry principle
-# in docs/megaplan-rubric.md.
+# in docs/megaplan-decision.md.
 DEPTH_AUTHOR_PHASES = frozenset({
     "plan",
     "revise",
@@ -482,7 +482,7 @@ def apply_profile_expansion(
         # Vendor-locked profiles silently ignore --vendor and --critic.
         # The lock is about which vendor, not which depth — --depth is
         # honored on locked profiles per dial-3 (high-stakes work that
-        # warrants poirot may also warrant deep thinking).
+        # warrants apex may also warrant deep thinking).
         # Resolution order: vendor → depth → critic.
         if not vendor_locked:
             # Always pick a vendor (CLI > state > config default) — even
