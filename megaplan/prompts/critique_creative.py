@@ -111,7 +111,7 @@ def _critique_creative_prompt(
     stance_subprovocation = _stance_subprovocation_block(plan_dir)
     iteration = int(state.get("iteration") or 1)
     prior_block = ""
-    if robustness == "standard" and iteration > 1 and prior_ids:
+    if robustness == "full" and iteration > 1 and prior_ids:
         prior_block = (
             "\nPreviously fired provocations from directors_notes.json are off-limits for this pass. "
             "The selector has excluded them; do not relitigate addressed material."

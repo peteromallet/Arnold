@@ -9,16 +9,17 @@ from typing import Any, Iterable
 from megaplan._core import creative_form_id, is_creative_mode, latest_plan_path
 from megaplan.audits.robustness import checks_for_robustness
 from megaplan.forms import Form, Provocation, ProvocateurVoice, get_form
-from megaplan.types import PlanState
+from megaplan.types import PlanState, normalize_robustness
 
 
 def select_provocateur_voice(
     form: Form,
     iteration: int,
     *,
-    robustness: str = "standard",
+    robustness: str = "full",
 ) -> ProvocateurVoice | None:
-    if robustness not in {"robust", "superrobust"} or not form.provocateur_voices:
+    robustness = normalize_robustness(robustness)
+    if robustness not in {"thorough", "extreme"} or not form.provocateur_voices:
         return None
     index = max(iteration - 1, 0) % len(form.provocateur_voices)
     return form.provocateur_voices[index]
@@ -72,7 +73,8 @@ def select_provocations(
     draft_state_tags: Iterable[str],
     prior_provocation_ids: Iterable[str] = (),
 ) -> tuple[Provocation, ...]:
-    if robustness == "tiny":
+    robustness = normalize_robustness(robustness)
+    if robustness == "bare":
         return ()
     tags = {tag for tag in draft_state_tags if isinstance(tag, str)}
     prior_ids = {pid for pid in prior_provocation_ids if isinstance(pid, str)}

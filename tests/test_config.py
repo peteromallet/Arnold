@@ -130,7 +130,7 @@ def test_config_set_execution_robustness_enum(
 def test_config_set_execution_robustness_invalid_value(isolated_config_dir: Path) -> None:
     with pytest.raises(
         megaplan.CliError,
-        match=r"execution\.robustness must be one of: tiny, light, standard, robust, superrobust",
+        match=r"execution\.robustness must be one of: bare, light, full, thorough, extreme, tiny, standard, robust, superrobust",
     ):
         megaplan.handle_config(
             Namespace(
@@ -237,9 +237,10 @@ def test_handle_init_uses_config_defaults_when_flags_omitted(isolated_config_dir
     state = json.loads((root / ".megaplan" / "plans" / response["plan"] / "state.json").read_text(encoding="utf-8"))
 
     assert response["auto_approve"] is True
-    assert response["robustness"] == "robust"
+    # Legacy ``robust`` in stored config is normalized to canonical ``thorough``.
+    assert response["robustness"] == "thorough"
     assert state["config"]["auto_approve"] is True
-    assert state["config"]["robustness"] == "robust"
+    assert state["config"]["robustness"] == "thorough"
 
 
 def test_handle_init_explicit_robustness_beats_config_default(
@@ -303,12 +304,12 @@ def test_handle_config_use_profile_writes_all_phase_keys_and_preserves_unrelated
     )
 
     response = megaplan.handle_config(
-        Namespace(config_action="use-profile", name="standard")
+        Namespace(config_action="use-profile", name="apex")
     )
 
     assert response["success"] is True
     assert response["action"] == "use-profile"
-    assert response["profile"] == "standard"
+    assert response["profile"] == "apex"
     # All 12 phases from DEFAULT_AGENT_ROUTING should be present in `applied`.
     assert set(response["applied"].keys()) == set(DEFAULT_AGENT_ROUTING.keys())
 
@@ -317,15 +318,15 @@ def test_handle_config_use_profile_writes_all_phase_keys_and_preserves_unrelated
     # Unrelated section preserved verbatim.
     assert on_disk["execution"] == {"auto_approve": True, "robustness": "robust"}
 
-    # Every phase from the standard profile written, and the stale plan value
+    # Every phase from the apex profile written, and the stale plan value
     # was overwritten.
     for phase in DEFAULT_AGENT_ROUTING:
         assert phase in on_disk["agents"]
     assert on_disk["agents"]["plan"] == "claude"
-    # Spec values from `config profiles show standard` should match what was
+    # Spec values from `config profiles show apex` should match what was
     # written to disk.
     shown = megaplan.handle_config(
-        Namespace(config_action="profiles", profiles_action="show", name="standard")
+        Namespace(config_action="profiles", profiles_action="show", name="apex")
     )
     assert on_disk["agents"] == shown["profile"]
 
@@ -348,7 +349,7 @@ def test_handle_config_use_profile_unknown_profile_raises(
     assert exc_info.value.code == "unknown_profile"
     # The error message should list at least one known built-in profile so the
     # user can recover without consulting docs.
-    assert "standard" in exc_info.value.message
+    assert "apex" in exc_info.value.message
 
 
 # ---------------------------------------------------------------------------

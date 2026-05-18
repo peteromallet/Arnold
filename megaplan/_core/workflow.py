@@ -21,6 +21,7 @@ from megaplan.types import (
     CliError,
     PlanState,
     ROBUSTNESS_LEVELS,
+    normalize_robustness,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_CRITIQUED,
@@ -58,10 +59,14 @@ _STEP_CONTEXT_STATES = {
 # ---------------------------------------------------------------------------
 
 def configured_robustness(state: PlanState) -> str:
-    robustness = state["config"].get("robustness", "standard")
-    if robustness not in ROBUSTNESS_LEVELS:
-        return "standard"
-    return robustness
+    """Return the canonical robustness for ``state``.
+
+    Accepts canonical (``bare|light|full|thorough|extreme``) or legacy
+    (``tiny|light|standard|robust|superrobust``) names in stored config,
+    so older plan states stay readable after the rename.
+    """
+    robustness = state["config"].get("robustness", "full")
+    return normalize_robustness(robustness)
 
 
 def robustness_critique_instruction(robustness: str) -> str:
@@ -94,16 +99,14 @@ def intent_and_notes_block(state: PlanState) -> str:
 # ---------------------------------------------------------------------------
 
 def _normalize_workflow_robustness(robustness: Any) -> str:
-    if robustness in ROBUSTNESS_LEVELS:
-        return str(robustness)
-    return "standard"
+    return normalize_robustness(robustness)
 
 
 def _workflow_robustness_from_state(state: PlanState) -> str:
     config = state.get("config", {})
     if not isinstance(config, dict):
-        return "standard"
-    return _normalize_workflow_robustness(config.get("robustness", "standard"))
+        return "full"
+    return _normalize_workflow_robustness(config.get("robustness", "full"))
 
 
 def _with_prep_from_state(state: PlanState) -> bool:
@@ -133,7 +136,7 @@ def _with_feedback_from_state(state: PlanState) -> bool:
 def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Transition]]:
     if not creative:
         return _ROBUSTNESS_OVERRIDES.get(robustness, {})
-    if robustness in {"superrobust", "robust", "standard"}:
+    if robustness in {"extreme", "thorough", "full"}:
         return {}
     if robustness == "light":
         return {
@@ -157,16 +160,16 @@ def _workflow_for_robustness(
 ) -> dict[str, list[Transition]]:
     normalized = _normalize_workflow_robustness(robustness)
     merged = dict(WORKFLOW)
-    for level in _ROBUSTNESS_WORKFLOW_LEVELS.get(normalized, _ROBUSTNESS_WORKFLOW_LEVELS["standard"]):
+    for level in _ROBUSTNESS_WORKFLOW_LEVELS.get(normalized, _ROBUSTNESS_WORKFLOW_LEVELS["full"]):
         merged.update(_resolve_overrides(level, creative=creative))
     # When --with-prep was set at init, prep must run regardless of the
-    # robustness level. The standard/light/tiny override chain replaces
+    # robustness level. The full/light/bare override chain replaces
     # STATE_INITIALIZED -> prep with STATE_INITIALIZED -> plan; we undo
     # that replacement here so the default WORKFLOW transition wins.
     if with_prep:
         merged[STATE_INITIALIZED] = list(WORKFLOW[STATE_INITIALIZED])
     # When --with-feedback was set at init, feedback runs regardless of
-    # robustness. Light/tiny set STATE_EXECUTED: [] to skip review; we
+    # robustness. Light/bare set STATE_EXECUTED: [] to skip review; we
     # undo that so review can run (feedback needs it). We also rewire
     # STATE_EXECUTED → review → STATE_REVIEWED (instead of STATE_DONE)
     # and add STATE_REVIEWED → feedback → STATE_DONE.
@@ -207,7 +210,11 @@ def workflow_includes_step(
 ) -> bool:
     if step == "step":
         return True
-    workflow = _workflow_for_robustness(robustness, with_prep=with_prep, with_feedback=with_feedback)
+    workflow = _workflow_for_robustness(
+        normalize_robustness(robustness),
+        with_prep=with_prep,
+        with_feedback=with_feedback,
+    )
     return any(
         transition.next_step == step
         for transitions in workflow.values()

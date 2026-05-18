@@ -50,6 +50,7 @@ Always do these things:
 - Keep the outer conversation clean. Do not ask for routine confirmation.
 - Use `next_step` and `valid_next` for routing. If memory and CLI state disagree, trust CLI state.
 - Follow `orchestrator_guidance` after `gate` unless you have a concrete reason to disagree after checking plan artifacts or repository evidence yourself.
+- Build on top of uncommitted changes in the working tree by default; only override if they directly contradict the plan.
 - Treat user notes as authoritative.
 
 Never do these things:
@@ -73,7 +74,12 @@ At startup and after every later resume:
 - If `active_step` is present, treat it as an in-flight phase marker rather than a completed step. Use `last_step` for the most recent completed phase.
 
 ## 3. Phase Routing by Robustness
-Use the workflow below exactly.
+Use the workflow below exactly. Canonical robustness names are `bare|light|full|thorough|extreme`; the legacy names `tiny|standard|robust|superrobust` map to `bare|full|thorough|extreme` and are still accepted.
+
+Bare robustness:
+- `init -> plan -> finalize -> execute -> done`
+- There is no `prep`, no `critique`, no `gate`, no `review`.
+- After `execute`, the CLI will end the run.
 
 Light robustness:
 - `init -> prep -> plan -> critique -> revise -> finalize -> execute -> done`
@@ -83,7 +89,7 @@ Light robustness:
 - After the light `revise`, the CLI moves to `gated`, so the next command is `finalize`.
 - After `execute`, the CLI will end the run.
 
-Standard robustness:
+Full robustness (legacy name: standard):
 - `init -> prep -> plan -> critique -> gate`
 - Then follow the gate decision tree below.
 - `prep` may return `skip: true`; do not skip the command yourself.
@@ -92,16 +98,16 @@ Standard robustness:
 - Then run `review`.
 - If `review` returns `needs_rework`, the workflow becomes `finalized -> execute -> review` again until review passes or the CLI reaches its cap.
 
-Robust robustness:
+Thorough robustness (legacy name: robust):
 - `init -> prep -> plan -> critique -> gate`
 - `prep` may still return `skip: true`, but the phase remains visible in the CLI state/history.
-- Uses 8 critique checks (vs 4 for standard) and enables parallel critique.
-- After that, robust follows the same gate, finalize, execute, and review behavior as standard.
+- Uses 8 critique checks (vs 4 for full) and enables parallel critique.
+- After that, thorough follows the same gate, finalize, execute, and review behavior as full.
 
-Superrobust robustness:
-- Same as robust, but also enables parallel review (review checks split across concurrent subagents).
+Extreme robustness (legacy name: superrobust):
+- Same as thorough, but also enables parallel review (review checks split across concurrent subagents).
 
-Gate decision tree for standard, robust, and superrobust:
+Gate decision tree for full, thorough, and extreme:
 - Condition 1: `gate_unset`
   Trigger: state is `critiqued` and `valid_next` includes `gate`.
   Action: run `megaplan gate --plan <name>`.
@@ -118,7 +124,7 @@ Gate decision tree for standard, robust, and superrobust:
   Trigger: the latest gate recommendation is `PROCEED` and preflight passed, so state becomes `gated`.
   Action: run `megaplan finalize --plan <name>`.
 
-Review routing for standard, robust, and superrobust:
+Review routing for full, thorough, and extreme:
 - If `review` succeeds, the run is done.
 - If `review` returns `needs_rework`, the CLI moves back to `finalized` with `next_step` set to `execute`.
 - When that happens, run `execute` again, then `review` again.

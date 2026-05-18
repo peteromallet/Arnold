@@ -56,8 +56,10 @@ Routing:
 - Trust CLI state over memory.
 - If `notes_count > 0`, read the full `notes` array before acting.
 - After each step, read `next_step_runtime.duration_hint` and `next_step_runtime.recommended_next_check_seconds` when present to calibrate the next status check.
+- For `bare`: `plan -> finalize -> execute`.
 - For `light`: `plan -> critique -> revise -> finalize -> execute`.
-- For `standard`, `robust`, or `superrobust`: follow the base skill workflow, including `prep`, `gate`, `review`, and any revise/rework loops.
+- For `full` (legacy: `standard`), `thorough` (legacy: `robust`), or `extreme` (legacy: `superrobust`): follow the base skill workflow, including `prep`, `gate`, `review`, and any revise/rework loops.
+- Build on top of uncommitted changes in the working tree by default; only override if they directly contradict the plan.
 - After `gate`, follow `orchestrator_guidance` unless repository evidence proves it wrong.
 
 Breakpoints:

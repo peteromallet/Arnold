@@ -54,10 +54,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         robustness = configured_robustness(state)
         state["last_gate"] = {}
         critique_filename = f"critique_v{iteration}.json"
-        if robustness == "tiny":
+        if robustness == "bare":
             raise CliError(
-                "tiny_skips_critique",
-                "tiny robustness skips critique entirely; the workflow routes plan -> finalize directly. "
+                "bare_skips_critique",
+                "bare robustness skips critique entirely; the workflow routes plan -> finalize directly. "
                 "Run `megaplan finalize` instead, or use --robustness light if you want a critique pass.",
             )
         active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)

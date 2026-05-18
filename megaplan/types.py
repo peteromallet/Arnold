@@ -339,7 +339,38 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "tiebreaker_challenger": "codex",
 }
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
-ROBUSTNESS_LEVELS = ("tiny", "light", "standard", "robust", "superrobust")
+# Canonical robustness names — match docs/megaplan-decision.md.
+ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
+# Legacy → canonical alias map. Old names remain accepted on the CLI and
+# in stored state for backward compatibility; ``normalize_robustness``
+# resolves them. The canonical name set above is what internal code
+# (set comparisons, etc.) should always compare against.
+ROBUSTNESS_ALIASES: dict[str, str] = {
+    "tiny": "bare",
+    "standard": "full",
+    "robust": "thorough",
+    "superrobust": "extreme",
+}
+# All accepted spellings on the CLI / config layer (canonical + legacy).
+ROBUSTNESS_ACCEPTED = tuple(ROBUSTNESS_LEVELS) + tuple(ROBUSTNESS_ALIASES.keys())
+
+
+def normalize_robustness(value: Any) -> str:
+    """Return the canonical robustness name for ``value``.
+
+    Accepts canonical names (``bare|light|full|thorough|extreme``) and
+    the legacy ``tiny|light|standard|robust|superrobust`` aliases. Any
+    other input — including ``None`` — falls back to the canonical
+    default (``"full"``).
+    """
+    if isinstance(value, str):
+        if value in ROBUSTNESS_LEVELS:
+            return value
+        if value in ROBUSTNESS_ALIASES:
+            return ROBUSTNESS_ALIASES[value]
+    return "full"
+
+
 def parse_agent_spec(spec: str) -> tuple[str, str | None]:
     """Parse 'hermes:model/name' → ('hermes', 'model/name'), 'claude:low' → ('claude', 'low'), or 'claude' → ('claude', None)."""
     if ":" in spec:
@@ -359,7 +390,7 @@ SCOPE_CREEP_TERMS = (
 
 DEFAULTS = {
     "execution.auto_approve": False,
-    "execution.robustness": "standard",
+    "execution.robustness": "full",
     "execution.strict_notes": False,
     "execution.worker_timeout_seconds": 7200,
     "execution.max_review_rework_cycles": 3,
@@ -375,7 +406,7 @@ _SETTABLE_BOOL = {
 }
 
 _SETTABLE_ENUM = {
-    "execution.robustness": ROBUSTNESS_LEVELS,
+    "execution.robustness": ROBUSTNESS_ACCEPTED,
 }
 
 _SETTABLE_NUMERIC = {

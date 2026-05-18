@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Final, TypedDict
 
+from megaplan.types import normalize_robustness
+
 
 VALID_SEVERITY_HINTS: Final[set[str]] = {"likely-significant", "likely-minor", "uncertain"}
 
@@ -204,15 +206,17 @@ def build_check_category_map() -> dict[str, str]:
 
 
 def checks_for_robustness(robustness: str) -> tuple[CritiqueCheckSpec, ...]:
-    if robustness in {"robust", "superrobust"}:
+    robustness = normalize_robustness(robustness)
+    if robustness in {"thorough", "extreme"}:
         return CRITIQUE_CHECKS
-    if robustness in {"light", "tiny"}:
+    if robustness in {"light", "bare"}:
         return ()
     return _CORE_CRITIQUE_CHECKS
 
 
 def creative_checks_for_robustness(form: Any, robustness: str) -> tuple[CritiqueCheckSpec, ...]:
-    if robustness == "tiny":
+    robustness = normalize_robustness(robustness)
+    if robustness == "bare":
         return ()
     from megaplan.forms import Form
     from megaplan.forms.provocations import select_active_checks
