@@ -758,6 +758,10 @@ def _canonical_decision_skill() -> str:
     return resources.files("megaplan").joinpath("data", "decision_skill.md").read_text(encoding="utf-8")
 
 
+def _canonical_epic_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "epic_skill.md").read_text(encoding="utf-8")
+
+
 def bundled_global_file(name: str) -> str:
     # Single-source skills: the canonical file already carries its frontmatter,
     # so this function just returns the canonical content unchanged. Do not
@@ -769,6 +773,8 @@ def bundled_global_file(name: str) -> str:
     # is accepted for back-compat with any in-flight callers.
     if name in {"decision_skill.md", "rubric_skill.md"}:
         return _canonical_decision_skill()
+    if name == "epic_skill.md":
+        return _canonical_epic_skill()
     content = _canonical_instructions()
     if name == "claude_skill.md":
         return _SKILL_HEADER + content + "\n\n" + _claude_subagent_appendix()
@@ -800,6 +806,8 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
 ]
 
 
