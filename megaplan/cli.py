@@ -780,6 +780,10 @@ def _canonical_observe_skill() -> str:
     return resources.files("megaplan").joinpath("data", "observe_skill.md").read_text(encoding="utf-8")
 
 
+def _canonical_cloud_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "cloud_skill.md").read_text(encoding="utf-8")
+
+
 def _canonical_composed(name: str) -> str:
     return resources.files("megaplan").joinpath("data", "_composed", name).read_text(encoding="utf-8")
 
@@ -799,6 +803,8 @@ def bundled_global_file(name: str) -> str:
         return _canonical_epic_skill()
     if name == "observe_skill.md":
         return _canonical_observe_skill()
+    if name == "cloud_skill.md":
+        return _canonical_cloud_skill()
     # Composed bundles: pre-built at commit time via --regen-composed and
     # stored under megaplan/data/_composed/. Every _GLOBAL_TARGETS entry
     # referencing these symlinks into the pre-composed file — no runtime
@@ -838,6 +844,8 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-cloud/SKILL.md", "data": "cloud_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-cloud/SKILL.md", "data": "cloud_skill.md", "install": "symlink"},
 ]
 
 
