@@ -898,6 +898,18 @@ def drive(
                 last_phase=last_phase,
             )
 
+        active_step = status.get("active_step")
+        if (
+            isinstance(active_step, dict)
+            and active_step.get("recommended_action") == "wait"
+        ):
+            active_name = active_step.get("step") or next_step or "unknown"
+            reason = active_step.get("recommended_action_reason") or "active step is still healthy"
+            log(f"active step '{active_name}' still running — waiting: {reason}")
+            if poll_sleep > 0:
+                time.sleep(poll_sleep)
+            continue
+
         # Review-cycle progress: a fresh review.json means a real review
         # pass completed since the last iteration. This counts as forward
         # progress even when `state` looks unchanged (finalized→executed→

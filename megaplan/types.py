@@ -396,7 +396,7 @@ DEFAULTS = {
     "execution.max_review_rework_cycles": 3,
     "execution.max_robust_review_rework_cycles": 2,
     "execution.max_execute_no_progress": 3,
-    "orchestration.max_critique_concurrency": 2,
+    "orchestration.max_critique_concurrency": 5,
     "orchestration.mode": "subagent",
 }
 

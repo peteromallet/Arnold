@@ -5,6 +5,7 @@ suppression, provider fallback, and CLI streaming display.
 """
 import json
 import threading
+import time
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch, PropertyMock
@@ -90,6 +91,34 @@ class TestStreamingAccumulator:
         assert response.choices[0].finish_reason == "stop"
         assert response.usage is not None
         assert response.usage.completion_tokens == 3
+
+    @patch("run_agent.AIAgent._create_request_openai_client")
+    @patch("run_agent.AIAgent._close_request_openai_client")
+    def test_streaming_call_has_wall_clock_timeout(self, mock_close, mock_create, monkeypatch):
+        from run_agent import AIAgent
+
+        monkeypatch.setenv("HERMES_API_TIMEOUT", "0.1")
+
+        def _hanging_stream():
+            time.sleep(1)
+            yield _make_stream_chunk(content="late")
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = _hanging_stream()
+        mock_create.return_value = mock_client
+
+        agent = AIAgent(
+            model="test/model",
+            quiet_mode=True,
+            skip_context_files=True,
+            skip_memory=True,
+        )
+        agent.api_mode = "chat_completions"
+        agent._interrupt_requested = False
+
+        with pytest.raises(TimeoutError, match="Streaming API call exceeded"):
+            agent._interruptible_streaming_api_call({})
+        mock_close.assert_any_call(mock_client, reason="stream_request_timeout_abort")
 
     @patch("run_agent.AIAgent._create_request_openai_client")
     @patch("run_agent.AIAgent._close_request_openai_client")

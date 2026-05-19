@@ -32,6 +32,26 @@ def test_get_effective_returns_default(isolated_config_dir: Path) -> None:
     assert get_effective("execution", "worker_timeout_seconds") == DEFAULTS["execution.worker_timeout_seconds"]
 
 
+def test_max_critique_concurrency_default_covers_full_core_checks(
+    isolated_config_dir: Path,
+) -> None:
+    # The 'full' robustness tier defines 5 core sub-checks. A default fanout
+    # below that count forces serial batches and triples critique wall time
+    # (see ticket 01KS03H13JWMVSED6V4584P1P3). Lock the default at the core
+    # check count so a regression here can't quietly bring back the 25-min
+    # critique grind.
+    from megaplan.audits.robustness import checks_for_robustness
+
+    full_core_checks = checks_for_robustness("full")
+    default = get_effective("orchestration", "max_critique_concurrency")
+    assert default >= len(full_core_checks), (
+        f"max_critique_concurrency default ({default}) must cover the "
+        f"'full' robustness core check count ({len(full_core_checks)}) "
+        "to avoid serialized critique batches"
+    )
+    assert default == DEFAULTS["orchestration.max_critique_concurrency"]
+
+
 def test_get_effective_returns_override(isolated_config_dir: Path) -> None:
     isolated_config_dir.mkdir(parents=True, exist_ok=True)
     (isolated_config_dir / "config.json").write_text(

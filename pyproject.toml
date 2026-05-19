@@ -36,15 +36,11 @@ agent = [
     "httpx",
     "rich",
     "requests",
-    "jinja2",
     "prompt_toolkit",
     "firecrawl-py",
     "fal-client",
     "edge-tts",
     "faster-whisper>=1.0.0",
-    "litellm>=1.75.5",
-    "typer",
-    "platformdirs",
     "PyJWT[crypto]",
 ]
 

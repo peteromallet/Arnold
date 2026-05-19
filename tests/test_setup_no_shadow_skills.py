@@ -1,30 +1,20 @@
 """Guard rail: prevent skill-doc duplication from creeping back in.
 
 The setup code in `megaplan/cli.py` writes user-level skill files at
-`~/.claude/skills/...` and `~/.codex/skills/...`. There are two install modes:
+`~/.claude/skills/...` and `~/.codex/skills/...`. After the skill-distribution
+cleanup (May 2026), composition moved from install-time to commit-time via
+`--regen-composed`, and every `_GLOBAL_TARGETS` entry uses `install: "symlink"`.
 
-* `copy`   — for composite skills built from multiple sources (header +
-             canonical + appendix). The installed file is a regenerated copy.
-* `symlink` — for single-source skills where the installed content is
-              identical to a bundled canonical file. These MUST be symlinks
-              so they cannot drift from the canonical, and so the canonical
-              has exactly one on-disk representation.
+This module enforces two invariants:
 
-This module enforces three invariants:
-
-1. Every target marked `install: "symlink"` actually installs as a symlink
-   pointing at the canonical bundle.
-2. Every single-source skill (where `bundled_global_file(name)` equals the
-   raw canonical file) is marked `install: "symlink"`. Reverting one to
-   `copy` (or omitting the field) is the regression we're guarding against.
-3. `handle_setup_global` is idempotent — running it twice against the same
+1. Every `_GLOBAL_TARGETS` entry declares `install: "symlink"` — copy mode
+   is retired. Pre-composed bundles under `megaplan/data/_composed/` are
+   single-source from the installer's perspective.
+2. `handle_setup_global` is idempotent — running it twice against the same
    home leaves symlinks unchanged.
 
-If you add a new skill and tests fail here, either:
-  * make the skill content equal to its canonical file and set
-    `install: "symlink"`, OR
-  * document why the skill needs `install: "copy"` (composite content) and
-    add the bundle name to `KNOWN_COMPOSITE_BUNDLES` below.
+If you add a new skill and tests fail here:
+  * set `install: "symlink"` — there is no copy mode anymore.
 """
 
 from __future__ import annotations
@@ -34,16 +24,6 @@ from pathlib import Path
 import pytest
 
 from megaplan import cli
-
-
-# Bundles that legitimately need `install: "copy"` because their installed
-# content is composed from multiple source files (header + body + appendix).
-# Adding to this list requires a one-line justification.
-KNOWN_COMPOSITE_BUNDLES = {
-    "claude_skill.md",   # header + instructions + claude_subagent_appendix
-    "codex_skill.md",    # header + instructions + codex_subagent_appendix
-    "cursor_rule.mdc",   # header + instructions, agent-specific framing
-}
 
 
 def _read_canonical(data_name: str) -> str:
@@ -63,31 +43,17 @@ def test_every_target_declares_install_mode():
         )
 
 
-def test_single_source_bundles_must_be_symlinked():
-    """If a bundle's `bundled_global_file` output equals its canonical file
-    byte-for-byte, every target referencing it MUST install as a symlink."""
-    bundle_names = {t["data"] for t in cli._GLOBAL_TARGETS}
-    for name in bundle_names:
-        if name in KNOWN_COMPOSITE_BUNDLES:
-            continue
-        bundled = cli.bundled_global_file(name)
-        try:
-            canonical = _read_canonical(name)
-        except (FileNotFoundError, OSError):
-            pytest.skip(f"canonical bundle file {name!r} not available in this install")
-        assert bundled == canonical, (
-            f"Bundle {name!r} composes content (bundled output != canonical "
-            f"file). Add it to KNOWN_COMPOSITE_BUNDLES with a justification."
+def test_every_target_uses_symlink():
+    """After the skill-distribution cleanup (May 2026), every _GLOBAL_TARGETS
+    entry must use install: 'symlink'. Copy mode is retired — pre-composed
+    bundles under megaplan/data/_composed/ are single-source from the
+    installer's perspective."""
+    for target in cli._GLOBAL_TARGETS:
+        assert target["install"] == "symlink", (
+            f"_GLOBAL_TARGETS entry for {target['path']!r} uses "
+            f"install: {target['install']!r}. All targets must symlink "
+            f"after the skill-distribution cleanup — copy mode is retired."
         )
-        targets_for_bundle = [t for t in cli._GLOBAL_TARGETS if t["data"] == name]
-        for target in targets_for_bundle:
-            assert target["install"] == "symlink", (
-                f"Bundle {name!r} is single-source (installed content equals "
-                f"canonical) but target {target['path']!r} is install: "
-                f"{target['install']!r}. Single-source bundles must be "
-                f"symlinked or they will drift — that's how the megaplan-decision "
-                f"shadow-doc regression happened in May 2026."
-            )
 
 
 def _make_fake_home(tmp_path: Path) -> Path:
