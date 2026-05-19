@@ -31,6 +31,33 @@ Typical flow:
 
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), and provider-specific troubleshooting.
 
+## Claude auth: subscription via refresh token (no metered API, no human)
+
+When Claude phases run on the cloud worker, you want them billed against your Claude **subscription** (Max/Pro), not metered API. The entrypoint supports two auth modes with clear precedence:
+
+1. **`CLAUDE_CODE_REFRESH_TOKEN`** *(preferred — programmatic, no expiry)*. Set this once on the Railway service. On every boot, the entrypoint installs:
+   - `/usr/local/bin/claude.real` — copy of the actual claude binary.
+   - `/usr/local/bin/claude-key-helper` — refreshes the OAuth access token against `https://api.anthropic.com/v1/oauth/token` using the refresh token, caches the result on the volume (`/workspace/.claude-creds/`), and rotates the refresh token per use.
+   - `/usr/local/bin/claude` — shim that calls the helper, exports `ANTHROPIC_API_KEY`, and `exec`s the real binary.
+
+   First-time setup runs on your laptop where you're already logged in to claude:
+
+   ```bash
+   bash scripts/refresh-cloud-claude-key.sh
+   ```
+
+   That extracts the refresh token from your macOS Keychain (service `"Claude Code-credentials"`), validates it against the OAuth endpoint, and pushes the (rotated) value to Railway as `CLAUDE_CODE_REFRESH_TOKEN`. No browser, no recurring human action. Re-run only if you `claude /logout` everywhere or the refresh token gets revoked.
+
+   The OAuth client ID is `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (Claude Code's public client, discovered from the binary). Override with `CLAUDE_CODE_OAUTH_CLIENT_ID` on the service if needed.
+
+2. **`ANTHROPIC_API_KEY`** *(legacy / metered)*. If `CLAUDE_CODE_REFRESH_TOKEN` is unset, the entrypoint expects a real API key here. `claude --bare` reads it directly; no shim installed. Billed per-call against the Anthropic Console org.
+
+If neither is set the entrypoint warns and continues — Claude phases will then fail at first invocation. Codex/DeepSeek/Kimi/Fireworks phases are unaffected.
+
+**Why a shim rather than `claude setup-token`**: `setup-token` generates a long-lived `sk-ant-api03-...` key but requires an interactive browser OAuth approval — incompatible with headless cloud-worker boot. The refresh-token flow uses credentials you already authorized when you ran `claude /login` on your laptop, and rotates them indefinitely without further consent.
+
+**Why a shim rather than `apiKeyHelper` in `--settings`**: shannon/megaplan invoke `claude --bare` without an explicit `--settings` flag. Wrapping the binary is the only way to inject auth without patching megaplan.
+
 ## Multi-repo and multi-tenant chains
 
 Two `cloud.yaml` fields let one shared worker host many sibling repos and several concurrent chains:
@@ -112,7 +139,7 @@ Today this operator loop is usually a small project-local shell script under `.m
 
 5. **`secrets:` in `cloud.yaml` drives an upload from local env at deploy time.** If you pre-set values directly on the Railway service (e.g. copied from another service), leave `secrets: []` in the `cloud.yaml` — otherwise `megaplan cloud deploy` reads the names from your local env, finds them missing, and either fails the deploy or overwrites the Railway values with empty strings. List the names in a comment for reference.
 
-6. **Credit-balance failures look like `internal_error`.** When a phase exits as "internal_error" with no useful stderr, read `plan_v<n>_raw.txt` in the plan directory. Anthropic/OpenAI quota errors arrive there as `"text":"Credit balance is too low"` from the agent CLI wrapper. The fix is switching profiles to a vendor with credit (e.g. `all-codex` if only OPENAI has balance, set via `vendor: codex` per milestone), not retrying.
+6. **Credit-balance failures look like `internal_error`.** When a phase exits as "internal_error" with no useful stderr, read `plan_v<n>_raw.txt` in the plan directory. Anthropic/OpenAI quota errors arrive there as `"text":"Credit balance is too low"` from the agent CLI wrapper. For Claude, the real fix is the refresh-token shim (see "Claude auth" above) — it bills against your subscription, never depletes. For OpenAI, top up the console balance or switch to a profile with credit headroom.
 
 7. **`secrets` get baked into the image-build context, not just runtime env.** `megaplan cloud deploy` runs `railway variables --set NAME=VALUE` for every secret in the local environment that matches a declared name, then `railway up`. Pre-existing values on the service are overwritten when the local env has the same key set. To preserve service-side values, either unset them locally before deploy or empty the `secrets:` list.
 
