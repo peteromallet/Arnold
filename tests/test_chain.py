@@ -201,6 +201,56 @@ def test_load_spec_rejects_invalid_milestone_rubric_choice(
     assert f"milestones[0].{field} must be one of" in excinfo.value.message
 
 
+def test_load_spec_parses_prep_direction(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "idea": str(idea),
+                    "prep_direction": "  focus on the shutdown path  ",
+                }
+            ]
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.milestones[0].prep_direction == "focus on the shutdown path"
+
+
+def test_load_spec_defaults_prep_direction_none(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea)}]},
+    )
+    spec = load_spec(spec_path)
+    assert spec.milestones[0].prep_direction is None
+
+
+def test_load_spec_rejects_blank_prep_direction(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), "prep_direction": "   "}]},
+    )
+    with pytest.raises(CliError) as info:
+        load_spec(spec_path)
+    assert "prep_direction" in info.value.message
+
+
+def test_load_spec_rejects_non_string_prep_direction(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea), "prep_direction": 7}]},
+    )
+    with pytest.raises(CliError) as info:
+        load_spec(spec_path)
+    assert "prep_direction" in info.value.message
+
+
 @pytest.mark.parametrize("field", ["with_prep", "with_feedback"])
 def test_load_spec_rejects_non_boolean_milestone_rubric_flags(
     tmp_path: Path,
@@ -663,6 +713,7 @@ def test_run_chain_executes_milestones_in_order(tmp_path: Path) -> None:
         deepseek_provider=None,
         with_prep=False,
         with_feedback=False,
+        prep_direction=None,
         phase_model=None,
         writer,
     ):
@@ -736,6 +787,7 @@ def test_run_chain_passes_milestone_rubric_knobs_to_init(tmp_path: Path) -> None
         "deepseek_provider": "fireworks",
         "with_prep": True,
         "with_feedback": True,
+        "prep_direction": None,
         "phase_model": ["execute=claude:low"],
         "writer": ANY,
     }
@@ -858,6 +910,7 @@ def test_run_chain_resumes_from_chain_state(tmp_path: Path) -> None:
         deepseek_provider=None,
         with_prep=False,
         with_feedback=False,
+        prep_direction=None,
         phase_model=None,
         writer,
     ):
@@ -1062,6 +1115,55 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
         "--idea-file",
         str(idea_path),
     ]
+
+
+def test_init_plan_forwards_prep_direction_flag(tmp_path: Path) -> None:
+    idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
+    proc = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"plan": "demo-plan"}',
+        stderr="",
+    )
+
+    with patch("megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from megaplan.chain import _init_plan
+
+        _init_plan(
+            tmp_path,
+            str(idea_path),
+            robustness="standard",
+            auto_approve=False,
+            prep_direction="focus on the shutdown path",
+            writer=lambda _m: None,
+        )
+
+    args = mock_run.call_args.args[0]
+    assert "--prep-direction" in args
+    assert args[args.index("--prep-direction") + 1] == "focus on the shutdown path"
+
+
+def test_init_plan_omits_prep_direction_when_none(tmp_path: Path) -> None:
+    idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
+    proc = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"plan": "demo-plan"}',
+        stderr="",
+    )
+
+    with patch("megaplan.chain.subprocess.run", return_value=proc) as mock_run:
+        from megaplan.chain import _init_plan
+
+        _init_plan(
+            tmp_path,
+            str(idea_path),
+            robustness="standard",
+            auto_approve=False,
+            writer=lambda _m: None,
+        )
+
+    assert "--prep-direction" not in mock_run.call_args.args[0]
 
 
 def test_run_chain_no_git_refresh_skips_refresh(tmp_path: Path) -> None:

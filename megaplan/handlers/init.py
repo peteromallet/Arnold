@@ -168,6 +168,12 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["with_prep"] = True
     if getattr(args, "with_feedback", False):
         state["config"]["with_feedback"] = True
+    prep_direction_raw = getattr(args, "prep_direction", None)
+    if prep_direction_raw is not None:
+        prep_direction = str(prep_direction_raw).strip()
+        if not prep_direction:
+            raise CliError("invalid_args", "--prep-direction must be non-empty when provided")
+        state["config"]["prep_direction"] = prep_direction
     # If the plan was initialized inside a freshly-created worktree
     # (via `megaplan init --in-worktree <name>`), persist the audit trail.
     worktree_meta = getattr(args, "_worktree_meta", None)
