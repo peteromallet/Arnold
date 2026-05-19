@@ -24,6 +24,9 @@ Spec format (YAML)::
         critic: kimi
         with_prep: true
         with_feedback: true
+        prep_direction: |               # optional steering for the prep phase
+          focus on the worker shutdown path and how cancel signals propagate
+          to inflight tasks; skip CLI plumbing.
         deepseek_provider: fireworks
       - label: m1a
         idea: /workspace/ideas/M1a-settings-store.txt
@@ -146,6 +149,7 @@ class MilestoneSpec:
     deepseek_provider: str | None = None
     with_prep: bool = False
     with_feedback: bool = False
+    prep_direction: str | None = None
     phase_model: list[str] = field(default_factory=list)
     bakeoff: dict[str, Any] | None = None
     notes: str | None = None
@@ -195,6 +199,22 @@ class MilestoneSpec:
         )
         with_prep = _optional_bool(raw, "with_prep", index=index)
         with_feedback = _optional_bool(raw, "with_feedback", index=index)
+        prep_direction_raw = raw.get("prep_direction")
+        if prep_direction_raw is None:
+            prep_direction = None
+        elif isinstance(prep_direction_raw, str):
+            stripped = prep_direction_raw.strip()
+            if not stripped:
+                raise CliError(
+                    "invalid_spec",
+                    f"milestones[{index}].prep_direction must be non-empty when provided",
+                )
+            prep_direction = stripped
+        else:
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].prep_direction must be a string",
+            )
         phase_model_raw = raw.get("phase_model") or []
         if isinstance(phase_model_raw, str):
             phase_model = [phase_model_raw]
@@ -220,6 +240,7 @@ class MilestoneSpec:
             deepseek_provider=deepseek_provider,
             with_prep=with_prep,
             with_feedback=with_feedback,
+            prep_direction=prep_direction,
             phase_model=phase_model,
             bakeoff=bakeoff,
             notes=notes,
@@ -959,6 +980,7 @@ def _init_plan(
     deepseek_provider: str | None = None,
     with_prep: bool = False,
     with_feedback: bool = False,
+    prep_direction: str | None = None,
     phase_model: list[str] | None = None,
     writer,
 ) -> str:
@@ -981,6 +1003,8 @@ def _init_plan(
         args.append("--with-prep")
     if with_feedback:
         args.append("--with-feedback")
+    if prep_direction:
+        args.extend(["--prep-direction", prep_direction])
     for override in phase_model or []:
         args.extend(["--phase-model", override])
     args.extend(["--idea-file", str(idea_path)])
@@ -1210,6 +1234,7 @@ def run_chain(
                 deepseek_provider=milestone.deepseek_provider,
                 with_prep=milestone.with_prep,
                 with_feedback=milestone.with_feedback,
+                prep_direction=milestone.prep_direction,
                 phase_model=milestone.phase_model,
                 writer=writer,
             )
