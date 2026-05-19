@@ -3,167 +3,168 @@
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 
+_PROMPT_DEFAULT = """a cute anime girl with massive fennec ears and a big fluffy tail wearing a maid outfit turning around"""
 
-READY_METADATA = {'model_assets': [{'name': 'wan2.1_i2v_480p_14B_fp16.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors',
-                   'subdir': 'diffusion_models'},
-                  {'name': 'umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-                   'subdir': 'text_encoders'},
-                  {'name': 'wan_2.1_vae.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors',
-                   'subdir': 'vae'},
-                  {'name': 'clip_vision_h.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors',
-                   'subdir': 'clip_vision'}],
- 'unbound_inputs': {'seed': 1694},
- 'ready_template': 'video/wan_i2v',
- 'workflow_template': 'wan_i2v',
- 'capability': 'image_to_video',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/official/video/wan_i2v.json',
- 'coverage_tier': 'required',
- 'approach': None,
- 'runtime_note': None,
- 'discord_signal': None}
+_NEGATIVE_PROMPT_DEFAULT = """色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"""
 
-READY_REQUIREMENTS = {'models': [{'name': 'wan2.1_i2v_480p_14B_fp16.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors',
-             'subdir': 'diffusion_models'},
-            {'name': 'umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'wan_2.1_vae.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors',
-             'subdir': 'vae'},
-            {'name': 'clip_vision_h.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors',
-             'subdir': 'clip_vision'}],
- 'custom_nodes': []}
+PRIVATE_KNOBS: dict[str, object] = {
+    'scheduler': 'simple',
+    'denoise': 1,
+}
 
+MODELS = {
+    'wan2_1_i2v_480p_14b_fp16': ModelAsset(
+        filename='wan2.1_i2v_480p_14B_fp16.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors',
+        subdir='diffusion_models',
+    ),
+    'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(
+        filename='umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+        subdir='text_encoders',
+    ),
+    'wan_2_1_vae': ModelAsset(
+        filename='wan_2.1_vae.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors',
+        subdir='vae',
+    ),
+    'clip_vision_h': ModelAsset(
+        filename='clip_vision_h.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors',
+        subdir='clip_vision',
+    ),
+}
+
+PUBLIC_INPUTS = {
+    'prompt': InputSpec(node='6', field='text', default=_PROMPT_DEFAULT, type='STRING', required=True, description='Text prompt.', media_semantics='text'),
+    'negative_prompt': InputSpec(node='7', field='text', default=_NEGATIVE_PROMPT_DEFAULT, type='STRING', aliases=('negative',), description='Negative text prompt.', media_semantics='text'),
+    'seed': InputSpec(node='3', field='seed', default=987948718394761, type='INT', description='Random seed.'),
+    'steps': InputSpec(node='3', field='steps', default=20, type='INT', description='Sampling steps.'),
+    'output_fps': InputSpec(node='55', field='fps', default=16, type='FLOAT', aliases=('fps',), description='Output playback frame rate.'),
+    'width': InputSpec(node='50', field='width', default=512, type='INT', description='Output width.'),
+    'height': InputSpec(node='50', field='height', default=512, type='INT', description='Output height.'),
+    'length': InputSpec(node='50', field='length', default=33, type='INT', description='Number of output frames.'),
+    'cfg': InputSpec(node='3', field='cfg', default=6, type='INT', description='Classifier-free guidance scale.'),
+    'sampler_name': InputSpec(node='3', field='sampler_name', default='uni_pc', type='STRING', description='Sampler algorithm.'),
+    'start_image': InputSpec(node='52', field='image', default='image_to_video_wan_start_image.png', type='IMAGE', required=True, aliases=('input_image', 'image'), description='Starting image.'),
+}
+
+OUTPUT_PREFIX = 'video/ComfyUI'
+
+READY_REQUIREMENTS: dict[str, object] = {
+    'custom_nodes': [],
+}
+
+# generated by vibecomfy port convert; see READY_METADATA["provenance"]
+READY_METADATA = ReadyMetadata.build(
+    template_id='wan_i2v',
+    capability='image_to_video',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix=OUTPUT_PREFIX,
+    provenance={'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/video/wan_i2v.json'},
+    coverage_tier='required',
+)
+
+READY_METADATA["unbound_inputs"].update({'fps': '55.fps', 'image': '52.image', 'negative_prompt': '7.text', 'prompt': '6.text', 'seed': '3.seed', 'steps': '3.steps'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    unetloader = _node(wf, 'UNETLoader', '37',
-        unet_name='wan2.1_i2v_480p_14B_fp16.safetensors',
+    # ════ LOADERS ════
+    base_diffusion_model = node(wf, 'UNETLoader', '37',
+        unet_name=MODELS['wan2_1_i2v_480p_14b_fp16'].filename,
         weight_dtype='default',
     )
-    cliploader = _node(wf, 'CLIPLoader', '38',
-        clip_name='umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+    text_encoder = node(wf, 'CLIPLoader', '38',
+        clip_name=MODELS['umt5_xxl_fp8_e4m3fn_scaled'].filename,
         type='wan',
         device='default',
     )
-    vaeloader = _node(wf, 'VAELoader', '39',
-        vae_name='wan_2.1_vae.safetensors',
+    vae = node(wf, 'VAELoader', '39',
+        vae_name=MODELS['wan_2_1_vae'].filename,
     )
-    clipvisionloader = _node(wf, 'CLIPVisionLoader', '49',
-        clip_name='clip_vision_h.safetensors',
+    clip_vision = node(wf, 'CLIPVisionLoader', '49',
+        clip_name=MODELS['clip_vision_h'].filename,
     )
-    loadimage = _node(wf, 'LoadImage', '52',
-        image='image_to_video_wan_start_image.png',
+    # ════ INPUTS ════
+    input_image = node(wf, 'LoadImage', '52',
+        image=PUBLIC_INPUTS['start_image'].default,
     )
-    cliptextencode = _node(wf, 'CLIPTextEncode', '6',
-        text='a cute anime girl with massive fennec ears and a big fluffy tail wearing a maid outfit turning around',
-        clip=cliploader.out(0),
+    # ════ TEXT CONDITIONING ════
+    positive_prompt = node(wf, 'CLIPTextEncode', '6',
+        text=PUBLIC_INPUTS['prompt'].default,
+        clip=text_encoder.out('CLIP'),
     )
-    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '7',
-        text='色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走',
-        clip=cliploader.out(0),
+    negative_prompt = node(wf, 'CLIPTextEncode', '7',
+        text=PUBLIC_INPUTS['negative_prompt'].default,
+        clip=text_encoder.out('CLIP'),
     )
-    clipvisionencode = _node(wf, 'CLIPVisionEncode', '51',
+    # ════ SAMPLING ════
+    clip_vision_features = node(wf, 'CLIPVisionEncode', '51',
         crop='none',
-        clip_vision=clipvisionloader.out(0),
-        image=loadimage.out(0),
+        clip_vision=clip_vision.out('CLIP_VISION'),
+        image=input_image.out('IMAGE'),
     )
-    modelsamplingsd3 = _node(wf, 'ModelSamplingSD3', '54',
+    model_sampling = node(wf, 'ModelSamplingSD3', '54',
         shift=8,
-        model=unetloader.out(0),
+        model=base_diffusion_model.out('MODEL'),
     )
-    wanimagetovideo = _node(wf, 'WanImageToVideo', '50',
+    wan_video = node(wf, 'WanImageToVideo', '50',
         batch_size=1,
-        height=512,
-        length=33,
-        width=512,
-        clip_vision_output=clipvisionencode.out(0),
-        negative=cliptextencode_2.out(0),
-        positive=cliptextencode.out(0),
-        start_image=loadimage.out(0),
-        vae=vaeloader.out(0),
+        height=PUBLIC_INPUTS['height'].default,
+        length=PUBLIC_INPUTS['length'].default,
+        width=PUBLIC_INPUTS['width'].default,
+        clip_vision_output=clip_vision_features.out('CLIP_VISION_OUTPUT'),
+        negative=negative_prompt.out('CONDITIONING'),
+        positive=positive_prompt.out('CONDITIONING'),
+        start_image=input_image.out('IMAGE'),
+        vae=vae.out('VAE'),
     )
-    ksampler = _node(wf, 'KSampler', '3',
-        seed=987948718394761,
-        steps=20,
-        cfg=6,
-        sampler_name='uni_pc',
-        scheduler='simple',
-        denoise=1,
-        latent_image=wanimagetovideo.out(2),
-        model=modelsamplingsd3.out(0),
-        negative=wanimagetovideo.out(1),
-        positive=wanimagetovideo.out(0),
+    sampler = node(wf, 'KSampler', '3',
+        seed=PUBLIC_INPUTS['seed'].default,
+        steps=PUBLIC_INPUTS['steps'].default,
+        cfg=PUBLIC_INPUTS['cfg'].default,
+        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
+        scheduler=PRIVATE_KNOBS['scheduler'],
+        denoise=PRIVATE_KNOBS['denoise'],
+        latent_image=wan_video.out('LATENT'),
+        model=model_sampling.out('MODEL'),
+        negative=wan_video.out('NEGATIVE'),
+        positive=wan_video.out('POSITIVE'),
     )
-    vaedecode = _node(wf, 'VAEDecode', '8',
-        samples=ksampler.out(0),
-        vae=vaeloader.out(0),
+    # ════ DECODE ════
+    decoded_frames = node(wf, 'VAEDecode', '8',
+        samples=sampler.out('LATENT'),
+        vae=vae.out('VAE'),
     )
-    createvideo = _node(wf, 'CreateVideo', '55',
-        fps=16,
-        images=vaedecode.out(0),
+    video = node(wf, 'CreateVideo', '55',
+        fps=PUBLIC_INPUTS['output_fps'].default,
+        images=decoded_frames.out('IMAGE'),
     )
-    savevideo = _node(wf, 'SaveVideo', '56',
-        filename_prefix='video/ComfyUI',
+    # ════ OUTPUT ════
+    saved_video = node(wf, 'SaveVideo', '56',
+        filename_prefix=OUTPUT_PREFIX,
         format='auto',
         codec='auto',
-        video=createvideo.out(0),
+        video=video.out('VIDEO'),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_input(wf, 'image', '52', 'image', type='IMAGE', required=True, aliases=['input_image', 'start_image'], media_semantics='image')
-    bind_input(wf, 'prompt', '6', 'text', type='STRING', required=True, media_semantics='text')
-    bind_input(wf, 'negative_prompt', '7', 'text', type='STRING', aliases=['negative'], media_semantics='text')
-    bind_input(wf, 'seed', '3', 'seed', type='INT')
-    bind_input(wf, 'steps', '3', 'steps', type='INT')
-    bind_input(wf, 'fps', '55', 'fps', type='FLOAT')
-    bind_output(wf, '56', output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', filename_prefix='video/ComfyUI', expected_cardinality='one')
-    return wf
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='56',
+        output_type='SaveVideo',
+        name='video',
+        mime_type='video/mp4',
+        expected_cardinality='one',
+        filename_prefix=OUTPUT_PREFIX,
+        source_path=__file__,
+        requirements=READY_REQUIREMENTS,
+    )
 
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder

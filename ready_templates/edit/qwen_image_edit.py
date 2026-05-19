@@ -3,192 +3,184 @@
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 
+_PROMPT_DEFAULT = """Remove all UI text elements from the image. Keep the feeling that the characters and scene are in water. Also, remove the green UI elements at the bottom."""
 
-READY_METADATA = {'model_assets': [{'name': 'qwen_image_edit_fp8_e4m3fn.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors',
-                   'subdir': 'diffusion_models'},
-                  {'name': 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors',
-                   'subdir': 'text_encoders'},
-                  {'name': 'qwen_image_vae.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors',
-                   'subdir': 'vae'},
-                  {'name': 'Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
-                   'url': 'https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
-                   'subdir': 'loras'}],
- 'unbound_inputs': {'seed': 2570},
- 'ready_template': 'edit/qwen_image_edit',
- 'workflow_template': 'qwen_image_edit',
- 'capability': 'image_edit',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/official/edit/qwen_image_edit.json',
- 'coverage_tier': 'required',
- 'approach': None,
- 'runtime_note': None,
- 'discord_signal': None}
+PRIVATE_KNOBS: dict[str, object] = {
+    'scheduler': 'simple',
+    'denoise': 1,
+}
 
-READY_REQUIREMENTS = {'models': [{'name': 'qwen_image_edit_fp8_e4m3fn.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors',
-             'subdir': 'diffusion_models'},
-            {'name': 'qwen_2.5_vl_7b_fp8_scaled.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'qwen_image_vae.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors',
-             'subdir': 'vae'},
-            {'name': 'Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
-             'url': 'https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
-             'subdir': 'loras'}],
- 'custom_nodes': []}
+MODELS = {
+    'qwen_image_edit_fp8_e4m3fn': ModelAsset(
+        filename='qwen_image_edit_fp8_e4m3fn.safetensors',
+        url='https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors',
+        subdir='diffusion_models',
+    ),
+    'qwen_2_5_vl_7b_fp8_scaled': ModelAsset(
+        filename='qwen_2.5_vl_7b_fp8_scaled.safetensors',
+        url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors',
+        subdir='text_encoders',
+    ),
+    'qwen_image_vae': ModelAsset(
+        filename='qwen_image_vae.safetensors',
+        url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors',
+        subdir='vae',
+    ),
+    'qwen_image_edit_lightning_4steps_v1_0_bf16': ModelAsset(
+        filename='Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
+        url='https://huggingface.co/lightx2v/Qwen-Image-Lightning/resolve/main/Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
+        subdir='loras',
+    ),
+}
 
+PUBLIC_INPUTS = {
+    'prompt': InputSpec(node='102:76', field='prompt', default=_PROMPT_DEFAULT, type='STRING', required=True, description='Text prompt.', media_semantics='text'),
+    'seed': InputSpec(node='102:3', field='seed', default=344147753686358, type='INT', description='Random seed.'),
+    'use_lora': InputSpec(node='102:111', field='value', default=False, type='BOOLEAN', description='Lightning LoRA branch toggle.'),
+    'sampler_name': InputSpec(node='102:3', field='sampler_name', default='euler', type='STRING', description='Sampler algorithm.'),
+    'source_image': InputSpec(node='78', field='image', default='image_qwen_image_edit_input_image.png', type='IMAGE', required=True, aliases=('input_image', 'image'), description='Source image.'),
+}
+
+OUTPUT_PREFIX = ''
+
+READY_REQUIREMENTS: dict[str, object] = {
+    'custom_nodes': [],
+}
+
+# generated by vibecomfy port convert; see READY_METADATA["provenance"]
+READY_METADATA = ReadyMetadata.build(
+    template_id='qwen_image_edit',
+    capability='image_edit',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix=OUTPUT_PREFIX,
+    provenance={'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/edit/qwen_image_edit.json'},
+    coverage_tier='required',
+)
+
+READY_METADATA["unbound_inputs"].update({'image': '78.image', 'prompt': '102:76.prompt', 'seed': '102:3.seed'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadimage = _node(wf, 'LoadImage', '78',
-        image='image_qwen_image_edit_input_image.png',
+    # ════ INPUTS ════
+    input_image = node(wf, 'LoadImage', '78',
+        image=PUBLIC_INPUTS['source_image'].default,
     )
-    unetloader = _node(wf, 'UNETLoader', '102:37',
-        unet_name='qwen_image_edit_fp8_e4m3fn.safetensors',
+    # ════ LOADERS ════
+    base_diffusion_model = node(wf, 'UNETLoader', '102:37',
+        unet_name=MODELS['qwen_image_edit_fp8_e4m3fn'].filename,
         weight_dtype='default',
     )
-    cliploader = _node(wf, 'CLIPLoader', '102:38',
-        clip_name='qwen_2.5_vl_7b_fp8_scaled.safetensors',
+    text_encoder = node(wf, 'CLIPLoader', '102:38',
+        clip_name=MODELS['qwen_2_5_vl_7b_fp8_scaled'].filename,
         type='qwen_image',
         device='default',
     )
-    vaeloader = _node(wf, 'VAELoader', '102:39',
-        vae_name='qwen_image_vae.safetensors',
+    vae = node(wf, 'VAELoader', '102:39',
+        vae_name=MODELS['qwen_image_vae'].filename,
     )
-    primitiveint = _node(wf, 'PrimitiveInt', '102:103',
-        value=4,
-    )
-    primitivefloat = _node(wf, 'PrimitiveFloat', '102:105',
-        value=1,
-    )
-    primitiveint_2 = _node(wf, 'PrimitiveInt', '102:106',
-        value=20,
-    )
-    primitivefloat_2 = _node(wf, 'PrimitiveFloat', '102:107',
-        value=2.5,
-    )
-    primitiveboolean = _node(wf, 'PrimitiveBoolean', '102:111',
-        value=False,
-    )
-    imagescaletototalpixels = _node(wf, 'ImageScaleToTotalPixels', '93',
+    # ════ SAMPLING ════
+    lora_steps = node(wf, 'PrimitiveInt', '102:103', value=4)
+    lora_cfg = node(wf, 'PrimitiveFloat', '102:105', value=1)
+    base_steps = node(wf, 'PrimitiveInt', '102:106', value=20)
+    base_cfg = node(wf, 'PrimitiveFloat', '102:107', value=2.5)
+    use_lora = node(wf, 'PrimitiveBoolean', '102:111', value=PUBLIC_INPUTS['use_lora'].default)
+    # ════ IMAGE PREP ════
+    # parity-preserved leaf: wiring into edit encoding changes source API links.
+    image_scale_to_total_pixels_93 = node(wf, 'ImageScaleToTotalPixels', '93',
         upscale_method='lanczos',
         megapixels=1.5,
         resolution_steps=1,
-        image=loadimage.out(0),
+        image=input_image.out('IMAGE'),
     )
-    textencodeqwenimageedit = _node(wf, 'TextEncodeQwenImageEdit', '102:76',
-        prompt='Remove all UI text elements from the image. Keep the feeling that the characters and scene are in water. Also, remove the green UI elements at the bottom.',
-        clip=cliploader.out(0),
-        image=loadimage.out(0),
-        vae=vaeloader.out(0),
+    # ════ TEXT CONDITIONING ════
+    positive_edit_conditioning = node(wf, 'TextEncodeQwenImageEdit', '102:76',
+        prompt=PUBLIC_INPUTS['prompt'].default,
+        clip=text_encoder.out('CLIP'),
+        image=input_image.out('IMAGE'),
+        vae=vae.out('VAE'),
     )
-    textencodeqwenimageedit_2 = _node(wf, 'TextEncodeQwenImageEdit', '102:77',
+    negative_edit_conditioning = node(wf, 'TextEncodeQwenImageEdit', '102:77',
         prompt='',
-        clip=cliploader.out(0),
-        image=loadimage.out(0),
-        vae=vaeloader.out(0),
+        clip=text_encoder.out('CLIP'),
+        image=input_image.out('IMAGE'),
+        vae=vae.out('VAE'),
     )
-    vaeencode = _node(wf, 'VAEEncode', '102:88',
-        pixels=loadimage.out(0),
-        vae=vaeloader.out(0),
+    vaeencode = node(wf, 'VAEEncode', '102:88',
+        pixels=input_image.out('IMAGE'),
+        vae=vae.out('VAE'),
     )
-    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '102:89',
-        lora_name='Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors',
+    # ════ MODEL PATCH STACK ════
+    lora = node(wf, 'LoraLoaderModelOnly', '102:89',
+        lora_name=MODELS['qwen_image_edit_lightning_4steps_v1_0_bf16'].filename,
         strength_model=1,
-        model=unetloader.out(0),
+        model=base_diffusion_model.out('MODEL'),
     )
-    comfyswitchnode_2 = _node(wf, 'ComfySwitchNode', '102:109',
-        on_false=primitivefloat_2.out(0),
-        on_true=primitivefloat.out(0),
-        switch=primitiveboolean.out(0),
+    # BRANCH SELECTION: use_flag=False → uses 102:107 (other: 102:105).
+    switch_cfg = node(wf, 'ComfySwitchNode', '102:109',
+        on_false=base_cfg.out('FLOAT'),
+        on_true=lora_cfg.out('FLOAT'),
+        switch=use_lora.out('BOOLEAN'),
     )
-    comfyswitchnode_3 = _node(wf, 'ComfySwitchNode', '102:110',
-        on_false=primitiveint_2.out(0),
-        on_true=primitiveint.out(0),
-        switch=primitiveboolean.out(0),
+    # BRANCH SELECTION: use_flag=False → uses 102:106 (other: 102:103).
+    switch_steps = node(wf, 'ComfySwitchNode', '102:110',
+        on_false=base_steps.out('INT'),
+        on_true=lora_steps.out('INT'),
+        switch=use_lora.out('BOOLEAN'),
     )
-    comfyswitchnode = _node(wf, 'ComfySwitchNode', '102:108',
-        on_false=unetloader.out(0),
-        on_true=loraloadermodelonly.out(0),
-        switch=primitiveboolean.out(0),
+    # BRANCH SELECTION: use_flag=False → uses 102:37 (other: 102:89).
+    switch_model = node(wf, 'ComfySwitchNode', '102:108',
+        on_false=base_diffusion_model.out('MODEL'),
+        on_true=lora.out('MODEL'),
+        switch=use_lora.out('BOOLEAN'),
     )
-    modelsamplingauraflow = _node(wf, 'ModelSamplingAuraFlow', '102:66',
+    model_sampling = node(wf, 'ModelSamplingAuraFlow', '102:66',
         shift=3,
-        model=comfyswitchnode.out(0),
+        model=switch_model.out('OUTPUT'),
     )
-    cfgnorm = _node(wf, 'CFGNorm', '102:75',
+    cfgnorm = node(wf, 'CFGNorm', '102:75',
         strength=1,
-        model=modelsamplingauraflow.out(0),
+        model=model_sampling.out('MODEL'),
     )
-    ksampler = _node(wf, 'KSampler', '102:3',
-        seed=344147753686358,
-        sampler_name='euler',
-        scheduler='simple',
-        denoise=1,
-        steps=comfyswitchnode_3.out(0),
-        cfg=comfyswitchnode_2.out(0),
-        latent_image=vaeencode.out(0),
-        model=cfgnorm.out(0),
-        negative=textencodeqwenimageedit_2.out(0),
-        positive=textencodeqwenimageedit.out(0),
+    sampler = node(wf, 'KSampler', '102:3',
+        seed=PUBLIC_INPUTS['seed'].default,
+        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
+        scheduler=PRIVATE_KNOBS['scheduler'],
+        denoise=PRIVATE_KNOBS['denoise'],
+        steps=switch_steps.out('OUTPUT'),
+        cfg=switch_cfg.out('OUTPUT'),
+        latent_image=vaeencode.out('LATENT'),
+        model=cfgnorm.out('PATCHED_MODEL'),
+        negative=negative_edit_conditioning.out('CONDITIONING'),
+        positive=positive_edit_conditioning.out('CONDITIONING'),
     )
-    vaedecode = _node(wf, 'VAEDecode', '102:8',
-        samples=ksampler.out(0),
-        vae=vaeloader.out(0),
+    # ════ DECODE ════
+    decoded_image = node(wf, 'VAEDecode', '102:8',
+        samples=sampler.out('LATENT'),
+        vae=vae.out('VAE'),
     )
-    saveimage = _node(wf, 'SaveImage', '60',
+    # ════ OUTPUT ════
+    image_output = node(wf, 'SaveImage', '60',
         filename_prefix='ComfyUI',
-        images=vaedecode.out(0),
+        images=decoded_image.out('IMAGE'),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_input(wf, 'image', '78', 'image', type='IMAGE', required=True, aliases=['input_image'], media_semantics='image')
-    bind_input(wf, 'prompt', '102:76', 'prompt', type='STRING', required=True, media_semantics='text')
-    bind_input(wf, 'seed', '102:3', 'seed', type='INT')
-    bind_output(wf, '60', output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', filename_prefix='ComfyUI', expected_cardinality='one')
-    return wf
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='60',
+        output_type='SaveImage',
+        name='image',
+        mime_type='image/png',
+        expected_cardinality='one',
+        filename_prefix=OUTPUT_PREFIX,
+        source_path=__file__,
+        requirements=READY_REQUIREMENTS,
+    )
 
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder

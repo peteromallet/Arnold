@@ -76,6 +76,7 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "LTXVImgToVideoConditionOnly": ["strength", "bypass"],
     "LTXAVTextEncoderLoader": ["text_encoder", "ckpt_name", "device"],
     "LTXVPreprocess": ["img_compression"],
+    "LTXFloatToInt": ["rounding"],
     "LTXVScheduler": ["steps", "max_shift", "base_shift", "stretch", "terminal"],
     "LTXVTiledVAEDecode": ["horizontal_tiles", "vertical_tiles", "overlap", "last_frame_fix", None, None],
     "LatentUpscaleModelLoader": ["model_name"],
@@ -236,6 +237,7 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "FloatConstant": ["value"],
     "ImageConcatMulti": ["inputcount", "direction", "match_image_size", "unused_3"],
     "BlockifyMask": ["block_size"],
+    "CannyEdgePreprocessor": ["low_threshold", "high_threshold", "resolution"],
     "DrawMaskOnImage": ["color"],
     "GrowMask": ["expand", "tapered_corners"],
     "DWPreprocessor": [

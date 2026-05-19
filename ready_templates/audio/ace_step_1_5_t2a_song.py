@@ -3,159 +3,155 @@
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 
+PRIVATE_KNOBS: dict[str, object] = {
+    'scheduler': 'simple',
+    'denoise': 1,
+}
 
-READY_METADATA = {'model_assets': [{'name': 'qwen_0.6b_ace15.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors',
-                   'subdir': 'text_encoders'},
-                  {'name': 'qwen_4b_ace15.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors',
-                   'subdir': 'text_encoders'},
-                  {'name': 'ace_1.5_vae.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors',
-                   'subdir': 'vae'},
-                  {'name': 'acestep_v1.5_turbo.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors',
-                   'subdir': 'diffusion_models'}],
- 'unbound_inputs': {'seed': 3020},
- 'ready_template': 'audio/ace_step_1_5_t2a_song',
- 'workflow_template': 'ace_step_1_5_t2a_song',
- 'capability': 'text_to_audio_song',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/official/audio/ace_step_1_5_t2a_song.json',
- 'coverage_tier': 'required',
- 'approach': 'ACE-Step 1.5 text-to-audio song generation',
- 'runtime_note': 'Official subgraph materialized to API-shaped nodes for VibeComfy smoke execution.',
- 'discord_signal': None,
- 'smoke_duration_seconds': 2,
- 'subgraph_materialized': True}
+MODELS = {
+    'qwen_0_6b_ace15': ModelAsset(
+        filename='qwen_0.6b_ace15.safetensors',
+        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors',
+        subdir='text_encoders',
+    ),
+    'qwen_4b_ace15': ModelAsset(
+        filename='qwen_4b_ace15.safetensors',
+        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors',
+        subdir='text_encoders',
+    ),
+    'ace_1_5_vae': ModelAsset(
+        filename='ace_1.5_vae.safetensors',
+        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors',
+        subdir='vae',
+    ),
+    'acestep_v1_5_turbo': ModelAsset(
+        filename='acestep_v1.5_turbo.safetensors',
+        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors',
+        subdir='diffusion_models',
+    ),
+}
 
-READY_REQUIREMENTS = {'models': [{'name': 'qwen_0.6b_ace15.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'qwen_4b_ace15.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'ace_1.5_vae.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors',
-             'subdir': 'vae'},
-            {'name': 'acestep_v1.5_turbo.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors',
-             'subdir': 'diffusion_models'}],
- 'custom_nodes': ['EmptyAceStep1', 'TextEncodeAceStepAudio1']}
+PUBLIC_INPUTS = {
+    'lyrics': InputSpec(node='124', field='lyrics', default='Verse\nTiny signal in the night.', type='STRING', required=True, description='Song lyrics.', media_semantics='text'),
+    'tags': InputSpec(node='124', field='tags', default='synthwave, short instrumental', type='STRING', description='Style tags.', media_semantics='text'),
+    'duration': InputSpec(node='124', field='duration', default=2, type='FLOAT', description='Duration in seconds.'),
+    'bpm': InputSpec(node='124', field='bpm', default=120, type='INT', description='Tempo in beats per minute.'),
+    'seed': InputSpec(node='124', field='seed', default=561594583201063, type='INT', description='Random seed.'),
+    'steps': InputSpec(node='3', field='steps', default=1, type='INT', description='Sampling steps.'),
+    'cfg': InputSpec(node='3', field='cfg', default=1, type='INT', description='Classifier-free guidance scale.'),
+    'sampler_name': InputSpec(node='3', field='sampler_name', default='euler', type='STRING', description='Sampler algorithm.'),
+    'seed_2': InputSpec(node='3', field='seed', default=561594583201063, type='INT', aliases=('noise_seed',), description='Secondary random seed.'),
+}
 
+OUTPUT_PREFIX = 'audio/vibecomfy_ace_step_smoke'
+
+READY_REQUIREMENTS: dict[str, object] = {
+    'custom_nodes': ['EmptyAceStep1', 'TextEncodeAceStepAudio1'],
+}
+
+# generated by vibecomfy port convert; see READY_METADATA["provenance"]
+READY_METADATA = ReadyMetadata.build(
+    template_id='ace_step_1_5_t2a_song',
+    capability='text_to_audio_song',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix=OUTPUT_PREFIX,
+    provenance={'source_workflow': 'workflow_corpus/official/audio/ace_step_1_5_t2a_song.json', 'approach': 'ACE-Step 1.5 text-to-audio song generation', 'source_role': 'materialized_ready_python_template'},
+    coverage_tier='required',
+    runtime_note='Official subgraph materialized to API-shaped nodes for VibeComfy smoke execution.',
+    smoke_duration_seconds=2,
+    subgraph_materialized=True,
+)
+
+READY_METADATA["unbound_inputs"].update({'bpm': '124.bpm', 'duration': '124.duration', 'lyrics': '124.lyrics', 'seed': '124.seed', 'steps': '3.steps', 'tags': '124.tags'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    dualcliploader = _node(wf, 'DualCLIPLoader', '105',
-        clip_name1='qwen_0.6b_ace15.safetensors',
-        clip_name2='qwen_4b_ace15.safetensors',
+    # ════ LOADERS ════
+    text_encoder = node(wf, 'DualCLIPLoader', '105',
+        clip_name1=MODELS['qwen_0_6b_ace15'].filename,
+        clip_name2=MODELS['qwen_4b_ace15'].filename,
         type='ace',
         device='default',
     )
-    vaeloader = _node(wf, 'VAELoader', '106',
-        vae_name='ace_1.5_vae.safetensors',
+    vae = node(wf, 'VAELoader', '106',
+        vae_name=MODELS['ace_1_5_vae'].filename,
     )
-    emptyacestep1_5latentaudio = _node(wf, 'EmptyAceStep1.5LatentAudio', '122',
+    # ════ LATENT ════
+    empty_audio_latent = node(wf, 'EmptyAceStep1.5LatentAudio', '122',
         batch_size=1,
         seconds=2,
     )
-    unetloader = _node(wf, 'UNETLoader', '125',
-        unet_name='acestep_v1.5_turbo.safetensors',
+    base_diffusion_model = node(wf, 'UNETLoader', '125',
+        unet_name=MODELS['acestep_v1_5_turbo'].filename,
         weight_dtype='default',
     )
-    modelsamplingauraflow = _node(wf, 'ModelSamplingAuraFlow', '78',
+    # ════ SAMPLING ════
+    model_sampling = node(wf, 'ModelSamplingAuraFlow', '78',
         shift=3,
-        model=unetloader.out(0),
+        model=base_diffusion_model.out('MODEL'),
     )
-    textencodeacestepaudio1_5 = _node(wf, 'TextEncodeAceStepAudio1.5', '124',
-        bpm=120,
+    # ════ TEXT CONDITIONING ════
+    positive_conditioning = node(wf, 'TextEncodeAceStepAudio1.5', '124',
+        bpm=PUBLIC_INPUTS['bpm'].default,
         cfg_scale=1.5,
-        duration=2,
+        duration=PUBLIC_INPUTS['duration'].default,
         generate_audio_codes=True,
         keyscale='E minor',
         language='en',
-        lyrics='Verse\nTiny signal in the night.',
+        lyrics=PUBLIC_INPUTS['lyrics'].default,
         min_p=0.9,
-        seed=561594583201063,
-        tags='synthwave, short instrumental',
+        seed=PUBLIC_INPUTS['seed'].default,
+        tags=PUBLIC_INPUTS['tags'].default,
         temperature=0,
         timesignature='4',
         top_k=0,
         top_p=0.85,
-        clip=dualcliploader.out(0),
+        clip=text_encoder.out('CLIP'),
     )
-    conditioningzeroout = _node(wf, 'ConditioningZeroOut', '47',
-        conditioning=textencodeacestepaudio1_5.out(0),
+    negative_conditioning = node(wf, 'ConditioningZeroOut', '47',
+        conditioning=positive_conditioning.out('CONDITIONING'),
     )
-    ksampler = _node(wf, 'KSampler', '3',
-        seed=561594583201063,
-        steps=1,
-        cfg=1,
-        sampler_name='euler',
-        scheduler='simple',
-        denoise=1,
-        latent_image=emptyacestep1_5latentaudio.out(0),
-        model=modelsamplingauraflow.out(0),
-        negative=conditioningzeroout.out(0),
-        positive=textencodeacestepaudio1_5.out(0),
+    sampler = node(wf, 'KSampler', '3',
+        seed=PUBLIC_INPUTS['seed_2'].default,
+        steps=PUBLIC_INPUTS['steps'].default,
+        cfg=PUBLIC_INPUTS['cfg'].default,
+        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
+        scheduler=PRIVATE_KNOBS['scheduler'],
+        denoise=PRIVATE_KNOBS['denoise'],
+        latent_image=empty_audio_latent.out('LATENT'),
+        model=model_sampling.out('MODEL'),
+        negative=negative_conditioning.out('CONDITIONING'),
+        positive=positive_conditioning.out('CONDITIONING'),
     )
-    vaedecodeaudio = _node(wf, 'VAEDecodeAudio', '123',
-        samples=ksampler.out(0),
-        vae=vaeloader.out(0),
+    # ════ DECODE ════
+    decoded_audio = node(wf, 'VAEDecodeAudio', '123',
+        samples=sampler.out('LATENT'),
+        vae=vae.out('VAE'),
     )
-    saveaudiomp3 = _node(wf, 'SaveAudioMP3', '59',
-        filename_prefix='audio/vibecomfy_ace_step_smoke',
+    # ════ OUTPUT ════
+    save_audio = node(wf, 'SaveAudioMP3', '59',
+        filename_prefix=OUTPUT_PREFIX,
         quality='V0',
-        audio=vaedecodeaudio.out(0),
+        audio=decoded_audio.out('AUDIO'),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_input(wf, 'lyrics', '124', 'lyrics', type='STRING', required=True, media_semantics='text')
-    bind_input(wf, 'tags', '124', 'tags', type='STRING', media_semantics='text')
-    bind_input(wf, 'duration', '124', 'duration', type='FLOAT')
-    bind_input(wf, 'bpm', '124', 'bpm', type='INT')
-    bind_input(wf, 'seed', '124', 'seed', type='INT')
-    bind_input(wf, 'steps', '3', 'steps', type='INT')
-    bind_output(wf, '59', output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', filename_prefix='audio/vibecomfy_ace_step_smoke', expected_cardinality='one')
-    return wf
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='59',
+        output_type='SaveAudioMP3',
+        name='audio',
+        mime_type='audio/mpeg',
+        expected_cardinality='one',
+        filename_prefix=OUTPUT_PREFIX,
+        source_path=__file__,
+        requirements=READY_REQUIREMENTS,
+    )
 
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
