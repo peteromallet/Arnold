@@ -418,11 +418,35 @@ def _write_plan_version(
         worker=worker,
         plan_text=plan_text,
     )
+    new_hash = sha256_text(plan_text)
+    prior_version = (
+        state.get("plan_versions", [])[-1]
+        if state.get("plan_versions")
+        else None
+    )
+    if isinstance(prior_version, dict) and prior_version.get("hash") == new_hash:
+        raise CliError(
+            "cache_hit_suspected",
+            "revise produced byte-identical content to prior plan version - likely a session-cache replay. See ticket.",
+            valid_next=infer_next_steps(state),
+            extra={
+                "step": step,
+                "prior_version": prior_version.get("version"),
+                "prior_hash": prior_version.get("hash"),
+                "new_hash": new_hash,
+                "session_id": worker.session_id,
+                "duration_ms": worker.duration_ms,
+                "prompt_tokens": worker.prompt_tokens,
+                "completion_tokens": worker.completion_tokens,
+                "ticket": "01KRXNZZGRV17PHZRJ2Q56SPS3",
+                "message": "revise produced byte-identical content to prior plan version - likely a session-cache replay. See ticket.",
+            },
+        )
     atomic_write_text(plan_dir / resolved_plan_filename, plan_text)
     meta = {
         "version": version,
         "timestamp": now_utc(),
-        "hash": sha256_text(plan_text),
+        "hash": new_hash,
         **meta_fields,
         "structure_warnings": structure_warnings,
     }

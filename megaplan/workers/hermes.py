@@ -412,6 +412,7 @@ def run_hermes_step(
     """
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
+    fresh = fresh or step != "execute"
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
