@@ -768,6 +768,14 @@ def _canonical_epic_skill() -> str:
     return resources.files("megaplan").joinpath("data", "epic_skill.md").read_text(encoding="utf-8")
 
 
+def _canonical_observe_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "observe_skill.md").read_text(encoding="utf-8")
+
+
+def _canonical_composed(name: str) -> str:
+    return resources.files("megaplan").joinpath("data", "_composed", name).read_text(encoding="utf-8")
+
+
 def bundled_global_file(name: str) -> str:
     # Single-source skills: the canonical file already carries its frontmatter,
     # so this function just returns the canonical content unchanged. Do not
@@ -781,6 +789,8 @@ def bundled_global_file(name: str) -> str:
         return _canonical_decision_skill()
     if name == "epic_skill.md":
         return _canonical_epic_skill()
+    if name == "observe_skill.md":
+        return _canonical_observe_skill()
     content = _canonical_instructions()
     if name == "claude_skill.md":
         return _SKILL_HEADER + content + "\n\n" + _claude_subagent_appendix()
@@ -814,6 +824,8 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
 ]
 
 
@@ -870,6 +882,40 @@ def _resolve_bundle_path(data_name: str) -> Path:
     currently supports).
     """
     return Path(str(resources.files("megaplan").joinpath("data", data_name)))
+
+
+def handle_regen_composed() -> dict[str, Any]:
+    """Regenerate composed skill bundles from source files.
+
+    Reads instructions.md and the platform subagent appendices, computes
+    three target strings (claude skill, codex skill, cursor rule), and
+    writes them into ``megaplan/data/_composed/``.  Returns ``success: True``
+    when every composed file already matches the computed content (no-op)
+    and ``success: False`` when one or more files were regenerated (exit
+    code 1 so the pre-commit hook / CI can detect drift).
+    """
+    instructions = _canonical_instructions()
+    targets = {
+        "claude_skill.md": _SKILL_HEADER + instructions + "\n\n" + _claude_subagent_appendix(),
+        "codex_skill.md": _SKILL_HEADER + instructions + "\n\n" + _codex_subagent_appendix(),
+        "cursor_rule.mdc": _CURSOR_HEADER + instructions,
+    }
+    composed_dir = resources.files("megaplan").joinpath("data", "_composed")
+    Path(str(composed_dir)).mkdir(parents=True, exist_ok=True)
+    changed: list[str] = []
+    for name, computed in targets.items():
+        target_path = Path(str(composed_dir)) / name
+        current = target_path.read_text(encoding="utf-8") if target_path.is_file() else ""
+        if current != computed:
+            atomic_write_text(target_path, computed)
+            changed.append(name)
+    if changed:
+        return {
+            "success": False,
+            "changed": changed,
+            "summary": f"Regenerated {len(changed)} composed bundle(s): {', '.join(changed)}.",
+        }
+    return {"success": True, "changed": [], "summary": "No composed bundles changed."}
 
 
 def handle_setup_global(force: bool = False, home: Path | None = None) -> StepResponse:
@@ -929,6 +975,8 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
 
 
 def handle_setup(args: argparse.Namespace) -> StepResponse:
+    if getattr(args, "regen_composed", False):
+        return handle_regen_composed()
     local = args.local or args.target_dir
     if not local:
         return handle_setup_global(force=args.force)
@@ -1294,13 +1342,13 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
 
 
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
-    # Check for awaiting_user.json first (YAML pipeline human_gate pause).
+    # Check for awaiting_user.json first (pipeline human_gate pause).
     # When present, enter the human-gate resume flow consuming --choice.
     # When absent, fall through to existing state.json::resume_cursor recovery.
     from megaplan._core.io import find_plan_dir
     plan_dir = find_plan_dir(root, args.plan)
     if plan_dir is not None and (plan_dir / "awaiting_user.json").exists():
-        return _resume_yaml_human_gate(root, plan_dir, args)
+        return _resume_human_gate(root, plan_dir, args)
 
     store = None
     if getattr(args, "actor", None) or getattr(args, "backend", None) == "db" or os.environ.get("MEGAPLAN_ACTOR_ID"):
@@ -1313,12 +1361,15 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
             close()
 
 
-def _resume_yaml_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> dict[str, Any]:
-    """Resume a YAML pipeline paused at a human_gate stage.
+def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> dict[str, Any]:
+    """Resume a pipeline paused at a human_gate stage.
 
     Re-reads ``awaiting_user.json``, validates the ``--choice`` argument,
-    and re-enters the pipeline at the paused stage so all artifact paths
-    are read fresh from disk on resume.
+    persists the choice back into ``awaiting_user.json`` as
+    ``_resume_choice`` so :class:`HumanGateStep` picks it up on
+    re-entry, then resolves the pipeline from the registry and
+    re-enters at the paused stage so prior artifact paths are read
+    fresh from disk.
     """
     awaiting_path = plan_dir / "awaiting_user.json"
     try:
@@ -1345,20 +1396,22 @@ def _resume_yaml_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace
                        f"Invalid choice '{choice}'. "
                        f"Valid choices: {', '.join(choices)}")
 
-    from megaplan._pipeline.loader import load_pipeline
-    from megaplan._pipeline.compiler import compile_pipeline, inject_pipeline_context
     from megaplan._pipeline.executor import run_pipeline
+    from megaplan._pipeline.registry import get_pipeline
     from megaplan._pipeline.resume import with_entry
     from megaplan._pipeline.types import StepContext
 
-    lp = load_pipeline(pipeline_name)
+    # Stamp the choice onto awaiting_user.json so HumanGateStep picks it
+    # up from disk when the stage re-enters (single-use; the step clears
+    # _resume_choice and unlinks the file on read).
+    data["_resume_choice"] = choice
+    try:
+        awaiting_path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    except OSError as exc:
+        raise CliError("bad_awaiting_user",
+                       f"Cannot write awaiting_user.json: {exc}") from exc
 
-    # Build pipeline with resume_choice so HumanGateStep returns it.
-    pipeline = compile_pipeline(
-        lp.spec,
-        pipeline_dir=lp.dir,
-        resume_choice=choice,
-    )
+    pipeline = get_pipeline(pipeline_name)
 
     # Re-enter at the paused stage so prior stages are not re-run.
     paused_stage = data.get("stage")
@@ -1385,11 +1438,11 @@ def _resume_yaml_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace
         mode=state.get("mode", "code"),
         inputs={},
     )
-    ctx = inject_pipeline_context(ctx, lp.spec.name)
 
     result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
 
-    # Clean up awaiting_user.json after successful resume
+    # Clean up awaiting_user.json after successful resume (HumanGateStep
+    # already unlinks it on read, but make the cleanup idempotent).
     if awaiting_path.exists():
         awaiting_path.unlink()
 
@@ -1978,6 +2031,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--local", action="store_true", help="Install AGENTS.md into a project instead of global agent configs")
     setup_parser.add_argument("--target-dir", help="Directory to install into (default: cwd, implies --local)")
     setup_parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+    setup_parser.add_argument("--regen-composed", action="store_true", help="Regenerate composed skill bundles from source files")
 
     init_parser = subparsers.add_parser("init")
     # --project-dir is normally required; the special case is --in-worktree,
@@ -2796,36 +2850,32 @@ def _find_git_root(start: Path) -> Path | None:
 
 
 def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
-    """Handle ``megaplan list pipelines`` — list YAML + registered pipelines."""
-    from megaplan._pipeline.loader import list_pipeline_names
-    from megaplan._pipeline.registry import registered_pipelines
+    """Handle ``megaplan list pipelines`` — list registered pipelines."""
+    from megaplan._pipeline.registry import (
+        describe_pipeline,
+        pipeline_metadata,
+        registered_pipelines,
+    )
 
     verbose = getattr(args, "verbose", False)
 
-    yaml_names = list(list_pipeline_names())
-    reg_names = list(registered_pipelines())
-
-    all_names = sorted(set(yaml_names) | set(reg_names))
-
     items: list[dict[str, Any]] = []
-    for name in all_names:
-        kind = "yaml" if name in yaml_names else "python"
-        if name in yaml_names and name in reg_names:
-            kind = "both"
-        entry: dict[str, Any] = {"name": name, "kind": kind}
-        if verbose and name in yaml_names:
-            from megaplan._pipeline.loader import describe_pipeline
-            desc = describe_pipeline(name)
-            # Extract first line of description
-            first_line = desc.split("\n")[0] if desc else ""
-            entry["description"] = first_line
-            # Get profile info
-            from megaplan._pipeline.loader import load_pipeline
-            lp = load_pipeline(name)
-            entry["version"] = lp.spec.version
-            entry["default_profile"] = lp.spec.default_profile
-            if lp.spec.supported_modes:
-                entry["modes"] = lp.spec.supported_modes
+    for name in registered_pipelines():
+        entry: dict[str, Any] = {"name": name}
+        meta = pipeline_metadata(name)
+        desc = describe_pipeline(name) or str(meta.get("description") or "")
+        if desc:
+            entry["description"] = desc.split("\n", 1)[0]
+        if verbose:
+            default_profile = meta.get("default_profile")
+            if default_profile:
+                entry["default_profile"] = default_profile
+            modes = meta.get("supported_modes") or ()
+            if modes:
+                entry["modes"] = list(modes)
+            recommended = meta.get("recommended_profiles") or ()
+            if recommended:
+                entry["recommended_profiles"] = list(recommended)
         items.append(entry)
 
     return {
@@ -2838,23 +2888,49 @@ def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
 
 def handle_describe(args: argparse.Namespace) -> StepResponse:
     """Handle ``megaplan describe <pipeline>`` command."""
-    from megaplan._pipeline.loader import describe_pipeline
+    from megaplan._pipeline.registry import (
+        describe_pipeline,
+        pipeline_metadata,
+        read_pipeline_skill_md,
+        registered_pipelines,
+    )
 
-    try:
-        desc = describe_pipeline(args.pipeline_name)
-    except KeyError as exc:
+    name = args.pipeline_name
+    if name not in registered_pipelines():
         return {
             "success": False,
             "step": "describe",
-            "error": str(exc),
+            "error": f"Unknown pipeline: {name}",
         }
 
-    # For CLI rendering, print directly (descriptions are long-form text)
-    print(desc)
+    meta = pipeline_metadata(name)
+    desc = describe_pipeline(name) or str(meta.get("description") or "")
+
+    lines: list[str] = [f"Pipeline: {name}"]
+    if desc:
+        lines.append("")
+        lines.append(desc)
+    default_profile = meta.get("default_profile")
+    if default_profile:
+        lines.append(f"Default profile: {default_profile}")
+    recommended = meta.get("recommended_profiles") or ()
+    if recommended:
+        lines.append("Recommended profiles: " + ", ".join(recommended))
+    modes = meta.get("supported_modes") or ()
+    if modes:
+        lines.append("Modes: " + ", ".join(modes))
+
+    skill_md = read_pipeline_skill_md(name)
+    if skill_md:
+        lines.append("")
+        lines.append("SKILL.md:")
+        lines.append(skill_md.rstrip())
+
+    print("\n".join(lines))
     return {
         "success": True,
         "step": "describe",
-        "pipeline": args.pipeline_name,
+        "pipeline": name,
     }
 
 
@@ -2915,7 +2991,11 @@ def main(argv: list[str] | None = None) -> int:
         _auto_sync_installed_skills()
     try:
         if args.command == "setup":
-            return render_response(handle_setup(args))
+            result = handle_setup(args)
+            if getattr(args, "regen_composed", False) and not result.get("success", True):
+                print(json_dump(result))
+                return 1
+            return render_response(result)
         if args.command == "config":
             return render_response(handle_config(args))
     except CliError as error:

@@ -63,6 +63,43 @@ def test_gate_stage_carries_typed_recommendation_edges() -> None:
     assert recs == ["escalate", "iterate", "proceed", "tiebreaker"], recs
 
 
+def test_gate_stage_total_edge_count_locks_extras() -> None:
+    """T11 parity: the gate stage carries exactly 8 edges — the four
+    ``kind='gate'`` recommendation edges plus the four label-only
+    fallback/override edges (revise, gate, override force-proceed,
+    override abort)."""
+    pipeline = compile_planning_pipeline()
+    gate_stage = pipeline.stages["gate"]
+    assert len(gate_stage.edges) == 8, gate_stage.edges
+    label_only = [e for e in gate_stage.edges if e.kind == "normal"]
+    label_targets = {(e.label, e.target) for e in label_only}
+    assert label_targets == {
+        ("revise", "revise"),
+        ("gate", "finalize"),
+        ("override force-proceed", "finalize"),
+        ("override abort", "halt"),
+    }, label_targets
+
+
+def test_tiebreaker_stage_edges_are_three_gate_recommendation_edges() -> None:
+    """T11 LOAD-BEARING: the tiebreaker stage carries exactly three
+    ``kind='gate'`` recommendation edges with the mapping
+    ``{iterate→critique, proceed→finalize, escalate→finalize}``. The
+    legacy label-only edges (``critique→critique``,
+    ``tiebreaker_decide→critique``) are gone."""
+    pipeline = compile_planning_pipeline()
+    tb_stage = pipeline.stages["tiebreaker"]
+    assert len(tb_stage.edges) == 3, tb_stage.edges
+    for e in tb_stage.edges:
+        assert e.kind == "gate", e
+    mapping = {e.recommendation: e.target for e in tb_stage.edges}
+    assert mapping == {
+        "iterate": "critique",
+        "proceed": "finalize",
+        "escalate": "finalize",
+    }, mapping
+
+
 @pytest.mark.parametrize(
     "robustness",
     ["tiny", "light", "standard", "robust", "superrobust"],

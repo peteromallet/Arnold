@@ -1,16 +1,33 @@
-"""Subloop primitive — Sprint 4 Chunk D.
+"""Subloop primitive.
 
-A :class:`SubloopStep` carries a nested :class:`Pipeline` that the
-executor runs as a child, then promotes the child's final state into
+A :class:`SubloopStep` is the executor-level primitive: it carries a
+nested :class:`Pipeline`, runs it as a child via
+:func:`run_pipeline`, and then promotes the child's final state into
 a :class:`Verdict` on the parent. The parent's Verdict.recommendation
 is set from the child pipeline's terminal stage by a configurable
 :attr:`promote` callable.
 
-This is the elegance fix for tiebreaker: today's two states
-(``tiebreaker_pending`` / ``tiebreaker_ready``) collapse into a
-single Step whose nested Pipeline runs researcher → challenger →
-synthesis, with the synthesis output becoming the parent's gate-style
-verdict.
+Relationships:
+
+* :class:`SubloopStep` (this module) is the **primitive**.
+* :class:`megaplan._pipeline.stages.tiebreaker.TiebreakerStep` is the
+  concrete planning use — it collapses the legacy two-state
+  tiebreaker pair into a single Step whose child Pipeline runs
+  researcher → challenger → synthesis.
+* :func:`megaplan._pipeline.patterns.subpipeline_call` is the
+  **recommended construction path** for future user pipelines: it is a
+  thin builder-friendly wrapper around :class:`SubloopStep` and is the
+  surface :class:`PipelineBuilder.subpipeline` plumbs onto.
+
+State-flow contract: the child runs with a *copy* of ``ctx.state``
+(``state=dict(ctx.state)``). Child state mutations therefore do not
+propagate back to the parent state map directly — only the
+``promote`` callable's :class:`GateRecommendation` flows up via
+:class:`Verdict`, plus the two ``subloop:<name>:recommendation`` /
+``subloop:<name>:state`` keys emitted as ``state_patch`` on the
+parent. Downstream handlers that need to observe child results
+should read them from on-disk artifacts (the child writes under
+``ctx.plan_dir / artifact_subdir``), not from in-process state.
 """
 
 from __future__ import annotations
