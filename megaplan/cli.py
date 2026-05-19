@@ -1972,6 +1972,15 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
     _add_vendor_critic_args(init_parser)
     init_parser.add_argument(
+        "--prep-direction",
+        default=None,
+        metavar="TEXT",
+        help="Steering text shown to the prep worker as 'User direction for prep'. "
+             "Use to point prep at specific files, subsystems, or questions to explore "
+             "(e.g. 'focus on the worker shutdown path; ignore CLI plumbing'). "
+             "Only effective when prep runs (robustness thorough|extreme, or --with-prep).",
+    )
+    init_parser.add_argument(
         "--from-arnold-epic",
         default=None,
         metavar="EPIC_ID",
@@ -2205,6 +2214,16 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="Override the source-code working directory passed to subprocess workers "
                                       "(--add-dir / -C). Defaults to the current working directory. Use this to "
                                       "force a specific path (e.g. a git worktree) regardless of where the plan was created.")
+        if name == "prep":
+            step_parser.add_argument(
+                "--direction",
+                dest="prep_direction",
+                default=None,
+                metavar="TEXT",
+                help="Set or replace the prep direction (state.config.prep_direction) "
+                     "before the prep worker runs. Same semantics as `init --prep-direction`, "
+                     "but applied at prep time so you can steer prep without re-initializing.",
+            )
         if name == "execute":
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")

@@ -441,6 +441,42 @@ def test_prep_prompt_contains_idea_and_root_path(tmp_path: Path) -> None:
     assert "prep.json" in prompt
 
 
+def test_prep_prompt_renders_user_notes(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["notes"] = [
+        {"timestamp": "2026-05-18T00:00:00Z", "note": "focus on shutdown path"},
+        {"timestamp": "2026-05-18T00:01:00Z", "note": "skip the CLI plumbing"},
+    ]
+    prompt = _prep_prompt(state, plan_dir, root=tmp_path)
+    assert "User notes and answers:" in prompt
+    assert "- focus on shutdown path" in prompt
+    assert "- skip the CLI plumbing" in prompt
+
+
+def test_prep_prompt_renders_prep_direction(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["prep_direction"] = (
+        "focus on the worker shutdown path; skip CLI plumbing"
+    )
+    prompt = _prep_prompt(state, plan_dir, root=tmp_path)
+    assert "User direction for prep" in prompt
+    assert "focus on the worker shutdown path; skip CLI plumbing" in prompt
+
+
+def test_prep_prompt_omits_direction_block_when_unset(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"].pop("prep_direction", None)
+    prompt = _prep_prompt(state, plan_dir, root=tmp_path)
+    assert "User direction for prep" not in prompt
+
+
+def test_prep_prompt_does_not_duplicate_idea_when_notes_present(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["notes"] = [{"timestamp": "2026-05-18T00:00:00Z", "note": "n1"}]
+    prompt = _prep_prompt(state, plan_dir, root=tmp_path)
+    assert prompt.count(state["idea"]) == 1
+
+
 def test_render_prep_block_returns_empty_strings_when_missing(tmp_path: Path) -> None:
     plan_dir, _ = _scaffold(tmp_path)
     assert _render_prep_block(plan_dir) == ("", "")

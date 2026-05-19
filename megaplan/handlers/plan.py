@@ -80,6 +80,12 @@ def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
 def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="prep") as (plan_dir, state):
         require_state(state, "prep", {STATE_INITIALIZED})
+        prep_direction_arg = getattr(args, "prep_direction", None)
+        if prep_direction_arg is not None:
+            new_direction = str(prep_direction_arg).strip()
+            if not new_direction:
+                raise CliError("invalid_args", "--direction must be non-empty when provided")
+            state["config"]["prep_direction"] = new_direction
         with phase_result_guard(plan_dir):
             worker, agent, mode, refreshed = _pkg._run_worker("prep", state, plan_dir, args, root=root)
             prep_filename = "prep.json"
