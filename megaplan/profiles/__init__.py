@@ -872,6 +872,43 @@ def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     return False
 
 
+# Profiles whose name asserts the vendor. If resolution drifts away from the
+# asserted vendor on any non-feedback phase, fail loudly: the resolved
+# phase_model is persisted into state.config and silently invalidates the
+# user's requested profile for the whole sprint.
+#
+# Only `all-codex` is in this list (not `all-claude`) because:
+#   - `all-claude` matches the harness-wide default vendor; when no
+#     `--vendor` is set it resolves to claude anyway, so the name is
+#     accurate even without locking. Locking it would also break the
+#     documented `--vendor codex --profile all-claude` flip.
+#   - `all-codex` is opinionated; without locking, the silent default-vendor
+#     fallback turned `--profile all-codex` into all-claude.
+_NAMED_VENDOR_PROFILES = {"all-codex": "codex"}
+
+
+def _validate_named_profile_invariants(
+    profile_name: str, resolved: dict[str, str]
+) -> None:
+    expected = _NAMED_VENDOR_PROFILES.get(profile_name)
+    if expected is None:
+        return
+    bad: list[str] = []
+    for phase, spec in resolved.items():
+        if phase == "feedback":
+            continue
+        agent, _model = parse_agent_spec(spec)
+        if agent != expected:
+            bad.append(f"{phase}={spec}")
+    if bad:
+        raise CliError(
+            "profile_resolution_mismatch",
+            f"profile={profile_name} expected {expected} on every non-feedback "
+            f"phase but resolved to: {', '.join(bad)}. "
+            f"Mark the profile vendor_locked=true or pass --vendor {expected} explicitly.",
+        )
+
+
 def apply_profile_expansion(
     args: argparse.Namespace,
     project_dir: Path | None,
@@ -976,6 +1013,8 @@ def apply_profile_expansion(
             resolved = apply_depth_rewrite(resolved, effective_depth_flag)
 
         resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag)
+
+        _validate_named_profile_invariants(profile_name, resolved)
 
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:
