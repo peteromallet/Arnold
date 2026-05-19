@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.22.0 (BREAKING)
+
+This release **removes the YAML pipeline runtime** and introduces a single Python composition framework for defining megaplan pipelines.
+
+### Breaking changes
+
+- **YAML pipeline runtime removed.** The YAML compiler (`megaplan/_pipeline/compiler.py`), schema (`megaplan/_pipeline/schema.py`), loader (`megaplan/_pipeline/loader.py`), and YAML-specific step glue (`megaplan/_pipeline/steps/gate.py`, the YAML wrapper modes in `steps/agent.py` / `steps/panel.py` / `steps/human_gate.py`) are gone. `megaplan/pipelines/planning/pipeline.yaml` and `megaplan/pipelines/writing-panel-strict/pipeline.yaml` have been deleted alongside their YAML-only tests (`tests/_pipeline/test_loader.py`, `tests/_pipeline/test_schema.py`, `tests/_pipeline/test_yaml_steps.py`).
+- **Pipeline discovery now scans Python modules**, not YAML files. The registry looks for sibling Python modules under `megaplan/pipelines/<name>(.py|/)` and user-installed modules under `~/.megaplan/pipelines/<name>.py`, each exposing a `build_pipeline()` factory. The hardcoded built-ins (`planning`, `doc-critique`, `judges`) continue to register through their existing builder functions; sibling-file discovery is additive.
+- **Migration note.** Any external YAML pipelines (none known) must be rewritten as Python modules that expose `build_pipeline() -> Pipeline` constructed via `Pipeline.builder(...)` and the pattern library. The internal pipelines (`planning`, `writing-panel-strict`) have already been ported.
+
+### New surface
+
+- **Python composition framework** in `megaplan._pipeline.patterns` — reusable pattern functions: `critique_revise_gate_loop`, `panel_parallel`, `alternating_turns`, `subpipeline_call`, `mode_prompts`, `iterate_until`, `escalate_if`, `majority_vote`, `phase_zero_gate`.
+- **Fluent builder** at `megaplan._pipeline.builder.PipelineBuilder`, reached via `Pipeline.builder(name, description='', *, default_profile=None, supported_modes=())` on the existing `Pipeline` dataclass. The builder exposes chained methods `.input()`, `.agent()`, `.panel()`, `.gate()`, `.human_gate()`, `.subpipeline()`, `.tiebreaker()`, `.iterate()`, `.escalate()`, `.mode()`, `.overlay()`, `.build()` over the existing `Pipeline` / `Stage` / `ParallelStage` / `Edge` primitives. Pipeline-level metadata (description, default profile, supported modes) is held on the `PipelineRegistry.metadata` surface, not on the frozen `Pipeline` dataclass.
+- **Planning tiebreaker is now first-class.** The `tiebreaker` stage in the planning pipeline runs the full researcher → challenger → synthesis child subloop via `TiebreakerStep` (the previous placeholder handler step has been replaced).
+
+### Behavior delta to surface
+
+- **Tiebreaker escalate emissions land directly on `finalize` via the new `gate`-kind `escalate → finalize` edge** and therefore do **not** exercise `run_pipeline_with_policy`'s escalate-policy resolver at `executor.py:349-355`. This matches the sibling planning gate stage, which already routes `escalate → finalize` directly. Callers that previously expected `policy.escalate.resolve()` to fire on a tiebreaker-subloop escalation will not see it. (Correctness-1 / FLAG-TIEBREAKER-ESCALATE-POLICY-BYPASS / warning #6.)
+
 ## Unreleased
 
 ### Repository organization
