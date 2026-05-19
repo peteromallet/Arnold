@@ -103,6 +103,18 @@ def render_ensure_repo_command(repo: RepoSpec) -> str:
     )
 
 
+def render_ensure_repos_block(spec: CloudSpec) -> str:
+    """Clone primary + every extra repo if missing, in declared order.
+
+    Each repo lives at its own absolute workspace path so a multi-repo or
+    multi-tenant volume can hold them as siblings on independent branches.
+    """
+    blocks = [render_ensure_repo_command(spec.repo)]
+    for extra in spec.extra_repos:
+        blocks.append(render_ensure_repo_command(extra))
+    return "\n".join(blocks)
+
+
 def _auto_command(spec: CloudSpec) -> str:
     assert spec.auto is not None
     plan_dir = f"{spec.repo.workspace}/.megaplan/plans/{spec.auto.plan_name}"
@@ -181,7 +193,7 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "AUTO_PLAN_NAME": spec.auto.plan_name if spec.auto is not None else "idle-plan",
         "AGENT_ROUTING_BLOCK": _agent_routing_block(spec),
         "CLAUDE_AUTH_BLOCK": _claude_auth_block(),
-        "ENSURE_REPO_BLOCK": render_ensure_repo_command(spec.repo),
+        "ENSURE_REPO_BLOCK": render_ensure_repos_block(spec),
         "RUNNER_LAUNCH_BLOCK": _runner_block(spec),
     }
     rendered = _entrypoint_template().safe_substitute(values)
