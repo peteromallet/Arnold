@@ -55,6 +55,7 @@ from megaplan.prompts import (
 
 
 _EXECUTE_STEPS = {"execute", "loop_execute"}
+_CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
 _CODEX_TEMPLATE_WRITE_STEPS = {"critique", "review"}
 
 # Shared mapping from step name to schema filename, used by both
@@ -1852,6 +1853,7 @@ def run_codex_step(
 ) -> WorkerResult:
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
+    fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
@@ -2418,7 +2420,10 @@ def run_step_with_worker(
     prompt_kwargs: dict[str, Any] | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     agent, mode, refreshed, model = resolved or resolve_agent_mode(step, args)
-    effective_refreshed = refreshed
+    # Cross-call persistence is only valid for execute-shaped phases. Every
+    # other phase receives all needed context in its prompt, so resuming prior
+    # planner/critic/reviewer sessions risks cache-replay no-ops.
+    effective_refreshed = refreshed or step not in _CROSS_CALL_PERSISTENT_STEPS
     explicit_agent = _agent_requested_explicitly(step, args)
     attempted_agents: set[str] = set()
     while True:
@@ -2497,7 +2502,7 @@ def run_step_with_worker(
                                 mode=mode,
                                 refreshed=effective_refreshed,
                             )
-                            effective_refreshed = False
+                            effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
                         continue
             return worker, agent, mode, effective_refreshed
         except CliError as error:

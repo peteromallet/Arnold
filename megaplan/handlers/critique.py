@@ -32,6 +32,7 @@ from megaplan._core import (
     load_plan_locked,
     now_utc,
     read_json,
+    record_step_failure,
     require_state,
     clear_active_step,
     save_flag_registry,
@@ -230,6 +231,28 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             "notes_consumed": notes_consumed,
             "notes_consumed_count": len(notes_consumed),
         }
+        if worker.cost_usd > 5.0:
+            error = CliError(
+                "revise_cost_sanity_guard",
+                "revise cost exceeded $5.00; aborting to avoid a possible session-cache loop. See ticket 01KRXNZZGRV17PHZRJ2Q56SPS3.",
+                extra={
+                    "step": "revise",
+                    "cost_usd": worker.cost_usd,
+                    "session_id": worker.session_id,
+                    "prompt_tokens": worker.prompt_tokens,
+                    "completion_tokens": worker.completion_tokens,
+                    "ticket": "01KRXNZZGRV17PHZRJ2Q56SPS3",
+                },
+            )
+            record_step_failure(
+                plan_dir,
+                state,
+                step="revise",
+                iteration=state["iteration"] + 1,
+                error=error,
+                duration_ms=worker.duration_ms,
+            )
+            raise error
         payload = worker.payload
         validate_payload("revise", payload)
         payload["success_criteria"] = _merge_imported_decision_criteria(
@@ -239,18 +262,30 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
         version = state["iteration"] + 1
         plan_text = payload["plan"].rstrip() + "\n"
         delta = compute_plan_delta_percent(previous_plan, plan_text)
-        plan_filename, meta_filename, meta = _write_plan_version(
-            plan_dir=plan_dir, state=state, step="revise", version=version,
-            worker=worker, plan_filename=f"plan_v{version}.md", plan_text=plan_text,
-            meta_fields={
-                "changes_summary": payload["changes_summary"],
-                "flags_addressed": payload["flags_addressed"],
-                "questions": payload.get("questions", []),
-                "success_criteria": payload.get("success_criteria", []),
-                "assumptions": payload.get("assumptions", []),
-                "delta_from_previous_percent": delta,
-            },
-        )
+        try:
+            plan_filename, meta_filename, meta = _write_plan_version(
+                plan_dir=plan_dir, state=state, step="revise", version=version,
+                worker=worker, plan_filename=f"plan_v{version}.md", plan_text=plan_text,
+                meta_fields={
+                    "changes_summary": payload["changes_summary"],
+                    "flags_addressed": payload["flags_addressed"],
+                    "questions": payload.get("questions", []),
+                    "success_criteria": payload.get("success_criteria", []),
+                    "assumptions": payload.get("assumptions", []),
+                    "delta_from_previous_percent": delta,
+                },
+            )
+        except CliError as error:
+            if error.code == "cache_hit_suspected":
+                record_step_failure(
+                    plan_dir,
+                    state,
+                    step="revise",
+                    iteration=version,
+                    error=error,
+                    duration_ms=worker.duration_ms,
+                )
+            raise
         state["iteration"], state["current_state"] = version, revise_transition.next_state
         state["meta"].pop("user_approved_gate", None)
         if has_gate:
