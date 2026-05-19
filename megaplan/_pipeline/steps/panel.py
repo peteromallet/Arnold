@@ -13,11 +13,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from megaplan._pipeline.steps.agent import (
-    _interpolate_inputs,
-    _next_version,
-    _resolve_inputs,
-    _resolve_prompt_text,
+from megaplan._pipeline.step_helpers import (
+    interpolate_inputs,
+    next_version,
+    resolve_inputs,
+    resolve_prompt_text,
 )
 from megaplan._pipeline.types import StepContext, StepResult
 
@@ -51,23 +51,23 @@ class PanelReviewerStep:
     _mode: str = ""
 
     def run(self, ctx: StepContext) -> StepResult:
-        inputs = _resolve_inputs(
+        inputs = resolve_inputs(
             self._input_refs,
             ctx,
             panel_reviewer_order=self._panel_reviewer_order,
         )
-        prompt_text = _resolve_prompt_text(
+        prompt_text = resolve_prompt_text(
             self._prompt_ref,
             self._pipeline_dir,
             prompt_registry=self._prompt_registry,
         )
-        rendered = _interpolate_inputs(prompt_text, inputs)
+        rendered = interpolate_inputs(prompt_text, inputs)
 
         # Write to <plan_dir>/<stage_id>/<reviewer_id>/v<n>.md per convention
         stage_id = self.name.rsplit(".", 1)[0] if "." in self.name else self.name
         output_dir = ctx.plan_dir / stage_id / self._reviewer_id
         output_dir.mkdir(parents=True, exist_ok=True)
-        version = _next_version(output_dir)
+        version = next_version(output_dir)
         output_path = output_dir / f"v{version}.md"
 
         if self._worker is not None:

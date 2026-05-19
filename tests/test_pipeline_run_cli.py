@@ -81,40 +81,32 @@ def test_run_unknown_pipeline_returns_error() -> None:
     assert "no pipeline named" in (proc.stdout + proc.stderr).lower()
 
 
-# ── YAML pipeline CLI tests (Python-level, no subprocess) ─────────────
+# ── Registry-backed CLI tests (Python-level, no subprocess) ───────────
 
 
-def test_yaml_pipeline_names_includes_writing_panel_strict() -> None:
-    """_yaml_pipeline_names discovers writing-panel-strict."""
-    from megaplan._pipeline.run_cli import _yaml_pipeline_names
-    names = _yaml_pipeline_names()
+def test_registered_pipelines_includes_writing_panel_strict() -> None:
+    """The registry surfaces writing-panel-strict alongside the built-ins."""
+    from megaplan._pipeline.registry import registered_pipelines
+    names = registered_pipelines()
     assert "writing-panel-strict" in names
     assert "planning" in names
 
 
-def test_list_all_pipelines_shows_both_kinds(capsys) -> None:
-    """_list_all_pipelines prints both registered and YAML pipelines."""
-    from megaplan._pipeline.run_cli import _list_all_pipelines
-    _list_all_pipelines()
-    captured = capsys.readouterr()
-    assert "writing-panel-strict" in captured.out
-    # Should have either registered or YAML pipelines (or both)
-    assert len(captured.out) > 0
-
-
-def test_describe_pipeline_yaml(capsys) -> None:
+def test_describe_pipeline_writing_panel_strict(capsys) -> None:
     """_describe_pipeline for writing-panel-strict prints metadata."""
     from megaplan._pipeline.run_cli import _describe_pipeline
-    _describe_pipeline("writing-panel-strict")
+    rc = _describe_pipeline("writing-panel-strict")
+    assert rc == 0
     captured = capsys.readouterr()
     assert "writing-panel-strict" in captured.out
     assert "adversarial" in captured.out.lower() or "Adversarial" in captured.out
 
 
 def test_describe_pipeline_unknown(capsys) -> None:
-    """_describe_pipeline for unknown name prints error."""
+    """_describe_pipeline for unknown name prints error and returns 2."""
     from megaplan._pipeline.run_cli import _describe_pipeline
-    _describe_pipeline("nonexistent-pipeline-xyz")
+    rc = _describe_pipeline("nonexistent-pipeline-xyz")
+    assert rc == 2
     captured = capsys.readouterr()
     assert "unknown" in captured.err.lower() or "Unknown" in captured.err
 
@@ -154,11 +146,17 @@ def test_handle_list_pipelines_verbose() -> None:
     )
     result = handle_list(Path.cwd(), args)
     assert result["success"] is True
-    # At least one entry should have version/profile info
-    yaml_entries = [p for p in result["pipelines"] if p["kind"] in ("yaml", "both")]
-    if yaml_entries:
-        assert "version" in yaml_entries[0]
-        assert "default_profile" in yaml_entries[0]
+    # writing-panel-strict's registered metadata carries default_profile + modes;
+    # locate it and assert the verbose-mode metadata surface.
+    wps = next(
+        (p for p in result["pipelines"] if p["name"] == "writing-panel-strict"),
+        None,
+    )
+    assert wps is not None
+    assert "default_profile" in wps
+    assert "modes" in wps
+    # The kind='yaml'|'python' distinction was dropped in 0.22.0.
+    assert all("kind" not in entry for entry in result["pipelines"])
 
 
 def test_handle_describe_writing_panel_strict(capsys) -> None:
@@ -184,7 +182,7 @@ def test_handle_describe_unknown_pipeline() -> None:
 
 
 def test_cli_run_list_dispatches(monkeypatch) -> None:
-    """cli_run with --list calls _list_all_pipelines."""
+    """cli_run with --list prints the registered pipeline names."""
     from megaplan._pipeline.run_cli import cli_run
 
     args = argparse.Namespace(
