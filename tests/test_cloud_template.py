@@ -74,10 +74,19 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
 
     assert '# sandbox_mode = "danger-full-access" stays on because the container is the sandbox.' in rendered
     assert 'sandbox_mode = "danger-full-access"' in rendered
-    assert 'if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then' in rendered
-    assert "claude setup-token" in rendered
-    assert "WARN: Claude token auth failed or timed out; continuing" in rendered
-    assert "exit 1" not in rendered
+    # The Claude auth block prefers the refresh-token shim (programmatic),
+    # falls back to ANTHROPIC_API_KEY (legacy), warns when neither is set.
+    assert 'if [[ -n "${CLAUDE_CODE_REFRESH_TOKEN:-}" ]]; then' in rendered
+    assert 'elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then' in rendered
+    assert "claude-key-helper" in rendered
+    assert "/usr/local/bin/claude.real" in rendered
+    assert "9d1c250a-e61b-44d9-88ed-5944d1962f5e" in rendered  # OAuth client ID
+    assert "claude setup-token" not in rendered  # interactive flow deliberately removed
+    # The entrypoint never terminates early on Claude auth failure: it falls
+    # through the if/elif/else and warns rather than `set -e`-ing out. The
+    # helper-script heredocs do contain `exit 1` (their own process), so we
+    # can't use a blanket grep here — instead check the structural fall-through.
+    assert "WARN: no Claude auth configured" in rendered
     assert render_ensure_repo_command(spec.repo) in rendered
     assert 'git clone --branch "$$REPO_BRANCH"' not in rendered
 
