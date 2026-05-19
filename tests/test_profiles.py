@@ -748,6 +748,32 @@ def test_vendor_locked_profile_runs_without_flags(
     assert resolved["critique"] == "codex"
 
 
+def test_all_codex_resolves_to_codex_without_vendor_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: `--profile all-codex` with no `--vendor` and no user
+    config must keep codex phases. Without vendor-locking, the silent
+    default-vendor fallback ("claude") rewrote every codex slot, turning
+    `all-codex` into all-claude across an entire sprint.
+    """
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="all-codex")
+    args.depth = "medium"
+    apply_profile_expansion(args, None)
+
+    resolved = _phase_models_to_map(args.phase_model)
+    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
+                  "execute", "loop_plan", "loop_execute", "review",
+                  "tiebreaker_researcher", "tiebreaker_challenger"):
+        agent = resolved[phase].split(":", 1)[0]
+        assert agent == "codex", (
+            f"{phase} expected codex but got {resolved[phase]!r}"
+        )
+    assert resolved["feedback"] == "claude:low"
+
+
 def _write_medium_claude_profile(tmp_path: Path) -> None:
     """Write an inline claude:medium-author / codex:medium-critic profile
     used by the vendor/critic rewrite tests below."""
