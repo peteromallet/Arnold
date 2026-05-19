@@ -14,6 +14,27 @@ repo:
   branch: main
   workspace: /workspace/app
 
+# extra_repos:
+#   Optional sibling repos cloned into the volume alongside the primary
+#   `repo`. Useful when a chain or plan references multiple repos (e.g.
+#   app + worker + orchestrator + agent). Each repo needs a unique
+#   workspace path. The entrypoint clones-if-missing on every boot, so
+#   adding a new entry on a redeploy will fetch it without rebuilding.
+# extra_repos:
+#   - url: https://github.com/example/worker.git
+#     branch: main
+#     workspace: /workspace/worker
+#   - url: https://github.com/example/agent.git
+#     branch: main
+#     workspace: /workspace/agent
+
+# chain_session:
+#   tmux session name used by `megaplan cloud chain` to host the chain
+#   runner. Override per cloud.yaml when running multiple chains on the
+#   same long-lived worker (e.g. chain_session: slot-first), so each
+#   chain has an isolated tmux session and log file.
+# chain_session: megaplan-chain
+
 # agents:
 #   `default` applies to every megaplan step. Add per-step overrides only when
 #   a specific phase should use a different agent.

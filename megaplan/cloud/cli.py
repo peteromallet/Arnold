@@ -404,11 +404,11 @@ def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
     }
 
 
-def _tmux_launch_status(result) -> str:
+def _tmux_launch_status(result, *, session_name: str = "megaplan-chain") -> str:
     output = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}"
     if "already running" in output:
         return "already_running"
-    if "started megaplan-chain session" in output:
+    if f"started {session_name} session" in output:
         return "started"
     return "unknown"
 
@@ -469,8 +469,8 @@ def _cloud_chain_launch_provenance(
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
-            "session": "megaplan-chain",
-            "status": _tmux_launch_status(tmux_result),
+            "session": spec.chain_session,
+            "status": _tmux_launch_status(tmux_result, session_name=spec.chain_session),
         },
     }
 
@@ -551,20 +551,27 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    log_file = (
+        ".megaplan/cloud-chain.log"
+        if spec.chain_session == "megaplan-chain"
+        else f".megaplan/cloud-chain-{spec.chain_session}.log"
+    )
     chain_command = (
         f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec {shlex.quote(remote_spec_path)} "
-        ">> .megaplan/cloud-chain.log 2>&1"
+        f">> {shlex.quote(log_file)} 2>&1"
     )
+    session_name = spec.chain_session
+    quoted_session = shlex.quote(session_name)
     result = provider.ssh_exec(
         " && ".join(
             [
                 f"mkdir -p {shlex.quote(str(PurePosixPath(spec.repo.workspace) / '.megaplan'))}",
                 (
-                    "if tmux has-session -t megaplan-chain 2>/dev/null; then "
-                    "echo 'megaplan-chain session already running'; "
+                    f"if tmux has-session -t {quoted_session} 2>/dev/null; then "
+                    f"echo {shlex.quote(f'{session_name} session already running')}; "
                     "else "
-                    f"tmux new-session -d -s megaplan-chain -c {shlex.quote(spec.repo.workspace)} {shlex.quote(chain_command)}; "
-                    "echo 'started megaplan-chain session'; "
+                    f"tmux new-session -d -s {quoted_session} -c {shlex.quote(spec.repo.workspace)} {shlex.quote(chain_command)}; "
+                    f"echo {shlex.quote(f'started {session_name} session')}; "
                     "fi"
                 ),
             ]
