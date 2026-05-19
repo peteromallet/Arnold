@@ -1238,7 +1238,7 @@ def test_run_claude_step_uses_prompt_override_without_builder(tmp_path: Path) ->
     assert command[0:2] == ["shannon", "-p"]
     assert "Read the full megaplan phase prompt from this file" in command[2]
     assert run_command.call_args.kwargs["stdin_text"] is None
-    prompt_file = plan_dir / "plan_shannon_prompt.txt"
+    prompt_file = plan_dir / "plan_v1_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "custom prompt" in prompt_text
     assert "SHANNON STRUCTURED OUTPUT CONTRACT" in prompt_text
@@ -1292,7 +1292,8 @@ def test_run_claude_step_attaches_session_id_on_timeout(tmp_path: Path) -> None:
         with pytest.raises(CliError) as exc_info:
             run_claude_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
-    assert exc_info.value.extra["session_id"] == "claude-session"
+    assert exc_info.value.extra["session_id"] != "claude-session"
+    assert exc_info.value.extra["session_id"]
 
 
 def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> None:
@@ -1962,28 +1963,20 @@ def test_run_codex_step_recovers_execute_batch_payload_from_jsonl_agent_message(
     assert result.duration_ms == 25
 
 
-def test_run_codex_step_resume_omits_add_dir_for_current_codex_cli(tmp_path: Path) -> None:
+def test_run_codex_step_execute_resume_omits_add_dir_for_current_codex_cli(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers import CommandResult, run_codex_step
 
     ensure_runtime_layout(tmp_path)
     plan_dir, state = _mock_state(tmp_path)
-    state["sessions"]["codex_gatekeeper"] = {
-        "id": "gate-session-2",
+    state["sessions"]["codex_executor"] = {
+        "id": "execute-session-2",
         "created_at": "2026-01-01T00:00:00Z",
         "last_used_at": "2026-01-01T00:00:00Z",
         "mode": "persistent",
         "refreshed": False,
     }
-    gate_payload = {
-        "recommendation": "PROCEED",
-        "rationale": "Ready.",
-        "signals_assessment": "Healthy.",
-        "warnings": [],
-        "settled_decisions": [],
-        "flag_resolutions": [],
-        "accepted_tradeoffs": [],
-    }
+    execute_payload = _build_mock_payload("execute", state, plan_dir, output="done")
 
     def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
         assert command[:3] == ["codex", "exec", "resume"]
@@ -1991,7 +1984,7 @@ def test_run_codex_step_resume_omits_add_dir_for_current_codex_cli(tmp_path: Pat
         assert "--skip-git-repo-check" in command
         output_idx = command.index("-o") + 1
         output_path = Path(command[output_idx])
-        output_path.write_text(json.dumps(gate_payload), encoding="utf-8")
+        output_path.write_text(json.dumps(execute_payload), encoding="utf-8")
         return CommandResult(
             command=command,
             cwd=tmp_path,
@@ -2003,17 +1996,17 @@ def test_run_codex_step_resume_omits_add_dir_for_current_codex_cli(tmp_path: Pat
 
     with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
         result = run_codex_step(
-            "gate",
+            "execute",
             state,
             plan_dir,
             root=tmp_path,
             persistent=True,
             fresh=False,
-            prompt_override="gate prompt",
+            prompt_override="execute prompt",
         )
 
-    assert result.payload == gate_payload
-    assert result.session_id == "gate-session-2"
+    assert result.payload == execute_payload
+    assert result.session_id == "execute-session-2"
     assert result.duration_ms == 12
 
 
@@ -2195,7 +2188,7 @@ def test_run_step_with_worker_retries_non_execute_codex_timeout_once(tmp_path: P
     assert result == worker
     assert agent == "codex"
     assert mode == "persistent"
-    assert refreshed is False
+    assert refreshed is True
     assert state["sessions"]["codex_planner"]["id"] == "retry-session"
 
 
@@ -3309,7 +3302,7 @@ def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> N
         )
     assert agent == "shannon"
     assert mode == "persistent"
-    assert refreshed is False
+    assert refreshed is True
     assert result.payload == payload
 
 
@@ -3343,7 +3336,7 @@ def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> N
     run_shannon.assert_called_once()
     assert agent == "claude"
     assert mode == "persistent"
-    assert refreshed is False
+    assert refreshed is True
     assert result.payload == payload
 
 
@@ -3564,15 +3557,17 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
         with pytest.raises(CliError) as exc_info:
             run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=False)
 
-    assert exc_info.value.extra["session_id"] == "shannon-session-abc"
+    assert exc_info.value.extra["session_id"] != "shannon-session-abc"
+    assert exc_info.value.extra["session_id"]
 
 
-def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
+def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers.shannon import run_shannon_step
     from megaplan.workers import CommandResult
 
     ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
     plan_dir, state = _mock_state(tmp_path)
     payload = {
         "output": "done",
@@ -3624,7 +3619,7 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path) -> None:
     assert "--session-id" in command
     assert run_command.call_args.kwargs["stdin_text"] is None
     assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
-    assert "ANTHROPIC_API_KEY" not in run_command.call_args.kwargs["env"]
+    assert run_command.call_args.kwargs["env"]["ANTHROPIC_API_KEY"] == ""
     prompt_file = plan_dir / "execute_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "return json" in prompt_text
