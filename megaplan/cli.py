@@ -2712,17 +2712,6 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
     invoking repo, its branches (other than the one it creates), its remotes,
     its stash, or any other worktree. If anything looks ambiguous, it raises.
     """
-    from megaplan.bakeoff.worktree import (
-        branch_exists,
-        carry_dirty_state_atomic,
-        create_named_worktree,
-        ensure_no_inprogress_op,
-        has_dirty_state,
-        resolve_ref,
-        validate_worktree_name,
-        worktree_registered,
-    )
-
     name = getattr(args, "in_worktree", None)
     clean_worktree = bool(getattr(args, "clean_worktree", False))
     carry_dirty_flag = bool(getattr(args, "carry_dirty", False))
@@ -2743,6 +2732,20 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
                 "--clean-worktree / --carry-dirty are only valid with --in-worktree",
             )
         return
+
+    # Defer bakeoff.worktree import until we know --in-worktree was actually
+    # passed; core init commands must keep working when megaplan.bakeoff is
+    # unavailable (see tests/test_core_without_bakeoff.py).
+    from megaplan.bakeoff.worktree import (
+        branch_exists,
+        carry_dirty_state_atomic,
+        create_named_worktree,
+        ensure_no_inprogress_op,
+        has_dirty_state,
+        resolve_ref,
+        validate_worktree_name,
+        worktree_registered,
+    )
 
     if getattr(args, "project_dir", None):
         raise CliError(

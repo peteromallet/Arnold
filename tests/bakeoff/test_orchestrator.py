@@ -241,56 +241,63 @@ def test_run_bakeoff_persists_doc_mode_and_output_in_state(
     assert persisted["output_path"] == "docs/foo.md"
 
 
-def test_run_bakeoff_metaplan_alias_normalizes_to_doc(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """`--mode metaplan` passed programmatically should normalize to 'doc'."""
-    import subprocess
+def test_run_bakeoff_metaplan_mode_rejected(tmp_path: Path) -> None:
+    """`--mode metaplan` is no longer accepted after the 0.23 bake-off cleanup
+    (T12: the metaplan→doc alias coercion was removed). Programmatic callers
+    that still pass `mode='metaplan'` must now raise CliError('invalid_args')
+    so they migrate to `mode='doc'`."""
+    from megaplan.types import CliError
 
     root = tmp_path / "repo"
     root.mkdir()
-    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=root, check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True, capture_output=True)
-    (root / ".gitignore").write_text(".megaplan/\n", encoding="utf-8")
-    (root / "README.md").write_text("base\n", encoding="utf-8")
-    (root / "idea.md").write_text("design x\n", encoding="utf-8")
-    subprocess.run(["git", "add", "."], cwd=root, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, capture_output=True)
+    idea = root / "idea.md"
+    idea.write_text("design x\n", encoding="utf-8")
 
-    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> FakeProcess:
-        return FakeProcess(0)
-
-    monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.asyncio.create_subprocess_exec",
-        fake_create_subprocess_exec,
-    )
-
-    async def fake_spawn(worktree: Path, plan_id: str, log_path: Path, outcome_path: Path):
-        import json as _json
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("ok\n", encoding="utf-8")
-        outcome_path.parent.mkdir(parents=True, exist_ok=True)
-        outcome_path.write_text(
-            _json.dumps({"status": "done", "plan": plan_id, "final_state": "done", "iterations": 1, "reason": "", "events": []}),
-            encoding="utf-8",
+    with pytest.raises(CliError) as excinfo:
+        asyncio.run(
+            orchestrator.run_bakeoff(
+                root,
+                idea,
+                ["apex"],
+                "metaplan",
+                "exp-meta",
+                output="docs/foo.md",
+            )
         )
-        return FakeProcess(0), None
+    assert excinfo.value.code == "invalid_args"
 
-    monkeypatch.setattr(orchestrator, "_spawn_auto", fake_spawn)
 
-    state = asyncio.run(
-        orchestrator.run_bakeoff(
-            root,
-            root / "idea.md",
-            ["apex"],
-            "metaplan",
-            "exp-meta",
-            output="docs/foo.md",
+def test_run_bakeoff_joke_mode_rejected(tmp_path: Path) -> None:
+    """`--mode joke` was never a valid bake-off mode and after the 0.23 cleanup
+    the validation set is tightened to `{code, doc}`. Programmatic callers must
+    raise CliError('invalid_args')."""
+    from megaplan.types import CliError
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    idea = root / "idea.md"
+    idea.write_text("design x\n", encoding="utf-8")
+
+    with pytest.raises(CliError) as excinfo:
+        asyncio.run(
+            orchestrator.run_bakeoff(
+                root,
+                idea,
+                ["apex"],
+                "joke",
+                "exp-joke",
+            )
         )
-    )
-    assert state["mode"] == "doc"
-    assert state["output_path"] == "docs/foo.md"
+    assert excinfo.value.code == "invalid_args"
+
+
+def test_run_bakeoff_code_and_doc_modes_validate(tmp_path: Path) -> None:
+    """The tightened validation set `{code, doc}` still accepts both literals;
+    the validation gate must not regress legitimate values along with the
+    metaplan/joke removal."""
+    from megaplan.bakeoff.cli import BAKEOFF_SUPPORTED_MODES
+
+    assert set(BAKEOFF_SUPPORTED_MODES) == {"code", "doc"}
 
 
 def test_init_profile_omits_robustness_when_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

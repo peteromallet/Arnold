@@ -1,4 +1,11 @@
-"""Smoke tests for handle_init's joke-mode arg validation (--mode/--output)."""
+"""Smoke tests for handle_init's joke-mode arg validation (--mode/--output).
+
+T14 (0.23): retained as LEGACY-path coverage in the explicit joke
+three-way split. See ``tests/test_joke_mode_smoke.py`` module docstring
+for the full split (LEGACY here + NEW ``tests/pipelines/test_creative_pipeline.py``
++ DEPRECATION ``tests/test_mode_deprecation.py``). Keeping all three is
+required by USER DECISION 2.
+"""
 from __future__ import annotations
 
 from argparse import Namespace

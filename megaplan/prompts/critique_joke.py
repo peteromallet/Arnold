@@ -1,35 +1,23 @@
-"""Joke-mode critique prompt compatibility shims."""
+"""Re-export shim for relocated ``critique_joke`` prompt builders (T8).
+
+Canonical module: ``megaplan.pipelines.creative.prompts.critique_joke``.
+
+CRITICAL: ``single_check_critique_joke_prompt`` is a non-underscore
+public symbol consumed at ``megaplan/orchestration/parallel_critique.py:21``
+and ``tests/test_joke_mode_smoke.py:14``. Star-imports do NOT carry
+non-underscore symbols consistently across Python versions; the
+explicit ``__all__`` below MUST enumerate it.
+"""
 
 from __future__ import annotations
 
-from functools import partial
-from pathlib import Path
-from typing import Any
+from megaplan.pipelines.creative.prompts.critique_joke import *  # noqa: F401,F403
+from megaplan.pipelines.creative.prompts.critique_joke import (  # noqa: F401
+    _critique_joke_prompt,
+    single_check_critique_joke_prompt,
+)
 
-from megaplan.forms import get_form
-from megaplan.types import PlanState
-
-from .critique_creative import _critique_creative_prompt
-from .critique import _build_critique_prompt, _critique_context
-
-_critique_joke_prompt = partial(_critique_creative_prompt, form=get_form("joke"))
-
-
-def single_check_critique_joke_prompt(
-    state: PlanState,
-    plan_dir: Path,
-    root: Path | None,
-    check: dict[str, Any],
-    template_path: Path,
-) -> str:
-    context = _critique_context(state, plan_dir, root)
-    critique_review_block = (
-        f"Your output template is at: {template_path}\n"
-        f"Investigate only this creative provocation and write one committed `FLAG-{check['id']}` proposal.\n\n"
-        f"Question: {check.get('question', '')}\n"
-        f"Guidance: {check.get('guidance', '')}"
-    )
-    return _build_critique_prompt(state, context, critique_review_block)
-
-
-__all__ = ["_critique_joke_prompt", "single_check_critique_joke_prompt"]
+__all__ = [
+    "_critique_joke_prompt",
+    "single_check_critique_joke_prompt",
+]

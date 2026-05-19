@@ -42,13 +42,14 @@ def test_bakeoff_run_accepts_doc_mode_with_output() -> None:
     assert args.output == "docs/foo.md"
 
 
-def test_bakeoff_run_accepts_metaplan_mode_with_output() -> None:
+def test_bakeoff_run_rejects_metaplan_mode() -> None:
+    """After 0.23's metaplan-alias removal, `--mode metaplan` is no longer a
+    valid bake-off mode; argparse rejects it at the choices boundary."""
     parser = _build_parser()
-    args = parser.parse_args(
-        ["bakeoff", "run", "--idea-file", "i.md", "--profiles", "p", "--mode", "metaplan", "--output", "docs/foo.md"]
-    )
-    assert args.mode == "metaplan"
-    assert args.output == "docs/foo.md"
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["bakeoff", "run", "--idea-file", "i.md", "--profiles", "p", "--mode", "metaplan", "--output", "docs/foo.md"]
+        )
 
 
 def test_bakeoff_run_rejects_unknown_mode() -> None:
@@ -96,23 +97,13 @@ def test_run_bakeoff_cli_rejects_doc_mode_without_output(monkeypatch: pytest.Mon
     assert "--output is required" in excinfo.value.message
 
 
-def test_run_bakeoff_cli_normalizes_metaplan_to_doc_before_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_bakeoff_cli_metaplan_rejected_at_parser_layer() -> None:
+    """The 0.23 metaplan-alias removal means `metaplan` is rejected at the
+    argparse choices boundary BEFORE `run_bakeoff_cli` runs — there is no
+    downstream coercion to dispatch."""
     parser = _build_parser()
-    args = parser.parse_args(
-        ["bakeoff", "run", "--idea-file", "i.md", "--profiles", "p",
-         "--mode", "metaplan", "--output", "docs/foo.md"]
-    )
-    seen: dict[str, object] = {}
-
-    def fake(_root: Path, ns: argparse.Namespace) -> int:
-        seen["mode"] = ns.mode
-        seen["output"] = ns.output
-        return 0
-
-    monkeypatch.setattr(
-        "megaplan.bakeoff.orchestrator.run_bakeoff_run_handler", fake
-    )
-    assert run_bakeoff_cli(Path("/tmp"), args) == 0
-    assert seen == {"mode": "doc", "output": "docs/foo.md"}
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["bakeoff", "run", "--idea-file", "i.md", "--profiles", "p",
+             "--mode", "metaplan", "--output", "docs/foo.md"]
+        )
