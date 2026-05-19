@@ -8,6 +8,7 @@ are made.
 import json
 import logging
 import re
+import time
 import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -590,7 +591,27 @@ class TestBuildApiKwargs:
         kwargs = agent._build_api_kwargs(messages)
         assert kwargs["model"] == agent.model
         assert kwargs["messages"] is messages
-        assert kwargs["timeout"] == 900.0
+        assert kwargs["timeout"] == 300.0
+
+    def test_api_timeout_env_override(self, agent, monkeypatch):
+        monkeypatch.setenv("HERMES_API_TIMEOUT", "42.5")
+        assert agent._build_api_kwargs([{"role": "user", "content": "hi"}])["timeout"] == 42.5
+
+    def test_interruptible_api_call_has_wall_clock_timeout(self, agent, monkeypatch):
+        monkeypatch.setenv("HERMES_API_TIMEOUT", "0.1")
+        mock_client = MagicMock()
+
+        def _hang(**_kwargs):
+            time.sleep(1)
+
+        mock_client.chat.completions.create.side_effect = _hang
+        with (
+            patch.object(agent, "_create_request_openai_client", return_value=mock_client),
+            patch.object(agent, "_close_request_openai_client") as mock_close,
+        ):
+            with pytest.raises(TimeoutError, match="API call exceeded"):
+                agent._interruptible_api_call({"model": "m", "messages": []})
+        mock_close.assert_any_call(mock_client, reason="request_timeout_abort")
 
     def test_provider_preferences_injected(self, agent):
         agent.providers_allowed = ["Anthropic"]

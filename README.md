@@ -220,7 +220,7 @@ View all settings with `megaplan config show`. Override with `megaplan config se
 | Key | Default | Description |
 |-----|---------|-------------|
 | `orchestration.mode` | `subagent` | `inline` or `subagent` (Claude Code and Codex) |
-| `orchestration.max_critique_concurrency` | `2` | Max parallel critique checks |
+| `orchestration.max_critique_concurrency` | `5` | Max parallel critique checks (covers all `full`-robustness core checks in one wave) |
 | `execution.worker_timeout_seconds` | `7200` | Worker process timeout (seconds) |
 | `execution.max_execute_no_progress` | `3` | No-progress execute attempts before escalation |
 | `execution.max_review_rework_cycles` | `3` | Review→rework loops before force-proceeding |

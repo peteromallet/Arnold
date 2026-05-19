@@ -2,8 +2,28 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import Any
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True iff the given pid corresponds to a running process.
+
+    Uses signal-0 probe; treats PermissionError as alive (process exists,
+    owned by someone else). Returns False for non-positive pids.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
 
 
 DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS = 900
@@ -224,6 +244,7 @@ def build_phase_observability(
     configured_timeout_seconds: int,
     age_seconds: int | None = None,
     lock_held: bool = False,
+    worker_pid: int | None = None,
 ) -> dict[str, Any]:
     resolved = resolve_phase_runtime(step, configured_timeout_seconds=configured_timeout_seconds)
     payload: dict[str, Any] = asdict(resolved)
@@ -232,6 +253,21 @@ def build_phase_observability(
         stale = age_seconds >= resolved.escalation_threshold_seconds
         payload["age_seconds"] = age_seconds
         payload["stale"] = stale
+    # Probe the recorded worker pid. If it was recorded but is no longer
+    # alive, the active step is dead regardless of where it sits in the
+    # time-vs-budget window. Cached "healthy" claims from stale state.json
+    # files used to mask this — health: "dead" forces a recover path.
+    if worker_pid is not None and not _pid_alive(int(worker_pid)):
+        payload["health"] = "dead"
+        payload["worker_pid_alive"] = False
+        payload["recommended_action"] = "resume_or_recover"
+        payload["recommended_action_reason"] = (
+            f"The active step's recorded worker process (pid={worker_pid}) is no longer alive; "
+            "the phase is not actually running. Re-run the step or recover via override."
+        )
+        return payload
+    if worker_pid is not None:
+        payload["worker_pid_alive"] = True
     if age_seconds is None or not stale:
         payload["health"] = "healthy"
         payload["recommended_action"] = "wait"

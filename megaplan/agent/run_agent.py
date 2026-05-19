@@ -72,6 +72,8 @@ import requests
 
 from hermes_constants import OPENROUTER_BASE_URL
 
+DEFAULT_API_TIMEOUT_SECONDS = 300.0
+
 # Agent internals extracted to agent/ package for modularity
 from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY, PLATFORM_HINTS,
@@ -3160,6 +3162,30 @@ class AIAgent:
         )
         return client
 
+    def _api_timeout_seconds(self) -> float:
+        try:
+            timeout = float(os.getenv("HERMES_API_TIMEOUT", DEFAULT_API_TIMEOUT_SECONDS))
+        except (TypeError, ValueError):
+            timeout = DEFAULT_API_TIMEOUT_SECONDS
+        return max(timeout, 0.1)
+
+    def _abort_request_client(self, request_client_holder: dict, *, reason: str) -> None:
+        try:
+            if self.api_mode == "anthropic_messages":
+                from agent.anthropic_adapter import build_anthropic_client
+
+                self._anthropic_client.close()
+                self._anthropic_client = build_anthropic_client(
+                    self._anthropic_api_key,
+                    getattr(self, "_anthropic_base_url", None),
+                )
+            else:
+                request_client = request_client_holder.get("client")
+                if request_client is not None:
+                    self._close_request_openai_client(request_client, reason=reason)
+        except Exception:
+            pass
+
     def _close_openai_client(self, client: Any, *, reason: str, shared: bool) -> None:
         if client is None:
             return
@@ -3462,27 +3488,19 @@ class AIAgent:
 
         t = threading.Thread(target=_call, daemon=True)
         t.start()
+        timeout_seconds = self._api_timeout_seconds()
+        deadline = time.monotonic() + timeout_seconds
         while t.is_alive():
-            t.join(timeout=0.3)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._abort_request_client(request_client_holder, reason="request_timeout_abort")
+                raise TimeoutError(f"API call exceeded {timeout_seconds:.1f}s")
+            t.join(timeout=min(0.3, max(0.01, remaining)))
             if self._interrupt_requested:
                 # Force-close the in-flight worker-local HTTP connection to stop
                 # token generation without poisoning the shared client used to
                 # seed future retries.
-                try:
-                    if self.api_mode == "anthropic_messages":
-                        from agent.anthropic_adapter import build_anthropic_client
-
-                        self._anthropic_client.close()
-                        self._anthropic_client = build_anthropic_client(
-                            self._anthropic_api_key,
-                            getattr(self, "_anthropic_base_url", None),
-                        )
-                    else:
-                        request_client = request_client_holder.get("client")
-                        if request_client is not None:
-                            self._close_request_openai_client(request_client, reason="interrupt_abort")
-                except Exception:
-                    pass
+                self._abort_request_client(request_client_holder, reason="interrupt_abort")
                 raise InterruptedError("Agent interrupted during API call")
         if result["error"] is not None:
             raise result["error"]
@@ -3775,24 +3793,16 @@ class AIAgent:
 
         t = threading.Thread(target=_call, daemon=True)
         t.start()
+        timeout_seconds = self._api_timeout_seconds()
+        deadline = time.monotonic() + timeout_seconds
         while t.is_alive():
-            t.join(timeout=0.3)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._abort_request_client(request_client_holder, reason="stream_request_timeout_abort")
+                raise TimeoutError(f"Streaming API call exceeded {timeout_seconds:.1f}s")
+            t.join(timeout=min(0.3, max(0.01, remaining)))
             if self._interrupt_requested:
-                try:
-                    if self.api_mode == "anthropic_messages":
-                        from agent.anthropic_adapter import build_anthropic_client
-
-                        self._anthropic_client.close()
-                        self._anthropic_client = build_anthropic_client(
-                            self._anthropic_api_key,
-                            getattr(self, "_anthropic_base_url", None),
-                        )
-                    else:
-                        request_client = request_client_holder.get("client")
-                        if request_client is not None:
-                            self._close_request_openai_client(request_client, reason="stream_interrupt_abort")
-                except Exception:
-                    pass
+                self._abort_request_client(request_client_holder, reason="stream_interrupt_abort")
                 raise InterruptedError("Agent interrupted during streaming API call")
         if result["error"] is not None:
             raise result["error"]
@@ -4164,7 +4174,7 @@ class AIAgent:
             "model": self.model,
             "messages": sanitized_messages,
             "tools": self.tools if self.tools else None,
-            "timeout": float(os.getenv("HERMES_API_TIMEOUT", 900.0)),
+            "timeout": self._api_timeout_seconds(),
         }
 
         if self.max_tokens is not None:

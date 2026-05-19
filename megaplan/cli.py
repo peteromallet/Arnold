@@ -312,6 +312,12 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
         return details
     configured_timeout_seconds = int(get_effective("execution", "worker_timeout_seconds"))
     lock_held = plan_lock_is_held(plan_dir)
+    raw_worker_pid = details.get("worker_pid")
+    worker_pid: int | None
+    try:
+        worker_pid = int(raw_worker_pid) if raw_worker_pid is not None else None
+    except (TypeError, ValueError):
+        worker_pid = None
     started_at = _parse_utc_timestamp(details.get("started_at"))
     if started_at is not None:
         age_seconds = max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
@@ -321,6 +327,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 configured_timeout_seconds=configured_timeout_seconds,
                 age_seconds=age_seconds,
                 lock_held=lock_held,
+                worker_pid=worker_pid,
             )
         )
         last_activity_at = _parse_utc_timestamp(details.get("last_activity_at"))
@@ -378,6 +385,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 step,
                 configured_timeout_seconds=configured_timeout_seconds,
                 lock_held=lock_held,
+                worker_pid=worker_pid,
             )
         )
         if step in {"execute", "loop_execute"}:
@@ -768,6 +776,14 @@ def _canonical_epic_skill() -> str:
     return resources.files("megaplan").joinpath("data", "epic_skill.md").read_text(encoding="utf-8")
 
 
+def _canonical_observe_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "observe_skill.md").read_text(encoding="utf-8")
+
+
+def _canonical_composed(name: str) -> str:
+    return resources.files("megaplan").joinpath("data", "_composed", name).read_text(encoding="utf-8")
+
+
 def bundled_global_file(name: str) -> str:
     # Single-source skills: the canonical file already carries its frontmatter,
     # so this function just returns the canonical content unchanged. Do not
@@ -781,39 +797,47 @@ def bundled_global_file(name: str) -> str:
         return _canonical_decision_skill()
     if name == "epic_skill.md":
         return _canonical_epic_skill()
-    content = _canonical_instructions()
+    if name == "observe_skill.md":
+        return _canonical_observe_skill()
+    # Composed bundles: pre-built at commit time via --regen-composed and
+    # stored under megaplan/data/_composed/. Every _GLOBAL_TARGETS entry
+    # referencing these symlinks into the pre-composed file — no runtime
+    # composition needed here.
     if name == "claude_skill.md":
-        return _SKILL_HEADER + content + "\n\n" + _claude_subagent_appendix()
+        return _canonical_composed("claude_skill.md")
     if name == "codex_skill.md":
-        return _SKILL_HEADER + content + "\n\n" + _codex_subagent_appendix()
+        return _canonical_composed("codex_skill.md")
+    if name == "cursor_rule.mdc":
+        return _canonical_composed("cursor_rule.mdc")
+    # skill.md: header + instructions only. No _GLOBAL_TARGETS entry
+    # references this variant — it exists for callers that want the
+    # instructions without any agent-specific appendix.
+    content = _canonical_instructions()
     if name == "skill.md":
         return _SKILL_HEADER + content
-    if name == "cursor_rule.mdc":
-        return _CURSOR_HEADER + content
     return content
 
 
-# Single-source skills install as symlinks pointing to the canonical bundle file
-# inside the package. Multi-source skills (megaplan/SKILL.md, cursor_rule.mdc)
-# are composed from several files at setup time and install as regular files —
-# but they're regenerated from canonical sources on every setup run, so they
-# can't drift if `megaplan setup` is run regularly.
+# Every _GLOBAL_TARGETS entry uses install: "symlink". Composition moved to
+# commit-time via --regen-composed, which writes pre-built bundles under
+# megaplan/data/_composed/. The composed bundles are single-source from the
+# installer's perspective — add_symlink_targets() creates symlinks into
+# _composed/ just like it does for single-file skills.
 #
-# To prevent shadow-doc drift forever, the rule is: any skill whose target
-# content is *identical* to one bundled file (no header prepending, no
-# concatenation) MUST install as a symlink. Adding a copy-mode entry that
-# duplicates a single-source canonical is a regression — the test
-# `tests/test_setup_no_shadow_skills.py` enforces this invariant.
+# Adding a copy-mode entry is a regression — the test
+# `tests/test_setup_no_shadow_skills.py` asserts every target uses symlink.
 _GLOBAL_TARGETS = [
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "claude_skill.md", "install": "copy"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan/SKILL.md", "data": "codex_skill.md", "install": "copy"},
-    {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "cursor_rule.mdc", "install": "copy"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "_composed/claude_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan/SKILL.md", "data": "_composed/codex_skill.md", "install": "symlink"},
+    {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "_composed/cursor_rule.mdc", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
 ]
 
 
@@ -870,6 +894,40 @@ def _resolve_bundle_path(data_name: str) -> Path:
     currently supports).
     """
     return Path(str(resources.files("megaplan").joinpath("data", data_name)))
+
+
+def handle_regen_composed() -> dict[str, Any]:
+    """Regenerate composed skill bundles from source files.
+
+    Reads instructions.md and the platform subagent appendices, computes
+    three target strings (claude skill, codex skill, cursor rule), and
+    writes them into ``megaplan/data/_composed/``.  Returns ``success: True``
+    when every composed file already matches the computed content (no-op)
+    and ``success: False`` when one or more files were regenerated (exit
+    code 1 so the pre-commit hook / CI can detect drift).
+    """
+    instructions = _canonical_instructions()
+    targets = {
+        "claude_skill.md": _SKILL_HEADER + instructions + "\n\n" + _claude_subagent_appendix(),
+        "codex_skill.md": _SKILL_HEADER + instructions + "\n\n" + _codex_subagent_appendix(),
+        "cursor_rule.mdc": _CURSOR_HEADER + instructions,
+    }
+    composed_dir = resources.files("megaplan").joinpath("data", "_composed")
+    Path(str(composed_dir)).mkdir(parents=True, exist_ok=True)
+    changed: list[str] = []
+    for name, computed in targets.items():
+        target_path = Path(str(composed_dir)) / name
+        current = target_path.read_text(encoding="utf-8") if target_path.is_file() else ""
+        if current != computed:
+            atomic_write_text(target_path, computed)
+            changed.append(name)
+    if changed:
+        return {
+            "success": False,
+            "changed": changed,
+            "summary": f"Regenerated {len(changed)} composed bundle(s): {', '.join(changed)}.",
+        }
+    return {"success": True, "changed": [], "summary": "No composed bundles changed."}
 
 
 def handle_setup_global(force: bool = False, home: Path | None = None) -> StepResponse:
@@ -929,6 +987,8 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
 
 
 def handle_setup(args: argparse.Namespace) -> StepResponse:
+    if getattr(args, "regen_composed", False):
+        return handle_regen_composed()
     local = args.local or args.target_dir
     if not local:
         return handle_setup_global(force=args.force)
@@ -1978,6 +2038,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--local", action="store_true", help="Install AGENTS.md into a project instead of global agent configs")
     setup_parser.add_argument("--target-dir", help="Directory to install into (default: cwd, implies --local)")
     setup_parser.add_argument("--force", action="store_true", help="Overwrite existing files")
+    setup_parser.add_argument("--regen-composed", action="store_true", help="Regenerate composed skill bundles from source files")
 
     init_parser = subparsers.add_parser("init")
     # --project-dir is normally required; the special case is --in-worktree,
@@ -2915,7 +2976,11 @@ def main(argv: list[str] | None = None) -> int:
         _auto_sync_installed_skills()
     try:
         if args.command == "setup":
-            return render_response(handle_setup(args))
+            result = handle_setup(args)
+            if getattr(args, "regen_composed", False) and not result.get("success", True):
+                print(json_dump(result))
+                return 1
+            return render_response(result)
         if args.command == "config":
             return render_response(handle_config(args))
     except CliError as error:

@@ -70,6 +70,25 @@ def _phase_status(plan: str, state: str = "planning", next_step: str = "prep") -
     }
 
 
+def _active_wait_status(plan: str, state: str = "planning", next_step: str = "plan") -> dict:
+    response = _phase_status(plan, state=state, next_step=next_step)
+    response["active_step"] = {
+        "step": next_step,
+        "agent": "codex",
+        "mode": "persistent",
+        "started_at": "2026-05-19T10:00:00Z",
+        "age_seconds": 48,
+        "stale": False,
+        "health": "healthy",
+        "recommended_action": "wait",
+        "recommended_action_reason": "The active step is within its expected runtime window.",
+        "idle_seconds": 48,
+        "phase_progress_summary": "plan running (48s elapsed, typically completes within 15m).",
+        "progress_pct": 5,
+    }
+    return response
+
+
 def _done_status(plan: str) -> dict:
     return {
         "success": True,
@@ -115,6 +134,39 @@ def _append_history_cost(plan_dir: Path, cost: float) -> None:
     history = state_data.setdefault("history", [])
     history.append({"cost_usd": cost})
     state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+
+def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path: Path) -> None:
+    plan = "active-plan"
+    _make_plan_dir(tmp_path, plan)
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _active_wait_status(plan_name, state="initialized", next_step="plan")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        healthy_lock_payload = {
+            "success": False,
+            "error": "plan_locked",
+            "active_step": _active_wait_status(plan, state="initialized", next_step="plan")["active_step"],
+        }
+        return 1, json.dumps(healthy_lock_payload), ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=2,
+            stall_threshold=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "cap"
+    assert run_calls == []
+    assert any("still running" in event.get("msg", "") for event in outcome.events)
 
 
 def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> None:

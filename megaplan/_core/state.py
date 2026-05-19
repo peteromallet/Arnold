@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -415,6 +416,7 @@ def set_active_step(
         "agent": agent,
         "mode": mode,
         "run_id": resolved_run_id,
+        "worker_pid": os.getpid(),
         "started_at": started_at,
         "attempt": attempt,
         "last_activity_at": started_at,
