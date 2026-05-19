@@ -48,6 +48,64 @@ def test_init_includes_next_step_runtime(plan_fixture: PlanFixture) -> None:
     assert "Expected duration:" in response["next_step_runtime"]["duration_hint"]
 
 
+def test_init_prep_direction_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--prep-direction lands in state['config']['prep_direction']."""
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+    make_args = make_args_factory(project_dir)
+    response = megaplan.handle_init(
+        root,
+        make_args(name="prep-direction-init", prep_direction="  focus on cache invalidation  "),
+    )
+    plan_dir = megaplan.plans_root(root) / response["plan"]
+    state = load_state(plan_dir)
+    assert state["config"]["prep_direction"] == "focus on cache invalidation"
+
+
+def test_init_prep_direction_rejects_blank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+    make_args = make_args_factory(project_dir)
+    with pytest.raises(CliError) as info:
+        megaplan.handle_init(
+            root,
+            make_args(name="prep-direction-blank", prep_direction="   "),
+        )
+    assert info.value.code == "invalid_args"
+    assert "prep-direction" in str(info.value)
+
+
+def test_init_without_prep_direction_omits_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+    make_args = make_args_factory(project_dir)
+    response = megaplan.handle_init(root, make_args(name="prep-direction-none"))
+    plan_dir = megaplan.plans_root(root) / response["plan"]
+    state = load_state(plan_dir)
+    assert "prep_direction" not in state["config"]
+
+
 def test_init_strict_notes_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """--strict-notes should land in state['config']['strict_notes']."""
     root = tmp_path / "root"
@@ -779,6 +837,57 @@ def test_handle_plan_stores_nonblocking_structure_warnings(plan_fixture: PlanFix
 
     assert response["success"] is True
     assert meta["structure_warnings"] == ["Plan should include a `## Overview` section."]
+
+
+def test_handle_prep_direction_arg_overrides_state(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`megaplan prep --direction` writes state.config.prep_direction before worker runs."""
+    captured: dict[str, str | None] = {}
+    worker = WorkerResult(
+        payload={
+            "skip": False,
+            "task_summary": "stub",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "stub",
+        },
+        raw_output="prep output",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="prep-direction",
+    )
+
+    def fake_run(step, state, plan_dir, args, **kwargs):
+        del step, plan_dir, args, kwargs
+        captured["prep_direction"] = state["config"].get("prep_direction")
+        return (worker, "claude", "persistent", False)
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run)
+
+    megaplan.handlers.handle_prep(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            prep_direction="trace the shutdown path in workers/shannon.py",
+        ),
+    )
+    persisted = load_state(plan_fixture.plan_dir)
+    assert captured["prep_direction"] == "trace the shutdown path in workers/shannon.py"
+    assert persisted["config"]["prep_direction"] == "trace the shutdown path in workers/shannon.py"
+
+
+def test_handle_prep_direction_blank_rejected(
+    plan_fixture: PlanFixture,
+) -> None:
+    with pytest.raises(CliError) as info:
+        megaplan.handlers.handle_prep(
+            plan_fixture.root,
+            plan_fixture.make_args(plan=plan_fixture.plan_name, prep_direction="   "),
+        )
+    assert info.value.code == "invalid_args"
 
 
 def test_handle_prep_harvests_primary_criterion_for_joke_mode(

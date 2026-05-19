@@ -1,8 +1,7 @@
 # `partnered` — tier 3. Premium reasoning end-to-end; cheap mechanical
 # phases. The default for *real* engineering work.
 #
-# Canonical name for the tier-3 profile (legacy alias: `thoughtful` — both
-# names remain loadable while consumers migrate).
+# Canonical name for the tier-3 profile.
 #
 # Claude (default vendor) handles every reasoning phase — `plan`, `critique`,
 # `revise`, `review`, `loop_plan`, and tiebreakers. DeepSeek V4 Pro handles
@@ -21,8 +20,7 @@
 #     stay DeepSeek.
 #   * `--critic cross` — overrides critique+review to the *other* premium
 #     relative to the resolved vendor. With default vendor=claude, that's
-#     codex; with --vendor codex it's claude (replaces today's cross-vendor
-#     `marlowe-*` / `holmes-*` shape).
+#     codex; with --vendor codex it's claude.
 #   * `--phase-model phase=spec` — always honored. Common pattern:
 #     `--phase-model plan=claude:high` when the brief is long or the
 #     codebase is unfamiliar.

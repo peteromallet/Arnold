@@ -257,8 +257,20 @@ def _extract_bracketed_scope(prompt: str, pattern: str) -> str:
     return raw or "none"
 
 
-def _write_prompt_file(plan_dir: Path, step: str, prompt: str) -> Path:
-    prompt_path = plan_dir / f"{step}_shannon_prompt.txt"
+def _prompt_file_iteration(step: str, state: PlanState) -> int:
+    current = int(state.get("iteration", 0) or 0)
+    if step == "revise":
+        return current + 1
+    if step == "plan":
+        return max(1, current)
+    return current
+
+
+def _write_prompt_file(plan_dir: Path, step: str, prompt: str, *, iteration: int | None = None) -> Path:
+    if iteration is None:
+        prompt_path = plan_dir / f"{step}_shannon_prompt.txt"
+    else:
+        prompt_path = plan_dir / f"{step}_v{iteration}_shannon_prompt.txt"
     prompt_path.write_text(prompt, encoding="utf-8")
     return prompt_path
 
@@ -839,6 +851,7 @@ def run_shannon_step(
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
         )
+    fresh = fresh or step != "execute"
 
     # ── (b) resolve working directory and session ───────────────────────
     _ensure_shannon_parent_timeout_control()
@@ -870,7 +883,8 @@ def run_shannon_step(
         schema_text=schema_text,
     )
 
-    prompt_path = _write_prompt_file(plan_dir, step, prompt)
+    prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
+    prompt_path = _write_prompt_file(plan_dir, step, prompt, iteration=prompt_iteration)
     launcher_prompt = (
         "Read the full megaplan phase prompt from this file and follow it exactly: "
         f"{prompt_path}. Your final response must satisfy the structured output "
@@ -921,7 +935,12 @@ def run_shannon_step(
     # is auto-patched to launch Claude in print mode under root, and that path
     # needs ANTHROPIC_API_KEY for non-interactive auth.
     if not (hasattr(os, "geteuid") and os.geteuid() == 0):
-        env.pop("ANTHROPIC_API_KEY", None)
+        # Setting to empty (rather than popping) defeats Bun's dotenv auto-load
+        # in shannon's launcher: Bun's loader skips vars that are already set,
+        # so an empty value blocks re-injection from a project-local .env file.
+        # Claude Code treats empty as no key and falls back to OAuth credentials.
+        # See megaplan ticket 01KRXNZZGRV17PHZRJ2Q56SPS3.
+        env["ANTHROPIC_API_KEY"] = ""
     # Megaplan owns phase timeout/staleness policy. Shannon's packaged
     # 180s turn timeout is too short for normal critique/finalize/execute
     # phases, so keep Shannon's internal watchdog above megaplan's worker

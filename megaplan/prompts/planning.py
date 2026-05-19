@@ -282,6 +282,34 @@ def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
     del root
     project_dir = Path(state["config"]["project_dir"])
     output_path = plan_dir / "prep.json"
+
+    direction_raw = state.get("config", {}).get("prep_direction")
+    direction = direction_raw.strip() if isinstance(direction_raw, str) else ""
+    if direction:
+        direction_block = textwrap.dedent(
+            f"""
+            User direction for prep (treat as steering for what to explore — not a substitute for the task):
+            {direction}
+            """
+        ).strip()
+    else:
+        direction_block = ""
+
+    extra_sections: list[str] = []
+    clarification = state.get("clarification", {}) or {}
+    intent_summary = clarification.get("intent_summary")
+    if isinstance(intent_summary, str) and intent_summary.strip():
+        extra_sections.append(f"User intent summary:\n{intent_summary.strip()}")
+    notes = state.get("meta", {}).get("notes", []) or []
+    note_lines = [
+        f"- {n['note']}"
+        for n in notes
+        if isinstance(n, dict) and isinstance(n.get("note"), str) and n["note"].strip()
+    ]
+    if note_lines:
+        extra_sections.append("User notes and answers:\n" + "\n".join(note_lines))
+    notes_block = "\n\n".join(extra_sections)
+
     return textwrap.dedent(
         f"""
         Prepare a concise engineering brief for the task below. This brief will be the primary context for all subsequent planning and execution.
@@ -291,6 +319,10 @@ def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
 
         Project: {project_dir}
         Output file: {output_path}
+
+        {direction_block}
+
+        {notes_block}
 
         First, assess: does this task need codebase investigation?
 

@@ -207,6 +207,7 @@ def parse_agent_output(
     step: str,
     project_dir: Path,
     plan_dir: Path,
+    plan_mode: str = "code",
     run_kwargs: dict | None = None,
 ) -> tuple[dict, str]:
     """Parse a Hermes agent result into a structured payload.
@@ -364,6 +365,36 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     _normalize_nested_aliases(payload, schema)
 
 
+def _resolve_hermes_cost(result: dict) -> tuple[float, int, int, int]:
+    """Return ``(cost_usd, prompt_tokens, completion_tokens, total_tokens)``.
+
+    hermes_cli reports ``estimated_cost_usd=0`` for Fireworks-hosted models
+    (no pricing wired in). We fall back to the local Fireworks pricing table
+    so phase receipts carry a non-zero cost, passing ``cache_read_tokens``
+    so the cached prefix is billed at the cheaper cached rate instead of the
+    full uncached input rate. Only a *zero* cost is overridden — a positive
+    cost from hermes is trusted as-is.
+    """
+    cost_usd = float(result.get("estimated_cost_usd", 0.0) or 0.0)
+    prompt_tokens = int(result.get("prompt_tokens", 0) or 0)
+    completion_tokens = int(result.get("completion_tokens", 0) or 0)
+    total_tokens = int(result.get("total_tokens", 0) or 0)
+    cached_prompt_tokens = int(result.get("cache_read_tokens", 0) or 0)
+
+    if cost_usd == 0.0 and (prompt_tokens > 0 or completion_tokens > 0):
+        model_actual = result.get("model")
+        if model_actual:
+            from megaplan.pricing import fireworks as fireworks_pricing
+
+            cost_usd = fireworks_pricing.cost_from_usage(
+                prompt_tokens,
+                completion_tokens,
+                model_actual,
+                cached_prompt_tokens=cached_prompt_tokens,
+            )
+    return cost_usd, prompt_tokens, completion_tokens, total_tokens
+
+
 def run_hermes_step(
     step: str,
     state: PlanState,
@@ -381,6 +412,7 @@ def run_hermes_step(
     """
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
+    fresh = fresh or step != "execute"
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
@@ -583,6 +615,7 @@ def run_hermes_step(
             step=step,
             project_dir=project_dir,
             plan_dir=plan_dir,
+            plan_mode=plan_mode,
             run_kwargs=run_kwargs,
         )
         clean_parsed_payload(current_payload, schema, step)
@@ -701,23 +734,7 @@ def run_hermes_step(
         _sandbox_stack.close()
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
-    cost_usd = result.get("estimated_cost_usd", 0.0) or 0.0
-    prompt_tokens = int(result.get("prompt_tokens", 0) or 0)
-    completion_tokens = int(result.get("completion_tokens", 0) or 0)
-    total_tokens = int(result.get("total_tokens", 0) or 0)
-
-    # hermes_cli currently reports estimated_cost_usd=0 for Fireworks-hosted
-    # models (no pricing wired in). Fall back to our local pricing table so
-    # phase receipts carry a non-zero cost. We only override a *zero* cost —
-    # if hermes itself returned a positive figure we trust it.
-    if cost_usd == 0.0 and (prompt_tokens > 0 or completion_tokens > 0):
-        model_actual = result.get("model")
-        if model_actual:
-            from megaplan.pricing import fireworks as fireworks_pricing
-
-            cost_usd = fireworks_pricing.cost_from_usage(
-                prompt_tokens, completion_tokens, model_actual
-            )
+    cost_usd, prompt_tokens, completion_tokens, total_tokens = _resolve_hermes_cost(result)
 
     return WorkerResult(
         payload=payload,

@@ -1,9 +1,8 @@
 # `apex` — tier 5. Both Claude *and* Codex contributing to the same job.
 # Vendor-locked.
 #
-# Canonical name for the tier-5 profile (legacy alias: `super-premium` — both
-# names remain loadable while consumers migrate). This is also the canonical
-# Claude/Codex split, mirroring `poirot` (kept as a personality-named alias).
+# Canonical name for the tier-5 profile. This is the canonical
+# Claude/Codex split.
 # Claude handles the author/repo-reading roles (plan, prep, revise, gate,
 # finalize, loop_plan); Codex handles the critique/structural-analysis roles
 # (critique, execute, review, loop_execute, tiebreakers). The whole point of
