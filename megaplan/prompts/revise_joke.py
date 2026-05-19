@@ -1,13 +1,13 @@
-"""Joke-mode revise prompt compatibility shim."""
+"""Re-export shim for relocated ``revise_joke`` prompt builder (T8).
+
+Canonical module: ``megaplan.pipelines.creative.prompts.revise_joke``.
+"""
 
 from __future__ import annotations
 
-from functools import partial
-
-from megaplan.forms import get_form
-
-from .revise_creative import _revise_creative_prompt
-
-_revise_joke_prompt = partial(_revise_creative_prompt, form=get_form("joke"))
+from megaplan.pipelines.creative.prompts.revise_joke import *  # noqa: F401,F403
+from megaplan.pipelines.creative.prompts.revise_joke import (  # noqa: F401
+    _revise_joke_prompt,
+)
 
 __all__ = ["_revise_joke_prompt"]

@@ -42,19 +42,15 @@ async def run_bakeoff(
     robustness: str | None = None,
     output: str | None = None,
 ) -> BakeoffState:
-    # Accept the user-facing `metaplan` alias here too so programmatic callers
-    # (tests, scripts) match CLI semantics without needing to pre-normalize.
-    if mode == "metaplan":
-        mode = "doc"
     if mode not in {"code", "doc"}:
         raise CliError(
             "invalid_args",
-            f"bake-off --mode must be one of code, doc, metaplan; got {mode!r}.",
+            f"bake-off --mode must be one of code, doc; got {mode!r}.",
         )
     if mode == "code" and output:
         raise CliError(
             "invalid_args",
-            "--output is only valid with --mode doc or --mode metaplan.",
+            "--output is only valid with --mode doc.",
         )
     if mode == "doc" and not output:
         raise CliError(

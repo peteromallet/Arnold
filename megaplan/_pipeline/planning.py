@@ -294,6 +294,16 @@ def compile_pipeline_for(
     left-to-right: robustness first (which already absorbs the
     creative-mode flag), then with_prep, then with_feedback, then a
     no-op mode overlay that names the mode for downstream introspection.
+
+    NOTE (0.23): this function currently has zero in-tree callers
+    post-cleanbreak — the canonical planning entry point now flows
+    through ``compile_planning_pipeline()`` directly. It is retained
+    as ABI for downstream callers and for 0.22 plan-state
+    compatibility (0.22 plans loaded under 0.23 may still reach this
+    overlay-composition path; the new ``doc`` / ``creative`` pipelines
+    bypass it entirely). The 0.23 CHANGELOG entry calls this out so
+    users understand that 0.22 plans loaded under 0.23 receive the
+    un-overlayed planning pipeline behaviour through this surface.
     """
 
     state_payload = dict(state_payload or {})
@@ -301,6 +311,9 @@ def compile_pipeline_for(
     with_feedback = _with_feedback_from_state(state_payload)
     config = state_payload.get("config", {}) if isinstance(state_payload, Mapping) else {}
     resolved_mode = mode or (config.get("mode", "code") if isinstance(config, Mapping) else "code")
+    # TODO(0.24): remove — legacy mode-overlay carried for ABI parity,
+    # no in-tree caller post-cleanbreak. The new 0.23 doc/creative
+    # pipelines do not flow through this branch.
     creative = resolved_mode in {"creative", "joke"}
 
     pipeline = compile_planning_pipeline()

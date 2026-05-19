@@ -210,6 +210,247 @@ megaplan's existing `PrepStep` (`next=on_pass`).
 prep = phase_zero_gate(PrepStep(), name="prep", on_pass="plan", on_fail="halt")
 ```
 
+## Dynamic primitives (0.23+)
+
+The 0.23 release adds five primitives whose width or topology is decided
+at **run time** rather than at compile time. They live in
+`megaplan._pipeline.patterns` alongside the existing nine. All five are
+composed from existing primitives (`Step`, `Stage`, `ParallelStage`,
+`SubloopStep`, `Edge`, `Overlay`, `JoinFn`) — `_pipeline/types.py` is
+untouched.
+
+The committed `SubloopStep` shape is load-bearing for the two
+fan-out-shaped primitives: `ParallelStage.steps` is materialised at
+compile time (see `executor.py:171/179/295/298`), so dynamism must be
+encapsulated inside a `SubloopStep` whose `run()` performs the per-spec
+dispatch when the pipeline actually executes — not by mutating a
+`ParallelStage` at run time.
+
+### `panel_from_artifact(artifact_ref, base_template, join, *, name) -> SubloopStep`
+
+Reads a JSON list of reviewer specs from an upstream artifact at
+`artifact_ref`, specialises `base_template` per spec (via
+`dataclasses.replace` over the intersection of spec keys and template
+fields), runs each specialised step, and folds the results through
+`join`.
+
+### `dynamic_fanout(generator, base_prompt, join, *, name) -> SubloopStep`
+
+Runs `generator` once, harvests the specs it emits (either
+`result.state_patch['specs']` in-memory, or a path on
+`result.outputs['specs']`), fans `base_prompt` per spec, then folds via
+`join`. This is the primitive the new `doc` pipeline's `section_drafts`
+stage uses to turn a runtime-decided list of sections into a per-section
+draft step (see `megaplan/pipelines/doc/__init__.py`).
+
+### `weighted_vote(weights) -> JoinFn`
+
+Variant of `majority_vote` that weighs each panellist's verdict by the
+caller-supplied `weights[reviewer_id]`. Missing reviewer ids contribute
+zero. Ties and empty panels resolve to `"tiebreaker"`, matching
+`majority_vote`'s shape so the two are drop-in interchangeable as a
+`ParallelStage` `join`.
+
+### `iterate_until_consensus(panel, min_agreement=0.8, max_iters=3, *, name) -> SubloopStep`
+
+Wraps a panel `Step` or `Stage` in a self-loop that exits as soon as the
+per-reviewer recommendation agreement ratio crosses `min_agreement`, or
+after `max_iters` passes — whichever happens first. Agreement is read
+off the panel's emitted `verdict.payload["per_reviewer_recommendations"]`.
+Emits `consensus:<name>:agreement` and `consensus:<name>:iterations`
+state-patch keys.
+
+### `paired_round(advocates, *, sees_other=True, name) -> Stage`
+
+Extends `alternating_turns` so that, with `sees_other=True`, each role's
+`StepContext.inputs` is augmented with `prior.<label>` keys carrying the
+previous turn's outputs from the other advocate. With `sees_other=False`
+the chaining devolves to topology-only semantics, matching
+`alternating_turns`.
+
+### Worked example: dynamic-prompt-generation panel
+
+The user's scenario: one stage designs five critique personas at run
+time, a second stage runs those five reviewers as a specialised
+critique panel, a third stage synthesises via `weighted_vote`. About
+30 LOC of Python composed entirely from the new and existing
+primitives:
+
+```python
+from dataclasses import dataclass
+from megaplan._pipeline.patterns import (
+    panel_from_artifact, weighted_vote,
+)
+from megaplan._pipeline.types import Edge, Pipeline, Stage
+from megaplan._pipeline.steps.agent import AgentStep
+
+
+@dataclass(frozen=True)
+class _PersonaCritique(AgentStep):
+    persona_id: str = ""
+    persona_brief: str = ""
+
+
+design_personas = AgentStep(
+    name="design_personas",
+    prompt_key="design_personas",  # emits personas.json: [{persona_id, persona_brief, weight}, …]
+)
+
+critique_panel = panel_from_artifact(
+    artifact_ref="personas.json",
+    base_template=_PersonaCritique(name="critique", prompt_key="critique_with_persona"),
+    join=weighted_vote(weights={"p1": 1.0, "p2": 1.0, "p3": 1.5, "p4": 1.0, "p5": 1.0}),
+    name="critique",
+)
+
+pipeline = Pipeline(
+    stages={
+        "design_personas": Stage(name="design_personas", step=design_personas,
+                                 edges=(Edge("done", "critique"),)),
+        "critique":        Stage(name="critique", step=critique_panel,
+                                 edges=(Edge("proceed",    "halt", kind="gate", recommendation="proceed"),
+                                        Edge("iterate",    "design_personas", kind="gate", recommendation="iterate"),
+                                        Edge("tiebreaker", "halt", kind="gate", recommendation="tiebreaker"))),
+    },
+    entry="design_personas",
+    overlays=(),
+)
+```
+
+`panel_from_artifact` reads the five persona specs from
+`personas.json`, builds five `_PersonaCritique` clones (one per
+persona, via `dataclasses.replace`), runs them, and folds the per-
+reviewer verdicts through `weighted_vote` so the third persona's
+opinion counts 1.5× the others. The outgoing gate edges then dispatch
+on the synthetic `Verdict.recommendation`.
+
+## The `doc` pipeline
+
+`megaplan run doc <brief>` runs a five-stage linear pipeline:
+
+```
+outline → section_drafts → critique → revise → assembly
+```
+
+There is no gate stage — the topology is a single forward pass.
+`section_drafts` is the real in-tree consumer of `dynamic_fanout`:
+`outline` emits a sections JSON artifact, then `section_drafts` fans a
+per-section draft step out across however many sections `outline`
+produced, joining the results into a single artifact for `critique` to
+read. `critique` and `revise` are plain `Step`s — there is **no**
+`critique_revise_gate_loop` and **no** `tiebreaker` subpipeline.
+`assembly` returns `next='halt'` directly (per `executor.py:218-220` a
+halt-labelled edge would be unreachable).
+
+Prompts live alongside the pipeline under
+`megaplan/pipelines/doc/prompts/` and register with the pipeline-scoped
+`PromptRegistry` slot `doc/<key>` for each of the five stages
+(`outline_doc`, `execute_doc`, `critique_doc`, `revise_doc`,
+`assemble_doc`). The legacy `megaplan/prompts/{prep_doc,
+review_doc}.py` modules are **not** consumed by the new pipeline; they
+remain at `megaplan/prompts/` solely to keep the legacy `--auto-start`
+planning + mode-overlay path functional for 0.23.
+
+**Iteration semantics drop in 0.23.** Legacy `--mode doc` (running
+under the planning topology with a doc mode-overlay) had a
+critique-revise gate loop that could iterate, proceed, escalate, or
+tiebreaker. The new `megaplan run doc` topology is a **single linear
+pass**: no gate, no loop, no tiebreaker. If you depend on the legacy
+multi-iteration behaviour you can still reach it for 0.23 via
+`megaplan init --mode doc --auto-start <brief>` (which routes through
+the legacy planning path), but that path is deprecated and will be
+removed in 0.24. The recommendation is to land your final doc through
+the new pipeline and re-run if you need a second pass.
+
+## The `creative` pipeline
+
+`megaplan run creative <brief> --form <id>` runs a five-stage linear
+pipeline with form-specialised prompts:
+
+```
+prep → execute_creative → critique_creative → revise_creative → finalize
+```
+
+`--form` is a **first-class input**, not a mode. The form is validated
+against `megaplan.forms.available_form_ids()` — the same canonical
+registry the init handler consults at `megaplan/handlers/init.py:62-64`
+— and an unknown form raises `CliError('invalid_args')`. Each stage's
+`prompt_key` is form-specialised as `<base_key>:<form>` (e.g.
+`execute_creative:joke`, `revise_creative:poem`); both the generic
+`creative/<key>` slot and the `creative/<key>:<form>` slot are
+registered so the `PromptRegistry` resolves the form-aware variant
+when one is registered and falls back to the generic creative renderer
+otherwise.
+
+The provocations registry, stance contract, and director's-notes
+sidecar are wired in exactly as on the legacy creative path —
+`megaplan/forms/` was **not** relocated (it's consumed by 25+ non-
+creative modules) and the creative pipeline imports from it like any
+other consumer.
+
+`--primary-criterion <text>` is a first-class creative-pipeline input
+and threads through to every stage's Step via the `primary_criterion`
+dataclass field on `_CreativeStep`.
+
+## How modes work in the new system
+
+After 0.23 there is no longer a single `--mode` axis that overlays the
+planning pipeline with mode-specific prompts in-tree. The architecture
+splits the responsibility:
+
+- **`planning` has no modes.** The `code` mode is the only effective
+  mode and it is the default; the pipeline is built from a single
+  prompt set.
+- **`doc` and `creative` are first-class atomic pipelines**, reached
+  via `megaplan run doc` and `megaplan run creative`. Each is a
+  distinct module under `megaplan/pipelines/` with its own topology
+  and pipeline-scoped prompt registry.
+- **`--form` (creative only)** is a first-class input on the
+  `creative` pipeline, validated against the canonical
+  `megaplan.forms.available_form_ids()` registry.
+- **The `Pipeline.builder(...).mode({...})` / `mode_prompts(...)`
+  pattern is retained** for any future pipeline where the topology is
+  shared across variants but the prompts swap (worked example 6 above).
+  Use it inline inside the pipeline module that owns those variants;
+  there is no separate registry.
+
+## `--mode` deprecation migration table (0.22 → 0.23)
+
+`megaplan init --mode <X>` continues to work in 0.23 with a one-release
+deprecation warning printed to stderr. **There is no `--mode` flag on
+`megaplan plan|execute|review`** — those subparsers never accepted it,
+so any documentation referring to `megaplan plan --mode <X>` is wrong.
+`--mode` will be removed entirely in 0.24.
+
+| Old (0.22)                                                  | New (0.23+)                                                  | 0.23 limitation                                                                                                                                                                          |
+| ----------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `megaplan init --mode doc <brief>`                          | `megaplan run doc <brief>`                                   | `init --mode doc` still works in 0.23 with a deprecation warning. `--auto-start` after `init --mode doc` runs the **legacy** planning + mode-overlay path, not the new `doc` pipeline.    |
+| `megaplan init --mode creative --form <id> <brief>`         | `megaplan run creative <brief> --form <id>`                  | `init --mode creative` still works in 0.23 with a deprecation warning. `--auto-start` after `init --mode creative` runs the **legacy** planning + mode-overlay path.                       |
+| `megaplan init --mode metaplan <brief>`                     | `megaplan run doc <brief>`                                   | `metaplan` was always an alias for `doc`. `init --mode metaplan` still coerces to `mode='doc'` in state config and prints a deprecation warning. `--auto-start` still routes through legacy. |
+| `megaplan init --mode joke <brief>`                         | `megaplan run creative <brief> --form joke`                  | `init --mode joke` still works in 0.23 with a deprecation warning; state config keeps `mode='joke'` (not rewritten) to preserve legacy `is_prose_mode`/`creative_form_id` semantics for `--auto-start`. |
+| `megaplan bakeoff run --mode metaplan …`                    | `megaplan bakeoff run --mode doc …`                          | The bake-off `metaplan` alias is **removed** in 0.23. `--mode metaplan` and `--mode joke` are rejected at the bake-off argparse layer.                                                    |
+
+The deprecation warning printed to stderr on each deprecated
+`init --mode` invocation is:
+
+```
+[deprecation] megaplan init --mode <X> is deprecated; use
+"megaplan run <pipeline> [--form …]" instead. NOTE: in 0.23,
+--auto-start after init --mode still runs the LEGACY planning +
+mode-overlay path; the new <pipeline> pipeline is only reached via
+"megaplan run". Full integration ships in 0.24. --mode will be removed
+in 0.24.
+```
+
+`--mode code` is unchanged: no warning, `state.config.mode='code'`,
+and `state.config.pipeline` / `state.config.form` left unset.
+
+**Hard `--form` contract on init.** Passing `--form` on `--mode
+doc|metaplan` raises `CliError('invalid_args')`. Omitting `--form` on
+`--mode creative` raises `CliError('invalid_args')`. `--mode joke`
+implicitly sets `form='joke'` and the existing reject-on-explicit-
+`--form-joke` behaviour at `init.py:60` is preserved.
+
 ## Subloop edges: a load-bearing convention
 
 Pipelines using `subpipeline_call`, the `PipelineBuilder.subpipeline`
