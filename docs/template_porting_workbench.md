@@ -72,7 +72,19 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
   --json
 ```
 
-The converter validates emitted Python by importing the module, calling `build()`, compiling API output, and running schema validation when a provider is available.
+The converter validates emitted Python by importing the module, calling `build()`, compiling API output, and running schema validation when a provider is available. Ready-template output uses the v2.6 context-bound form:
+
+```python
+def build():
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+        model = UNETLoader(unet_name=MODELS["main"])
+        SaveImage(images=model, filename_prefix="image/example")
+        return wf.finalize(PUBLIC_INPUTS, output_node="9", output_type="SaveImage")
+```
+
+Generated wrappers also accept the older explicit workflow form, such as
+`UNETLoader(wf, unet_name=...)`, but checked-in ready templates are expected to
+use the zero-positional context form.
 
 Ready-template candidates also run strict-ready validation with the target `ready_id` context before writing. Unexcepted strict-ready errors stop replacement before the target path is touched; JSON output includes `conversion.validation.strict_ready_ok`, `conversion.validation.strict_ready_diagnostics`, and top-level strict-ready fields for automation.
 
@@ -98,7 +110,10 @@ python -m vibecomfy.cli port convert workflow_corpus/community/example.json \
 
 Templates whose first line contains `# vibecomfy: manual` will not be overwritten.
 This is a hard gate evaluated before emission work. To regenerate a manual template,
-remove the marker or use a different output path.
+remove the marker or use a different output path. The repository-wide v2.6 migration
+used the explicit `tools.convert_ready_templates --all --write --include-manual`
+override to include formerly manual templates once; normal conversions still refuse
+manual markers by default.
 
 ### Port Inventory
 
@@ -138,7 +153,7 @@ python -m vibecomfy.cli port check ready_templates/<kind>/<id>.py --strict-ready
 python -m pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_cli.py
 ```
 
-For `coverage_tier: required` or app-active templates, strict-ready gates prohibit hidden schema-backed widgets, missing or broken public input targets, missing or unnamed public outputs, hidden model filenames, and opaque UUID component classes. If a violation cannot be fixed in the same change, document an exact exception with owner, ticket, final category, expiration, and removal condition before relying on it.
+For `coverage_tier: required` or app-active templates, strict-ready gates prohibit missing `with new_workflow(...) as wf:` blocks, explicit `Wrapper(wf, ...)` calls in ready-template builds, wrapper-eligible `node(wf, ...)` calls, schema-default kwargs, single-output `_outputs=` or named `.out("NAME")`, legacy ready-template helper imports, missing custom-node pack provenance commits, hidden schema-backed widgets, missing or broken public input targets, missing or unnamed public outputs, hidden model filenames, and opaque UUID component classes. If a violation cannot be fixed in the same change, document an exact exception with owner, ticket, final category, expiration, and removal condition before relying on it.
 
 Editing internals of a Python template does not require a manifest or index
 change unless its identity, category, task, coverage tier, custom-node

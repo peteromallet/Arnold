@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def Any_Switch_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -23,14 +22,18 @@ def Any_Switch_rgthree(
     
     Pack: rgthree-comfy
     Returns: *
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Any_Switch_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Any Switch (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     base_ctx: Any = _UNSET,
     model: Any = _UNSET,
@@ -49,7 +52,12 @@ def Context_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Context_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if base_ctx is not _UNSET:
         _kwargs['base_ctx'] = base_ctx
@@ -73,8 +81,7 @@ def Context_rgthree(
     return node(wf, 'Context (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Big_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     base_ctx: Any = _UNSET,
     model: Any = _UNSET,
@@ -107,7 +114,12 @@ def Context_Big_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED, STEPS, STEP_REFINER, CFG, CKPT_NAME, SAMPLER, SCHEDULER, CLIP_WIDTH, CLIP_HEIGHT, TEXT_POS_G, TEXT_POS_L, TEXT_NEG_G, TEXT_NEG_L, MASK, CONTROL_NET
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Context_Big_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if base_ctx is not _UNSET:
         _kwargs['base_ctx'] = base_ctx
@@ -159,8 +171,7 @@ def Context_Big_rgthree(
     return node(wf, 'Context Big (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Merge_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -170,14 +181,18 @@ def Context_Merge_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Context_Merge_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Context Merge (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Merge_Big_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -187,14 +202,18 @@ def Context_Merge_Big_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED, STEPS, STEP_REFINER, CFG, CKPT_NAME, SAMPLER, SCHEDULER, CLIP_WIDTH, CLIP_HEIGHT, TEXT_POS_G, TEXT_POS_L, TEXT_NEG_G, TEXT_NEG_L, MASK, CONTROL_NET
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Context_Merge_Big_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Context Merge Big (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Switch_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -204,14 +223,18 @@ def Context_Switch_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Context_Switch_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Context Switch (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Switch_Big_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -221,14 +244,18 @@ def Context_Switch_Big_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED, STEPS, STEP_REFINER, CFG, CKPT_NAME, SAMPLER, SCHEDULER, CLIP_WIDTH, CLIP_HEIGHT, TEXT_POS_G, TEXT_POS_L, TEXT_NEG_G, TEXT_NEG_L, MASK, CONTROL_NET
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Context_Switch_Big_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Context Switch Big (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Display_Any_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     source: Any = _UNSET,
     pass_raw: bool = False,
@@ -239,7 +266,12 @@ def Display_Any_rgthree(
     
     Pack: rgthree-comfy
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Display_Any_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if source is not _UNSET:
         _kwargs['source'] = source
@@ -247,8 +279,7 @@ def Display_Any_rgthree(
     return node(wf, 'Display Any (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Display_Int_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     input: Any = _UNSET,
     pass_raw: bool = False,
@@ -259,7 +290,12 @@ def Display_Int_rgthree(
     
     Pack: rgthree-comfy
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Display_Int_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if input is not _UNSET:
         _kwargs['input'] = input
@@ -267,8 +303,7 @@ def Display_Int_rgthree(
     return node(wf, 'Display Int (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_Comparer_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image_a: Any = _UNSET,
     image_b: Any = _UNSET,
@@ -280,7 +315,12 @@ def Image_Comparer_rgthree(
     
     Pack: rgthree-comfy
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Image_Comparer_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image_a is not _UNSET:
         _kwargs['image_a'] = image_a
@@ -290,8 +330,7 @@ def Image_Comparer_rgthree(
     return node(wf, 'Image Comparer (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_Inset_Crop_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     measurement: Any = _UNSET,
@@ -307,7 +346,12 @@ def Image_Inset_Crop_rgthree(
     
     Pack: rgthree-comfy
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Image_Inset_Crop_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -325,8 +369,7 @@ def Image_Inset_Crop_rgthree(
     return node(wf, 'Image Inset Crop (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_Resize_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     measurement: Any = _UNSET,
@@ -342,7 +385,12 @@ def Image_Resize_rgthree(
     
     Pack: rgthree-comfy
     Returns: IMAGE, WIDTH, HEIGHT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Image_Resize_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -360,8 +408,7 @@ def Image_Resize_rgthree(
     return node(wf, 'Image Resize (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_or_Latent_Size_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -371,14 +418,18 @@ def Image_or_Latent_Size_rgthree(
     
     Pack: rgthree-comfy
     Returns: WIDTH, HEIGHT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Image_or_Latent_Size_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Image or Latent Size (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def KSampler_Config_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     steps_total: Any = _UNSET,
     refiner_step: Any = _UNSET,
@@ -393,7 +444,12 @@ def KSampler_Config_rgthree(
     
     Pack: rgthree-comfy
     Returns: STEPS, REFINER_STEP, CFG, SAMPLER, SCHEDULER
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"KSampler_Config_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if steps_total is not _UNSET:
         _kwargs['steps_total'] = steps_total
@@ -409,8 +465,7 @@ def KSampler_Config_rgthree(
     return node(wf, 'KSampler Config (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Lora_Loader_Stack_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     clip: Any = _UNSET,
@@ -430,7 +485,12 @@ def Lora_Loader_Stack_rgthree(
     
     Pack: rgthree-comfy
     Returns: MODEL, CLIP
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Lora_Loader_Stack_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -456,8 +516,7 @@ def Lora_Loader_Stack_rgthree(
     return node(wf, 'Lora Loader Stack (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Lora_Loader_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     clip: Any = _UNSET,
@@ -469,7 +528,12 @@ def Power_Lora_Loader_rgthree(
     
     Pack: rgthree-comfy
     Returns: MODEL, CLIP
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Power_Lora_Loader_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -479,8 +543,7 @@ def Power_Lora_Loader_rgthree(
     return node(wf, 'Power Lora Loader (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Primitive_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -490,14 +553,18 @@ def Power_Primitive_rgthree(
     
     Pack: rgthree-comfy
     Returns: *
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Power_Primitive_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Power Primitive (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Prompt_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     prompt: Any = _UNSET,
     opt_model: Any = _UNSET,
@@ -513,7 +580,12 @@ def Power_Prompt_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONDITIONING, MODEL, CLIP, TEXT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Power_Prompt_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if prompt is not _UNSET:
         _kwargs['prompt'] = prompt
@@ -531,8 +603,7 @@ def Power_Prompt_rgthree(
     return node(wf, 'Power Prompt (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Prompt_Simple_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     prompt: Any = _UNSET,
     opt_clip: Any = _UNSET,
@@ -546,7 +617,12 @@ def Power_Prompt_Simple_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONDITIONING, TEXT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Power_Prompt_Simple_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if prompt is not _UNSET:
         _kwargs['prompt'] = prompt
@@ -560,8 +636,7 @@ def Power_Prompt_Simple_rgthree(
     return node(wf, 'Power Prompt - Simple (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Puter_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
@@ -571,14 +646,18 @@ def Power_Puter_rgthree(
     
     Pack: rgthree-comfy
     Returns: *
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Power_Puter_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
     return node(wf, 'Power Puter (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def SDXL_Empty_Latent_Image_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     dimensions: Any = _UNSET,
     clip_scale: Any = _UNSET,
@@ -591,7 +670,12 @@ def SDXL_Empty_Latent_Image_rgthree(
     
     Pack: rgthree-comfy
     Returns: LATENT, CLIP_WIDTH, CLIP_HEIGHT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SDXL_Empty_Latent_Image_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if dimensions is not _UNSET:
         _kwargs['dimensions'] = dimensions
@@ -603,8 +687,7 @@ def SDXL_Empty_Latent_Image_rgthree(
     return node(wf, 'SDXL Empty Latent Image (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def SDXL_Power_Prompt_Positive_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     prompt_g: Any = _UNSET,
     prompt_l: Any = _UNSET,
@@ -627,7 +710,12 @@ def SDXL_Power_Prompt_Positive_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONDITIONING, MODEL, CLIP, TEXT_G, TEXT_L
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SDXL_Power_Prompt_Positive_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if prompt_g is not _UNSET:
         _kwargs['prompt_g'] = prompt_g
@@ -659,8 +747,7 @@ def SDXL_Power_Prompt_Positive_rgthree(
     return node(wf, 'SDXL Power Prompt - Positive (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def SDXL_Power_Prompt_Simple_Negative_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     prompt_g: Any = _UNSET,
     prompt_l: Any = _UNSET,
@@ -681,7 +768,12 @@ def SDXL_Power_Prompt_Simple_Negative_rgthree(
     
     Pack: rgthree-comfy
     Returns: CONDITIONING, TEXT_G, TEXT_L
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SDXL_Power_Prompt_Simple_Negative_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if prompt_g is not _UNSET:
         _kwargs['prompt_g'] = prompt_g
@@ -709,8 +801,7 @@ def SDXL_Power_Prompt_Simple_Negative_rgthree(
     return node(wf, 'SDXL Power Prompt - Simple / Negative (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Seed_rgthree(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     seed: Any = _UNSET,
     pass_raw: bool = False,
@@ -721,7 +812,12 @@ def Seed_rgthree(
     
     Pack: rgthree-comfy
     Returns: SEED
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Seed_rgthree() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if seed is not _UNSET:
         _kwargs['seed'] = seed

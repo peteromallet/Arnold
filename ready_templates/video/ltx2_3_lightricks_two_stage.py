@@ -1,292 +1,341 @@
-# vibecomfy: manual
-# Promoted because the upstream Lightricks source JSON is not present in this checkout.
-"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.templates import finalize_ready, template_output
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
+from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMAudioVAELoader, LowVRAMCheckpointLoader
 
 
-READY_METADATA = {
-    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},'model_assets': [],
- 'unbound_inputs': {'seed': 3779},
- 'ready_template': 'video/ltx2_3_lightricks_two_stage',
- 'workflow_template': 'ltx2_3_lightricks_two_stage',
- 'capability': 'text_or_image_to_video_upscale',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json',
- 'coverage_tier': 'required',
- 'approach': 'official two-stage low-VRAM T2V/I2V with latent spatial upscaler',
- 'runtime_note': None,
- 'manual_promotion_rationale': 'Promoted during sprint 7 because the declared upstream source workflow is absent; preserve the materialized graph and curate public contracts manually.',
- 'discord_signal': 'Longer clips and upscale passes were recurring LTX channel themes.',
- 'smoke_resolution': '256x256x5_frames',
- 'ltx_best_practices': ['Use the official Lightricks workflows as runtime gates where possible.',
-                        'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
-                        'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes '
-                        'model_mmap_residency for LatentUpscaleModelManageable.',
-                        'Keep community audio, lip-sync, and long-form workflows as ready templates until '
-                        'their custom node packs and service credentials are declared.'],
- 'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
+CONTROL_AFTER_GENERATE = 'fixed'
+DEFAULT_FPS = 8
+DEFAULT_FRAMES = 5
+DEFAULT_PROMPT = 'A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.'
+DEFAULT_PROMPT_2 = 'pc game, console game, video game, cartoon, childish, ugly'
+DEFAULT_SEED = 43
+DEFAULT_SEED_2 = 42
+GUIDE_STRENGTH = 0.5
+GUIDE_STRENGTH_2 = 2.5
+IMAGE = 'example.png'
+MODEL_NAME = 'ltx-2.3-22b-dev-fp8.safetensors'
+MODEL_NAME_2 = 'gemma_3_12B_it_fp4_mixed.safetensors'
+MODEL_NAME_3 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
+WIDGET_0 = ''
 
-READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
-                      {'slug': 'ComfyUI-LTXVideo',
-                       'source': 'git',
-                       'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543',
-                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]}
 
+MODELS = {}
+
+PUBLIC_INPUTS = {
+    'model': InputSpec(node=ref('lowvramcheckpointloader'), field='ckpt_name', default=MODEL_NAME),
+    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
+    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
+    'image': InputSpec(node=ref('loadimage'), field='image', default=IMAGE),
+    'input_image': InputSpec(node=ref('loadimage'), field='image', default=IMAGE),
+    'width': InputSpec(node=ref('emptyltxvlatentvideo'), field='width', default=256),
+    'height': InputSpec(node=ref('emptyltxvlatentvideo'), field='height', default=256),
+}
+
+READY_METADATA = ReadyMetadata.build(
+    capability='text_or_image_to_video_upscale',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    requirements={'models': ['euler_ancestral_cfg_pp', 'euler_cfg_pp', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
+    custom_node_packs={'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVEmptyLatentAudio', 'LTXVPreprocess', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'pinned'}},
+    approach='official two-stage low-VRAM T2V/I2V with latent spatial upscaler',
+    manual_promotion_rationale='Promoted during sprint 7 because the declared upstream source workflow is absent; preserve the materialized graph and curate public contracts manually.',
+    discord_signal='Longer clips and upscale passes were recurring LTX channel themes.',
+    smoke_resolution='256x256x5_frames',
+    ltx_best_practices=['Use the official Lightricks workflows as runtime gates where possible.', 'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.', 'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes model_mmap_residency for LatentUpscaleModelManageable.', 'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom node packs and service credentials are declared.'],
+    comfy_configuration={'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True},
+    provenance={'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json'},
+)
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    loadimage = _node(wf, 'LoadImage', '2004',
-        image='example.png',
-        widget_0='example.png',
-        widget_1='image',
-    )
-    lowvramcheckpointloader = _node(wf, 'LowVRAMCheckpointLoader', '3940',
-        ckpt_name='ltx-2.3-22b-dev-fp8.safetensors',
-    )
-    lowvramaudiovaeloader = _node(wf, 'LowVRAMAudioVAELoader', '4010',
-        ckpt_name='ltx-2.3-22b-dev-fp8.safetensors',
-    )
-    ksamplerselect = _node(wf, 'KSamplerSelect', '4831',
-        sampler_name='euler_ancestral_cfg_pp',
-    )
-    randomnoise = _node(wf, 'RandomNoise', '4832',
-        noise_seed=43,
-        control_after_generate='fixed',
-    )
-    randomnoise_2 = _node(wf, 'RandomNoise', '4967',
-        noise_seed=42,
-        control_after_generate='fixed',
-    )
-    ksamplerselect_2 = _node(wf, 'KSamplerSelect', '4976',
-        sampler_name='euler_cfg_pp',
-    )
-    primitivestring = _node(wf, 'PrimitiveString', '4979',
-        value='',
-    )
-    ltxavtextencoderloader = _node(wf, 'LTXAVTextEncoderLoader', '4982',
-        ckpt_name='ltx-2.3-22b-dev-fp8.safetensors',
-        text_encoder='gemma_3_12B_it_fp4_mixed.safetensors',
-        widget_0='gemma_3_12B_it_fp4_mixed.safetensors',
-        widget_1='ltx-2.3-22b-dev-fp8.safetensors',
-        widget_2='default',
-    )
-    manualsigmas = _node(wf, 'ManualSigmas', '4984',
-        widget_0='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
-    )
-    manualsigmas_2 = _node(wf, 'ManualSigmas', '4985',
-        widget_0='0.85, 0.7250, 0.4219, 0.0',
-    )
-    primitiveboolean = _node(wf, 'PrimitiveBoolean', '4987',
-        value=True,
-    )
-    primitiveint = _node(wf, 'PrimitiveInt', '4988',
-        value=5,
-        widget_1='fixed',
-    )
-    primitivefloat = _node(wf, 'PrimitiveFloat', '4989',
-        value=8,
-    )
-    cliptextencode = _node(wf, 'CLIPTextEncode', '2483',
-        text='A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.',
-        clip=ltxavtextencoderloader.out(0),
-    )
-    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '2612',
-        text='pc game, console game, video game, cartoon, childish, ugly',
-        clip=ltxavtextencoderloader.out(0),
-    )
-    emptyltxvlatentvideo = _node(wf, 'EmptyLTXVLatentVideo', '3059',
-        width=256,
-        height=256,
-        batch_size=1,
-        widget_0=256,
-        widget_1=256,
-        widget_2=5,
-        length=primitiveint.out(0),
-    )
-    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '4922',
-        lora_name='ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors',
-        strength_model=0.5,
-        model=lowvramcheckpointloader.out(0),
-    )
-    gemmaapitextencode = _node(wf, 'GemmaAPITextEncode', '4980',
-        widget_0='',
-        widget_1='',
-        widget_2='ltx-2.3-22b-dev-fp8.safetensors',
-        widget_3='ltx-2.3-22b-dev-fp8.safetensors',
-        api_key=primitivestring.out(0),
-    )
-    gemmaapitextencode_2 = _node(wf, 'GemmaAPITextEncode', '4981',
-        widget_0='',
-        widget_1=384,
-        widget_2=False,
-        widget_3='ltx-2.3-22b-dev-fp8.safetensors',
-        api_key=primitivestring.out(0),
-    )
-    resizeimagemasknode = _node(wf, 'ResizeImageMaskNode', '4990',
-        widget_0='scale longer dimension',
-        widget_1=256,
-        widget_2='lanczos',
-        input=loadimage.out(0),
-    )
-    ltxfloattoint = _node(wf, 'LTXFloatToInt', '5000',
-        widget_0=0,
-        a=primitivefloat.out(0),
-    )
-    ltxvconditioning = _node(wf, 'LTXVConditioning', '1241',
-        widget_0=8,
-        frame_rate=primitivefloat.out(0),
-        negative=cliptextencode_2.out(0),
-        positive=cliptextencode.out(0),
-    )
-    ltxvpreprocess = _node(wf, 'LTXVPreprocess', '3336',
-        widget_0=18,
-        image=resizeimagemasknode.out(0),
-    )
-    ltxvemptylatentaudio = _node(wf, 'LTXVEmptyLatentAudio', '3980',
-        widget_0=5,
-        widget_1=8,
-        widget_2=1,
-        audio_vae=lowvramaudiovaeloader.out(0),
-        frame_rate=ltxfloattoint.out(0),
-        frames_number=primitiveint.out(0),
-    )
-    ltxvimgtovideoconditiononly = _node(wf, 'LTXVImgToVideoConditionOnly', '3159',
-        widget_0=0.7,
-        widget_1=False,
-        bypass=primitiveboolean.out(0),
-        image=ltxvpreprocess.out(0),
-        latent=emptyltxvlatentvideo.out(0),
-        vae=lowvramcheckpointloader.out(2),
-    )
-    cfgguider = _node(wf, 'CFGGuider', '4828',
-        cfg=2.5,
-        model=loraloadermodelonly.out(0),
-        negative=ltxvconditioning.out(1),
-        positive=ltxvconditioning.out(0),
-    )
-    cfgguider_2 = _node(wf, 'CFGGuider', '4964',
-        cfg=2.5,
-        model=loraloadermodelonly.out(0),
-        negative=ltxvconditioning.out(1),
-        positive=ltxvconditioning.out(0),
-    )
-    ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '4528',
-        audio_latent=ltxvemptylatentaudio.out(0),
-        video_latent=ltxvimgtovideoconditiononly.out(0),
-    )
-    samplercustomadvanced = _node(wf, 'SamplerCustomAdvanced', '4829',
-        guider=cfgguider.out(0),
-        latent_image=ltxvconcatavlatent.out(0),
-        noise=randomnoise.out(0),
-        sampler=ksamplerselect.out(0),
-        sigmas=manualsigmas.out(0),
-    )
-    ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '4845',
-        av_latent=samplercustomadvanced.out(0),
-    )
-    ltxvimgtovideoconditiononly_2 = _node(wf, 'LTXVImgToVideoConditionOnly', '4970',
-        widget_0=1,
-        widget_1=False,
-        bypass=primitiveboolean.out(0),
-        image=resizeimagemasknode.out(0),
-        latent=ltxvseparateavlatent.out(0),
-        vae=lowvramcheckpointloader.out(2),
-    )
-    ltxvconcatavlatent_2 = _node(wf, 'LTXVConcatAVLatent', '4969',
-        audio_latent=ltxvseparateavlatent.out(1),
-        video_latent=ltxvimgtovideoconditiononly_2.out(0),
-    )
-    samplercustomadvanced_2 = _node(wf, 'SamplerCustomAdvanced', '4971',
-        guider=cfgguider_2.out(0),
-        latent_image=ltxvconcatavlatent_2.out(0),
-        noise=randomnoise_2.out(0),
-        sampler=ksamplerselect_2.out(0),
-        sigmas=manualsigmas_2.out(0),
-    )
-    ltxvseparateavlatent_2 = _node(wf, 'LTXVSeparateAVLatent', '4973',
-        av_latent=samplercustomadvanced_2.out(0),
-    )
-    ltxvaudiovaedecode = _node(wf, 'LTXVAudioVAEDecode', '4848',
-        audio_vae=lowvramaudiovaeloader.out(0),
-        samples=ltxvseparateavlatent_2.out(1),
-    )
-    ltxvtiledvaedecode = _node(wf, 'LTXVTiledVAEDecode', '4995',
-        widget_0=2,
-        widget_1=2,
-        widget_2=6,
-        widget_3=False,
-        widget_4='auto',
-        widget_5='auto',
-        latents=ltxvseparateavlatent_2.out(0),
-        vae=lowvramcheckpointloader.out(2),
-    )
-    createvideo = _node(wf, 'CreateVideo', '4849',
-        widget_0=8,
-        fps=primitivefloat.out(0),
-        audio=ltxvaudiovaedecode.out(0),
-        images=ltxvtiledvaedecode.out(0),
-    )
-    savevideo = _node(wf, 'SaveVideo', '4852',
-        filename_prefix='output',
-        format='auto',
-        codec='auto',
-        video=createvideo.out(0),
-    )
+        # Inputs
+        loadimage = LoadImage(
+            _id='2004',
+            image=IMAGE,
+            widget_0='example.png',
+            _outputs=('IMAGE', 'MASK'),
+        )
+        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
-    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    template_output(
-        wf,
-        '4852',
-        output_type='SaveVideo',
-        name='video',
-        artifact_kind='video',
-        mime_type='video/mp4',
-        filename_prefix='output',
-        expected_cardinality='one',
-    )
-    return wf
+        lowvramcheckpointloader = LowVRAMCheckpointLoader(
+            _id='3940',
+            ckpt_name=MODEL_NAME,
+            _outputs=('MODEL', 'CLIP', 'VAE'),
+        )
+        wf.metadata.setdefault('id_map', {})['lowvramcheckpointloader'] = lowvramcheckpointloader.node.id
 
+        lowvramaudiovaeloader = LowVRAMAudioVAELoader(_id='4010', ckpt_name=MODEL_NAME)
+        wf.metadata.setdefault('id_map', {})['lowvramaudiovaeloader'] = lowvramaudiovaeloader.node.id
+        # Sampling
+        ksamplerselect = KSamplerSelect(
+            _id='4831',
+            sampler_name='euler_ancestral_cfg_pp',
+        )
+        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
 
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
+        randomnoise = RandomNoise(
+            _id='4832',
+            noise_seed=DEFAULT_SEED,
+            control_after_generate=CONTROL_AFTER_GENERATE,
+        )
+        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
 
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
+        randomnoise_2 = RandomNoise(
+            _id='4967',
+            noise_seed=DEFAULT_SEED_2,
+            control_after_generate=CONTROL_AFTER_GENERATE,
+        )
+        wf.metadata.setdefault('id_map', {})['randomnoise_2'] = randomnoise_2.node.id
+
+        ksamplerselect_2 = KSamplerSelect(_id='4976', sampler_name='euler_cfg_pp')
+        wf.metadata.setdefault('id_map', {})['ksamplerselect_2'] = ksamplerselect_2.node.id
+        # Inputs
+        primitivestring = raw_call(wf, 'PrimitiveString', '4979', value='')
+        wf.metadata.setdefault('id_map', {})['primitivestring'] = primitivestring.node.id
+        ltxavtextencoderloader = LTXAVTextEncoderLoader(
+            _id='4982',
+            text_encoder=MODEL_NAME_2,
+            ckpt_name=MODEL_NAME,
+            device='default',
+            widget_0='gemma_3_12B_it_fp4_mixed.safetensors',
+            widget_1='ltx-2.3-22b-dev-fp8.safetensors',
+        )
+        wf.metadata.setdefault('id_map', {})['ltxavtextencoderloader'] = ltxavtextencoderloader.node.id
+
+        manualsigmas = ManualSigmas(
+            _id='4984',
+            sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
+        )
+        wf.metadata.setdefault('id_map', {})['manualsigmas'] = manualsigmas.node.id
+
+        manualsigmas_2 = ManualSigmas(_id='4985', sigmas='0.85, 0.7250, 0.4219, 0.0')
+        wf.metadata.setdefault('id_map', {})['manualsigmas_2'] = manualsigmas_2.node.id
+        primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '4987', value=True)
+        wf.metadata.setdefault('id_map', {})['primitiveboolean'] = primitiveboolean.node.id
+        primitiveint = raw_call(wf, 'PrimitiveInt', '4988', value=5, widget_1='fixed')
+        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
+        primitivefloat = raw_call(wf, 'PrimitiveFloat', '4989', value=8)
+        wf.metadata.setdefault('id_map', {})['primitivefloat'] = primitivefloat.node.id
+        # Conditioning
+        cliptextencode = CLIPTextEncode(
+            _id='2483',
+            text=DEFAULT_PROMPT,
+            clip=ltxavtextencoderloader,
+        )
+        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
+
+        cliptextencode_2 = CLIPTextEncode(
+            _id='2612',
+            text=DEFAULT_PROMPT_2,
+            clip=ltxavtextencoderloader,
+        )
+        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
+
+        # Sampling
+        emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+            _id='3059',
+            width=256,
+            height=256,
+            widget_0=256,
+            widget_1=256,
+            widget_2=5,
+            length=primitiveint,
+        )
+        wf.metadata.setdefault('id_map', {})['emptyltxvlatentvideo'] = emptyltxvlatentvideo.node.id
+
+        loraloadermodelonly = LoraLoaderModelOnly(
+            _id='4922',
+            lora_name=MODEL_NAME_3,
+            strength_model=GUIDE_STRENGTH,
+            model=lowvramcheckpointloader.out('MODEL'),
+        )
+        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
+
+        gemmaapitextencode = GemmaAPITextEncode(
+            _id='4980',
+            widget_0=WIDGET_0,
+            widget_1='',
+            widget_2=MODEL_NAME,
+            widget_3=MODEL_NAME,
+            api_key=primitivestring,
+        )
+        wf.metadata.setdefault('id_map', {})['gemmaapitextencode'] = gemmaapitextencode.node.id
+
+        gemmaapitextencode_2 = GemmaAPITextEncode(
+            _id='4981',
+            widget_0=WIDGET_0,
+            widget_1=384,
+            widget_2=False,
+            widget_3=MODEL_NAME,
+            api_key=primitivestring,
+        )
+        wf.metadata.setdefault('id_map', {})['gemmaapitextencode_2'] = gemmaapitextencode_2.node.id
+
+        resizeimagemasknode = ResizeImageMaskNode(
+            _id='4990',
+            resize_type='scale longer dimension',
+            scale_method='lanczos',
+            input=loadimage.out('IMAGE'),
+        )
+        wf.metadata.setdefault('id_map', {})['resizeimagemasknode'] = resizeimagemasknode.node.id
+
+        ltxfloattoint = LTXFloatToInt(_id='5000', rounding=0, a=primitivefloat)
+        wf.metadata.setdefault('id_map', {})['ltxfloattoint'] = ltxfloattoint.node.id
+        ltxvconditioning = LTXVConditioning(
+            _id='1241',
+            widget_0=8,
+            frame_rate=primitivefloat,
+            negative=cliptextencode_2,
+            positive=cliptextencode,
+            _outputs=('POSITIVE', 'NEGATIVE'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvconditioning'] = ltxvconditioning.node.id
+
+        ltxvpreprocess = LTXVPreprocess(
+            _id='3336',
+            img_compression=18,
+            image=resizeimagemasknode,
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvpreprocess'] = ltxvpreprocess.node.id
+
+        ltxvemptylatentaudio = LTXVEmptyLatentAudio(
+            _id='3980',
+            widget_0=5,
+            widget_1=8,
+            frames_number=primitiveint,
+            frame_rate=ltxfloattoint,
+            audio_vae=lowvramaudiovaeloader,
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvemptylatentaudio'] = ltxvemptylatentaudio.node.id
+
+        ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
+            _id='3159',
+            strength=0.7,
+            widget_1=False,
+            bypass=primitiveboolean,
+            image=ltxvpreprocess,
+            latent=emptyltxvlatentvideo,
+            vae=lowvramcheckpointloader.out('VAE'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvimgtovideoconditiononly'] = ltxvimgtovideoconditiononly.node.id
+
+        # Conditioning
+        cfgguider = CFGGuider(
+            _id='4828',
+            cfg=GUIDE_STRENGTH_2,
+            model=loraloadermodelonly,
+            negative=ltxvconditioning.out('NEGATIVE'),
+            positive=ltxvconditioning.out('POSITIVE'),
+        )
+        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
+
+        cfgguider_2 = CFGGuider(
+            _id='4964',
+            cfg=GUIDE_STRENGTH_2,
+            model=loraloadermodelonly,
+            negative=ltxvconditioning.out('NEGATIVE'),
+            positive=ltxvconditioning.out('POSITIVE'),
+        )
+        wf.metadata.setdefault('id_map', {})['cfgguider_2'] = cfgguider_2.node.id
+
+        ltxvconcatavlatent = LTXVConcatAVLatent(
+            _id='4528',
+            audio_latent=ltxvemptylatentaudio,
+            video_latent=ltxvimgtovideoconditiononly,
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent'] = ltxvconcatavlatent.node.id
+
+        # Sampling
+        samplercustomadvanced = SamplerCustomAdvanced(
+            _id='4829',
+            guider=cfgguider,
+            latent_image=ltxvconcatavlatent,
+            noise=randomnoise,
+            sampler=ksamplerselect,
+            sigmas=manualsigmas,
+            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
+        )
+        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
+
+        ltxvseparateavlatent = LTXVSeparateAVLatent(
+            _id='4845',
+            av_latent=samplercustomadvanced.out('OUTPUT'),
+            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent'] = ltxvseparateavlatent.node.id
+
+        ltxvimgtovideoconditiononly_2 = LTXVImgToVideoConditionOnly(
+            _id='4970',
+            widget_1=False,
+            bypass=primitiveboolean,
+            image=resizeimagemasknode,
+            latent=ltxvseparateavlatent.out('VIDEO_LATENT'),
+            vae=lowvramcheckpointloader.out('VAE'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvimgtovideoconditiononly_2'] = ltxvimgtovideoconditiononly_2.node.id
+
+        ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+            _id='4969',
+            audio_latent=ltxvseparateavlatent.out('AUDIO_LATENT'),
+            video_latent=ltxvimgtovideoconditiononly_2,
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent_2'] = ltxvconcatavlatent_2.node.id
+
+        samplercustomadvanced_2 = SamplerCustomAdvanced(
+            _id='4971',
+            guider=cfgguider_2,
+            latent_image=ltxvconcatavlatent_2,
+            noise=randomnoise_2,
+            sampler=ksamplerselect_2,
+            sigmas=manualsigmas_2,
+            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
+        )
+        wf.metadata.setdefault('id_map', {})['samplercustomadvanced_2'] = samplercustomadvanced_2.node.id
+
+        ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
+            _id='4973',
+            av_latent=samplercustomadvanced_2.out('OUTPUT'),
+            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent_2'] = ltxvseparateavlatent_2.node.id
+
+        ltxvaudiovaedecode = LTXVAudioVAEDecode(
+            _id='4848',
+            audio_vae=lowvramaudiovaeloader,
+            samples=ltxvseparateavlatent_2.out('AUDIO_LATENT'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvaudiovaedecode'] = ltxvaudiovaedecode.node.id
+
+        ltxvtiledvaedecode = LTXVTiledVAEDecode(
+            _id='4995',
+            horizontal_tiles=2,
+            vertical_tiles=2,
+            overlap=6,
+            latents=ltxvseparateavlatent_2.out('VIDEO_LATENT'),
+            vae=lowvramcheckpointloader.out('VAE'),
+        )
+        wf.metadata.setdefault('id_map', {})['ltxvtiledvaedecode'] = ltxvtiledvaedecode.node.id
+
+        createvideo = CreateVideo(
+            _id='4849',
+            widget_0=8,
+            fps=primitivefloat,
+            audio=ltxvaudiovaedecode,
+            images=ltxvtiledvaedecode,
+        )
+        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
+
+        # Outputs
+        savevideo = SaveVideo(_id='4852', filename_prefix='output', video=createvideo)
+        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
+

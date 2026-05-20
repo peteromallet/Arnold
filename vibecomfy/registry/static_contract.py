@@ -164,14 +164,14 @@ def _extract_finalize_outputs(
         call_name = _call_name(node.func)
         if call_name != "finalize" and not call_name.endswith(".finalize"):
             continue
+        output_type = _keyword_literal(node, "output_type", diagnostics, "finalize")
         output_node = _keyword_literal(node, "output_node", diagnostics, "finalize")
         if output_node is None:
             output_node = _keyword_node_ref(node, "output_node", node_assignments)
         if output_node is None:
-            output_node = _single_terminal_output_id(tree)
+            output_node = _terminal_output_id_for_type(tree, str(output_type)) if output_type else _single_terminal_output_id(tree)
         if not isinstance(output_node, str):
             continue
-        output_type = _keyword_literal(node, "output_type", diagnostics, "finalize")
         output_kind = _keyword_literal(node, "output_kind", diagnostics, "finalize")
         name = _keyword_literal(node, "name", diagnostics, "finalize")
         mime_type = _keyword_literal(node, "mime_type", diagnostics, "finalize")
@@ -239,10 +239,26 @@ def _single_terminal_output_id(tree: ast.Module) -> str | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _terminal_output_id_for_type(tree: ast.Module, output_type: str) -> str | None:
+    candidates: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        node_id = _node_call_source_id(node)
+        if node_id is None:
+            continue
+        class_type = _node_call_class_type(node)
+        if class_type == output_type:
+            candidates.append(node_id)
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _node_call_class_type(node: ast.Call) -> str | None:
     call_name = _call_name(node.func)
     if call_name == "node" and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
         return str(node.args[1].value)
+    if call_name and call_name[:1].isupper():
+        return call_name.rsplit(".", 1)[-1]
     if call_name.endswith(".node") and node.args and isinstance(node.args[0], ast.Constant):
         return str(node.args[0].value)
     return None

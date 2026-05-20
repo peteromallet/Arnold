@@ -1,191 +1,137 @@
-# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
-"""Image-to-video generation with Wan 2.1 I2V 480p 14B.
-
-Public inputs:
-    prompt (required): Text prompt
-    start_image (required): Starting image
-    negative_prompt: Negative text prompt
-    seed: Random seed
-    steps: Sampling steps
-    output_fps: Output playback frame rate
-    width: Output width
-    height: Output height
-    length: Number of output frames
-    cfg: Classifier-free guidance scale
-    sampler_name: Sampler algorithm
-
-Output: SaveVideo (node 56).
-
-Source:  workflow_corpus/official/video/wan_i2v.json
-"""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CLIPVisionEncode, CLIPVisionLoader, CreateVideo, KSampler, LoadImage, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader, WanImageToVideo
 
-_PROMPT_DEFAULT = """a cute anime girl with massive fennec ears and a big fluffy tail wearing a maid outfit turning around"""
 
-_NEGATIVE_PROMPT_DEFAULT = """色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"""
+DEFAULT_FPS = 16
+DEFAULT_FRAMES = 33
+DEFAULT_PROMPT = 'a cute anime girl with massive fennec ears and a big fluffy tail wearing a maid outfit turning around'
+DEFAULT_PROMPT_2 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
+DEFAULT_SEED = 987948718394761
+GUIDE_STRENGTH = 6
+MODEL_NAME = 'wan2.1_i2v_480p_14B_fp16.safetensors'
+MODEL_NAME_2 = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
+MODEL_NAME_3 = 'wan_2.1_vae.safetensors'
+MODEL_NAME_4 = 'clip_vision_h.safetensors'
+
 
 MODELS = {
-    'wan2_1_i2v_480p_14b_fp16': ModelAsset(
-        filename='wan2.1_i2v_480p_14B_fp16.safetensors',
-        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors',
-        subdir='diffusion_models',
-        sha256='27988f6b510eb8d5fdd7485671b54897f8683f2bba7a772c5671be21d3491253',
-        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
-        size_bytes=32791377504,
-    ),
-    'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(
-        filename='umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-        subdir='text_encoders',
-        sha256='c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68',
-        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
-        size_bytes=6735906897,
-    ),
-    'wan_2_1_vae': ModelAsset(
-        filename='wan_2.1_vae.safetensors',
-        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors',
-        subdir='vae',
-        sha256='2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b',
-        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
-        size_bytes=253815318,
-    ),
-    'clip_vision_h': ModelAsset(
-        filename='clip_vision_h.safetensors',
-        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors',
-        subdir='clip_vision',
-        sha256='64a7ef761bfccbadbaa3da77366aac4185a6c58fa5de5f589b42a65bcc21f161',
-        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
-        size_bytes=1264219396,
-    ),
+    'wan2_1_i2v_480p_14b_fp16': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors', sha256='27988f6b510eb8d5fdd7485671b54897f8683f2bba7a772c5671be21d3491253', hf_revision='06e001fc51048fb03433a6fb25334de7836704a5', size_bytes=32791377504, subdir='diffusion_models'),
+    'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors', sha256='c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68', hf_revision='06e001fc51048fb03433a6fb25334de7836704a5', size_bytes=6735906897, subdir='text_encoders'),
+    'wan_2_1_vae': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors', sha256='2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b', hf_revision='06e001fc51048fb03433a6fb25334de7836704a5', size_bytes=253815318, subdir='vae'),
+    'clip_vision_h': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors', sha256='64a7ef761bfccbadbaa3da77366aac4185a6c58fa5de5f589b42a65bcc21f161', hf_revision='06e001fc51048fb03433a6fb25334de7836704a5', size_bytes=1264219396, subdir='clip_vision'),
 }
 
 PUBLIC_INPUTS = {
-    'prompt': InputSpec(node='6', field='text', default=_PROMPT_DEFAULT, type='STRING', required=True, description='Text prompt.', media_semantics='text'),
-    'negative_prompt': InputSpec(node='7', field='text', default=_NEGATIVE_PROMPT_DEFAULT, type='STRING', aliases=('negative',), description='Negative text prompt.', media_semantics='text'),
-    'seed': InputSpec(node='3', field='seed', default=987948718394761, type='INT', description='Random seed.'),
-    'steps': InputSpec(node='3', field='steps', default=20, type='INT', description='Sampling steps.'),
-    'output_fps': InputSpec(node='55', field='fps', default=16, type='FLOAT', aliases=('fps',), description='Output playback frame rate.'),
-    'width': InputSpec(node='50', field='width', default=512, type='INT', description='Output width.'),
-    'height': InputSpec(node='50', field='height', default=512, type='INT', description='Output height.'),
-    'length': InputSpec(node='50', field='length', default=33, type='INT', description='Number of output frames.'),
-    'cfg': InputSpec(node='3', field='cfg', default=6, type='INT', description='Classifier-free guidance scale.'),
-    'sampler_name': InputSpec(node='3', field='sampler_name', default='uni_pc', type='STRING', description='Sampler algorithm.'),
-    'start_image': InputSpec(node='52', field='image', default='image_to_video_wan_start_image.png', type='IMAGE', required=True, aliases=('input_image', 'image'), description='Starting image.'),
+    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node=ref('ksampler'), field='steps', default=20),
+    'negative_prompt': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT_2),
+    'negative': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT_2),
+    'output_fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
+    'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
+    'width': InputSpec(node=ref('wanimagetovideo'), field='width', default=512),
+    'height': InputSpec(node=ref('wanimagetovideo'), field='height', default=512),
+    'length': InputSpec(node=ref('wanimagetovideo'), field='length', default=DEFAULT_FRAMES),
+    'cfg': InputSpec(node=ref('ksampler'), field='cfg', default=GUIDE_STRENGTH),
+    'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='uni_pc'),
+    'start_image': InputSpec(node=ref('loadimage'), field='image', default='image_to_video_wan_start_image.png'),
+    'input_image': InputSpec(node=ref('loadimage'), field='image', default='image_to_video_wan_start_image.png'),
+    'image': InputSpec(node=ref('loadimage'), field='image', default='image_to_video_wan_start_image.png'),
+    'frames': InputSpec(node=ref('wanimagetovideo'), field='length', default=DEFAULT_FRAMES),
 }
 
-# vibecomfy: narrative (generated by tools/narrate_template.py @ 0.1.0+g9c5810f+dirty)
-# ported from workflow_corpus/official/video/wan_i2v.json (sha256: e455b28ec1eb5c2312ec4bb65dd2e2e69e9193ee766bdfc251a9c001a15edee4)
 READY_METADATA = ReadyMetadata.build(
-    template_id='wan_i2v',
     capability='image_to_video',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
     output_prefix='video/ComfyUI',
-    provenance={'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/video/wan_i2v.json'},
-    coverage_tier='required',
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    provenance={'source_workflow': 'workflow_corpus/official/video/wan_i2v.json'},
 )
-
-READY_METADATA["unbound_inputs"].update({'fps': '55.fps', 'image': '52.image', 'negative_prompt': '7.text', 'prompt': '6.text', 'seed': '3.seed', 'steps': '3.steps'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = new_workflow(READY_METADATA, source_path=__file__)
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    # ════ LOADERS ════
-    base_diffusion_model = node(wf, 'UNETLoader', '37',
-        unet_name=MODELS['wan2_1_i2v_480p_14b_fp16'].filename,
-        weight_dtype='default',
-    )
-    text_encoder = node(wf, 'CLIPLoader', '38',
-        clip_name=MODELS['umt5_xxl_fp8_e4m3fn_scaled'].filename,
-        type='wan',
-        device='default',
-    )
-    vae = node(wf, 'VAELoader', '39',
-        vae_name=MODELS['wan_2_1_vae'].filename,
-    )
-    clip_vision = node(wf, 'CLIPVisionLoader', '49',
-        clip_name=MODELS['clip_vision_h'].filename,
-    )
-    # ════ INPUTS ════
-    input_image = node(wf, 'LoadImage', '52',
-        image=PUBLIC_INPUTS['start_image'].default,
-    )
-    # ════ TEXT CONDITIONING ════
-    positive_prompt = node(wf, 'CLIPTextEncode', '6',
-        text=PUBLIC_INPUTS['prompt'].default,
-        clip=text_encoder.out('CLIP'),
-    )
-    negative_prompt = node(wf, 'CLIPTextEncode', '7',
-        text=PUBLIC_INPUTS['negative_prompt'].default,
-        clip=text_encoder.out('CLIP'),
-    )
-    # ════ SAMPLING ════
-    clip_vision_features = node(wf, 'CLIPVisionEncode', '51',
-        crop='none',
-        clip_vision=clip_vision.out('CLIP_VISION'),
-        image=input_image.out('IMAGE'),
-    )
-    model_sampling = node(wf, 'ModelSamplingSD3', '54',
-        shift=8,
-        model=base_diffusion_model.out('MODEL'),
-    )
-    wan_video = node(wf, 'WanImageToVideo', '50',
-        batch_size=1,
-        height=PUBLIC_INPUTS['height'].default,
-        length=PUBLIC_INPUTS['length'].default,
-        width=PUBLIC_INPUTS['width'].default,
-        clip_vision_output=clip_vision_features.out('CLIP_VISION_OUTPUT'),
-        negative=negative_prompt.out('CONDITIONING'),
-        positive=positive_prompt.out('CONDITIONING'),
-        start_image=input_image.out('IMAGE'),
-        vae=vae.out('VAE'),
-    )
-    sampler = node(wf, 'KSampler', '3',
-        seed=PUBLIC_INPUTS['seed'].default,
-        steps=PUBLIC_INPUTS['steps'].default,
-        cfg=PUBLIC_INPUTS['cfg'].default,
-        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
-        scheduler='simple',
-        denoise=1,
-        latent_image=wan_video.out('LATENT'),
-        model=model_sampling.out('MODEL'),
-        negative=wan_video.out('NEGATIVE'),
-        positive=wan_video.out('POSITIVE'),
-    )
-    # ════ DECODE ════
-    decoded_frames = node(wf, 'VAEDecode', '8',
-        samples=sampler.out('LATENT'),
-        vae=vae.out('VAE'),
-    )
-    video = node(wf, 'CreateVideo', '55',
-        fps=PUBLIC_INPUTS['output_fps'].default,
-        images=decoded_frames.out('IMAGE'),
-    )
-    # ════ OUTPUT ════
-    saved_video = node(wf, 'SaveVideo', '56',
-        filename_prefix='video/ComfyUI',
-        format='auto',
-        codec='auto',
-        video=video.out('VIDEO'),
-    )
+        # Loaders
+        unetloader = UNETLoader(_id='37', unet_name=MODEL_NAME)
+        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
+        cliploader = CLIPLoader(_id='38', clip_name=MODEL_NAME_2, type_='wan')
+        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
+        vaeloader = VAELoader(_id='39', vae_name=MODEL_NAME_3)
+        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
+        clipvisionloader = CLIPVisionLoader(_id='49', clip_name=MODEL_NAME_4)
+        wf.metadata.setdefault('id_map', {})['clipvisionloader'] = clipvisionloader.node.id
+        # Inputs
+        loadimage = LoadImage(
+            _id='52',
+            image='image_to_video_wan_start_image.png',
+            _outputs=('IMAGE', 'MASK'),
+        )
+        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='56',
-        output_type='SaveVideo',
-        name='video',
-        mime_type='video/mp4',
-        expected_cardinality='one',
-        filename_prefix='video/ComfyUI',
-        source_path=__file__,
-        
-    )
+        # Conditioning
+        cliptextencode = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT, clip=cliploader)
+        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
+        cliptextencode_2 = CLIPTextEncode(
+            _id='7',
+            text=DEFAULT_PROMPT_2,
+            clip=cliploader,
+        )
+        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
+
+        clipvisionencode = CLIPVisionEncode(
+            _id='51',
+            crop='none',
+            clip_vision=clipvisionloader,
+            image=loadimage.out('IMAGE'),
+        )
+        wf.metadata.setdefault('id_map', {})['clipvisionencode'] = clipvisionencode.node.id
+
+        modelsamplingsd3 = ModelSamplingSD3(_id='54', shift=8, model=unetloader)
+        wf.metadata.setdefault('id_map', {})['modelsamplingsd3'] = modelsamplingsd3.node.id
+        wanimagetovideo = WanImageToVideo(
+            _id='50',
+            height=512,
+            length=DEFAULT_FRAMES,
+            width=512,
+            clip_vision_output=clipvisionencode,
+            negative=cliptextencode_2,
+            positive=cliptextencode,
+            start_image=loadimage.out('IMAGE'),
+            vae=vaeloader,
+            _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
+        )
+        wf.metadata.setdefault('id_map', {})['wanimagetovideo'] = wanimagetovideo.node.id
+
+        # Sampling
+        ksampler = KSampler(
+            _id='3',
+            seed=DEFAULT_SEED,
+            steps=20,
+            cfg=GUIDE_STRENGTH,
+            sampler_name='uni_pc',
+            latent_image=wanimagetovideo.out('LATENT'),
+            model=modelsamplingsd3,
+            negative=wanimagetovideo.out('NEGATIVE'),
+            positive=wanimagetovideo.out('POSITIVE'),
+        )
+        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
+
+        # Decode
+        vaedecode = VAEDecode(_id='8', samples=ksampler, vae=vaeloader)
+        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
+        createvideo = CreateVideo(_id='55', fps=DEFAULT_FPS, images=vaedecode)
+        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
+        # Outputs
+        savevideo = SaveVideo(_id='56', video=createvideo)
+        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

@@ -75,17 +75,21 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "READY_METADATA =" in text
     assert "READY_REQUIREMENTS =" not in text
     assert "ReadyMetadata.build(" in text
-    assert "template_id='image/sample'" in text
-    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node, ref" in text
+    assert "template_id='image/sample'" not in text
+    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref" in text
     assert "from vibecomfy.registry.ready_template import" not in text
     assert "def _node" not in text
+    assert "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in text
+    assert "LoadImage(_id='10', image='input.png')" in text
+    assert "LoadImage(wf" not in text
+    assert "        return wf.finalize(PUBLIC_INPUTS" in text
     assert "'prefix': InputSpec(node=ref('saveimage'), field='filename_prefix', default='out/sample')" in text
     assert "bind_input(" not in text
     assert "bind_output(" not in text
     assert "artifact_kind='image'" in text
 
     namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
-    exec(compile(text, "ready emitted", "exec"), namespace)  # noqa: S102 - generated code under test
+    exec(compile(text, "ready_templates/image/sample.py", "exec"), namespace)  # noqa: S102 - generated code under test
     workflow = namespace["build"]()
 
     assert isinstance(workflow, VibeWorkflow)
@@ -93,9 +97,47 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert workflow.source.source_type == "ready_template"
     assert sorted(workflow.nodes) == ["10", "20"]
     assert workflow.metadata["ready_template"] == "image/sample"
+    assert workflow.metadata["id_map"]["loadimage"] == "10"
+    assert workflow.metadata["id_map"]["saveimage"] == "20"
     assert workflow.inputs["prefix"].node_id == "20"
     assert workflow.inputs["prefix"].default == "out/sample"
     assert workflow.outputs[0].artifact_kind == "image"
+
+
+def test_ready_template_emits_custom_node_pack_provenance_from_lockfile() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode("1", "DepthAnything_V2", inputs={"image": "input.png"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/depth", "capability": "image"},
+        ready_requirements={"custom_nodes": []},
+        template_id="image/depth",
+    )
+
+    assert "custom_node_packs=" in text
+    assert "'ComfyUI-DepthAnythingV2'" in text
+    assert "'classes_used': ['DepthAnything_V2']" in text
+    assert "'commit': '553187872eeb1d52e50dc53209fa57e569609a72'" in text
+    assert "'status': 'discovered'" in text
+
+
+def test_ready_template_preserves_explicit_custom_node_pack_override() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "input.png"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={
+            "ready_template": "image/depth",
+            "capability": "image",
+            "custom_node_packs": {"ExamplePack": {"commit": "abc", "classes_used": ["LoadImage"]}},
+        },
+        ready_requirements={},
+        template_id="image/depth",
+    )
+
+    assert "custom_node_packs={'ExamplePack': {'commit': 'abc', 'classes_used': ['LoadImage']}}" in text
 
 
 def test_tools_format_as_python_remains_ready_template_wrapper() -> None:
@@ -107,6 +149,23 @@ def test_tools_format_as_python_remains_ready_template_wrapper() -> None:
     }
 
     assert format_as_python(_sample_workflow(), **kwargs) == emit_ready_template_python(_sample_workflow(), **kwargs)
+
+
+def test_ready_template_ltx_tail_lines_are_inside_workflow_context() -> None:
+    text = emit_ready_template_python(
+        _sample_workflow(),
+        ready_metadata={"ready_template": "video/ltx2_3_i2v", "source_workflow": "workflow_corpus/source.json"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="video/ltx2_3_i2v",
+        registered_inputs={"prefix": ("20", "filename_prefix")},
+    )
+
+    assert "    with new_workflow(READY_METADATA, source_path=__file__) as wf:" in text
+    assert "        apply_ltx_lowvram(wf)" in text
+    assert "        resolution(384, 256, 9).apply(wf)" in text
+    assert "        ensure_custom_nodes(wf, READY_METADATA.get(\"requirements\", {}).get(\"custom_nodes\", []))" in text
+    assert "        return wf.finalize(PUBLIC_INPUTS" in text
+    assert "\n    apply_ltx_lowvram(wf)" not in text
 
 
 def test_convert_ready_templates_tool_dry_run_remains_compatible() -> None:
@@ -183,6 +242,30 @@ def test_write_emitted_raises_manual_refusal_before_write(tmp_path: Path) -> Non
             _write_emitted(manual_path, "emitted text", dry_run=False)
         # File must be unchanged
         assert manual_path.read_text().startswith("# vibecomfy: manual")
+    finally:
+        tmod.READY_ROOT = orig_root
+
+
+def test_write_emitted_include_manual_override_replaces_manual_template(tmp_path: Path) -> None:
+    from tools.convert_ready_templates import _write_emitted
+
+    tmpl_dir = tmp_path / "ready_templates" / "image"
+    tmpl_dir.mkdir(parents=True)
+    manual_path = tmpl_dir / "test_manual.py"
+    manual_path.write_text("# vibecomfy: manual - do not regenerate\ndef build(): pass\n")
+
+    import tools.convert_ready_templates as tmod
+
+    orig_root = tmod.READY_ROOT
+    try:
+        tmod.READY_ROOT = tmp_path / "ready_templates"
+        _write_emitted(
+            manual_path,
+            "# vibecomfy: generated - converted by tools/convert_ready_templates.py\ndef build():\n    return None\n",
+            dry_run=False,
+            include_manual=True,
+        )
+        assert manual_path.read_text(encoding="utf-8").startswith("# vibecomfy: generated")
     finally:
         tmod.READY_ROOT = orig_root
 

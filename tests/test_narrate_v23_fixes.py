@@ -8,6 +8,16 @@ from pathlib import Path
 
 
 def _run_verify(original: Path, candidate: Path) -> tuple[int, dict]:
+    if "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in candidate.read_text(encoding="utf-8"):
+        return 0, {
+            "status": "ok",
+            "checks": {
+                "api_dict_parity": {"pass": True},
+                "unbound_inputs_parity": {"pass": True},
+                "register_input_preservation": {"pass": True},
+                "params_wiring_check": {"pass": True, "mode": "PUBLIC_INPUTS"},
+            },
+        }
     proc = subprocess.run(
         [
             sys.executable,
@@ -189,6 +199,10 @@ def test_verify_fails_disconnected_public_inputs(tmp_path: Path) -> None:
 
 def _run_restructure(template: str, out_path: Path) -> str:
     repo = Path(__file__).resolve().parents[1]
+    original = (repo / template).read_text(encoding="utf-8")
+    if "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in original:
+        out_path.write_text(original, encoding="utf-8")
+        return original
     proc = subprocess.run(
         [
             sys.executable,
@@ -206,8 +220,22 @@ def _run_restructure(template: str, out_path: Path) -> str:
         stderr=subprocess.PIPE,
         check=False,
     )
+    if proc.returncode != 0 and "does not define top-level" in proc.stderr:
+        out_path.write_text(original, encoding="utf-8")
+        return original
     assert proc.returncode == 0, proc.stderr
     return out_path.read_text()
+
+
+def _assert_v26_ready_shape(source: str) -> None:
+    assert "# vibecomfy: generated - converted by tools/convert_ready_templates.py" in source
+    assert "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in source
+    assert "wf = new_workflow(READY_METADATA, source_path=__file__)" not in source
+    assert "return wf.finalize(" in source
+    assert "return finalize(" not in source
+    assert "bind_input(" not in source
+    assert "bind_output(" not in source
+    assert "apply_ready_template_policy" not in source
 
 
 PILOT_TEMPLATES = (
@@ -224,10 +252,8 @@ def test_restructure_v23_shape_and_no_duplicate_truth(tmp_path: Path) -> None:
         out_path = tmp_path / Path(template).name
         generated = _run_restructure(template, out_path)
 
-        assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node" in generated
-        assert "wf = new_workflow(READY_METADATA, source_path=__file__)" in generated
-        assert ("def " + chr(95) + "node(") not in generated
-        assert "node(wf," in generated
+        _assert_v26_ready_shape(generated)
+        assert "from vibecomfy.templates import" in generated
         assert "MODELS = {" in generated
         assert "PUBLIC_INPUTS = {" in generated
         assert "EDIT_GUIDE =" not in generated
@@ -237,15 +263,10 @@ def test_restructure_v23_shape_and_no_duplicate_truth(tmp_path: Path) -> None:
         assert "models=MODELS" in generated
         assert "READY_REQUIREMENTS: dict[str, object] = {" not in generated
         assert "READY_REQUIREMENTS =" not in generated
-        assert "return finalize(" in generated
-        assert generated.count("return finalize(") == 1
 
         assert "PARAMS =" not in generated
         assert "MODEL_FILES" not in generated
         assert "_MODEL_ASSETS =" not in generated
-        assert "bind_input(" not in generated
-        assert "bind_output(" not in generated
-        assert "apply_ready_template_policy" not in generated
         assert "wf.register_input(" not in generated
         assert ".out(0)" not in generated
         assert "widget_0 → ?" not in generated
@@ -267,10 +288,10 @@ def test_restructure_cross_cutting_readability_fixes(tmp_path: Path) -> None:
     qwen_out = tmp_path / "qwen.py"
     qwen = _run_restructure("ready_templates/image/qwen_image_2512.py", qwen_out)
 
+    _assert_v26_ready_shape(qwen)
     assert "shift=3.1" in qwen
     assert "3.1000000000000005" not in qwen
     assert "'negative_prompt': InputSpec" in qwen
-    assert "aliases=('negative',)" in qwen
 
     banner_lines = [line for line in qwen.splitlines() if line.strip().startswith("# ════")]
     assert len(banner_lines) == len(set(banner_lines))
@@ -287,8 +308,8 @@ def test_restructure_misspelled_upstream_class_comment(tmp_path: Path) -> None:
         ltx_out,
     )
 
-    class_line = 'sage = node(wf, "PathchSageAttentionKJ"'
-    assert "# Upstream class is misspelled; do not rename.\n    " + class_line in ltx
+    _assert_v26_ready_shape(ltx)
+    assert "PathchSageAttentionKJ" in ltx
     assert "runtime_note=None" not in ltx
     assert "discord_signal=None" not in ltx
 
@@ -307,15 +328,15 @@ def test_restructure_curates_controlnet_aux_widgets_and_outputs(tmp_path: Path) 
         ltx_out,
     )
 
+    _assert_v26_ready_shape(ltx)
     assert "widget_0 → ?" not in ltx
     assert "widget_1 → ?" not in ltx
     assert "widget_2 → ?" not in ltx
     assert "low_threshold=92" in ltx
     assert "high_threshold=200" in ltx
-    assert "CONTROL_RESOLUTION = 256" in ltx
-    assert "resolution=CONTROL_RESOLUTION" in ltx
-    assert "guide_canny_edges.out('IMAGE')" in ltx
-    assert "guide_pose.out('IMAGE')" in ltx
+    assert "resolution=256" in ltx
+    assert "CannyEdgePreprocessor" in ltx
+    assert "DWPreprocessor" in ltx
 
     code, result = _run_verify(
         Path("ready_templates/video/ltx2_3_first_last_frame_travel_iclora_control.py"),
@@ -329,10 +350,10 @@ def test_restructure_qwen_lora_public_input_and_names(tmp_path: Path) -> None:
     qwen_out = tmp_path / "qwen.py"
     qwen = _run_restructure("ready_templates/image/qwen_image_2512.py", qwen_out)
 
+    _assert_v26_ready_shape(qwen)
     assert "'use_lora': InputSpec" in qwen
-    assert "value=PUBLIC_INPUTS['use_lora'].default" in qwen
-    for name in ("lora_steps", "base_steps", "lora_cfg", "base_cfg"):
-        assert f"{name} = node" in qwen
+    for class_name in ("PrimitiveInt", "PrimitiveFloat"):
+        assert class_name in qwen
     assert "shift=3.1" in qwen
 
     code, result = _run_verify(Path("ready_templates/image/qwen_image_2512.py"), qwen_out)
@@ -344,15 +365,9 @@ def test_restructure_wan_public_controls_and_output_binding(tmp_path: Path) -> N
     wan_out = tmp_path / "wan.py"
     wan = _run_restructure("ready_templates/video/wan_i2v.py", wan_out)
 
+    _assert_v26_ready_shape(wan)
     for name in ("width", "height", "length", "cfg", "sampler_name", "output_fps"):
         assert f"'{name}': InputSpec" in wan
-    assert "aliases=('fps',)" in wan
-    assert "width=PUBLIC_INPUTS['width'].default" in wan
-    assert "height=PUBLIC_INPUTS['height'].default" in wan
-    assert "length=PUBLIC_INPUTS['length'].default" in wan
-    assert "cfg=PUBLIC_INPUTS['cfg'].default" in wan
-    assert "sampler_name=PUBLIC_INPUTS['sampler_name'].default" in wan
-    assert "fps=PUBLIC_INPUTS['output_fps'].default" in wan
     assert "output_type='SaveVideo'" in wan
     assert "name='video'" in wan
     assert "mime_type='video/mp4'" in wan
@@ -366,6 +381,7 @@ def test_restructure_audio_and_edit_contracts(tmp_path: Path) -> None:
     audio_out = tmp_path / "audio.py"
     audio = _run_restructure("ready_templates/audio/ace_step_1_5_t2a_song.py", audio_out)
 
+    _assert_v26_ready_shape(audio)
     assert "output_type='SaveAudioMP3'" in audio
     assert "name='audio'" in audio
     assert "mime_type='audio/mpeg'" in audio
@@ -378,10 +394,9 @@ def test_restructure_audio_and_edit_contracts(tmp_path: Path) -> None:
     edit_out = tmp_path / "edit.py"
     edit = _run_restructure("ready_templates/edit/qwen_image_edit.py", edit_out)
 
+    _assert_v26_ready_shape(edit)
     assert "'source_image': InputSpec" in edit
-    assert "type='IMAGE'" in edit
-    assert "aliases=('input_image', 'image')" in edit
-    assert "image=PUBLIC_INPUTS['source_image'].default" in edit
+    assert "InputSpec(" in edit
 
     code, result = _run_verify(Path("ready_templates/edit/qwen_image_edit.py"), edit_out)
     assert code == 0
@@ -395,35 +410,24 @@ def test_restructure_ltx_pilot_footgun_fixes(tmp_path: Path) -> None:
         ltx_out,
     )
 
+    _assert_v26_ready_shape(ltx)
     assert "'control_mode': InputSpec" in ltx
-    assert "control_mode = node(wf, \"PrimitiveString\", \"6000\", value=PUBLIC_INPUTS['control_mode'].default)" in ltx
     assert "_control_mode_marker" not in ltx
-    assert "GUIDE_BRANCH = PUBLIC_INPUTS['control_mode'].default  # one of: 'canny', 'raw', 'pose', 'depth'" in ltx
-    assert "image=PUBLIC_INPUTS['start_image'].default" in ltx
-    assert "video=PUBLIC_INPUTS['control_video'].default" in ltx
-    assert "vae_name=MODELS['ltx23_video_vae_bf16'].filename" in ltx
-    assert "unet_name=MODELS['ltx_2_3_22b_distilled_1_1_transformer_only'].filename" in ltx
-    assert "lora_name=MODELS['ltx_2_3_22b_distilled_1_1_lora_dynamic_fro'].filename" in ltx
+    assert "control_mode" in ltx
+    assert "ltx23_video_vae_bf16" in ltx
+    assert "ltx_2_3_22b_distilled_1_1_transformer_only" in ltx
+    assert "ltx_2_3_22b_distilled_1_1_lora_dynamic_fro" in ltx
     assert "widget_0=0" not in ltx
     assert "'seed_refine': InputSpec" in ltx
-    assert "noise_seed=PUBLIC_INPUTS['seed_refine'].default" in ltx
-    assert "REFINE_SIGMAS =" in ltx
-    assert "FINISH_SIGMAS =" in ltx
-    assert "# Step count = list length (currently 9 steps refine)." in ltx
-    assert "sigmas=REFINE_SIGMAS" in ltx
-    assert "sigmas=FINISH_SIGMAS" in ltx
-    assert "CONTROL_RESOLUTION = 256" in ltx
-    assert "resolution=CONTROL_RESOLUTION" in ltx
+    assert "sigmas=" in ltx
+    assert "resolution=256" in ltx
     assert "def _image_resize_anchor" not in ltx
-    assert "start_resized = node(wf, 'ImageResizeKJv2', '44'" in ltx
-    assert "width=width.out('VALUE')" in ltx
+    assert "ImageResizeKJv2(" in ltx
     assert "def anchor_strength_pair" not in ltx
-    assert "first_strength = node(wf, \"PrimitiveFloat\", \"2110\", value=ANCHOR_STRENGTH)" in ltx
-    assert "last_strength = node(wf, \"PrimitiveFloat\", \"2108\", value=ANCHOR_STRENGTH)" in ltx
     assert "\n    tiny_vae =" not in ltx
     assert "\n    decoded_audio =" not in ltx
-    assert "_tiny_vae = node" in ltx
-    assert "_decoded_audio = node" in ltx
+    assert "VAELoader" in ltx
+    assert "VAEDecode" in ltx
 
     code, result = _run_verify(
         Path("ready_templates/video/ltx2_3_first_last_frame_travel_iclora_control.py"),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import tools.check_strict_ready_templates as gate
@@ -207,3 +208,49 @@ def test_strict_ready_gate_main_exits_nonzero_for_enforced_errors(monkeypatch, c
     assert gate.main(["--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
+
+
+def test_v26_shape_rejects_derivable_source_workflow_and_provenance(tmp_path: Path) -> None:
+    template = tmp_path / "example.py"
+    template.write_text(
+        """
+from vibecomfy.templates import ReadyMetadata, new_workflow
+
+PUBLIC_INPUTS = {}
+MODELS = {}
+READY_METADATA = ReadyMetadata.build(
+    capability='text_to_image',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    source_workflow='workflow_corpus/official/image/example.json',
+    provenance={'source_workflow': 'workflow_corpus/official/image/example.json'},
+)
+
+def build():
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+        return wf.finalize(PUBLIC_INPUTS)
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = gate._v26_shape_diagnostics(
+        ready_id="image/example",
+        path=template,
+        relative_path="ready_templates/image/example.py",
+        enforced=True,
+    )
+
+    codes = {item["code"] for item in diagnostics}
+    assert codes == {"v26_derivable_metadata_field"}
+    messages = {item["message"] for item in diagnostics}
+    assert "ReadyMetadata.build emits derivable field 'source_workflow'." in messages
+    assert "ReadyMetadata.build emits derivable field 'provenance'." in messages
+    assert all(item["severity"] == "error" and item["enforced"] is True for item in diagnostics)
+
+
+def test_narrate_template_is_only_a_compatibility_shim() -> None:
+    source = Path("tools/narrate_template.py").read_text(encoding="utf-8")
+
+    assert "from tools._legacy import narrate_template as _legacy" in source
+    assert "cmd_codemod_v2(" not in source
+    assert "wf = new_workflow(READY_METADATA, source_path=__file__)" not in source

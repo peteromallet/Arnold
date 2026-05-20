@@ -20,14 +20,44 @@ See [template_porting_workbench.md](template_porting_workbench.md) for the full 
 
 The canonical promotion path is raw workflow source -> `port check` -> optional scratchpad -> `port convert --ready-id` or hand-authored Python ready template -> `tools.refresh_template_index` -> `validate`/`doctor`/strict-ready checks. Raw JSON and compiled API dictionaries are source/runtime material, not the reusable authoring surface.
 
-## v2.4 Ready Template Surface
+## v2.6 Ready Template Surface
 
 New ready templates declare data first and build the graph second:
 
 - `MODELS: dict[str, ModelAsset]` lists every authored model file, including URL, Comfy subdir, and when available `sha256`, `hf_revision`, and `size_bytes`.
 - `PUBLIC_INPUTS: dict[str, InputSpec]` is the public contract. Each input points at a node id and field and can carry aliases, type, required state, default, and media semantics.
-- `READY_METADATA = ReadyMetadata.build(...)` is the reproducibility identity: template id, capability, provenance, requirements, model assets, `vibecomfy_version`, `comfy_core`, optional hardware, and optional `python_env`.
-- `return finalize(wf, PUBLIC_INPUTS, READY_METADATA, output_node="...")` applies metadata, registers inputs, binds the output, and checks that the graph still matches the public contract.
+- `READY_METADATA = ReadyMetadata.build(...)` is the reproducibility identity: capability, public contract, requirements, model assets, custom-node pack provenance, `vibecomfy_version`, `comfy_core`, optional hardware, and optional `python_env`. Template id, source workflow, output prefix, and other static fields are derived when they match repository conventions.
+- `with new_workflow(READY_METADATA, source_path=__file__) as wf:` binds the active workflow through a `ContextVar`, allowing generated wrappers to omit the first `wf` argument.
+- `return wf.finalize(PUBLIC_INPUTS, output_node="...")` applies metadata, registers inputs, binds the output, and checks that the graph still matches the public contract.
+
+```python
+from vibecomfy.nodes.core import CLIPTextEncode, SaveImage
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
+
+PUBLIC_INPUTS = {
+    "prompt": InputSpec(node="6", field="text", default="a glass teapot", type="STRING", required=True),
+}
+MODELS = {}
+READY_METADATA = ReadyMetadata.build(
+    capability="text_to_image",
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+)
+
+def build():
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+        positive = CLIPTextEncode(_id="6", text=PUBLIC_INPUTS["prompt"], clip=...)
+        SaveImage(_id="9", images=positive, filename_prefix="image/example")
+        return wf.finalize(PUBLIC_INPUTS, output_node="9", output_type="SaveImage")
+```
+
+The explicit workflow form remains available for compatibility outside a
+workflow context:
+
+```python
+wf = new_workflow(READY_METADATA, source_path=__file__)
+positive = CLIPTextEncode(wf, _id="6", text="hello", clip=...)
+```
 
 Deprecated for generated or newly authored templates:
 
@@ -36,7 +66,7 @@ Deprecated for generated or newly authored templates:
 - `apply_ready_template_policy(...)`
 - direct `wf.register_input(...)` calls inside `build()`
 
-Those APIs remain for old templates and tests, but they emit `PendingDeprecationWarning`. Use `python -m tools.narrate_template ready_templates/<kind>/<id>.py --out ready_templates/<kind>/<id>.py` to migrate compatible legacy templates to v2.4 form.
+Those APIs remain for old templates and tests, but they emit `PendingDeprecationWarning`. Use `python -m tools.convert_ready_templates --all --write --include-manual` for the repository migration path, or `python -m vibecomfy.cli port convert <workflow> --ready-id <kind>/<id> --out ready_templates/<kind>/<id>.py --json` for individual sources. `tools.narrate_template` is a legacy compatibility surface, not the active emitter.
 
 ## Blocks
 

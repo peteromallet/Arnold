@@ -23,6 +23,7 @@ from .session import (
     _prepare_prompt_async,
     _run_metadata,
     _wait_for_server_history,
+    _workflow_queue_failure_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ async def run(
         try:
             queued = await ComfyClient(active_url).queue_prompt(api_dict)
         except Exception as exc:
-            raise RuntimeError(f"Workflow queue failed: {exc}") from exc
+            raise RuntimeError(_workflow_queue_failure_message(workflow, exc)) from exc
         prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
         history = await _wait_for_server_history(active_url, prompt_id, config=resolved_config)
         comfy_outputs = _outputs_from_server_history(history, prompt_id)

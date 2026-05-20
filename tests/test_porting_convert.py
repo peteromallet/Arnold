@@ -75,7 +75,7 @@ def test_ready_template_emitter_uses_typed_wrappers_and_strips_schema_defaults()
     assert "UNETLoader(" in source
     assert "_id='1'" in source
     assert "source_id='1'" not in source
-    assert "weight_dtype='default'" in source
+    assert "weight_dtype='default'" not in source
     assert "bind_output(" not in source
     assert "return wf.finalize(PUBLIC_INPUTS" in source
 
@@ -174,13 +174,14 @@ def test_port_convert_ready_template_candidate_requires_ready_id() -> None:
     assert result.ready_id == "image/sample"
     assert result.validation is not None and result.validation.ok
     assert "READY_METADATA =" in result.text
-    assert "template_id='image/sample'" in result.text
+    assert "template_id='image/sample'" not in result.text
     assert "'source_hash': 'sha256:abc'" in result.text
     assert "'workflow_shape': {'nodes': 2, 'runtime_nodes': 2}" in result.text
     assert "'output_mode': 'ready_template'" in result.text
     assert "'ready_id': 'image/sample'" in result.text
     assert "'custom_nodes': ['ComfyUI-TestPack']" in result.text
-    assert "'model.safetensors'" in result.text
+    assert "https://example.test/model.safetensors" in result.text
+    assert "filename='model.safetensors'" not in result.text
 
 
 def test_port_convert_ready_template_emits_structured_custom_node_refs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1428,7 +1429,7 @@ def test_ready_template_uses_shared_helpers_and_passes_import_build_compile_pari
     assert result.validation is not None
 
     # Import check: emitted code must import the natural template surface, not define local _node
-    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node, ref" in result.text
+    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref" in result.text
     assert "from vibecomfy.registry.ready_template import" not in result.text
     assert "new_workflow" in result.text
     assert "wf.finalize(PUBLIC_INPUTS" in result.text

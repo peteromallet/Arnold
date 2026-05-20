@@ -122,32 +122,36 @@ VibeComfy is a thin Python authoring layer. The real work belongs to:
 
 ![Code quality scorecard](docs/assets/scorecard.png)
 
-## v2.4 Ready Templates
+## v2.6 Ready Templates
 
-Ready templates use the v2.4 reproducibility shape:
+Ready templates use the v2.6 context-bound shape. Node wrappers read the active
+workflow from `with new_workflow(...) as wf:`, so each node call carries only
+semantic kwargs:
 
 ```python
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.nodes.core import CLIPTextEncode, SaveImage
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 
-MODELS = {"main": ModelAsset(filename="model.safetensors", url="https://...", subdir="checkpoints")}
+MODELS = {"main": ModelAsset(url="https://example.com/model.safetensors", subdir="checkpoints")}
 PUBLIC_INPUTS = {"prompt": InputSpec(node="6", field="text", default="", type="STRING", required=True)}
 READY_METADATA = ReadyMetadata.build(
-    template_id="image/example",
     capability="text_to_image",
     inputs=PUBLIC_INPUTS,
     models=MODELS,
-    requirements={"custom_nodes": ["ComfyUI-Example"]},
-    comfy_core={"version": "unknown", "commit": "unknown", "tested_at": "2026-05-20T00:00:00Z"},
-    vibecomfy_version="0.1.0",
 )
 
 def build():
-    wf = new_workflow(READY_METADATA, source_path=__file__)
-    # node(...)
-    return finalize(wf, PUBLIC_INPUTS, READY_METADATA, output_node="9", output_type="SaveImage")
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+        encoded = CLIPTextEncode(_id="6", text=PUBLIC_INPUTS["prompt"], clip=...)
+        SaveImage(_id="9", images=encoded, filename_prefix="image/example")
+        return wf.finalize(PUBLIC_INPUTS, output_node="9", output_type="SaveImage")
 ```
 
-`bind_input`, `bind_output`, direct `wf.register_input` calls in templates, and `apply_ready_template_policy` are compatibility APIs only. New templates declare public inputs in `PUBLIC_INPUTS`, model files in `MODELS`, and pack pins through `READY_METADATA.requirements`. The pack registry is `custom_nodes.lock`; rich TOML entries carry `slug`, `source`, `url`, `commit`, `version`, `schema_hash`, `class_set`, and `last_seen_at` so templates can be checked offline.
+The explicit workflow form remains supported for external callers:
+`CLIPTextEncode(wf, text="...", clip=...)`. Regenerated ready templates should
+use the context-bound zero-positional form inside the `with` block.
+
+`bind_input`, `bind_output`, direct `wf.register_input` calls in templates, and `apply_ready_template_policy` are compatibility APIs only. New templates declare public inputs in `PUBLIC_INPUTS`, model files in `MODELS`, and pack pins through `READY_METADATA.requirements` or derived `custom_node_packs`. The pack registry is `custom_nodes.lock`; rich TOML entries carry `slug`, `source`, `url`, `commit`, `version`, `schema_hash`, `class_set`, and `last_seen_at` so templates can be checked offline.
 
 See [docs/authoring.md](docs/authoring.md) and [docs/adding_templates_models.md](docs/adding_templates_models.md) for the full authoring and promotion flow.
 

@@ -201,7 +201,7 @@ def test_port_convert_ready_template_mode_requires_ready_id_and_writes_metadata(
     payload = json.loads(capsys.readouterr().out)
     text = out.read_text(encoding="utf-8")
     assert "READY_METADATA =" in text
-    assert "template_id='image/ported'" in text
+    assert "template_id='image/ported'" not in text
     provenance = _load_emitted_provenance(out)
     assert provenance["ready_id"] == "image/ported"
     assert provenance["source_hash"] == payload["report"]["source_hash"]

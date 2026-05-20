@@ -1,149 +1,116 @@
-# vibecomfy: manual
-# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
-"""Text-to-image generation with Qwen 3.8B Fp8mixed.
-
-Public inputs:
-    prompt (required): Text prompt
-    negative_prompt: Negative text prompt
-    seed: Random seed
-    width: Output width
-    height: Output height
-
-Output: SaveImage (node 9).
-
-Source:  workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json
-"""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlux2LatentImage, Flux2Scheduler, KSamplerSelect, RandomNoise, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAELoader
+
+
+DEFAULT_SEED = 653844576367526
+GUIDE_STRENGTH = 5
+MODEL_NAME = 'flux-2-klein-base-9b-fp8.safetensors'
+MODEL_NAME_2 = 'qwen_3_8b_fp8mixed.safetensors'
+MODEL_NAME_3 = 'full_encoder_small_decoder.safetensors'
+TEXT = ''
+
 
 MODELS = {
-    'qwen_3_8b_fp8mixed': ModelAsset(
-        filename='qwen_3_8b_fp8mixed.safetensors',
-        url='https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
-        subdir='text_encoders',
-        sha256='abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6',
-        hf_revision='23fbc8aa8b621f29f2249cd1bd9c47e5d0eebd83',
-        size_bytes=8664848742,
-    ),
-    'flux_2_klein_base_9b_fp8_unet': ModelAsset(
-        filename='flux-2-klein-base-9b-fp8.safetensors',
-        url='',
-        subdir='diffusion_models',
-    ),
-    'full_encoder_small_decoder_vae': ModelAsset(
-        filename='full_encoder_small_decoder.safetensors',
-        url='',
-        subdir='vae',
-    ),
+    'qwen_3_8b_fp8mixed': ModelAsset(url='https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors', sha256='abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6', hf_revision='23fbc8aa8b621f29f2249cd1bd9c47e5d0eebd83', size_bytes=8664848742, subdir='text_encoders'),
 }
 
 PUBLIC_INPUTS = {
-    'prompt': InputSpec(node='75:74', field='text', default='', type='STRING', required=True, description='Text prompt.', media_semantics='text'),
-    'negative_prompt': InputSpec(node='75:67', field='text', default='', type='STRING', aliases=('negative',), description='Negative text prompt.', media_semantics='text'),
-    'seed': InputSpec(node='75:73', field='noise_seed', default=653844576367526, type='INT', description='Random seed.'),
-    'width': InputSpec(node='75:68', field='value', default=1024, type='INT', description='Output width.'),
-    'height': InputSpec(node='75:69', field='value', default=1024, type='INT', description='Output height.'),
+    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
+    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
+    'prompt': InputSpec(node=ref('positive'), field='text', default=TEXT),
+    'negative_prompt': InputSpec(node=ref('negative'), field='text', default=TEXT),
+    'negative': InputSpec(node=ref('negative'), field='text', default=TEXT),
+    'width': InputSpec(node=ref('primitiveint'), field='value', default=1024),
+    'height': InputSpec(node=ref('primitiveint_2'), field='value', default=1024),
 }
 
 READY_METADATA = ReadyMetadata.build(
-    template_id='flux2_klein_9b_gguf_t2i',
     capability='text_to_image',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
     output_prefix='Flux2-Klein',
-    requirements={'custom_node_refs': [{'slug': 'ComfyUI-GGUF', 'source': 'git',
-                       'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git'}]},
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_role': 'materialized_ready_python_template'},
-    coverage_tier='required',
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    provenance={'source_workflow': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json'},
 )
-
-READY_METADATA["unbound_inputs"].update({'height': '75:69.value', 'negative_prompt': '75:67.text', 'prompt': '75:74.text', 'seed': '75:73.noise_seed', 'width': '75:68.value'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = new_workflow(READY_METADATA, source_path=__file__)
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    # ════ SAMPLING ════
-    sampler_kind = node(wf, 'KSamplerSelect', '75:61',
-        sampler_name='euler',
-    )
-    # ════ INPUTS ════
-    param_width = node(wf, 'PrimitiveInt', '75:68', value=PUBLIC_INPUTS['width'].default)
-    param_height = node(wf, 'PrimitiveInt', '75:69', value=PUBLIC_INPUTS['height'].default)
-    # ════ LOADERS ════
-    base_diffusion_model = node(wf, 'UNETLoader', '75:70',
-        unet_name=MODELS['flux_2_klein_base_9b_fp8_unet'].filename,
-        weight_dtype='default',
-    )
-    text_encoder = node(wf, 'CLIPLoader', '75:71',
-        clip_name=MODELS['qwen_3_8b_fp8mixed'].filename,
-        type='flux2',
-        device='default',
-    )
-    vae = node(wf, 'VAELoader', '75:72',
-        vae_name=MODELS['full_encoder_small_decoder_vae'].filename,
-    )
-    noise = node(wf, 'RandomNoise', '75:73',
-        noise_seed=PUBLIC_INPUTS['seed'].default,
-    )
-    flux2_scheduler = node(wf, 'Flux2Scheduler', '75:62',
-        steps=20,
-        height=param_height.out('INT'),
-        width=param_width.out('INT'),
-    )
-    # ════ LATENT ════
-    empty_flux2_latent_image = node(wf, 'EmptyFlux2LatentImage', '75:66',
-        batch_size=1,
-        width=param_width.out('INT'),
-        height=param_height.out('INT'),
-    )
-    # ════ TEXT CONDITIONING ════
-    negative_prompt = node(wf, 'CLIPTextEncode', '75:67',
-        text=PUBLIC_INPUTS['negative_prompt'].default,
-        clip=text_encoder.out('CLIP'),
-    )
-    positive_prompt = node(wf, 'CLIPTextEncode', '75:74',
-        text=PUBLIC_INPUTS['prompt'].default,
-        clip=text_encoder.out('CLIP'),
-    )
-    cfg_guider = node(wf, 'CFGGuider', '75:63',
-        cfg=5,
-        model=base_diffusion_model.out('MODEL'),
-        negative=negative_prompt.out('CONDITIONING'),
-        positive=positive_prompt.out('CONDITIONING'),
-    )
-    sampled_latent = node(wf, 'SamplerCustomAdvanced', '75:64',
-        guider=cfg_guider.out('GUIDER'),
-        latent_image=empty_flux2_latent_image.out(0),
-        noise=noise.out('NOISE'),
-        sampler=sampler_kind.out('SAMPLER'),
-        sigmas=flux2_scheduler.out(0),
-    )
-    # ════ DECODE ════
-    decoded_image = node(wf, 'VAEDecode', '75:65',
-        samples=sampled_latent.out('OUTPUT'),
-        vae=vae.out('VAE'),
-    )
-    # ════ OUTPUT ════
-    image_output = node(wf, 'SaveImage', '9',
-        filename_prefix='Flux2-Klein',
-        images=decoded_image.out('IMAGE'),
-    )
+        # Sampling
+        ksamplerselect = KSamplerSelect(_id='75:61', sampler_name='euler')
+        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
+        # Inputs
+        primitiveint = raw_call(wf, 'PrimitiveInt', '75:68', value=1024)
+        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
+        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '75:69', value=1024)
+        wf.metadata.setdefault('id_map', {})['primitiveint_2'] = primitiveint_2.node.id
+        # Loaders
+        unetloader = UNETLoader(_id='75:70', unet_name=MODEL_NAME)
+        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
+        cliploader = CLIPLoader(_id='75:71', clip_name=MODEL_NAME_2, type_='flux2')
+        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
+        vaeloader = VAELoader(_id='75:72', vae_name=MODEL_NAME_3)
+        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
+        randomnoise = RandomNoise(_id='75:73', noise_seed=DEFAULT_SEED)
+        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
+        # Sampling
+        flux2scheduler = Flux2Scheduler(
+            _id='75:62',
+            height=primitiveint_2,
+            width=primitiveint,
+        )
+        wf.metadata.setdefault('id_map', {})['flux2scheduler'] = flux2scheduler.node.id
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='9',
-        output_type='SaveImage',
-        name='image',
-        mime_type='image/png',
-        expected_cardinality='one',
-        filename_prefix='Flux2-Klein',
-        source_path=__file__,
-    )
+        emptyflux2latentimage = EmptyFlux2LatentImage(
+            _id='75:66',
+            width=primitiveint,
+            height=primitiveint_2,
+        )
+        wf.metadata.setdefault('id_map', {})['emptyflux2latentimage'] = emptyflux2latentimage.node.id
+
+        # Conditioning
+        negative = CLIPTextEncode(_id='75:67', text=TEXT, clip=cliploader)
+        wf.metadata.setdefault('id_map', {})['negative'] = negative.node.id
+        positive = CLIPTextEncode(_id='75:74', text=TEXT, clip=cliploader)
+        wf.metadata.setdefault('id_map', {})['positive'] = positive.node.id
+        cfgguider = CFGGuider(
+            _id='75:63',
+            cfg=GUIDE_STRENGTH,
+            model=unetloader,
+            negative=negative,
+            positive=positive,
+        )
+        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
+
+        # Sampling
+        samplercustomadvanced = SamplerCustomAdvanced(
+            _id='75:64',
+            guider=cfgguider,
+            latent_image=emptyflux2latentimage,
+            noise=randomnoise,
+            sampler=ksamplerselect,
+            sigmas=flux2scheduler,
+            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
+        )
+        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
+
+        # Decode
+        vaedecode = VAEDecode(
+            _id='75:65',
+            samples=samplercustomadvanced.out('OUTPUT'),
+            vae=vaeloader,
+        )
+        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
+
+        # Outputs
+        saveimage = SaveImage(_id='9', filename_prefix='Flux2-Klein', images=vaedecode)
+        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

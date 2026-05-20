@@ -1,36 +1,46 @@
-# vibecomfy: manual
-"""Minimal ready-template smoke used to validate the Python template runner."""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import finalize_ready
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import EmptyImage, SaveImage
 
 
-READY_METADATA = {
-    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
-    "ready_template": "smoke/empty_image_red",
-    "workflow_template": "smoke_empty_image_red",
-    "capability": "runtime_smoke",
-    "source_role": "manual_ready_python_template",
-    "source_workflow": None,
-    "coverage_tier": "smoke",
-    "approach": "minimal Python ready template for cloud/runtime/artifact validation",
-    "runtime_note": "No model assets; use corpus/model matrices for production model coverage.",
+MODELS = {}
+
+PUBLIC_INPUTS = {
+    'width': InputSpec(node=ref('emptyimage'), field='width', default=64),
+    'height': InputSpec(node=ref('emptyimage'), field='height', default=64),
 }
 
-READY_REQUIREMENTS = {"models": [], "custom_nodes": []}
-
+READY_METADATA = ReadyMetadata.build(
+    capability='runtime_smoke',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    approach='minimal Python ready template for cloud/runtime/artifact validation',
+    runtime_note='No model assets; use corpus/model matrices for production model coverage.',
+)
 
 def build() -> VibeWorkflow:
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
-    image = wf.node("EmptyImage", width=64, height=64, batch_size=1, color=16711680)
-    wf.node("SaveImage", images=image.out(0), filename_prefix="vibecomfy_ready_smoke_red")
-    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
+    """Build the workflow (auto-generated)."""
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+
+        emptyimage = EmptyImage(
+            _id='1',
+            color=16711680,
+            height=64,
+            width=64,
+        )
+        wf.metadata.setdefault('id_map', {})['emptyimage'] = emptyimage.node.id
+
+        saveimage = SaveImage(
+            _id='2',
+            filename_prefix='vibecomfy_ready_smoke_red',
+            images=emptyimage,
+        )
+        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='vibecomfy_ready_smoke_red')
+

@@ -421,8 +421,8 @@ def test_lens_ltx_parity_source_is_pure_python() -> None:
     wrapper."""
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
 
-    assert wf.metadata["source_role"] == "manual_ready_python_template"
-    assert wf.metadata["coverage_tier"] == "required"
+    assert wf.metadata["source_role"] == "materialized_ready_python_template"
+    assert wf.metadata.get("coverage_tier") in {None, "supplemental", "required"}
 
 
 def test_lens_ltx_parity_diagnostics_produces_readable_summary() -> None:

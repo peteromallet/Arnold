@@ -25,6 +25,7 @@ def _extract_class_types_from_template(template_path: str | Path) -> list[str]:
 
         _node(wf, class_type: str, _id: str, ...)
         _at(wf, _id: str, class_type: str, ...)
+        raw_call(wf, class_type: str, _id: str, ...)
 
     We extract the second positional argument (a string literal).
     """
@@ -37,7 +38,7 @@ def _extract_class_types_from_template(template_path: str | Path) -> list[str]:
             continue
 
         func = node.func
-        if isinstance(func, ast.Name) and func.id in {"_node", "node"}:
+        if isinstance(func, ast.Name) and func.id in {"_node", "node", "raw_call"}:
             class_arg_index = 1
         elif isinstance(func, ast.Name) and func.id == "_at":
             class_arg_index = 2

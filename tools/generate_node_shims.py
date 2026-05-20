@@ -156,7 +156,7 @@ def _write_module(module: str, class_types: list[str]) -> list[str]:
         "",
         "from typing import Any",
         "",
-        "from vibecomfy.templates import node",
+        "from vibecomfy.templates import _current_workflow_or_raise, node",
         "from vibecomfy.workflow import VibeWorkflow",
         "",
         "_UNSET = object()",
@@ -184,7 +184,7 @@ def _render_wrapper(function_name: str, class_type: str, entry: dict[str, Any]) 
     returns = ", ".join(_output_names(entry)) or "None"
     description = str(entry.get("description") or entry.get("display_name") or "").strip()
 
-    lines = [f"def {function_name}(", "    wf: VibeWorkflow,", "    *,"]
+    lines = [f"def {function_name}(", "    *args: VibeWorkflow,"]
     lines.append("    _id: str | None = None,")
     for param in params:
         default = param["default"]
@@ -199,8 +199,13 @@ def _render_wrapper(function_name: str, class_type: str, entry: dict[str, Any]) 
         doc.append("    ")
     doc.append(f"    Pack: {pack}")
     doc.append(f"    Returns: {returns}")
+    doc.append("    ")
+    doc.append("    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.")
     doc.append('    """')
     lines.extend(doc)
+    lines.append("    if len(args) > 1:")
+    lines.append(f"        raise TypeError(f\"{function_name}() takes at most 1 positional argument, got {{len(args)}}\")")
+    lines.append("    wf = args[0] if args else _current_workflow_or_raise()")
     lines.append("    _kwargs: dict[str, Any] = {}")
     for param in params:
         original = param["original"]

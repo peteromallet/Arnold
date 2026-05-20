@@ -2,16 +2,14 @@
   "37": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "wan2.1_t2v_1.3B_fp16.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "wan2.1_t2v_1.3B_fp16.safetensors"
     }
   },
   "38": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-      "type": "wan",
-      "device": "default"
+      "type": "wan"
     }
   },
   "39": {
@@ -25,8 +23,7 @@
     "inputs": {
       "width": 832,
       "height": 480,
-      "length": 33,
-      "batch_size": 1
+      "length": 33
     }
   },
   "6": {
@@ -66,22 +63,20 @@
       "steps": 30,
       "cfg": 6,
       "sampler_name": "uni_pc",
-      "scheduler": "simple",
-      "denoise": 1,
-      "latent_image": [
-        "40",
-        0
-      ],
       "model": [
         "48",
+        0
+      ],
+      "positive": [
+        "6",
         0
       ],
       "negative": [
         "7",
         0
       ],
-      "positive": [
-        "6",
+      "latent_image": [
+        "40",
         0
       ]
     }
@@ -112,9 +107,6 @@
   "50": {
     "class_type": "SaveVideo",
     "inputs": {
-      "filename_prefix": "video/ComfyUI",
-      "format": "auto",
-      "codec": "auto",
       "video": [
         "49",
         0

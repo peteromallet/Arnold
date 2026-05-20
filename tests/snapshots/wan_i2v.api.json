@@ -2,16 +2,14 @@
   "37": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "wan2.1_i2v_480p_14B_fp16.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "wan2.1_i2v_480p_14B_fp16.safetensors"
     }
   },
   "38": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-      "type": "wan",
-      "device": "default"
+      "type": "wan"
     }
   },
   "39": {
@@ -79,28 +77,27 @@
   "50": {
     "class_type": "WanImageToVideo",
     "inputs": {
-      "batch_size": 1,
+      "width": 512,
       "height": 512,
       "length": 33,
-      "width": 512,
-      "clip_vision_output": [
-        "51",
+      "positive": [
+        "6",
         0
       ],
       "negative": [
         "7",
         0
       ],
-      "positive": [
-        "6",
+      "vae": [
+        "39",
+        0
+      ],
+      "clip_vision_output": [
+        "51",
         0
       ],
       "start_image": [
         "52",
-        0
-      ],
-      "vae": [
-        "39",
         0
       ]
     }
@@ -112,23 +109,21 @@
       "steps": 20,
       "cfg": 6,
       "sampler_name": "uni_pc",
-      "scheduler": "simple",
-      "denoise": 1,
-      "latent_image": [
-        "50",
-        2
-      ],
       "model": [
         "54",
+        0
+      ],
+      "positive": [
+        "50",
         0
       ],
       "negative": [
         "50",
         1
       ],
-      "positive": [
+      "latent_image": [
         "50",
-        0
+        2
       ]
     }
   },
@@ -158,9 +153,6 @@
   "56": {
     "class_type": "SaveVideo",
     "inputs": {
-      "filename_prefix": "video/ComfyUI",
-      "format": "auto",
-      "codec": "auto",
       "video": [
         "55",
         0

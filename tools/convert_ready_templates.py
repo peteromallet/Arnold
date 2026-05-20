@@ -6,6 +6,7 @@ Usage:
     python -m tools.convert_ready_templates --template image/z_image --dry-run
     python -m tools.convert_ready_templates --all --dry-run
     python -m tools.convert_ready_templates --all --write
+    python -m tools.convert_ready_templates --all --write --include-manual
     python -m tools.convert_ready_templates --regenerate-snapshots
 """
 
@@ -120,28 +121,32 @@ def _load_override(path: Path) -> dict | None:
     return None
 
 
-def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
+def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row, str | None, dict | None]:
     """Process one template. Returns (row, emitted_text or None, original_compiled_api)."""
     template_id = _template_id_for_path(path)
     row = Row(template_id=template_id)
 
     # --- shared manual-refusal gate (Sprint 1) --------------------------------
+    manual_included = False
     try:
         _check_manual_refusal(path)
     except ManualTemplateRefusal:
-        row.shape = "manual-refused"
-        row.parse = "skip"
-        row.build = "skip"
-        row.validate = "skip"
-        row.roundtrip = "skip"
-        row.snapshot = "skip"
-        row.note = "manual template refused by shared gate"
-        return (row, None, None)
+        if not include_manual:
+            row.shape = "manual-refused"
+            row.parse = "skip"
+            row.build = "skip"
+            row.validate = "skip"
+            row.roundtrip = "skip"
+            row.snapshot = "skip"
+            row.note = "manual template refused by shared gate"
+            return (row, None, None)
+        manual_included = True
+        row.note = "manual template included by explicit v2.6 override"
 
     shape, shape_note = _classify_shape(path)
     row.shape = shape
     if shape_note:
-        row.note = shape_note
+        row.note = "; ".join(part for part in (row.note, shape_note) if part)
 
     # Already-converted templates are skipped (no emission work needed).
     if shape == "converted":
@@ -169,7 +174,7 @@ def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
         from tools.format_as_python import _build_workflow_for, format_as_python
         wf, metadata, requirements, tid, reg_inputs = _build_workflow_for(path)
     except Exception as exc:
-        if shape != "authored":
+        if shape != "authored" and not manual_included:
             row.build = "fail"
             row.note = f"parse_for_emit_failed: {type(exc).__name__}: {exc}"
             return (row, None, original_api)
@@ -186,6 +191,8 @@ def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
         reg_inputs = {
             name: (str(descriptor.node_id), descriptor.field)
             for name, descriptor in getattr(original_workflow, "inputs", {}).items()
+            if str(descriptor.node_id) in original_workflow.nodes
+            and descriptor.field in original_workflow.nodes[str(descriptor.node_id)].inputs
         }
 
     # Apply override if present.
@@ -241,7 +248,7 @@ def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
     return (row, emitted, original_api)
 
 
-def _write_emitted(path: Path, text: str, *, dry_run: bool) -> Path:
+def _write_emitted(path: Path, text: str, *, dry_run: bool, include_manual: bool = False) -> Path:
     """Write emitted text. Dry-run goes to out/converted/, --write uses atomic temp+replace.
 
     Shared safety gates (Sprint 1): manual-template refusal, atomic replace.
@@ -260,7 +267,8 @@ def _write_emitted(path: Path, text: str, *, dry_run: bool) -> Path:
         raise RuntimeError(f"refusing to write outside READY_ROOT: {resolved}")
 
     # Shared manual-refusal gate — refuse before any write work.
-    _check_manual_refusal(path)
+    if not include_manual:
+        _check_manual_refusal(path)
 
     # Atomic write: temp file in target directory, validate, then replace.
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,6 +353,11 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--regenerate-snapshots", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--write", action="store_true")
+    parser.add_argument(
+        "--include-manual",
+        action="store_true",
+        help="Explicit one-time v2.6 migration override for first-line manual templates.",
+    )
     args = parser.parse_args(argv)
 
     _bootstrap_comfy_runtime()
@@ -372,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[Row] = []
     converted = 0
     for path in paths:
-        row, emitted, _ = _convert_template(path)
+        row, emitted, _ = _convert_template(path, include_manual=args.include_manual)
         rows.append(row)
         if emitted is None:
             continue
@@ -387,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_emitted(path, emitted, dry_run=True)
             converted += 1
         elif args.write:
-            _write_emitted(path, emitted, dry_run=False)
+            _write_emitted(path, emitted, dry_run=False, include_manual=args.include_manual)
             converted += 1
 
     _print_grid(rows)

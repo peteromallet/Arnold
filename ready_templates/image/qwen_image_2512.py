@@ -1,189 +1,146 @@
-# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
-"""Text-to-image generation with Qwen Image 2512.
-
-Public inputs:
-    prompt (required): Text prompt
-    negative_prompt: Negative text prompt
-    seed: Random seed
-    width: Output width
-    height: Output height
-    use_lora: Lightning LoRA branch toggle
-    sampler_name: Sampler algorithm
-
-Output: SaveImage (node 60).
-
-Source:  workflow_corpus/official/image/qwen_image_2512.json
-"""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, ComfySwitchNode, EmptySD3LatentImage, KSampler, LoraLoaderModelOnly, ModelSamplingAuraFlow, SaveImage, UNETLoader, VAEDecode, VAELoader
 
-_PROMPT_DEFAULT = """Urban alleyway at dusk. Tall, statuesque high-fashion model striding elegantly, mid distant full body shot from an angular perspective, cinematic/editorial with bold contrasts and tactile materials. They wear a rose-gold metallic trench coat with deconstructed elements over a black long-sleeved turtleneck with subtle texture; paired with forest-green pleated pants with raw hems and a soft texture. Long braided dark hair, medium complexion. They carry a vibrant yellow designer handbag with geometric details and a structured silhouette. White architectural sneakers with bold geometric cutouts. Bold, high-contrast, tactile, urban-grit meets high-fashion impact, extreme clarity, extreme layering, post-processing with transparent light-transmitting ultra-smooth high-definition film effect, removing all noise and grain, removing all blur, removing all vintage feel, removing all roughness, drawn with 32K pixel precision, unparalleled fine line drawing of every single detail, the entire image like a brand new photograph, photorealistic
-"""
+
+DEFAULT_PROMPT = 'Urban alleyway at dusk. Tall, statuesque high-fashion model striding elegantly, mid distant full body shot from an angular perspective, cinematic/editorial with bold contrasts and tactile materials. They wear a rose-gold metallic trench coat with deconstructed elements over a black long-sleeved turtleneck with subtle texture; paired with forest-green pleated pants with raw hems and a soft texture. Long braided dark hair, medium complexion. They carry a vibrant yellow designer handbag with geometric details and a structured silhouette. White architectural sneakers with bold geometric cutouts. Bold, high-contrast, tactile, urban-grit meets high-fashion impact, extreme clarity, extreme layering, post-processing with transparent light-transmitting ultra-smooth high-definition film effect, removing all noise and grain, removing all blur, removing all vintage feel, removing all roughness, drawn with 32K pixel precision, unparalleled fine line drawing of every single detail, the entire image like a brand new photograph, photorealistic\n'
+DEFAULT_PROMPT_2 = '低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲'
+DEFAULT_SEED = 1232512
+MODEL_NAME = 'qwen_2.5_vl_7b_fp8_scaled.safetensors'
+MODEL_NAME_2 = 'qwen_image_vae.safetensors'
+MODEL_NAME_3 = 'qwen_image_2512_fp8_e4m3fn.safetensors'
+MODEL_NAME_4 = 'Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors'
+
 
 MODELS = {
-    'qwen_image_2512_fp8_e4m3fn': ModelAsset(
-        filename='qwen_image_2512_fp8_e4m3fn.safetensors',
-        url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors',
-        subdir='diffusion_models',
-        sha256='5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b',
-        hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5',
-        size_bytes=20430679144,
-    ),
-    'qwen_2_5_vl_7b_fp8_scaled': ModelAsset(
-        filename='qwen_2.5_vl_7b_fp8_scaled.safetensors',
-        url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors',
-        subdir='text_encoders',
-        sha256='cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4',
-        hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5',
-        size_bytes=9384670680,
-    ),
-    'qwen_image_vae': ModelAsset(
-        filename='qwen_image_vae.safetensors',
-        url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors',
-        subdir='vae',
-        sha256='a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f',
-        hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5',
-        size_bytes=253806246,
-    ),
-    'qwen_image_2512_lightning_4steps_v1_0_fp32': ModelAsset(
-        filename='Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors',
-        url='https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors',
-        subdir='loras',
-        sha256='ad12117461cb41e2ea637fec8df6392ce8e8550c47fbe2b829ed3deb98262066',
-        hf_revision='a52649c9d0f6e1a248bff13f0df33bb8a2abdb52',
-        size_bytes=1698951104,
-    ),
+    'qwen_image_2512_fp8_e4m3fn': ModelAsset(url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors', sha256='5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b', hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5', size_bytes=20430679144, subdir='diffusion_models'),
+    'qwen_2_5_vl_7b_fp8_scaled': ModelAsset(url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors', sha256='cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4', hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5', size_bytes=9384670680, subdir='text_encoders'),
+    'qwen_image_vae': ModelAsset(url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors', sha256='a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f', hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5', size_bytes=253806246, subdir='vae'),
+    'qwen_image_2512_lightning_4steps_v1_0_fp32': ModelAsset(url='https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors', sha256='ad12117461cb41e2ea637fec8df6392ce8e8550c47fbe2b829ed3deb98262066', hf_revision='a52649c9d0f6e1a248bff13f0df33bb8a2abdb52', size_bytes=1698951104, subdir='loras'),
 }
 
 PUBLIC_INPUTS = {
-    'prompt': InputSpec(node='238:227', field='text', default=_PROMPT_DEFAULT, type='STRING', required=True, description='Text prompt.', media_semantics='text'),
-    'negative_prompt': InputSpec(node='238:228', field='text', default='低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲', type='STRING', aliases=('negative',), description='Negative text prompt.', media_semantics='text'),
-    'seed': InputSpec(node='238:230', field='seed', default=1232512, type='INT', description='Random seed.'),
-    'width': InputSpec(node='238:232', field='width', default=768, type='INT', description='Output width.'),
-    'height': InputSpec(node='238:232', field='height', default=768, type='INT', description='Output height.'),
-    'use_lora': InputSpec(node='238:229', field='value', default=True, type='BOOLEAN', description='Lightning LoRA branch toggle.'),
-    'sampler_name': InputSpec(node='238:230', field='sampler_name', default='euler', type='STRING', description='Sampler algorithm.'),
+    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME_3),
+    'prompt': InputSpec(node=ref('positive'), field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
+    'negative_prompt': InputSpec(node=ref('negative'), field='text', default=DEFAULT_PROMPT_2),
+    'negative': InputSpec(node=ref('negative'), field='text', default=DEFAULT_PROMPT_2),
+    'width': InputSpec(node=ref('emptysd3latentimage'), field='width', default=768),
+    'height': InputSpec(node=ref('emptysd3latentimage'), field='height', default=768),
+    'use_lora': InputSpec(node=ref('primitiveboolean'), field='value', default=True),
+    'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='euler'),
 }
 
-# vibecomfy: narrative (generated by tools/narrate_template.py @ 0.1.0+g9c5810f+dirty)
-# ported from workflow_corpus/official/image/qwen_image_2512.json (sha256: 1825da34e2124e9d6d54c8fbcf5b9f1ab901d2fe39be03b358130bb30f06fbdb)
 READY_METADATA = ReadyMetadata.build(
-    template_id='qwen_image_2512',
     capability='text_to_image',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
     output_prefix='Qwen-Image-2512',
-    provenance={'smoke_resolution': '768x768', 'runtime_variant': 'qwen-image-2512-lightning-4step-768px', 'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/image/qwen_image_2512.json', 'approach': 'official Qwen-Image-2512 text-to-image workflow using the 4-step Lightning LoRA path for smoke/runtime validation'},
-    coverage_tier='required',
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    smoke_resolution='768x768',
+    runtime_variant='qwen-image-2512-lightning-4step-768px',
+    approach='official Qwen-Image-2512 text-to-image workflow using the 4-step Lightning LoRA path for smoke/runtime validation',
+    provenance={'source_workflow': 'workflow_corpus/official/image/qwen_image_2512.json'},
 )
-
-READY_METADATA.setdefault("unbound_inputs", {}).update({'height': '238:232.height', 'negative_prompt': '238:228.text', 'prompt': '238:227.text', 'seed': '238:230.seed', 'width': '238:232.width'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = new_workflow(READY_METADATA, source_path=__file__)
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    # ════ SAMPLING ════
-    lora_cfg = node(wf, 'PrimitiveFloat', '238:218', value=1.0)
-    # ════ LOADERS ════
-    text_encoder = node(wf, 'CLIPLoader', '238:219',
-        clip_name=MODELS['qwen_2_5_vl_7b_fp8_scaled'].filename,
-        type='qwen_image',
-        device='default',
-    )
-    vae = node(wf, 'VAELoader', '238:220',
-        vae_name=MODELS['qwen_image_vae'].filename,
-    )
-    base_cfg = node(wf, 'PrimitiveFloat', '238:223', value=1)
-    base_steps = node(wf, 'PrimitiveInt', '238:224', value=4)
-    lora_steps = node(wf, 'PrimitiveInt', '238:225', value=4)
-    base_diffusion_model = node(wf, 'UNETLoader', '238:226',
-        unet_name=MODELS['qwen_image_2512_fp8_e4m3fn'].filename,
-        weight_dtype='default',
-    )
-    # ════ INPUTS ════
-    use_lora = node(wf, 'PrimitiveBoolean', '238:229', value=PUBLIC_INPUTS['use_lora'].default)
-    # ════ LATENT ════
-    latent = node(wf, 'EmptySD3LatentImage', '238:232',
-        width=PUBLIC_INPUTS['width'].default,
-        height=PUBLIC_INPUTS['height'].default,
-        batch_size=1,
-    )
-    # ════ MODEL PATCH STACK ════
-    lora = node(wf, 'LoraLoaderModelOnly', '238:221',
-        lora_name=MODELS['qwen_image_2512_lightning_4steps_v1_0_fp32'].filename,
-        strength_model=1,
-        model=base_diffusion_model.out('MODEL'),
-    )
-    # ════ TEXT CONDITIONING ════
-    positive_prompt = node(wf, 'CLIPTextEncode', '238:227',
-        text=PUBLIC_INPUTS['prompt'].default,
-        clip=text_encoder.out('CLIP'),
-    )
-    negative_prompt = node(wf, 'CLIPTextEncode', '238:228',
-        text=PUBLIC_INPUTS['negative_prompt'].default,
-        clip=text_encoder.out('CLIP'),
-    )
-    # BRANCH SELECTION: use_flag=True → uses 238:225 (other: 238:224).
-    switch_steps = node(wf, 'ComfySwitchNode', '238:240',
-        on_false=base_steps.out('INT'),
-        on_true=lora_steps.out('INT'),
-        switch=use_lora.out('BOOLEAN'),
-    )
-    # BRANCH SELECTION: use_flag=True → uses 238:218 (other: 238:223).
-    switch_cfg = node(wf, 'ComfySwitchNode', '238:243',
-        on_false=base_cfg.out('FLOAT'),
-        on_true=lora_cfg.out('FLOAT'),
-        switch=use_lora.out('BOOLEAN'),
-    )
-    # BRANCH SELECTION: use_flag=True → uses 238:221 (other: 238:226).
-    switch_model = node(wf, 'ComfySwitchNode', '238:233',
-        on_false=base_diffusion_model.out('MODEL'),
-        on_true=lora.out('MODEL'),
-        switch=use_lora.out('BOOLEAN'),
-    )
-    model_sampling = node(wf, 'ModelSamplingAuraFlow', '238:222',
-        shift=3.1,
-        model=switch_model.out('OUTPUT'),
-    )
-    sampler = node(wf, 'KSampler', '238:230',
-        seed=PUBLIC_INPUTS['seed'].default,
-        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
-        scheduler='simple',
-        denoise=1,
-        steps=switch_steps.out('OUTPUT'),
-        cfg=switch_cfg.out('OUTPUT'),
-        latent_image=latent.out('LATENT'),
-        model=model_sampling.out('MODEL'),
-        negative=negative_prompt.out('CONDITIONING'),
-        positive=positive_prompt.out('CONDITIONING'),
-    )
-    # ════ DECODE ════
-    decoded_image = node(wf, 'VAEDecode', '238:231',
-        samples=sampler.out('LATENT'),
-        vae=vae.out('VAE'),
-    )
-    # ════ OUTPUT ════
-    image_output = node(wf, 'SaveImage', '60',
-        filename_prefix='Qwen-Image-2512',
-        images=decoded_image.out('IMAGE'),
-    )
+        # Inputs
+        primitivefloat = raw_call(wf, 'PrimitiveFloat', '238:218', value=1.0)
+        wf.metadata.setdefault('id_map', {})['primitivefloat'] = primitivefloat.node.id
+        # Loaders
+        cliploader = CLIPLoader(_id='238:219', clip_name=MODEL_NAME, type_='qwen_image')
+        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
+        vaeloader = VAELoader(_id='238:220', vae_name=MODEL_NAME_2)
+        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
+        # Inputs
+        primitivefloat_2 = raw_call(wf, 'PrimitiveFloat', '238:223', value=1)
+        wf.metadata.setdefault('id_map', {})['primitivefloat_2'] = primitivefloat_2.node.id
+        primitiveint = raw_call(wf, 'PrimitiveInt', '238:224', value=4)
+        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
+        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '238:225', value=4)
+        wf.metadata.setdefault('id_map', {})['primitiveint_2'] = primitiveint_2.node.id
+        # Loaders
+        unetloader = UNETLoader(_id='238:226', unet_name=MODEL_NAME_3)
+        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
+        primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '238:229', value=True)
+        wf.metadata.setdefault('id_map', {})['primitiveboolean'] = primitiveboolean.node.id
+        # Sampling
+        emptysd3latentimage = EmptySD3LatentImage(_id='238:232', width=768, height=768)
+        wf.metadata.setdefault('id_map', {})['emptysd3latentimage'] = emptysd3latentimage.node.id
+        loraloadermodelonly = LoraLoaderModelOnly(
+            _id='238:221',
+            lora_name=MODEL_NAME_4,
+            model=unetloader,
+        )
+        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='60',
-        output_type='SaveImage',
-        name='image',
-        mime_type='image/png',
-        expected_cardinality='one',
-        filename_prefix='Qwen-Image-2512',
-        source_path=__file__,
-        
-    )
+        # Conditioning
+        positive = CLIPTextEncode(_id='238:227', text=DEFAULT_PROMPT, clip=cliploader)
+        wf.metadata.setdefault('id_map', {})['positive'] = positive.node.id
+        negative = CLIPTextEncode(_id='238:228', text=DEFAULT_PROMPT_2, clip=cliploader)
+        wf.metadata.setdefault('id_map', {})['negative'] = negative.node.id
+        comfyswitchnode_2 = ComfySwitchNode(
+            _id='238:240',
+            on_false=primitiveint,
+            on_true=primitiveint_2,
+            switch=primitiveboolean,
+        )
+        wf.metadata.setdefault('id_map', {})['comfyswitchnode_2'] = comfyswitchnode_2.node.id
+
+        comfyswitchnode_3 = ComfySwitchNode(
+            _id='238:243',
+            on_false=primitivefloat_2,
+            on_true=primitivefloat,
+            switch=primitiveboolean,
+        )
+        wf.metadata.setdefault('id_map', {})['comfyswitchnode_3'] = comfyswitchnode_3.node.id
+
+        comfyswitchnode = ComfySwitchNode(
+            _id='238:233',
+            on_false=unetloader,
+            on_true=loraloadermodelonly,
+            switch=primitiveboolean,
+        )
+        wf.metadata.setdefault('id_map', {})['comfyswitchnode'] = comfyswitchnode.node.id
+
+        modelsamplingauraflow = ModelSamplingAuraFlow(
+            _id='238:222',
+            shift=3.1,
+            model=comfyswitchnode,
+        )
+        wf.metadata.setdefault('id_map', {})['modelsamplingauraflow'] = modelsamplingauraflow.node.id
+
+        # Sampling
+        ksampler = KSampler(
+            _id='238:230',
+            seed=DEFAULT_SEED,
+            sampler_name='euler',
+            steps=comfyswitchnode_2,
+            cfg=comfyswitchnode_3,
+            latent_image=emptysd3latentimage,
+            model=modelsamplingauraflow,
+            negative=negative,
+            positive=positive,
+        )
+        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
+
+        # Decode
+        vaedecode = VAEDecode(_id='238:231', samples=ksampler, vae=vaeloader)
+        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
+        # Outputs
+        saveimage = SaveImage(
+            _id='60',
+            filename_prefix='Qwen-Image-2512',
+            images=vaedecode,
+        )
+        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

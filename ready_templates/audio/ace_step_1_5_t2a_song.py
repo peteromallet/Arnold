@@ -1,176 +1,131 @@
-# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
-"""Text To Audio Song with Qwen 0.6B Ace 15.
-
-Public inputs:
-    lyrics (required): Song lyrics
-    tags: Style tags
-    duration: Duration in seconds
-    bpm: Tempo in beats per minute
-    seed: Random seed
-    steps: Sampling steps
-    cfg: Classifier-free guidance scale
-    sampler_name: Sampler algorithm
-    seed_2: Secondary random seed
-
-Output: SaveAudioMP3 (node 59).
-
-Source:  workflow_corpus/official/audio/ace_step_1_5_t2a_song.json
-"""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import ConditioningZeroOut, DualCLIPLoader, KSampler, ModelSamplingAuraFlow, SaveAudioMP3, UNETLoader, VAEDecodeAudio, VAELoader
+
+
+DEFAULT_SEED = 561594583201063
+GUIDE_STRENGTH = 1
+MODEL_NAME = 'qwen_0.6b_ace15.safetensors'
+MODEL_NAME_2 = 'qwen_4b_ace15.safetensors'
+MODEL_NAME_3 = 'ace_1.5_vae.safetensors'
+MODEL_NAME_4 = 'acestep_v1.5_turbo.safetensors'
+
 
 MODELS = {
-    'qwen_0_6b_ace15': ModelAsset(
-        filename='qwen_0.6b_ace15.safetensors',
-        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors',
-        subdir='text_encoders',
-        sha256='fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7',
-        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
-        size_bytes=1191588248,
-    ),
-    'qwen_4b_ace15': ModelAsset(
-        filename='qwen_4b_ace15.safetensors',
-        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors',
-        subdir='text_encoders',
-        sha256='ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873',
-        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
-        size_bytes=8379154232,
-    ),
-    'ace_1_5_vae': ModelAsset(
-        filename='ace_1.5_vae.safetensors',
-        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors',
-        subdir='vae',
-        sha256='6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb',
-        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
-        size_bytes=337431732,
-    ),
-    'acestep_v1_5_turbo': ModelAsset(
-        filename='acestep_v1.5_turbo.safetensors',
-        url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors',
-        subdir='diffusion_models',
-        sha256='3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7',
-        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
-        size_bytes=4787825604,
-    ),
+    'qwen_0_6b_ace15': ModelAsset(url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors', sha256='fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7', hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b', size_bytes=1191588248, subdir='text_encoders'),
+    'qwen_4b_ace15': ModelAsset(url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors', sha256='ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873', hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b', size_bytes=8379154232, subdir='text_encoders'),
+    'ace_1_5_vae': ModelAsset(url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors', sha256='6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb', hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b', size_bytes=337431732, subdir='vae'),
+    'acestep_v1_5_turbo': ModelAsset(url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors', sha256='3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7', hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b', size_bytes=4787825604, subdir='diffusion_models'),
 }
 
 PUBLIC_INPUTS = {
-    'lyrics': InputSpec(node='124', field='lyrics', default='Verse\nTiny signal in the night.', type='STRING', required=True, description='Song lyrics.', media_semantics='text'),
-    'tags': InputSpec(node='124', field='tags', default='synthwave, short instrumental', type='STRING', description='Style tags.', media_semantics='text'),
-    'duration': InputSpec(node='124', field='duration', default=2, type='FLOAT', description='Duration in seconds.'),
-    'bpm': InputSpec(node='124', field='bpm', default=120, type='INT', description='Tempo in beats per minute.'),
-    'seed': InputSpec(node='124', field='seed', default=561594583201063, type='INT', description='Random seed.'),
-    'steps': InputSpec(node='3', field='steps', default=1, type='INT', description='Sampling steps.'),
-    'cfg': InputSpec(node='3', field='cfg', default=1, type='INT', description='Classifier-free guidance scale.'),
-    'sampler_name': InputSpec(node='3', field='sampler_name', default='euler', type='STRING', description='Sampler algorithm.'),
-    'seed_2': InputSpec(node='3', field='seed', default=561594583201063, type='INT', aliases=('noise_seed',), description='Secondary random seed.'),
+    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME_4),
+    'seed': InputSpec(node=ref('textencodeacestepaudio1_5'), field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node=ref('ksampler'), field='steps', default=1),
+    'lyrics': InputSpec(node=ref('textencodeacestepaudio1_5'), field='lyrics', default='Verse\nTiny signal in the night.'),
+    'tags': InputSpec(node=ref('textencodeacestepaudio1_5'), field='tags', default='synthwave, short instrumental'),
+    'duration': InputSpec(node=ref('textencodeacestepaudio1_5'), field='duration', default=2),
+    'bpm': InputSpec(node=ref('textencodeacestepaudio1_5'), field='bpm', default=120),
+    'cfg': InputSpec(node=ref('ksampler'), field='cfg', default=GUIDE_STRENGTH),
+    'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='euler'),
+    'seed_2': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
+    'noise_seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
 }
 
-# vibecomfy: narrative (generated by tools/narrate_template.py @ 0.1.0+g9c5810f+dirty)
-# ported from workflow_corpus/official/audio/ace_step_1_5_t2a_song.json (sha256: 6cbab4f5679824d0c33518953582613dea10e21dfe9ab8e66ff1d4e5d7a6c7ba)
 READY_METADATA = ReadyMetadata.build(
-    template_id='ace_step_1_5_t2a_song',
     capability='text_to_audio_song',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
     output_prefix='audio/vibecomfy_ace_step_smoke',
-    provenance={'source_workflow': 'workflow_corpus/official/audio/ace_step_1_5_t2a_song.json', 'approach': 'ACE-Step 1.5 text-to-audio song generation', 'source_role': 'materialized_ready_python_template'},
-    coverage_tier='required',
+    requirements={'custom_nodes': ['EmptyAceStep1', 'TextEncodeAceStepAudio1']},
+    approach='ACE-Step 1.5 text-to-audio song generation',
     runtime_note='Official subgraph materialized to API-shaped nodes for VibeComfy smoke execution.',
     smoke_duration_seconds=2,
     subgraph_materialized=True,
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    provenance={'source_workflow': 'workflow_corpus/official/audio/ace_step_1_5_t2a_song.json'},
 )
-
-READY_METADATA["unbound_inputs"].update({'bpm': '124.bpm', 'duration': '124.duration', 'lyrics': '124.lyrics', 'seed': '124.seed', 'steps': '3.steps', 'tags': '124.tags'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = new_workflow(READY_METADATA, source_path=__file__)
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    # ════ LOADERS ════
-    text_encoder = node(wf, 'DualCLIPLoader', '105',
-        clip_name1=MODELS['qwen_0_6b_ace15'].filename,
-        clip_name2=MODELS['qwen_4b_ace15'].filename,
-        type='ace',
-        device='default',
-    )
-    vae = node(wf, 'VAELoader', '106',
-        vae_name=MODELS['ace_1_5_vae'].filename,
-    )
-    # ════ LATENT ════
-    empty_audio_latent = node(wf, 'EmptyAceStep1.5LatentAudio', '122',
-        batch_size=1,
-        seconds=2,
-    )
-    base_diffusion_model = node(wf, 'UNETLoader', '125',
-        unet_name=MODELS['acestep_v1_5_turbo'].filename,
-        weight_dtype='default',
-    )
-    # ════ SAMPLING ════
-    model_sampling = node(wf, 'ModelSamplingAuraFlow', '78',
-        shift=3,
-        model=base_diffusion_model.out('MODEL'),
-    )
-    # ════ TEXT CONDITIONING ════
-    positive_conditioning = node(wf, 'TextEncodeAceStepAudio1.5', '124',
-        bpm=PUBLIC_INPUTS['bpm'].default,
-        cfg_scale=1.5,
-        duration=PUBLIC_INPUTS['duration'].default,
-        generate_audio_codes=True,
-        keyscale='E minor',
-        language='en',
-        lyrics=PUBLIC_INPUTS['lyrics'].default,
-        min_p=0.9,
-        seed=PUBLIC_INPUTS['seed'].default,
-        tags=PUBLIC_INPUTS['tags'].default,
-        temperature=0,
-        timesignature='4',
-        top_k=0,
-        top_p=0.85,
-        clip=text_encoder.out('CLIP'),
-    )
-    negative_conditioning = node(wf, 'ConditioningZeroOut', '47',
-        conditioning=positive_conditioning.out('CONDITIONING'),
-    )
-    sampler = node(wf, 'KSampler', '3',
-        seed=PUBLIC_INPUTS['seed_2'].default,
-        steps=PUBLIC_INPUTS['steps'].default,
-        cfg=PUBLIC_INPUTS['cfg'].default,
-        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
-        scheduler='simple',
-        denoise=1,
-        latent_image=empty_audio_latent.out('LATENT'),
-        model=model_sampling.out('MODEL'),
-        negative=negative_conditioning.out('CONDITIONING'),
-        positive=positive_conditioning.out('CONDITIONING'),
-    )
-    # ════ DECODE ════
-    decoded_audio = node(wf, 'VAEDecodeAudio', '123',
-        samples=sampler.out('LATENT'),
-        vae=vae.out('VAE'),
-    )
-    # ════ OUTPUT ════
-    save_audio = node(wf, 'SaveAudioMP3', '59',
-        filename_prefix='audio/vibecomfy_ace_step_smoke',
-        quality='V0',
-        audio=decoded_audio.out('AUDIO'),
-    )
+        # Loaders
+        dualcliploader = DualCLIPLoader(
+            _id='105',
+            clip_name1=MODEL_NAME,
+            clip_name2=MODEL_NAME_2,
+            type_='ace',
+            device='default',
+        )
+        wf.metadata.setdefault('id_map', {})['dualcliploader'] = dualcliploader.node.id
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='59',
-        output_type='SaveAudioMP3',
-        name='audio',
-        mime_type='audio/mpeg',
-        expected_cardinality='one',
-        filename_prefix='audio/vibecomfy_ace_step_smoke',
-        source_path=__file__,
-        
-    )
+        vaeloader = VAELoader(_id='106', vae_name=MODEL_NAME_3)
+        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
+        emptyacestep1_5latentaudio = raw_call(wf, 'EmptyAceStep1.5LatentAudio', '122',
+            seconds=2,
+        )
+        wf.metadata.setdefault('id_map', {})['emptyacestep1_5latentaudio'] = emptyacestep1_5latentaudio.node.id
+
+        unetloader = UNETLoader(_id='125', unet_name=MODEL_NAME_4)
+        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
+        modelsamplingauraflow = ModelSamplingAuraFlow(
+            _id='78',
+            shift=3,
+            model=unetloader,
+        )
+        wf.metadata.setdefault('id_map', {})['modelsamplingauraflow'] = modelsamplingauraflow.node.id
+
+        textencodeacestepaudio1_5 = raw_call(wf, 'TextEncodeAceStepAudio1.5', '124',
+            bpm=120,
+            cfg_scale=1.5,
+            duration=2,
+            keyscale='E minor',
+            language='en',
+            lyrics='Verse\nTiny signal in the night.',
+            min_p=0.9,
+            seed=DEFAULT_SEED,
+            tags='synthwave, short instrumental',
+            temperature=0,
+            timesignature='4',
+            top_p=0.85,
+            clip=dualcliploader,
+        )
+        wf.metadata.setdefault('id_map', {})['textencodeacestepaudio1_5'] = textencodeacestepaudio1_5.node.id
+
+        conditioningzeroout = ConditioningZeroOut(
+            _id='47',
+            conditioning=textencodeacestepaudio1_5,
+        )
+        wf.metadata.setdefault('id_map', {})['conditioningzeroout'] = conditioningzeroout.node.id
+
+        # Sampling
+        ksampler = KSampler(
+            _id='3',
+            seed=DEFAULT_SEED,
+            steps=1,
+            cfg=GUIDE_STRENGTH,
+            sampler_name='euler',
+            latent_image=emptyacestep1_5latentaudio,
+            model=modelsamplingauraflow,
+            negative=conditioningzeroout,
+            positive=textencodeacestepaudio1_5,
+        )
+        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
+
+        vaedecodeaudio = VAEDecodeAudio(_id='123', samples=ksampler, vae=vaeloader)
+        wf.metadata.setdefault('id_map', {})['vaedecodeaudio'] = vaedecodeaudio.node.id
+        # Outputs
+        saveaudiomp3 = SaveAudioMP3(
+            _id='59',
+            filename_prefix='audio/vibecomfy_ace_step_smoke',
+            audio=vaedecodeaudio,
+        )
+        wf.metadata.setdefault('id_map', {})['saveaudiomp3'] = saveaudiomp3.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

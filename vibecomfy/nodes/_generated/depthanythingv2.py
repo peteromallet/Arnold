@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def DepthAnything_V2(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     da_model: Any = _UNSET,
     images: Any = _UNSET,
@@ -25,7 +24,12 @@ def DepthAnything_V2(
     
     Pack: ComfyUI-DepthAnythingV2
     Returns: image
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DepthAnything_V2() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if da_model is not _UNSET:
         _kwargs['da_model'] = da_model
@@ -35,8 +39,7 @@ def DepthAnything_V2(
     return node(wf, 'DepthAnything_V2', _id, pass_raw=pass_raw, **_kwargs)
 
 def DownloadAndLoadDepthAnythingV2Model(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     precision: Any = _UNSET,
@@ -51,7 +54,12 @@ def DownloadAndLoadDepthAnythingV2Model(
     
     Pack: ComfyUI-DepthAnythingV2
     Returns: da_v2_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DownloadAndLoadDepthAnythingV2Model() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model

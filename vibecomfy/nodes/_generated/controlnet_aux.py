@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()

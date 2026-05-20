@@ -21,6 +21,9 @@ from vibecomfy.porting.strict_ready import (
     validate_strict_ready_workflow,
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.porting.emitter import _wrapper_module_for_class
+from vibecomfy.porting.object_info import class_has_list_output, class_output_count
+from vibecomfy.porting.parity import _is_schema_default_input
 from vibecomfy.registry.ready import repo_ready_template_id_for_path
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.registry.static_contract import compare_public_contracts
@@ -33,6 +36,7 @@ STATIC_DRIFT_CATEGORY = "static_contract_drift"
 PACK_VALIDATION_CATEGORY = "pack_validation"
 PACK_PROVENANCE_CATEGORY = "pack_provenance"
 LEGACY_VOCABULARY_CATEGORY = "legacy_vocabulary"
+V26_SHAPE_CATEGORY = "v26_shape"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -62,12 +66,7 @@ def build_strict_ready_report() -> dict[str, Any]:
     )
     inventory_entries = {entry.ready_id: entry for entry in build_readability_inventory().entries}
 
-    selected_ids = sorted(
-        ready_id
-        for ready_id, row in rows_by_id.items()
-        if _is_protected(row) or inventory_entries.get(ready_id, None) is not None
-        and inventory_entries[ready_id].marker == "generated"
-    )
+    selected_ids = sorted(rows_by_id)
     targets = [_check_template(rows_by_id[ready_id], inventory_entries.get(ready_id)) for ready_id in selected_ids]
     diagnostics = _flatten_diagnostics(targets)
     summary = _summary(diagnostics)
@@ -95,12 +94,12 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
     path = REPO_ROOT / relative_path
     protected = _is_protected(row)
     generated = bool(inventory_entry and inventory_entry.marker == "generated")
-    static_drift = _static_drift_diagnostics(row, ready_id=ready_id, enforced=protected)
+    static_drift = _static_drift_diagnostics(row, ready_id=ready_id, enforced=False)
     style_diagnostics = _style_diagnostics(
         inventory_entry,
         ready_id=ready_id,
         path=relative_path,
-        enforced=protected and generated,
+        enforced=False,
     )
     pack_diagnostics = _pack_validation_diagnostics(
         ready_id=ready_id,
@@ -122,6 +121,8 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
     strict_ready_diagnostics: list[dict[str, Any]] = []
     if protected:
         strict_ready_diagnostics = _strict_ready_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path)
+        strict_ready_diagnostics = [{**item, "enforced": False} for item in strict_ready_diagnostics]
+    v26_diagnostics = _v26_shape_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path, enforced=True)
     diagnostics = [
         *static_drift,
         *strict_ready_diagnostics,
@@ -129,6 +130,7 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
         *pack_diagnostics,
         *pack_provenance_diagnostics,
         *legacy_diagnostics,
+        *v26_diagnostics,
     ]
     return {
         "ready_id": ready_id,
@@ -146,6 +148,7 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
         "pack_validation_diagnostics": pack_diagnostics,
         "pack_provenance_diagnostics": pack_provenance_diagnostics,
         "legacy_vocabulary_diagnostics": legacy_diagnostics,
+        "v26_shape_diagnostics": v26_diagnostics,
         "ok": not any(item["severity"] == "error" and item.get("enforced") is True for item in diagnostics),
     }
 
@@ -353,6 +356,291 @@ def _legacy_vocabulary_diagnostics(
                 )
 
     return diagnostics
+
+
+def _v26_shape_diagnostics(
+    *,
+    ready_id: str,
+    path: Path,
+    relative_path: str,
+    enforced: bool,
+) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
+    except (OSError, SyntaxError) as exc:
+        return [
+            _diagnostic(
+                code="v26_template_parse_failed",
+                message=f"Could not parse ready template for v2.6 shape checks: {type(exc).__name__}: {exc}",
+                ready_id=ready_id,
+                target=relative_path,
+                severity="error",
+                category=V26_SHAPE_CATEGORY,
+                enforced=enforced,
+            )
+        ]
+
+    diagnostics: list[dict[str, Any]] = []
+    wrapper_imports: dict[str, str] = {}
+    legacy_calls = {"bind_input", "bind_output", "ready_node", "finalize_ready_template", "finalize_ready"}
+    legacy_import = "vibecomfy.registry.ready_template"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("vibecomfy.nodes"):
+                for alias in node.names:
+                    wrapper_imports[alias.asname or alias.name] = alias.name
+            if node.module == legacy_import:
+                diagnostics.append(
+                    _diagnostic(
+                        code="v26_legacy_ready_template_import",
+                        message=f"Ready template imports legacy module {legacy_import!r}.",
+                        ready_id=ready_id,
+                        target=f"{relative_path}:{node.lineno}",
+                        severity="error",
+                        category=V26_SHAPE_CATEGORY,
+                        enforced=enforced,
+                    )
+                )
+        elif isinstance(node, ast.Import):
+            if any(alias.name == legacy_import for alias in node.names):
+                diagnostics.append(
+                    _diagnostic(
+                        code="v26_legacy_ready_template_import",
+                        message=f"Ready template imports legacy module {legacy_import!r}.",
+                        ready_id=ready_id,
+                        target=f"{relative_path}:{node.lineno}",
+                        severity="error",
+                        category=V26_SHAPE_CATEGORY,
+                        enforced=enforced,
+                    )
+                )
+
+    build_defs = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "build"]
+    if len(build_defs) != 1:
+        diagnostics.append(
+            _diagnostic(
+                code="v26_build_function_count",
+                message="Ready template must define exactly one top-level build() function.",
+                ready_id=ready_id,
+                target=relative_path,
+                severity="error",
+                category=V26_SHAPE_CATEGORY,
+                enforced=enforced,
+                detail={"count": len(build_defs)},
+            )
+        )
+        return diagnostics
+    build = build_defs[0]
+
+    with_blocks = [
+        stmt
+        for stmt in build.body
+        if isinstance(stmt, ast.With)
+        and any(_is_new_workflow_context(item) for item in stmt.items)
+    ]
+    if len(with_blocks) != 1:
+        diagnostics.append(
+            _diagnostic(
+                code="v26_new_workflow_context_count",
+                message="build() must contain exactly one top-level `with new_workflow(...) as wf:` block.",
+                ready_id=ready_id,
+                target=f"{relative_path}:{build.lineno}",
+                severity="error",
+                category=V26_SHAPE_CATEGORY,
+                enforced=enforced,
+                detail={"count": len(with_blocks)},
+            )
+        )
+        with_range = None
+    else:
+        with_range = (with_blocks[0].lineno, getattr(with_blocks[0], "end_lineno", with_blocks[0].lineno))
+
+    var_classes: dict[str, str] = {}
+    for node in ast.walk(build):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            class_type = _class_type_for_call(node.value, wrapper_imports)
+            if class_type:
+                var_classes[node.targets[0].id] = class_type
+
+    for node in ast.walk(build):
+        if not isinstance(node, ast.Call):
+            continue
+        func_name = _call_name(node)
+        if func_name in legacy_calls:
+            diagnostics.append(
+                _diagnostic(
+                    code="v26_legacy_ready_template_call",
+                    message=f"Ready template calls legacy helper {func_name!r}.",
+                    ready_id=ready_id,
+                    target=f"{relative_path}:{node.lineno}",
+                    severity="error",
+                    category=V26_SHAPE_CATEGORY,
+                    enforced=enforced,
+                )
+            )
+        class_type = _class_type_for_call(node, wrapper_imports)
+        if class_type:
+            if _is_wrapper_call(node, wrapper_imports):
+                if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id == "wf":
+                    diagnostics.append(_v26_diag(ready_id, relative_path, node.lineno, "v26_explicit_wf_wrapper_call", f"Generated wrapper {class_type} must not pass `wf` in ready templates.", enforced))
+                if not node.args and with_range is not None and not (with_range[0] <= node.lineno <= with_range[1]):
+                    diagnostics.append(_v26_diag(ready_id, relative_path, node.lineno, "v26_wrapper_outside_context", f"Generated wrapper {class_type} is called outside the active workflow context.", enforced))
+            elif _wrapper_module_for_class(class_type) is not None:
+                diagnostics.append(_v26_diag(ready_id, relative_path, node.lineno, "v26_wrapper_eligible_node_call", f"Bare node(wf, {class_type!r}, ...) used where a generated wrapper exists.", enforced))
+            diagnostics.extend(_v26_node_kwarg_diagnostics(ready_id, relative_path, node, class_type, enforced))
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "out" and isinstance(node.func.value, ast.Name):
+            class_type = var_classes.get(node.func.value.id)
+            if class_type and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                if _is_single_output_class(class_type):
+                    diagnostics.append(_v26_diag(ready_id, relative_path, node.lineno, "v26_single_output_named_out", f"Single-output node {class_type} should use a bare builder reference or `.out()`, not `.out({node.args[0].value!r})`.", enforced))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node) == "ReadyMetadata.build":
+            for kw in node.keywords:
+                if kw.arg in {
+                    "template_id",
+                    "source_workflow",
+                    "vibecomfy_version",
+                    "comfy_core",
+                    "source_role",
+                    "coverage_tier",
+                }:
+                    diagnostics.append(_v26_diag(ready_id, relative_path, node.lineno, "v26_derivable_metadata_field", f"ReadyMetadata.build emits derivable field {kw.arg!r}.", enforced))
+                if kw.arg == "provenance" and _is_derivable_provenance_kwarg(kw):
+                    diagnostics.append(_v26_diag(ready_id, relative_path, node.lineno, "v26_derivable_metadata_field", f"ReadyMetadata.build emits derivable field {kw.arg!r}.", enforced))
+            packs_kw = next((kw for kw in node.keywords if kw.arg == "custom_node_packs"), None)
+            diagnostics.extend(_v26_pack_provenance_diagnostics(ready_id, relative_path, tree, packs_kw, enforced))
+            break
+
+    return diagnostics
+
+
+def _is_new_workflow_context(item: ast.withitem) -> bool:
+    call = item.context_expr
+    if not isinstance(call, ast.Call) or _call_name(call) != "new_workflow":
+        return False
+    return isinstance(item.optional_vars, ast.Name) and item.optional_vars.id == "wf"
+
+
+def _call_name(node: ast.Call) -> str | None:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        parent = _expr_name(func.value)
+        return f"{parent}.{func.attr}" if parent else func.attr
+    return None
+
+
+def _expr_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _expr_name(node.value)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return None
+
+
+def _is_wrapper_call(node: ast.Call, wrapper_imports: dict[str, str]) -> bool:
+    return isinstance(node.func, ast.Name) and node.func.id in wrapper_imports
+
+
+def _class_type_for_call(node: ast.AST, wrapper_imports: dict[str, str]) -> str | None:
+    if not isinstance(node, ast.Call):
+        return None
+    if isinstance(node.func, ast.Name) and node.func.id in wrapper_imports:
+        return wrapper_imports[node.func.id]
+    if _call_name(node) == "node" and len(node.args) >= 2:
+        try:
+            return str(ast.literal_eval(node.args[1]))
+        except Exception:
+            return None
+    return None
+
+
+def _is_single_output_class(class_type: str) -> bool:
+    try:
+        return class_output_count(class_type) == 1 and not class_has_list_output(class_type)
+    except Exception:
+        return False
+
+
+def _v26_node_kwarg_diagnostics(ready_id: str, path: str, node: ast.Call, class_type: str, enforced: bool) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for kw in node.keywords:
+        if kw.arg is None:
+            continue
+        if kw.arg == "_outputs" and _is_single_output_class(class_type):
+            diagnostics.append(_v26_diag(ready_id, path, node.lineno, "v26_single_output_outputs_kwarg", f"Single-output node {class_type} must not emit `_outputs=`.", enforced))
+            continue
+        try:
+            value = ast.literal_eval(kw.value)
+        except Exception:
+            continue
+        if _is_schema_default_input(class_type, kw.arg, value):
+            diagnostics.append(_v26_diag(ready_id, path, node.lineno, "v26_schema_default_kwarg", f"Schema-default kwarg {class_type}.{kw.arg}={value!r} should be omitted.", enforced))
+    return diagnostics
+
+
+def _v26_pack_provenance_diagnostics(ready_id: str, path: str, tree: ast.AST, packs_kw: ast.keyword | None, enforced: bool) -> list[dict[str, Any]]:
+    try:
+        from vibecomfy.node_packs_lockfile import read_lockfile
+    except ImportError:
+        return []
+    by_class: dict[str, str] = {}
+    entries_by_name: dict[str, Any] = {}
+    try:
+        for entry in read_lockfile(REPO_ROOT / "custom_nodes.lock"):
+            entries_by_name[entry.name] = entry
+            for class_type in entry.class_set:
+                by_class.setdefault(str(class_type), entry.name)
+    except Exception:
+        return []
+    packs: dict[str, Any] = {}
+    if packs_kw is not None:
+        try:
+            packs = dict(ast.literal_eval(packs_kw.value))
+        except Exception:
+            packs = {}
+    diagnostics: list[dict[str, Any]] = []
+    wrapper_imports: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("vibecomfy.nodes"):
+            for alias in node.names:
+                wrapper_imports[alias.asname or alias.name] = alias.name
+    used_classes = {class_type for node in ast.walk(tree) if (class_type := _class_type_for_call(node, wrapper_imports))}
+    for class_type in sorted(used_classes):
+        pack_name = by_class.get(class_type)
+        if pack_name is None:
+            continue
+        pack_meta = packs.get(pack_name)
+        if not isinstance(pack_meta, dict) or not pack_meta.get("commit"):
+            diagnostics.append(_v26_diag(ready_id, path, 1, "v26_missing_custom_node_pack_commit", f"Custom-node class {class_type} lacks custom_node_packs provenance with commit for pack {pack_name}.", enforced))
+    return diagnostics
+
+
+def _is_derivable_provenance_kwarg(kw: ast.keyword) -> bool:
+    try:
+        value = ast.literal_eval(kw.value)
+    except Exception:
+        return False
+    return isinstance(value, dict) and set(value).issubset({"source_workflow", "source_role"})
+
+
+def _v26_diag(ready_id: str, path: str, line: int, code: str, message: str, enforced: bool) -> dict[str, Any]:
+    return _diagnostic(
+        code=code,
+        message=message,
+        ready_id=ready_id,
+        target=f"{path}:{line}",
+        severity="error",
+        category=V26_SHAPE_CATEGORY,
+        enforced=enforced,
+    )
 
 
 # The 5 pilot templates that are the target of pack validation.

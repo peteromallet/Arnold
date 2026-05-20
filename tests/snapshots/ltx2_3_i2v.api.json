@@ -5,16 +5,6 @@
       "image": "example.png"
     }
   },
-  "3940": {
-    "class_type": "LowVRAMCheckpointLoader",
-    "inputs": {
-      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
-      "dependencies": [
-        "4960",
-        0
-      ]
-    }
-  },
   "4010": {
     "class_type": "LowVRAMAudioVAELoader",
     "inputs": {
@@ -42,9 +32,9 @@
   "4960": {
     "class_type": "LTXAVTextEncoderLoader",
     "inputs": {
+      "text_encoder": "comfy_gemma_3_12B_it.safetensors",
       "ckpt_name": "ltx-2.3-22b-dev.safetensors",
-      "device": "default",
-      "text_encoder": "comfy_gemma_3_12B_it.safetensors"
+      "device": "default"
     }
   },
   "4963": {
@@ -111,20 +101,18 @@
     "inputs": {
       "width": 384,
       "height": 256,
-      "batch_size": 1,
       "length": [
         "4979",
         0
       ]
     }
   },
-  "4922": {
-    "class_type": "LoraLoaderModelOnly",
+  "3940": {
+    "class_type": "LowVRAMCheckpointLoader",
     "inputs": {
-      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-      "strength_model": 0.5,
-      "model": [
-        "3940",
+      "ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors",
+      "dependencies": [
+        "4960",
         0
       ]
     }
@@ -135,17 +123,6 @@
       "UNKNOWN": true,
       "parameters": [
         "4963",
-        0
-      ]
-    }
-  },
-  "4968": {
-    "class_type": "LoraLoaderModelOnly",
-    "inputs": {
-      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
-      "strength_model": 0.2,
-      "model": [
-        "3940",
         0
       ]
     }
@@ -179,12 +156,12 @@
         "4978",
         0
       ],
-      "negative": [
-        "2612",
-        0
-      ],
       "positive": [
         "2483",
+        0
+      ],
+      "negative": [
+        "2612",
         0
       ]
     }
@@ -202,7 +179,6 @@
   "3980": {
     "class_type": "LTXVEmptyLatentAudio",
     "inputs": {
-      "batch_size": 1,
       "frames_number": [
         "4979",
         0
@@ -217,13 +193,35 @@
       ]
     }
   },
+  "4922": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.5,
+      "model": [
+        "3940",
+        0
+      ]
+    }
+  },
+  "4968": {
+    "class_type": "LoraLoaderModelOnly",
+    "inputs": {
+      "lora_name": "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+      "strength_model": 0.2,
+      "model": [
+        "3940",
+        0
+      ]
+    }
+  },
   "3159": {
     "class_type": "LTXVImgToVideoConditionOnly",
     "inputs": {
       "UNKNOWN": false,
-      "bypass": [
-        "4977",
-        0
+      "vae": [
+        "3940",
+        2
       ],
       "image": [
         "3336",
@@ -233,9 +231,9 @@
         "3059",
         0
       ],
-      "vae": [
-        "3940",
-        2
+      "bypass": [
+        "4977",
+        0
       ]
     }
   },
@@ -247,16 +245,16 @@
         "4968",
         0
       ],
+      "positive": [
+        "1241",
+        0
+      ],
       "negative": [
         "1241",
         1
       ],
       "parameters": [
         "4964",
-        0
-      ],
-      "positive": [
-        "1241",
         0
       ]
     }
@@ -269,25 +267,25 @@
         "4922",
         0
       ],
-      "negative": [
-        "1241",
-        1
-      ],
       "positive": [
         "1241",
         0
+      ],
+      "negative": [
+        "1241",
+        1
       ]
     }
   },
   "4528": {
     "class_type": "LTXVConcatAVLatent",
     "inputs": {
-      "audio_latent": [
-        "3980",
-        0
-      ],
       "video_latent": [
         "3159",
+        0
+      ],
+      "audio_latent": [
+        "3980",
         0
       ]
     }
@@ -295,16 +293,12 @@
   "4829": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
-      "guider": [
-        "4828",
-        0
-      ],
-      "latent_image": [
-        "4528",
-        0
-      ],
       "noise": [
         "4832",
+        0
+      ],
+      "guider": [
+        "4828",
         0
       ],
       "sampler": [
@@ -314,17 +308,17 @@
       "sigmas": [
         "4971",
         0
+      ],
+      "latent_image": [
+        "4528",
+        0
       ]
     }
   },
   "4966": {
     "class_type": "LTXVScheduler",
     "inputs": {
-      "base_shift": 0.95,
-      "max_shift": 2.05,
       "steps": 15,
-      "stretch": true,
-      "terminal": 0.1,
       "latent": [
         "4528",
         0
@@ -334,16 +328,12 @@
   "4802": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
-      "guider": [
-        "4808",
-        0
-      ],
-      "latent_image": [
-        "4528",
-        0
-      ],
       "noise": [
         "4814",
+        0
+      ],
+      "guider": [
+        "4808",
         0
       ],
       "sampler": [
@@ -352,6 +342,10 @@
       ],
       "sigmas": [
         "4966",
+        0
+      ],
+      "latent_image": [
+        "4528",
         0
       ]
     }
@@ -377,13 +371,13 @@
   "4848": {
     "class_type": "LTXVAudioVAEDecode",
     "inputs": {
-      "audio_vae": [
-        "4010",
-        0
-      ],
       "samples": [
         "4845",
         1
+      ],
+      "audio_vae": [
+        "4010",
+        0
       ]
     }
   },
@@ -391,42 +385,42 @@
     "class_type": "LTXVTiledVAEDecode",
     "inputs": {
       "UNKNOWN": "auto",
-      "latents": [
-        "4845",
-        0
-      ],
       "vae": [
         "3940",
         2
+      ],
+      "latents": [
+        "4845",
+        0
       ]
     }
   },
   "4818": {
     "class_type": "LTXVAudioVAEDecode",
     "inputs": {
-      "audio_vae": [
-        "4010",
-        0
-      ],
       "samples": [
         "4824",
         1
+      ],
+      "audio_vae": [
+        "4010",
+        0
       ]
     }
   },
   "4849": {
     "class_type": "CreateVideo",
     "inputs": {
+      "images": [
+        "4982",
+        0
+      ],
       "fps": [
         "4978",
         0
       ],
       "audio": [
         "4848",
-        0
-      ],
-      "images": [
-        "4982",
         0
       ]
     }
@@ -435,29 +429,29 @@
     "class_type": "LTXVTiledVAEDecode",
     "inputs": {
       "UNKNOWN": "auto",
-      "latents": [
-        "4824",
-        0
-      ],
       "vae": [
         "3940",
         2
+      ],
+      "latents": [
+        "4824",
+        0
       ]
     }
   },
   "4819": {
     "class_type": "CreateVideo",
     "inputs": {
+      "images": [
+        "4983",
+        0
+      ],
       "fps": [
         "4978",
         0
       ],
       "audio": [
         "4818",
-        0
-      ],
-      "images": [
-        "4983",
         0
       ]
     }
@@ -466,8 +460,6 @@
     "class_type": "SaveVideo",
     "inputs": {
       "filename_prefix": "output_D",
-      "format": "auto",
-      "codec": "auto",
       "video": [
         "4849",
         0
@@ -478,8 +470,6 @@
     "class_type": "SaveVideo",
     "inputs": {
       "filename_prefix": "output_F",
-      "format": "auto",
-      "codec": "auto",
       "video": [
         "4819",
         0

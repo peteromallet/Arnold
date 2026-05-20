@@ -25,12 +25,6 @@
   ],
   [
     "EmptyLTXVLatentVideo",
-    "batch_size",
-    "1",
-    1
-  ],
-  [
-    "EmptyLTXVLatentVideo",
     "height",
     "256",
     1
@@ -78,12 +72,6 @@
     1
   ],
   [
-    "LTXVEmptyLatentAudio",
-    "batch_size",
-    "1",
-    1
-  ],
-  [
     "LTXVImgToVideoConditionOnly",
     "UNKNOWN",
     "False",
@@ -97,32 +85,8 @@
   ],
   [
     "LTXVScheduler",
-    "base_shift",
-    "0.95",
-    1
-  ],
-  [
-    "LTXVScheduler",
-    "max_shift",
-    "2.05",
-    1
-  ],
-  [
-    "LTXVScheduler",
     "steps",
     "15",
-    1
-  ],
-  [
-    "LTXVScheduler",
-    "stretch",
-    "True",
-    1
-  ],
-  [
-    "LTXVScheduler",
-    "terminal",
-    "0.1",
     1
   ],
   [
@@ -247,12 +211,6 @@
   ],
   [
     "SaveVideo",
-    "codec",
-    "'auto'",
-    2
-  ],
-  [
-    "SaveVideo",
     "filename_prefix",
     "'output_D'",
     1
@@ -262,11 +220,5 @@
     "filename_prefix",
     "'output_F'",
     1
-  ],
-  [
-    "SaveVideo",
-    "format",
-    "'auto'",
-    2
   ]
 ]

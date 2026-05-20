@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def CreateCFGScheduleFloatList(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     steps: Any = _UNSET,
     cfg_scale_start: Any = _UNSET,
@@ -29,7 +28,12 @@ def CreateCFGScheduleFloatList(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: float_list
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CreateCFGScheduleFloatList() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if steps is not _UNSET:
         _kwargs['steps'] = steps
@@ -47,8 +51,7 @@ def CreateCFGScheduleFloatList(
     return node(wf, 'CreateCFGScheduleFloatList', _id, pass_raw=pass_raw, **_kwargs)
 
 def DownloadAndLoadWav2VecModel(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     base_precision: Any = _UNSET,
@@ -61,7 +64,12 @@ def DownloadAndLoadWav2VecModel(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: wav2vec_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DownloadAndLoadWav2VecModel() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -73,8 +81,7 @@ def DownloadAndLoadWav2VecModel(
     return node(wf, 'DownloadAndLoadWav2VecModel', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadWanVideoClipTextEncoder(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model_name: Any = _UNSET,
     precision: Any = _UNSET,
@@ -87,7 +94,12 @@ def LoadWanVideoClipTextEncoder(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: wan_clip_vision
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoadWanVideoClipTextEncoder() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model_name is not _UNSET:
         _kwargs['model_name'] = model_name
@@ -99,8 +111,7 @@ def LoadWanVideoClipTextEncoder(
     return node(wf, 'LoadWanVideoClipTextEncoder', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadWanVideoT5TextEncoder(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model_name: Any = _UNSET,
     precision: Any = _UNSET,
@@ -114,7 +125,12 @@ def LoadWanVideoT5TextEncoder(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: wan_t5_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoadWanVideoT5TextEncoder() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model_name is not _UNSET:
         _kwargs['model_name'] = model_name
@@ -128,8 +144,7 @@ def LoadWanVideoT5TextEncoder(
     return node(wf, 'LoadWanVideoT5TextEncoder', _id, pass_raw=pass_raw, **_kwargs)
 
 def MultiTalkModelLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     pass_raw: bool = False,
@@ -140,7 +155,12 @@ def MultiTalkModelLoader(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"MultiTalkModelLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -148,8 +168,7 @@ def MultiTalkModelLoader(
     return node(wf, 'MultiTalkModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def MultiTalkWav2VecEmbeds(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     wav2vec_model: Any = _UNSET,
     audio_1: Any = _UNSET,
@@ -173,7 +192,12 @@ def MultiTalkWav2VecEmbeds(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: multitalk_embeds, audio, num_frames
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"MultiTalkWav2VecEmbeds() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if wav2vec_model is not _UNSET:
         _kwargs['wav2vec_model'] = wav2vec_model
@@ -207,8 +231,7 @@ def MultiTalkWav2VecEmbeds(
     return node(wf, 'MultiTalkWav2VecEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def NormalizeAudioLoudness(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     lufs: Any = _UNSET,
@@ -220,7 +243,12 @@ def NormalizeAudioLoudness(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"NormalizeAudioLoudness() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -230,8 +258,7 @@ def NormalizeAudioLoudness(
     return node(wf, 'NormalizeAudioLoudness', _id, pass_raw=pass_raw, **_kwargs)
 
 def OviMMAudioVAELoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     vocoder: Any = _UNSET,
@@ -244,7 +271,12 @@ def OviMMAudioVAELoader(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: mmaudio_vae
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"OviMMAudioVAELoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -256,8 +288,7 @@ def OviMMAudioVAELoader(
     return node(wf, 'OviMMAudioVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def ReCamMasterPoseVisualizer(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     camera_poses: Any = _UNSET,
     base_xval: Any = _UNSET,
@@ -273,7 +304,12 @@ def ReCamMasterPoseVisualizer(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ReCamMasterPoseVisualizer() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if camera_poses is not _UNSET:
         _kwargs['camera_poses'] = camera_poses
@@ -289,8 +325,7 @@ def ReCamMasterPoseVisualizer(
     return node(wf, 'ReCamMasterPoseVisualizer', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoAddS2VEmbeds(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     embeds: Any = _UNSET,
     frame_window_size: Any = _UNSET,
@@ -310,7 +345,12 @@ def WanVideoAddS2VEmbeds(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds, audio_frame_count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoAddS2VEmbeds() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if embeds is not _UNSET:
         _kwargs['embeds'] = embeds
@@ -336,8 +376,7 @@ def WanVideoAddS2VEmbeds(
     return node(wf, 'WanVideoAddS2VEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoAddWanMoveTracks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image_embeds: Any = _UNSET,
     strength: Any = _UNSET,
@@ -352,7 +391,12 @@ def WanVideoAddWanMoveTracks(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds, tracks
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoAddWanMoveTracks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image_embeds is not _UNSET:
         _kwargs['image_embeds'] = image_embeds
@@ -368,8 +412,7 @@ def WanVideoAddWanMoveTracks(
     return node(wf, 'WanVideoAddWanMoveTracks', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoBlockSwap(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     blocks_to_swap: Any = _UNSET,
     offload_img_emb: Any = _UNSET,
@@ -386,7 +429,12 @@ def WanVideoBlockSwap(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: block_swap_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoBlockSwap() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if blocks_to_swap is not _UNSET:
         _kwargs['blocks_to_swap'] = blocks_to_swap
@@ -406,8 +454,7 @@ def WanVideoBlockSwap(
     return node(wf, 'WanVideoBlockSwap', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoClipVisionEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip_vision: Any = _UNSET,
     image_1: Any = _UNSET,
@@ -428,7 +475,12 @@ def WanVideoClipVisionEncode(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoClipVisionEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip_vision is not _UNSET:
         _kwargs['clip_vision'] = clip_vision
@@ -456,8 +508,7 @@ def WanVideoClipVisionEncode(
     return node(wf, 'WanVideoClipVisionEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoContextOptions(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     context_schedule: Any = _UNSET,
     context_frames: Any = _UNSET,
@@ -475,7 +526,12 @@ def WanVideoContextOptions(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: context_options
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoContextOptions() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if context_schedule is not _UNSET:
         _kwargs['context_schedule'] = context_schedule
@@ -497,8 +553,7 @@ def WanVideoContextOptions(
     return node(wf, 'WanVideoContextOptions', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoControlEmbeds(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     start_percent: Any = _UNSET,
     end_percent: Any = _UNSET,
@@ -512,7 +567,12 @@ def WanVideoControlEmbeds(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoControlEmbeds() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if start_percent is not _UNSET:
         _kwargs['start_percent'] = start_percent
@@ -526,8 +586,7 @@ def WanVideoControlEmbeds(
     return node(wf, 'WanVideoControlEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoControlnet(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     controlnet: Any = _UNSET,
@@ -544,7 +603,12 @@ def WanVideoControlnet(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoControlnet() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -564,8 +628,7 @@ def WanVideoControlnet(
     return node(wf, 'WanVideoControlnet', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoControlnetLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     base_precision: Any = _UNSET,
@@ -579,7 +642,12 @@ def WanVideoControlnetLoader(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: controlnet
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoControlnetLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -593,8 +661,7 @@ def WanVideoControlnetLoader(
     return node(wf, 'WanVideoControlnetLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoDecode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     samples: Any = _UNSET,
@@ -612,7 +679,12 @@ def WanVideoDecode(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoDecode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -634,8 +706,7 @@ def WanVideoDecode(
     return node(wf, 'WanVideoDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoDecodeOviAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mmaudio_vae: Any = _UNSET,
     samples: Any = _UNSET,
@@ -647,7 +718,12 @@ def WanVideoDecodeOviAudio(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoDecodeOviAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mmaudio_vae is not _UNSET:
         _kwargs['mmaudio_vae'] = mmaudio_vae
@@ -657,8 +733,7 @@ def WanVideoDecodeOviAudio(
     return node(wf, 'WanVideoDecodeOviAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEasyCache(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     easycache_thresh: Any = _UNSET,
     start_step: Any = _UNSET,
@@ -672,7 +747,12 @@ def WanVideoEasyCache(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: cache_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoEasyCache() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if easycache_thresh is not _UNSET:
         _kwargs['easycache_thresh'] = easycache_thresh
@@ -686,8 +766,7 @@ def WanVideoEasyCache(
     return node(wf, 'WanVideoEasyCache', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEmptyEmbeds(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -702,7 +781,12 @@ def WanVideoEmptyEmbeds(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoEmptyEmbeds() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -718,8 +802,7 @@ def WanVideoEmptyEmbeds(
     return node(wf, 'WanVideoEmptyEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEmptyMMAudioLatents(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     length: Any = _UNSET,
     pass_raw: bool = False,
@@ -730,7 +813,12 @@ def WanVideoEmptyMMAudioLatents(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: samples
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoEmptyMMAudioLatents() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if length is not _UNSET:
         _kwargs['length'] = length
@@ -738,8 +826,7 @@ def WanVideoEmptyMMAudioLatents(
     return node(wf, 'WanVideoEmptyMMAudioLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     image: Any = _UNSET,
@@ -759,7 +846,12 @@ def WanVideoEncode(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: samples
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -785,8 +877,7 @@ def WanVideoEncode(
     return node(wf, 'WanVideoEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEnhanceAVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     weight: Any = _UNSET,
     start_percent: Any = _UNSET,
@@ -799,7 +890,12 @@ def WanVideoEnhanceAVideo(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: feta_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoEnhanceAVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if weight is not _UNSET:
         _kwargs['weight'] = weight
@@ -811,8 +907,7 @@ def WanVideoEnhanceAVideo(
     return node(wf, 'WanVideoEnhanceAVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoExperimentalArgs(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video_attention_split_steps: Any = _UNSET,
     cfg_zero_star: Any = _UNSET,
@@ -836,7 +931,12 @@ def WanVideoExperimentalArgs(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: exp_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoExperimentalArgs() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video_attention_split_steps is not _UNSET:
         _kwargs['video_attention_split_steps'] = video_attention_split_steps
@@ -870,8 +970,7 @@ def WanVideoExperimentalArgs(
     return node(wf, 'WanVideoExperimentalArgs', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoExtraModelSelect(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     extra_model: Any = _UNSET,
     prev_model: Any = _UNSET,
@@ -883,7 +982,12 @@ def WanVideoExtraModelSelect(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: extra_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoExtraModelSelect() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if extra_model is not _UNSET:
         _kwargs['extra_model'] = extra_model
@@ -893,8 +997,7 @@ def WanVideoExtraModelSelect(
     return node(wf, 'WanVideoExtraModelSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoFunCameraEmbeds(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     poses: Any = _UNSET,
     width: Any = _UNSET,
@@ -910,7 +1013,12 @@ def WanVideoFunCameraEmbeds(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoFunCameraEmbeds() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if poses is not _UNSET:
         _kwargs['poses'] = poses
@@ -928,8 +1036,7 @@ def WanVideoFunCameraEmbeds(
     return node(wf, 'WanVideoFunCameraEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoImageToVideoEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -958,7 +1065,12 @@ def WanVideoImageToVideoEncode(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoImageToVideoEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -1002,8 +1114,7 @@ def WanVideoImageToVideoEncode(
     return node(wf, 'WanVideoImageToVideoEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoImageToVideoMultiTalk(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     width: Any = _UNSET,
@@ -1025,7 +1136,12 @@ def WanVideoImageToVideoMultiTalk(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image_embeds, output_path
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoImageToVideoMultiTalk() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -1055,8 +1171,7 @@ def WanVideoImageToVideoMultiTalk(
     return node(wf, 'WanVideoImageToVideoMultiTalk', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoLoraSelect(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     lora: Any = _UNSET,
     strength: Any = _UNSET,
@@ -1072,7 +1187,12 @@ def WanVideoLoraSelect(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: lora
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoLoraSelect() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if lora is not _UNSET:
         _kwargs['lora'] = lora
@@ -1090,8 +1210,7 @@ def WanVideoLoraSelect(
     return node(wf, 'WanVideoLoraSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoLoraSelectMulti(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     lora_0: Any = _UNSET,
     strength_0: Any = _UNSET,
@@ -1115,7 +1234,12 @@ def WanVideoLoraSelectMulti(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: lora
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoLoraSelectMulti() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if lora_0 is not _UNSET:
         _kwargs['lora_0'] = lora_0
@@ -1149,8 +1273,7 @@ def WanVideoLoraSelectMulti(
     return node(wf, 'WanVideoLoraSelectMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoModelLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     base_precision: Any = _UNSET,
@@ -1174,7 +1297,12 @@ def WanVideoModelLoader(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoModelLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1208,8 +1336,7 @@ def WanVideoModelLoader(
     return node(wf, 'WanVideoModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoOviCFG(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     original_text_embeds: Any = _UNSET,
     ovi_audio_cfg: Any = _UNSET,
@@ -1222,7 +1349,12 @@ def WanVideoOviCFG(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: text_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoOviCFG() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if original_text_embeds is not _UNSET:
         _kwargs['original_text_embeds'] = original_text_embeds
@@ -1234,8 +1366,7 @@ def WanVideoOviCFG(
     return node(wf, 'WanVideoOviCFG', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoReCamMasterCameraEmbed(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     camera_poses: Any = _UNSET,
     latents: Any = _UNSET,
@@ -1247,7 +1378,12 @@ def WanVideoReCamMasterCameraEmbed(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: camera_embeds, camera_poses
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoReCamMasterCameraEmbed() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if camera_poses is not _UNSET:
         _kwargs['camera_poses'] = camera_poses
@@ -1257,8 +1393,7 @@ def WanVideoReCamMasterCameraEmbed(
     return node(wf, 'WanVideoReCamMasterCameraEmbed', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoReCamMasterDefaultCamera(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     camera_type: Any = _UNSET,
     latents: Any = _UNSET,
@@ -1270,7 +1405,12 @@ def WanVideoReCamMasterDefaultCamera(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: camera_poses
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoReCamMasterDefaultCamera() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if camera_type is not _UNSET:
         _kwargs['camera_type'] = camera_type
@@ -1280,8 +1420,7 @@ def WanVideoReCamMasterDefaultCamera(
     return node(wf, 'WanVideoReCamMasterDefaultCamera', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoReCamMasterGenerateOrbitCamera(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     num_frames: Any = _UNSET,
     degrees: Any = _UNSET,
@@ -1293,7 +1432,12 @@ def WanVideoReCamMasterGenerateOrbitCamera(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: camera_poses
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoReCamMasterGenerateOrbitCamera() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if num_frames is not _UNSET:
         _kwargs['num_frames'] = num_frames
@@ -1303,8 +1447,7 @@ def WanVideoReCamMasterGenerateOrbitCamera(
     return node(wf, 'WanVideoReCamMasterGenerateOrbitCamera', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSLG(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     blocks: Any = _UNSET,
     start_percent: Any = _UNSET,
@@ -1317,7 +1460,12 @@ def WanVideoSLG(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: slg_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoSLG() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if blocks is not _UNSET:
         _kwargs['blocks'] = blocks
@@ -1329,8 +1477,7 @@ def WanVideoSLG(
     return node(wf, 'WanVideoSLG', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSampler(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     image_embeds: Any = _UNSET,
@@ -1370,7 +1517,12 @@ def WanVideoSampler(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: samples, denoised_samples
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoSampler() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1436,8 +1588,7 @@ def WanVideoSampler(
     return node(wf, 'WanVideoSampler', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSetBlockSwap(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     block_swap_args: Any = _UNSET,
@@ -1449,7 +1600,12 @@ def WanVideoSetBlockSwap(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoSetBlockSwap() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1459,8 +1615,7 @@ def WanVideoSetBlockSwap(
     return node(wf, 'WanVideoSetBlockSwap', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSetLoRAs(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     lora: Any = _UNSET,
@@ -1472,7 +1627,12 @@ def WanVideoSetLoRAs(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoSetLoRAs() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1482,8 +1642,7 @@ def WanVideoSetLoRAs(
     return node(wf, 'WanVideoSetLoRAs', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTeaCache(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     rel_l1_thresh: Any = _UNSET,
     start_step: Any = _UNSET,
@@ -1506,7 +1665,12 @@ def WanVideoTeaCache(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: cache_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoTeaCache() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if rel_l1_thresh is not _UNSET:
         _kwargs['rel_l1_thresh'] = rel_l1_thresh
@@ -1524,8 +1688,7 @@ def WanVideoTeaCache(
     return node(wf, 'WanVideoTeaCache', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTextEmbedBridge(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -1537,7 +1700,12 @@ def WanVideoTextEmbedBridge(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: text_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoTextEmbedBridge() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -1547,8 +1715,7 @@ def WanVideoTextEmbedBridge(
     return node(wf, 'WanVideoTextEmbedBridge', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTextEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive_prompt: Any = _UNSET,
     negative_prompt: Any = _UNSET,
@@ -1565,7 +1732,12 @@ def WanVideoTextEncode(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: text_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoTextEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive_prompt is not _UNSET:
         _kwargs['positive_prompt'] = positive_prompt
@@ -1585,8 +1757,7 @@ def WanVideoTextEncode(
     return node(wf, 'WanVideoTextEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTextEncodeCached(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model_name: Any = _UNSET,
     precision: Any = _UNSET,
@@ -1609,7 +1780,12 @@ def WanVideoTextEncodeCached(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: text_embeds, negative_text_embeds, positive_prompt
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoTextEncodeCached() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model_name is not _UNSET:
         _kwargs['model_name'] = model_name
@@ -1631,8 +1807,7 @@ def WanVideoTextEncodeCached(
     return node(wf, 'WanVideoTextEncodeCached', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTorchCompileSettings(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     backend: Any = _UNSET,
     fullgraph: Any = _UNSET,
@@ -1651,7 +1826,12 @@ def WanVideoTorchCompileSettings(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: torch_compile_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoTorchCompileSettings() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if backend is not _UNSET:
         _kwargs['backend'] = backend
@@ -1675,8 +1855,7 @@ def WanVideoTorchCompileSettings(
     return node(wf, 'WanVideoTorchCompileSettings', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVACEEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     width: Any = _UNSET,
@@ -1698,7 +1877,12 @@ def WanVideoVACEEncode(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: vace_embeds
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoVACEEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -1728,8 +1912,7 @@ def WanVideoVACEEncode(
     return node(wf, 'WanVideoVACEEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVACEModelSelect(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vace_model: Any = _UNSET,
     pass_raw: bool = False,
@@ -1740,7 +1923,12 @@ def WanVideoVACEModelSelect(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: extra_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoVACEModelSelect() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vace_model is not _UNSET:
         _kwargs['vace_model'] = vace_model
@@ -1748,8 +1936,7 @@ def WanVideoVACEModelSelect(
     return node(wf, 'WanVideoVACEModelSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVACEStartToEndFrame(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     num_frames: Any = _UNSET,
     empty_frame_level: Any = _UNSET,
@@ -1767,7 +1954,12 @@ def WanVideoVACEStartToEndFrame(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: images, masks
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoVACEStartToEndFrame() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if num_frames is not _UNSET:
         _kwargs['num_frames'] = num_frames
@@ -1789,8 +1981,7 @@ def WanVideoVACEStartToEndFrame(
     return node(wf, 'WanVideoVACEStartToEndFrame', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVAELoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model_name: Any = _UNSET,
     precision: Any = _UNSET,
@@ -1805,7 +1996,12 @@ def WanVideoVAELoader(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: vae
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoVAELoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model_name is not _UNSET:
         _kwargs['model_name'] = model_name
@@ -1821,8 +2017,7 @@ def WanVideoVAELoader(
     return node(wf, 'WanVideoVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVRAMManagement(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     offload_percent: Any = _UNSET,
     pass_raw: bool = False,
@@ -1833,7 +2028,12 @@ def WanVideoVRAMManagement(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: vram_management_args
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoVRAMManagement() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if offload_percent is not _UNSET:
         _kwargs['offload_percent'] = offload_percent
@@ -1841,8 +2041,7 @@ def WanVideoVRAMManagement(
     return node(wf, 'WanVideoVRAMManagement', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoWanDrawWanMoveTracks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     tracks: Any = _UNSET,
@@ -1858,7 +2057,12 @@ def WanVideoWanDrawWanMoveTracks(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: image
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanVideoWanDrawWanMoveTracks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -1876,8 +2080,7 @@ def WanVideoWanDrawWanMoveTracks(
     return node(wf, 'WanVideoWanDrawWanMoveTracks', _id, pass_raw=pass_raw, **_kwargs)
 
 def Wav2VecModelLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     base_precision: Any = _UNSET,
@@ -1890,7 +2093,12 @@ def Wav2VecModelLoader(
     
     Pack: ComfyUI-WanVideoWrapper
     Returns: wav2vec_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Wav2VecModelLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model

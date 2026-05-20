@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def DrawViTPose(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pose_data: Any = _UNSET,
     width: Any = _UNSET,
@@ -30,7 +29,12 @@ def DrawViTPose(
     
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: pose_images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DrawViTPose() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if pose_data is not _UNSET:
         _kwargs['pose_data'] = pose_data
@@ -50,8 +54,7 @@ def DrawViTPose(
     return node(wf, 'DrawViTPose', _id, pass_raw=pass_raw, **_kwargs)
 
 def OnnxDetectionModelLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vitpose_model: Any = _UNSET,
     yolo_model: Any = _UNSET,
@@ -64,7 +67,12 @@ def OnnxDetectionModelLoader(
     
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"OnnxDetectionModelLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vitpose_model is not _UNSET:
         _kwargs['vitpose_model'] = vitpose_model
@@ -76,8 +84,7 @@ def OnnxDetectionModelLoader(
     return node(wf, 'OnnxDetectionModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def PoseAndFaceDetection(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     images: Any = _UNSET,
@@ -93,7 +100,12 @@ def PoseAndFaceDetection(
     
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: pose_data, face_images, key_frame_body_points, bboxes, face_bboxes
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PoseAndFaceDetection() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -111,8 +123,7 @@ def PoseAndFaceDetection(
     return node(wf, 'PoseAndFaceDetection', _id, pass_raw=pass_raw, **_kwargs)
 
 def PoseDetectionOneToAllAnimation(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     images: Any = _UNSET,
@@ -130,7 +141,12 @@ def PoseDetectionOneToAllAnimation(
     
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: pose_images, ref_pose_image, ref_image, ref_mask
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PoseDetectionOneToAllAnimation() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -152,8 +168,7 @@ def PoseDetectionOneToAllAnimation(
     return node(wf, 'PoseDetectionOneToAllAnimation', _id, pass_raw=pass_raw, **_kwargs)
 
 def PoseRetargetPromptHelper(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pose_data: Any = _UNSET,
     pass_raw: bool = False,
@@ -164,7 +179,12 @@ def PoseRetargetPromptHelper(
     
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: prompt, retarget_prompt
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PoseRetargetPromptHelper() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if pose_data is not _UNSET:
         _kwargs['pose_data'] = pose_data

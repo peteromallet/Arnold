@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import warnings
 from pathlib import Path
 
 import pytest
 
 import vibecomfy.templates as templates
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, SymbolicNodeRef, _derive_output_kind, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, SymbolicNodeRef, _current_workflow_or_raise, _derive_output_kind, finalize, new_workflow, node
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -55,6 +56,16 @@ def test_node_allows_id_free_creation_and_legacy_source_ids() -> None:
     assert first.node.id == "1"
     assert second.node.id == "legacy"
     assert wf.id_map()["legacy"] == "legacy"
+
+
+def test_id_map_merges_semantic_names_and_source_ids_without_hiding_source_ids() -> None:
+    wf = _workflow()
+    builder = node(wf, "PrimitiveString", "7", value="hello")
+    wf.metadata.setdefault("id_map", {})["prompt"] = builder.node.id
+    wf.metadata.setdefault("id_map", {})["7"] = "not-the-source-id"
+
+    assert wf.id_map()["prompt"] == "7"
+    assert wf.id_map()["7"] == "7"
 
 
 def test_finalize_resolves_symbolic_inputspec_from_build_locals() -> None:
@@ -149,6 +160,63 @@ def test_new_workflow_constructs_ready_workflow_with_metadata() -> None:
     assert wf.source.source_type == "ready_template"
     assert wf.source.provenance == {"source": "unit"}
     assert wf.metadata["capability"] == "text_to_image"
+
+
+def test_new_workflow_direct_assignment_remains_vibeworkflow() -> None:
+    wf = new_workflow({"ready_template": "image/example"}, source_path="ready_templates/image/example.py")
+
+    assert isinstance(wf, VibeWorkflow)
+    with pytest.raises(RuntimeError, match="No active workflow"):
+        _current_workflow_or_raise()
+
+
+def test_workflow_context_propagates() -> None:
+    wf = new_workflow({"ready_template": "image/example"}, source_path="ready_templates/image/example.py")
+
+    with wf as active:
+        assert active is wf
+        assert _current_workflow_or_raise() is wf
+
+    with pytest.raises(RuntimeError, match="No active workflow"):
+        _current_workflow_or_raise()
+
+
+def test_nested_workflow_context_raises() -> None:
+    outer = new_workflow({"ready_template": "image/outer"}, source_path="ready_templates/image/outer.py")
+    inner = new_workflow({"ready_template": "image/inner"}, source_path="ready_templates/image/inner.py")
+
+    with outer:
+        with pytest.raises(RuntimeError, match="Nested workflow contexts not supported"):
+            with inner:
+                pass
+
+    with pytest.raises(RuntimeError, match="No active workflow"):
+        _current_workflow_or_raise()
+
+
+def test_exception_in_workflow_context_unbinds() -> None:
+    wf = new_workflow({"ready_template": "image/example"}, source_path="ready_templates/image/example.py")
+
+    with pytest.raises(ValueError, match="boom"):
+        with wf:
+            assert _current_workflow_or_raise() is wf
+            raise ValueError("boom")
+
+    with pytest.raises(RuntimeError, match="No active workflow"):
+        _current_workflow_or_raise()
+
+
+def test_workflow_context_isolated_across_async_tasks() -> None:
+    async def build(template_id: str) -> str:
+        wf = new_workflow({"ready_template": template_id}, source_path=f"ready_templates/{template_id}.py")
+        with wf:
+            await asyncio.sleep(0)
+            return _current_workflow_or_raise().id
+
+    async def run_builds() -> list[str]:
+        return list(await asyncio.gather(build("image/one"), build("image/two")))
+
+    assert asyncio.run(run_builds()) == ["image/one", "image/two"]
 
 
 def test_input_spec_register_preserves_current_value_and_declared_default() -> None:
@@ -706,6 +774,25 @@ def test_ready_metadata_build_minimal_derives_traceability_fields() -> None:
     assert metadata["output_prefix"] == "test_templates_module"
     assert metadata["vibecomfy_version"]
     assert isinstance(metadata["comfy_core"], dict)
+
+
+def test_ready_metadata_build_preserves_custom_node_packs() -> None:
+    metadata = ReadyMetadata.build(
+        capability="image",
+        custom_node_packs={
+            "ExamplePack": {
+                "commit": "abc123",
+                "classes_used": ["ExampleNode"],
+            }
+        },
+    )
+
+    assert metadata["custom_node_packs"] == {
+        "ExamplePack": {
+            "commit": "abc123",
+            "classes_used": ["ExampleNode"],
+        }
+    }
 
 
 def test_node_rejects_inputspec_for_filename_kwargs_unless_pass_raw() -> None:

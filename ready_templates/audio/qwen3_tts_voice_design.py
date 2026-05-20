@@ -1,62 +1,56 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
 # marker on the first line if hand-editing is required.
-"""Text To Speech Voice Design.
-
-Output: unknown.
-
-Source:  workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json
-
-Packs:   ComfyUI-QwenTTS
-"""
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import SaveAudioMP3
+from vibecomfy.nodes.qwentts import AILab_Qwen3TTSVoiceDesign
+
+
+DEFAULT_PROMPT = 'This is a compact Qwen voice design smoke test for reusable VibeComfy audio templates.'
+DEFAULT_SEED = 3294
+
+
 MODELS = {}
 
-PUBLIC_INPUTS = {}
+PUBLIC_INPUTS = {
+    'seed': InputSpec(node=ref('ailab_qwen3ttsvoicedesign'), field='seed', default=DEFAULT_SEED),
+}
 
 READY_METADATA = ReadyMetadata.build(
-    template_id='qwen3_tts_voice_design',
     capability='text_to_speech_voice_design',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
-    output_prefix='',
-    requirements={'custom_nodes': ['ComfyUI-QwenTTS'], 'custom_node_refs': [{'slug': 'ComfyUI-QwenTTS', 'source': 'git', 'commit': 'd8122a8ba835b65fd65c113d2b273b1ad1579293', 'url': 'https://github.com/1038lab/ComfyUI-QwenTTS.git'}]},
-    provenance={'approach': 'text-to-speech from a natural language voice description', 'runtime_variant': 'qwen3-tts-smoke', 'source_workflow': 'workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json', 'source_role': 'materialized_ready_python_template'},
-    coverage_tier='supplemental',
+    requirements={'custom_nodes': ['ComfyUI-QwenTTS']},
+    custom_node_packs={'ComfyUI-QwenTTS': {'commit': 'd8122a8ba835b65fd65c113d2b273b1ad1579293', 'url': 'https://github.com/1038lab/ComfyUI-QwenTTS.git', 'class_schema_sha256': '4137bb4f37ea178be0e794377829905d9ede1bc65496a23a51d766a3f03b2c84', 'classes_used': ['AILab_Qwen3TTSVoiceDesign'], 'pip_packages': ['accelerate', 'librosa', 'openai-whisper', 'qwen-tts', 'soundfile', 'tiktoken'], 'status': 'pinned'}},
+    approach='text-to-speech from a natural language voice description',
+    runtime_variant='qwen3-tts-smoke',
     runtime_note='Voice design currently requires the 1.7B Qwen3-TTS path exposed by the custom node.',
     input_fixtures=[],
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    provenance={'source_workflow': 'workflow_corpus/custom_nodes/qwen_tts/1038lab/qwen3_tts_voice_design.json'},
 )
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = new_workflow(READY_METADATA, source_path=__file__)
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    # ════ SAMPLING ════
-    ailab__qwen3_ttsvoice_design = node(wf, 'AILab_Qwen3TTSVoiceDesign', '1',
-        instruct='A warm narrator voice with crisp diction and a neutral studio tone.',
-        language='English',
-        model_size='1.7B',
-        seed=3294,
-        text='This is a compact Qwen voice design smoke test for reusable VibeComfy audio templates.',
-        unload_models=True,
-    )
-    # ════ OUTPUT ════
-    save_audio = node(wf, 'SaveAudioMP3', '2',
-        filename_prefix='audio/qwen3_tts_voice_design',
-        quality='V0',
-        audio=ailab__qwen3_ttsvoice_design.out(0),
-    )
+        ailab_qwen3ttsvoicedesign = AILab_Qwen3TTSVoiceDesign(
+            _id='1',
+            instruct='A warm narrator voice with crisp diction and a neutral studio tone.',
+            language='English',
+            seed=DEFAULT_SEED,
+            text=DEFAULT_PROMPT,
+        )
+        wf.metadata.setdefault('id_map', {})['ailab_qwen3ttsvoicedesign'] = ailab_qwen3ttsvoicedesign.node.id
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='',
-        source_path=__file__,
-    )
+        saveaudiomp3 = SaveAudioMP3(
+            _id='2',
+            filename_prefix='audio/qwen3_tts_voice_design',
+            audio=ailab_qwen3ttsvoicedesign,
+        )
+        wf.metadata.setdefault('id_map', {})['saveaudiomp3'] = saveaudiomp3.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

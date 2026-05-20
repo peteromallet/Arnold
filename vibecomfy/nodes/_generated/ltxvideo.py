@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def GemmaAPITextEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     api_key: Any = _UNSET,
     prompt: Any = _UNSET,
@@ -27,7 +26,12 @@ def GemmaAPITextEncode(
     
     Pack: ComfyUI-LTXVideo
     Returns: conditioning
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GemmaAPITextEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if api_key is not _UNSET:
         _kwargs['api_key'] = api_key
@@ -41,8 +45,7 @@ def GemmaAPITextEncode(
     return node(wf, 'GemmaAPITextEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def GuiderParameters(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     modality: Any = _UNSET,
     cfg: Any = _UNSET,
@@ -61,7 +64,12 @@ def GuiderParameters(
     
     Pack: ComfyUI-LTXVideo
     Returns: GUIDER_PARAMETERS
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GuiderParameters() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if modality is not _UNSET:
         _kwargs['modality'] = modality
@@ -85,8 +93,7 @@ def GuiderParameters(
     return node(wf, 'GuiderParameters', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXAddVideoICLoRAGuide(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -108,7 +115,12 @@ def LTXAddVideoICLoRAGuide(
     
     Pack: ComfyUI-LTXVideo
     Returns: positive, negative, latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXAddVideoICLoRAGuide() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -138,8 +150,7 @@ def LTXAddVideoICLoRAGuide(
     return node(wf, 'LTXAddVideoICLoRAGuide', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXFloatToInt(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     a: Any = _UNSET,
     pass_raw: bool = False,
@@ -150,7 +161,12 @@ def LTXFloatToInt(
     
     Pack: ComfyUI-LTXVideo
     Returns: INT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXFloatToInt() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if a is not _UNSET:
         _kwargs['a'] = a
@@ -158,8 +174,7 @@ def LTXFloatToInt(
     return node(wf, 'LTXFloatToInt', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXICLoRALoaderModelOnly(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     lora_name: Any = _UNSET,
@@ -172,7 +187,12 @@ def LTXICLoRALoaderModelOnly(
     
     Pack: ComfyUI-LTXVideo
     Returns: model, latent_downscale_factor
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXICLoRALoaderModelOnly() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -184,8 +204,7 @@ def LTXICLoRALoaderModelOnly(
     return node(wf, 'LTXICLoRALoaderModelOnly', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAddLatentGuide(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     positive: Any = _UNSET,
@@ -202,7 +221,12 @@ def LTXVAddLatentGuide(
     
     Pack: ComfyUI-LTXVideo
     Returns: positive, negative, latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAddLatentGuide() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -222,8 +246,7 @@ def LTXVAddLatentGuide(
     return node(wf, 'LTXVAddLatentGuide', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVGemmaCLIPModelLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     gemma_path: Any = _UNSET,
     ltxv_path: Any = _UNSET,
@@ -236,7 +259,12 @@ def LTXVGemmaCLIPModelLoader(
     
     Pack: ComfyUI-LTXVideo
     Returns: clip
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVGemmaCLIPModelLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if gemma_path is not _UNSET:
         _kwargs['gemma_path'] = gemma_path
@@ -248,8 +276,7 @@ def LTXVGemmaCLIPModelLoader(
     return node(wf, 'LTXVGemmaCLIPModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVHDRDecodePostprocess(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     exposure: Any = _UNSET,
@@ -265,7 +292,12 @@ def LTXVHDRDecodePostprocess(
     
     Pack: ComfyUI-LTXVideo
     Returns: tonemapped, hdr_linear
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVHDRDecodePostprocess() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -283,8 +315,7 @@ def LTXVHDRDecodePostprocess(
     return node(wf, 'LTXVHDRDecodePostprocess', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVImgToVideoConditionOnly(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     image: Any = _UNSET,
@@ -299,7 +330,12 @@ def LTXVImgToVideoConditionOnly(
     
     Pack: ComfyUI-LTXVideo
     Returns: latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVImgToVideoConditionOnly() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -315,8 +351,7 @@ def LTXVImgToVideoConditionOnly(
     return node(wf, 'LTXVImgToVideoConditionOnly', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVPreprocessMasks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     masks: Any = _UNSET,
     vae: Any = _UNSET,
@@ -335,7 +370,12 @@ def LTXVPreprocessMasks(
     
     Pack: ComfyUI-LTXVideo
     Returns: MASK
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVPreprocessMasks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if masks is not _UNSET:
         _kwargs['masks'] = masks
@@ -359,8 +399,7 @@ def LTXVPreprocessMasks(
     return node(wf, 'LTXVPreprocessMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVSetVideoLatentNoiseMasks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     masks: Any = _UNSET,
@@ -372,7 +411,12 @@ def LTXVSetVideoLatentNoiseMasks(
     
     Pack: ComfyUI-LTXVideo
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVSetVideoLatentNoiseMasks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -382,8 +426,7 @@ def LTXVSetVideoLatentNoiseMasks(
     return node(wf, 'LTXVSetVideoLatentNoiseMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVTiledVAEDecode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     latents: Any = _UNSET,
@@ -401,7 +444,12 @@ def LTXVTiledVAEDecode(
     
     Pack: ComfyUI-LTXVideo
     Returns: image
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVTiledVAEDecode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -423,8 +471,7 @@ def LTXVTiledVAEDecode(
     return node(wf, 'LTXVTiledVAEDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def LowVRAMAudioVAELoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     ckpt_name: Any = _UNSET,
     dependencies: Any = _UNSET,
@@ -436,7 +483,12 @@ def LowVRAMAudioVAELoader(
     
     Pack: ComfyUI-LTXVideo
     Returns: audio_vae
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LowVRAMAudioVAELoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if ckpt_name is not _UNSET:
         _kwargs['ckpt_name'] = ckpt_name
@@ -446,8 +498,7 @@ def LowVRAMAudioVAELoader(
     return node(wf, 'LowVRAMAudioVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LowVRAMCheckpointLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     ckpt_name: Any = _UNSET,
     dependencies: Any = _UNSET,
@@ -459,7 +510,12 @@ def LowVRAMCheckpointLoader(
     
     Pack: ComfyUI-LTXVideo
     Returns: MODEL, CLIP, VAE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LowVRAMCheckpointLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if ckpt_name is not _UNSET:
         _kwargs['ckpt_name'] = ckpt_name
@@ -469,8 +525,7 @@ def LowVRAMCheckpointLoader(
     return node(wf, 'LowVRAMCheckpointLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def MultimodalGuider(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     positive: Any = _UNSET,
@@ -485,7 +540,12 @@ def MultimodalGuider(
     
     Pack: ComfyUI-LTXVideo
     Returns: GUIDER
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"MultimodalGuider() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model

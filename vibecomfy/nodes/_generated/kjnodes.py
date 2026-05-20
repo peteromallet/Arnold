@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def AddLabel(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     text_x: Any = _UNSET,
@@ -38,7 +37,12 @@ def AddLabel(
     
     Pack: ComfyUI-KJNodes
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AddLabel() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -66,8 +70,7 @@ def AddLabel(
     return node(wf, 'AddLabel', _id, pass_raw=pass_raw, **_kwargs)
 
 def BlockifyMask(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     masks: Any = _UNSET,
     block_size: Any = _UNSET,
@@ -80,7 +83,12 @@ def BlockifyMask(
     
     Pack: ComfyUI-KJNodes
     Returns: mask
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"BlockifyMask() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if masks is not _UNSET:
         _kwargs['masks'] = masks
@@ -92,8 +100,7 @@ def BlockifyMask(
     return node(wf, 'BlockifyMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def CameraPoseVisualizer(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pose_file_path: Any = _UNSET,
     base_xval: Any = _UNSET,
@@ -112,7 +119,12 @@ def CameraPoseVisualizer(
     
     Pack: ComfyUI-KJNodes
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CameraPoseVisualizer() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if pose_file_path is not _UNSET:
         _kwargs['pose_file_path'] = pose_file_path
@@ -134,8 +146,7 @@ def CameraPoseVisualizer(
     return node(wf, 'CameraPoseVisualizer', _id, pass_raw=pass_raw, **_kwargs)
 
 def ColorMatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image_ref: Any = _UNSET,
     image_target: Any = _UNSET,
@@ -158,7 +169,12 @@ def ColorMatch(
     
     Pack: ComfyUI-KJNodes
     Returns: image
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ColorMatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image_ref is not _UNSET:
         _kwargs['image_ref'] = image_ref
@@ -174,8 +190,7 @@ def ColorMatch(
     return node(wf, 'ColorMatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def DrawMaskOnImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     mask: Any = _UNSET,
@@ -189,7 +204,12 @@ def DrawMaskOnImage(
     
     Pack: ComfyUI-KJNodes
     Returns: images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DrawMaskOnImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -203,8 +223,7 @@ def DrawMaskOnImage(
     return node(wf, 'DrawMaskOnImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImageSizeAndCount(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     pass_raw: bool = False,
@@ -216,7 +235,12 @@ def GetImageSizeAndCount(
     
     Pack: ComfyUI-KJNodes
     Returns: image, width, height, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GetImageSizeAndCount() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -224,8 +248,7 @@ def GetImageSizeAndCount(
     return node(wf, 'GetImageSizeAndCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImagesFromBatchIndexed(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     indexes: Any = _UNSET,
@@ -237,7 +260,12 @@ def GetImagesFromBatchIndexed(
     
     Pack: ComfyUI-KJNodes
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GetImagesFromBatchIndexed() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -247,8 +275,7 @@ def GetImagesFromBatchIndexed(
     return node(wf, 'GetImagesFromBatchIndexed', _id, pass_raw=pass_raw, **_kwargs)
 
 def INTConstant(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     value: Any = _UNSET,
     pass_raw: bool = False,
@@ -259,7 +286,12 @@ def INTConstant(
     
     Pack: ComfyUI-KJNodes
     Returns: value
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"INTConstant() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if value is not _UNSET:
         _kwargs['value'] = value
@@ -267,8 +299,7 @@ def INTConstant(
     return node(wf, 'INTConstant', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBatchExtendWithOverlap(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     source_images: Any = _UNSET,
     overlap: Any = _UNSET,
@@ -285,7 +316,12 @@ def ImageBatchExtendWithOverlap(
     
     Pack: ComfyUI-KJNodes
     Returns: source_images, start_images, extended_images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageBatchExtendWithOverlap() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if source_images is not _UNSET:
         _kwargs['source_images'] = source_images
@@ -301,8 +337,7 @@ def ImageBatchExtendWithOverlap(
     return node(wf, 'ImageBatchExtendWithOverlap', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBatchMulti(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     inputcount: Any = _UNSET,
     image_1: Any = _UNSET,
@@ -317,7 +352,12 @@ def ImageBatchMulti(
     
     Pack: ComfyUI-KJNodes
     Returns: images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageBatchMulti() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if inputcount is not _UNSET:
         _kwargs['inputcount'] = inputcount
@@ -329,8 +369,7 @@ def ImageBatchMulti(
     return node(wf, 'ImageBatchMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageConcatMulti(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     inputcount: Any = _UNSET,
     image_1: Any = _UNSET,
@@ -347,7 +386,12 @@ def ImageConcatMulti(
     
     Pack: ComfyUI-KJNodes
     Returns: images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageConcatMulti() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if inputcount is not _UNSET:
         _kwargs['inputcount'] = inputcount
@@ -363,8 +407,7 @@ def ImageConcatMulti(
     return node(wf, 'ImageConcatMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImagePadKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     left: Any = _UNSET,
@@ -385,7 +428,12 @@ def ImagePadKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: images, masks
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImagePadKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -413,8 +461,7 @@ def ImagePadKJ(
     return node(wf, 'ImagePadKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageResizeKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     width: Any = _UNSET,
@@ -435,7 +482,12 @@ def ImageResizeKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: IMAGE, width, height
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageResizeKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -457,8 +509,7 @@ def ImageResizeKJ(
     return node(wf, 'ImageResizeKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageResizeKJv2(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     width: Any = _UNSET,
@@ -482,7 +533,12 @@ def ImageResizeKJv2(
     
     Pack: ComfyUI-KJNodes
     Returns: IMAGE, width, height, mask
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageResizeKJv2() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -508,8 +564,7 @@ def ImageResizeKJv2(
     return node(wf, 'ImageResizeKJv2', _id, pass_raw=pass_raw, **_kwargs)
 
 def InsertLatentToIndexed(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     source: Any = _UNSET,
     destination: Any = _UNSET,
@@ -522,7 +577,12 @@ def InsertLatentToIndexed(
     
     Pack: ComfyUI-KJNodes
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"InsertLatentToIndexed() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if source is not _UNSET:
         _kwargs['source'] = source
@@ -534,8 +594,7 @@ def InsertLatentToIndexed(
     return node(wf, 'InsertLatentToIndexed', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTX2AttentionTunerPatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     blocks: Any = _UNSET,
@@ -552,7 +611,12 @@ def LTX2AttentionTunerPatch(
     
     Pack: ComfyUI-KJNodes
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTX2AttentionTunerPatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -572,8 +636,7 @@ def LTX2AttentionTunerPatch(
     return node(wf, 'LTX2AttentionTunerPatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTX2MemoryEfficientSageAttentionPatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     triton_kernels: Any = _UNSET,
@@ -585,7 +648,12 @@ def LTX2MemoryEfficientSageAttentionPatch(
     
     Pack: ComfyUI-KJNodes
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTX2MemoryEfficientSageAttentionPatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -595,8 +663,7 @@ def LTX2MemoryEfficientSageAttentionPatch(
     return node(wf, 'LTX2MemoryEfficientSageAttentionPatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTX2_NAG(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     nag_scale: Any = _UNSET,
@@ -613,7 +680,12 @@ def LTX2_NAG(
     
     Pack: ComfyUI-KJNodes
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTX2_NAG() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -633,8 +705,7 @@ def LTX2_NAG(
     return node(wf, 'LTX2_NAG', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVideoMask(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video_fps: Any = _UNSET,
     video_start_time: Any = _UNSET,
@@ -653,7 +724,12 @@ def LTXVAudioVideoMask(
     
     Pack: ComfyUI-KJNodes
     Returns: video_latent, audio_latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAudioVideoMask() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video_fps is not _UNSET:
         _kwargs['video_fps'] = video_fps
@@ -677,8 +753,7 @@ def LTXVAudioVideoMask(
     return node(wf, 'LTXVAudioVideoMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVChunkFeedForward(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     chunks: Any = _UNSET,
@@ -691,7 +766,12 @@ def LTXVChunkFeedForward(
     
     Pack: ComfyUI-KJNodes
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVChunkFeedForward() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -703,8 +783,7 @@ def LTXVChunkFeedForward(
     return node(wf, 'LTXVChunkFeedForward', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVImgToVideoInplaceKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     latent: Any = _UNSET,
@@ -717,7 +796,12 @@ def LTXVImgToVideoInplaceKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVImgToVideoInplaceKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -729,8 +813,7 @@ def LTXVImgToVideoInplaceKJ(
     return node(wf, 'LTXVImgToVideoInplaceKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def LazySwitchKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     switch: Any = _UNSET,
     on_false: Any = _UNSET,
@@ -743,7 +826,12 @@ def LazySwitchKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: *
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LazySwitchKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if switch is not _UNSET:
         _kwargs['switch'] = switch
@@ -755,8 +843,7 @@ def LazySwitchKJ(
     return node(wf, 'LazySwitchKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadVideosFromFolder(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     force_rate: Any = _UNSET,
@@ -776,7 +863,12 @@ def LoadVideosFromFolder(
     
     Pack: ComfyUI-KJNodes
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoadVideosFromFolder() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -802,8 +894,7 @@ def LoadVideosFromFolder(
     return node(wf, 'LoadVideosFromFolder', _id, pass_raw=pass_raw, **_kwargs)
 
 def PathchSageAttentionKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     sage_attention: Any = _UNSET,
@@ -816,7 +907,12 @@ def PathchSageAttentionKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: MODEL
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PathchSageAttentionKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -828,8 +924,7 @@ def PathchSageAttentionKJ(
     return node(wf, 'PathchSageAttentionKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def PointsEditor(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     points_store: Any = _UNSET,
     coordinates: Any = _UNSET,
@@ -867,7 +962,12 @@ def PointsEditor(
     
     Pack: ComfyUI-KJNodes
     Returns: positive_coords, negative_coords, bbox, bbox_mask, cropped_image
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PointsEditor() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if points_store is not _UNSET:
         _kwargs['points_store'] = points_store
@@ -893,8 +993,7 @@ def PointsEditor(
     return node(wf, 'PointsEditor', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewAnimation(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     fps: Any = _UNSET,
     images: Any = _UNSET,
@@ -907,7 +1006,12 @@ def PreviewAnimation(
     
     Pack: ComfyUI-KJNodes
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PreviewAnimation() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if fps is not _UNSET:
         _kwargs['fps'] = fps
@@ -919,8 +1023,7 @@ def PreviewAnimation(
     return node(wf, 'PreviewAnimation', _id, pass_raw=pass_raw, **_kwargs)
 
 def SimpleCalculatorKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     expression: Any = _UNSET,
     variables: Any = _UNSET,
@@ -937,7 +1040,12 @@ def SimpleCalculatorKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: FLOAT, INT, BOOLEAN
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SimpleCalculatorKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if expression is not _UNSET:
         _kwargs['expression'] = expression
@@ -947,8 +1055,7 @@ def SimpleCalculatorKJ(
     return node(wf, 'SimpleCalculatorKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def SplineEditor(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     points_store: Any = _UNSET,
     coordinates: Any = _UNSET,
@@ -1016,7 +1123,12 @@ def SplineEditor(
     
     Pack: ComfyUI-KJNodes
     Returns: mask, coord_str, float, count, normalized_str
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SplineEditor() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if points_store is not _UNSET:
         _kwargs['points_store'] = points_store
@@ -1048,8 +1160,7 @@ def SplineEditor(
     return node(wf, 'SplineEditor', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAELoaderKJ(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae_name: Any = _UNSET,
     device: Any = _UNSET,
@@ -1062,7 +1173,12 @@ def VAELoaderKJ(
     
     Pack: ComfyUI-KJNodes
     Returns: VAE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VAELoaderKJ() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae_name is not _UNSET:
         _kwargs['vae_name'] = vae_name
@@ -1074,8 +1190,7 @@ def VAELoaderKJ(
     return node(wf, 'VAELoaderKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def VRAM_Debug(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     empty_cache: Any = _UNSET,
     gc_collect: Any = _UNSET,
@@ -1093,7 +1208,12 @@ def VRAM_Debug(
     
     Pack: ComfyUI-KJNodes
     Returns: any_output, image_pass, model_pass, freemem_before, freemem_after
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VRAM_Debug() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if empty_cache is not _UNSET:
         _kwargs['empty_cache'] = empty_cache
@@ -1111,8 +1231,7 @@ def VRAM_Debug(
     return node(wf, 'VRAM_Debug', _id, pass_raw=pass_raw, **_kwargs)
 
 def WidgetToString(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     id: Any = _UNSET,
     widget_name: Any = _UNSET,
@@ -1134,7 +1253,12 @@ def WidgetToString(
     
     Pack: ComfyUI-KJNodes
     Returns: STRING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WidgetToString() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if id is not _UNSET:
         _kwargs['id'] = id

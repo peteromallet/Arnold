@@ -170,6 +170,17 @@ def _parse_ready_metadata(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         else:
             requirements = dict(meta_reqs)
 
+    if isinstance(metadata, dict):
+        try:
+            from vibecomfy.registry.static_contract import _metadata_with_static_derivations
+
+            metadata = _metadata_with_static_derivations(
+                metadata,
+                path,
+                path.read_text(encoding="utf-8"),
+            )
+        except Exception:
+            pass
     return (
         metadata if isinstance(metadata, dict) else {},
         requirements if isinstance(requirements, dict) else {},

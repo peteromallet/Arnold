@@ -20,16 +20,14 @@
   "75:70": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "flux-2-klein-base-4b.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "flux-2-klein-base-4b.safetensors"
     }
   },
   "75:71": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_3_4b.safetensors",
-      "type": "flux2",
-      "device": "default"
+      "type": "flux2"
     }
   },
   "75:72": {
@@ -53,13 +51,12 @@
   "75:62": {
     "class_type": "Flux2Scheduler",
     "inputs": {
-      "steps": 20,
-      "height": [
-        "75:69",
-        0
-      ],
       "width": [
         "75:68",
+        0
+      ],
+      "height": [
+        "75:69",
         0
       ]
     }
@@ -67,7 +64,6 @@
   "75:66": {
     "class_type": "EmptyFlux2LatentImage",
     "inputs": {
-      "batch_size": 1,
       "width": [
         "75:68",
         0
@@ -109,12 +105,12 @@
         "75:70",
         0
       ],
-      "negative": [
-        "75:67",
-        0
-      ],
       "positive": [
         "75:74",
+        0
+      ],
+      "negative": [
+        "75:67",
         0
       ]
     }
@@ -122,16 +118,12 @@
   "75:64": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
-      "guider": [
-        "75:63",
-        0
-      ],
-      "latent_image": [
-        "75:66",
-        0
-      ],
       "noise": [
         "75:73",
+        0
+      ],
+      "guider": [
+        "75:63",
         0
       ],
       "sampler": [
@@ -140,6 +132,10 @@
       ],
       "sigmas": [
         "75:62",
+        0
+      ],
+      "latent_image": [
+        "75:66",
         0
       ]
     }

@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def AudioConcat(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio1: Any = _UNSET,
     audio2: Any = _UNSET,
@@ -26,7 +25,12 @@ def AudioConcat(
     
     Pack: comfy_core
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AudioConcat() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio1 is not _UNSET:
         _kwargs['audio1'] = audio1
@@ -38,8 +42,7 @@ def AudioConcat(
     return node(wf, 'AudioConcat', _id, pass_raw=pass_raw, **_kwargs)
 
 def AudioEncoderEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio_encoder: Any = _UNSET,
     audio: Any = _UNSET,
@@ -49,7 +52,12 @@ def AudioEncoderEncode(
     """
     Pack: comfy_core
     Returns: AUDIO_ENCODER_OUTPUT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AudioEncoderEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio_encoder is not _UNSET:
         _kwargs['audio_encoder'] = audio_encoder
@@ -59,8 +67,7 @@ def AudioEncoderEncode(
     return node(wf, 'AudioEncoderEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def AudioEncoderLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio_encoder_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -69,7 +76,12 @@ def AudioEncoderLoader(
     """
     Pack: comfy_core
     Returns: AUDIO_ENCODER
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AudioEncoderLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio_encoder_name is not _UNSET:
         _kwargs['audio_encoder_name'] = audio_encoder_name
@@ -77,8 +89,7 @@ def AudioEncoderLoader(
     return node(wf, 'AudioEncoderLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def BasicScheduler(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     scheduler: Any = _UNSET,
@@ -90,7 +101,12 @@ def BasicScheduler(
     """
     Pack: comfy_core
     Returns: SIGMAS
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"BasicScheduler() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -104,8 +120,7 @@ def BasicScheduler(
     return node(wf, 'BasicScheduler', _id, pass_raw=pass_raw, **_kwargs)
 
 def CFGGuider(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     positive: Any = _UNSET,
@@ -117,7 +132,12 @@ def CFGGuider(
     """
     Pack: comfy_core
     Returns: GUIDER
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CFGGuider() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -131,8 +151,7 @@ def CFGGuider(
     return node(wf, 'CFGGuider', _id, pass_raw=pass_raw, **_kwargs)
 
 def CFGNorm(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     strength: Any = _UNSET,
@@ -142,7 +161,12 @@ def CFGNorm(
     """
     Pack: comfy_core
     Returns: patched_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CFGNorm() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -152,8 +176,7 @@ def CFGNorm(
     return node(wf, 'CFGNorm', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip_name: Any = _UNSET,
     type_: Any = _UNSET,
@@ -177,7 +200,12 @@ def CLIPLoader(
     
     Pack: comfy
     Returns: CLIP
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CLIPLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip_name is not _UNSET:
         _kwargs['clip_name'] = clip_name
@@ -189,8 +217,7 @@ def CLIPLoader(
     return node(wf, 'CLIPLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPTextEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     text: Any = _UNSET,
     clip: Any = _UNSET,
@@ -202,7 +229,12 @@ def CLIPTextEncode(
     
     Pack: comfy
     Returns: CONDITIONING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CLIPTextEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if text is not _UNSET:
         _kwargs['text'] = text
@@ -212,8 +244,7 @@ def CLIPTextEncode(
     return node(wf, 'CLIPTextEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPVisionEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip_vision: Any = _UNSET,
     image: Any = _UNSET,
@@ -226,7 +257,12 @@ def CLIPVisionEncode(
     
     Pack: comfy
     Returns: CLIP_VISION_OUTPUT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CLIPVisionEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip_vision is not _UNSET:
         _kwargs['clip_vision'] = clip_vision
@@ -238,8 +274,7 @@ def CLIPVisionEncode(
     return node(wf, 'CLIPVisionEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPVisionLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -250,7 +285,12 @@ def CLIPVisionLoader(
     
     Pack: comfy
     Returns: CLIP_VISION
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CLIPVisionLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip_name is not _UNSET:
         _kwargs['clip_name'] = clip_name
@@ -258,8 +298,7 @@ def CLIPVisionLoader(
     return node(wf, 'CLIPVisionLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def CheckpointLoaderSimple(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     ckpt_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -270,7 +309,12 @@ def CheckpointLoaderSimple(
     
     Pack: comfy
     Returns: MODEL, CLIP, VAE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CheckpointLoaderSimple() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if ckpt_name is not _UNSET:
         _kwargs['ckpt_name'] = ckpt_name
@@ -278,8 +322,7 @@ def CheckpointLoaderSimple(
     return node(wf, 'CheckpointLoaderSimple', _id, pass_raw=pass_raw, **_kwargs)
 
 def ComfyMathExpression(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     expression: Any = _UNSET,
     values: Any = _UNSET,
@@ -291,7 +334,12 @@ def ComfyMathExpression(
     
     Pack: comfy_core
     Returns: FLOAT, INT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ComfyMathExpression() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if expression is not _UNSET:
         _kwargs['expression'] = expression
@@ -301,8 +349,7 @@ def ComfyMathExpression(
     return node(wf, 'ComfyMathExpression', _id, pass_raw=pass_raw, **_kwargs)
 
 def ComfySwitchNode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     switch: Any = _UNSET,
     on_false: Any = _UNSET,
@@ -315,7 +362,12 @@ def ComfySwitchNode(
     
     Pack: comfy_core
     Returns: output
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ComfySwitchNode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if switch is not _UNSET:
         _kwargs['switch'] = switch
@@ -327,8 +379,7 @@ def ComfySwitchNode(
     return node(wf, 'ComfySwitchNode', _id, pass_raw=pass_raw, **_kwargs)
 
 def ConditioningZeroOut(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     conditioning: Any = _UNSET,
     pass_raw: bool = False,
@@ -339,7 +390,12 @@ def ConditioningZeroOut(
     
     Pack: comfy
     Returns: CONDITIONING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ConditioningZeroOut() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if conditioning is not _UNSET:
         _kwargs['conditioning'] = conditioning
@@ -347,8 +403,7 @@ def ConditioningZeroOut(
     return node(wf, 'ConditioningZeroOut', _id, pass_raw=pass_raw, **_kwargs)
 
 def CreateVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     fps: Any = _UNSET,
@@ -361,7 +416,12 @@ def CreateVideo(
     
     Pack: comfy_core
     Returns: VIDEO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"CreateVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -373,8 +433,7 @@ def CreateVideo(
     return node(wf, 'CreateVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def DualCLIPLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip_name1: Any = _UNSET,
     clip_name2: Any = _UNSET,
@@ -395,7 +454,12 @@ def DualCLIPLoader(
     
     Pack: comfy
     Returns: CLIP
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DualCLIPLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip_name1 is not _UNSET:
         _kwargs['clip_name1'] = clip_name1
@@ -409,8 +473,7 @@ def DualCLIPLoader(
     return node(wf, 'DualCLIPLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyAceStep1_5LatentAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     seconds: Any = _UNSET,
     batch_size: Any = _UNSET,
@@ -422,7 +485,12 @@ def EmptyAceStep1_5LatentAudio(
     
     Pack: comfy_core
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptyAceStep1_5LatentAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if seconds is not _UNSET:
         _kwargs['seconds'] = seconds
@@ -432,8 +500,7 @@ def EmptyAceStep1_5LatentAudio(
     return node(wf, 'EmptyAceStep1.5LatentAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     duration: Any = _UNSET,
     sample_rate: Any = _UNSET,
@@ -446,7 +513,12 @@ def EmptyAudio(
     
     Pack: comfy_core
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptyAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if duration is not _UNSET:
         _kwargs['duration'] = duration
@@ -458,8 +530,7 @@ def EmptyAudio(
     return node(wf, 'EmptyAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyFlux2LatentImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -472,7 +543,12 @@ def EmptyFlux2LatentImage(
     
     Pack: comfy_core
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptyFlux2LatentImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -484,8 +560,7 @@ def EmptyFlux2LatentImage(
     return node(wf, 'EmptyFlux2LatentImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyHunyuanLatentVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -499,7 +574,12 @@ def EmptyHunyuanLatentVideo(
     
     Pack: comfy_core
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptyHunyuanLatentVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -513,8 +593,7 @@ def EmptyHunyuanLatentVideo(
     return node(wf, 'EmptyHunyuanLatentVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -528,7 +607,12 @@ def EmptyImage(
     
     Pack: comfy
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptyImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -542,8 +626,7 @@ def EmptyImage(
     return node(wf, 'EmptyImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyLTXVLatentVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -555,7 +638,12 @@ def EmptyLTXVLatentVideo(
     """
     Pack: comfy_core
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptyLTXVLatentVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -569,8 +657,7 @@ def EmptyLTXVLatentVideo(
     return node(wf, 'EmptyLTXVLatentVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptySD3LatentImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     width: Any = _UNSET,
     height: Any = _UNSET,
@@ -581,7 +668,12 @@ def EmptySD3LatentImage(
     """
     Pack: comfy_core
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"EmptySD3LatentImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if width is not _UNSET:
         _kwargs['width'] = width
@@ -593,8 +685,7 @@ def EmptySD3LatentImage(
     return node(wf, 'EmptySD3LatentImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def Flux2Scheduler(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     steps: Any = _UNSET,
     width: Any = _UNSET,
@@ -605,7 +696,12 @@ def Flux2Scheduler(
     """
     Pack: comfy_core
     Returns: SIGMAS
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Flux2Scheduler() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if steps is not _UNSET:
         _kwargs['steps'] = steps
@@ -617,8 +713,7 @@ def Flux2Scheduler(
     return node(wf, 'Flux2Scheduler', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImageRangeFromBatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     start_index: Any = _UNSET,
     num_frames: Any = _UNSET,
@@ -632,7 +727,12 @@ def GetImageRangeFromBatch(
     
     Pack: comfy_extras
     Returns: IMAGE, MASK
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GetImageRangeFromBatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if start_index is not _UNSET:
         _kwargs['start_index'] = start_index
@@ -646,8 +746,7 @@ def GetImageRangeFromBatch(
     return node(wf, 'GetImageRangeFromBatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImageSize(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     pass_raw: bool = False,
@@ -658,7 +757,12 @@ def GetImageSize(
     
     Pack: comfy_core
     Returns: width, height, batch_size
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GetImageSize() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -666,8 +770,7 @@ def GetImageSize(
     return node(wf, 'GetImageSize', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetVideoComponents(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     pass_raw: bool = False,
@@ -678,7 +781,12 @@ def GetVideoComponents(
     
     Pack: comfy_core
     Returns: images, audio, fps
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GetVideoComponents() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -686,8 +794,7 @@ def GetVideoComponents(
     return node(wf, 'GetVideoComponents', _id, pass_raw=pass_raw, **_kwargs)
 
 def GrowMask(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     expand: Any = _UNSET,
@@ -700,7 +807,12 @@ def GrowMask(
     
     Pack: comfy_core
     Returns: MASK
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"GrowMask() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -712,8 +824,7 @@ def GrowMask(
     return node(wf, 'GrowMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBlend(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image1: Any = _UNSET,
     image2: Any = _UNSET,
@@ -727,7 +838,12 @@ def ImageBlend(
     
     Pack: comfy_core
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageBlend() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image1 is not _UNSET:
         _kwargs['image1'] = image1
@@ -741,8 +857,7 @@ def ImageBlend(
     return node(wf, 'ImageBlend', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBlur(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     blur_radius: Any = _UNSET,
@@ -755,7 +870,12 @@ def ImageBlur(
     
     Pack: comfy_core
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageBlur() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -767,8 +887,7 @@ def ImageBlur(
     return node(wf, 'ImageBlur', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageFromBatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     batch_index: Any = _UNSET,
@@ -779,7 +898,12 @@ def ImageFromBatch(
     """
     Pack: comfy_core
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageFromBatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -791,8 +915,7 @@ def ImageFromBatch(
     return node(wf, 'ImageFromBatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageScale(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     upscale_method: Any = _UNSET,
@@ -807,7 +930,12 @@ def ImageScale(
     
     Pack: comfy
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageScale() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -823,8 +951,7 @@ def ImageScale(
     return node(wf, 'ImageScale', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageScaleBy(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     upscale_method: Any = _UNSET,
@@ -837,7 +964,12 @@ def ImageScaleBy(
     
     Pack: comfy
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageScaleBy() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -849,8 +981,7 @@ def ImageScaleBy(
     return node(wf, 'ImageScaleBy', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageScaleToTotalPixels(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     upscale_method: Any = _UNSET,
@@ -862,7 +993,12 @@ def ImageScaleToTotalPixels(
     """
     Pack: comfy_core
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ImageScaleToTotalPixels() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -876,8 +1012,7 @@ def ImageScaleToTotalPixels(
     return node(wf, 'ImageScaleToTotalPixels', _id, pass_raw=pass_raw, **_kwargs)
 
 def KSampler(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     seed: Any = _UNSET,
@@ -897,7 +1032,12 @@ def KSampler(
     
     Pack: comfy
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"KSampler() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -923,8 +1063,7 @@ def KSampler(
     return node(wf, 'KSampler', _id, pass_raw=pass_raw, **_kwargs)
 
 def KSamplerSelect(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     sampler_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -933,7 +1072,12 @@ def KSamplerSelect(
     """
     Pack: comfy_core
     Returns: SAMPLER
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"KSamplerSelect() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if sampler_name is not _UNSET:
         _kwargs['sampler_name'] = sampler_name
@@ -941,8 +1085,7 @@ def KSamplerSelect(
     return node(wf, 'KSamplerSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXAVTextEncoderLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     text_encoder: Any = _UNSET,
     ckpt_name: Any = _UNSET,
@@ -957,7 +1100,12 @@ def LTXAVTextEncoderLoader(
     
     Pack: comfy_core
     Returns: CLIP
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXAVTextEncoderLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if text_encoder is not _UNSET:
         _kwargs['text_encoder'] = text_encoder
@@ -969,8 +1117,7 @@ def LTXAVTextEncoderLoader(
     return node(wf, 'LTXAVTextEncoderLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAddGuide(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -985,7 +1132,12 @@ def LTXVAddGuide(
     """
     Pack: comfy_core
     Returns: positive, negative, latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAddGuide() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -1005,8 +1157,7 @@ def LTXVAddGuide(
     return node(wf, 'LTXVAddGuide', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAddGuideMulti(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -1021,7 +1172,12 @@ def LTXVAddGuideMulti(
     
     Pack: comfy_core
     Returns: positive, negative, latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAddGuideMulti() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -1037,8 +1193,7 @@ def LTXVAddGuideMulti(
     return node(wf, 'LTXVAddGuideMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVAEDecode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     audio_vae: Any = _UNSET,
@@ -1050,7 +1205,12 @@ def LTXVAudioVAEDecode(
     
     Pack: comfy_core
     Returns: Audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAudioVAEDecode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -1060,8 +1220,7 @@ def LTXVAudioVAEDecode(
     return node(wf, 'LTXVAudioVAEDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVAEEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     audio_vae: Any = _UNSET,
@@ -1073,7 +1232,12 @@ def LTXVAudioVAEEncode(
     
     Pack: comfy_core
     Returns: Audio Latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAudioVAEEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -1083,8 +1247,7 @@ def LTXVAudioVAEEncode(
     return node(wf, 'LTXVAudioVAEEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVAELoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     ckpt_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -1095,7 +1258,12 @@ def LTXVAudioVAELoader(
     
     Pack: comfy_core
     Returns: Audio VAE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVAudioVAELoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if ckpt_name is not _UNSET:
         _kwargs['ckpt_name'] = ckpt_name
@@ -1103,8 +1271,7 @@ def LTXVAudioVAELoader(
     return node(wf, 'LTXVAudioVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVConcatAVLatent(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video_latent: Any = _UNSET,
     audio_latent: Any = _UNSET,
@@ -1114,7 +1281,12 @@ def LTXVConcatAVLatent(
     """
     Pack: comfy_core
     Returns: latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVConcatAVLatent() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video_latent is not _UNSET:
         _kwargs['video_latent'] = video_latent
@@ -1124,8 +1296,7 @@ def LTXVConcatAVLatent(
     return node(wf, 'LTXVConcatAVLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVConditioning(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -1136,7 +1307,12 @@ def LTXVConditioning(
     """
     Pack: comfy_core
     Returns: positive, negative
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVConditioning() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -1148,8 +1324,7 @@ def LTXVConditioning(
     return node(wf, 'LTXVConditioning', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVCropGuides(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -1160,7 +1335,12 @@ def LTXVCropGuides(
     """
     Pack: comfy_core
     Returns: positive, negative, latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVCropGuides() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -1172,8 +1352,7 @@ def LTXVCropGuides(
     return node(wf, 'LTXVCropGuides', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVEmptyLatentAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     frames_number: Any = _UNSET,
     frame_rate: Any = _UNSET,
@@ -1187,7 +1366,12 @@ def LTXVEmptyLatentAudio(
     
     Pack: comfy_core
     Returns: Latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVEmptyLatentAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if frames_number is not _UNSET:
         _kwargs['frames_number'] = frames_number
@@ -1201,8 +1385,7 @@ def LTXVEmptyLatentAudio(
     return node(wf, 'LTXVEmptyLatentAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVImgToVideoInplace(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae: Any = _UNSET,
     image: Any = _UNSET,
@@ -1215,7 +1398,12 @@ def LTXVImgToVideoInplace(
     """
     Pack: comfy_core
     Returns: latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVImgToVideoInplace() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae is not _UNSET:
         _kwargs['vae'] = vae
@@ -1231,8 +1419,7 @@ def LTXVImgToVideoInplace(
     return node(wf, 'LTXVImgToVideoInplace', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVLatentUpsampler(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     upscale_model: Any = _UNSET,
@@ -1245,7 +1432,12 @@ def LTXVLatentUpsampler(
     
     Pack: comfy_extras
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVLatentUpsampler() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -1257,8 +1449,7 @@ def LTXVLatentUpsampler(
     return node(wf, 'LTXVLatentUpsampler', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVPreprocess(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     img_compression: Any = _UNSET,
@@ -1268,7 +1459,12 @@ def LTXVPreprocess(
     """
     Pack: comfy_core
     Returns: output_image
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVPreprocess() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -1278,8 +1474,7 @@ def LTXVPreprocess(
     return node(wf, 'LTXVPreprocess', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVScheduler(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     steps: Any = _UNSET,
     max_shift: Any = _UNSET,
@@ -1293,7 +1488,12 @@ def LTXVScheduler(
     """
     Pack: comfy_core
     Returns: SIGMAS
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVScheduler() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if steps is not _UNSET:
         _kwargs['steps'] = steps
@@ -1311,8 +1511,7 @@ def LTXVScheduler(
     return node(wf, 'LTXVScheduler', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVSeparateAVLatent(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     av_latent: Any = _UNSET,
     pass_raw: bool = False,
@@ -1323,7 +1522,12 @@ def LTXVSeparateAVLatent(
     
     Pack: comfy_core
     Returns: video_latent, audio_latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LTXVSeparateAVLatent() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if av_latent is not _UNSET:
         _kwargs['av_latent'] = av_latent
@@ -1331,8 +1535,7 @@ def LTXVSeparateAVLatent(
     return node(wf, 'LTXVSeparateAVLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def LatentUpscaleModelLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -1343,7 +1546,12 @@ def LatentUpscaleModelLoader(
     
     Pack: comfy_extras
     Returns: LATENT_UPSCALE_MODEL
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LatentUpscaleModelLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model_name is not _UNSET:
         _kwargs['model_name'] = model_name
@@ -1351,8 +1559,7 @@ def LatentUpscaleModelLoader(
     return node(wf, 'LatentUpscaleModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     pass_raw: bool = False,
@@ -1363,7 +1570,12 @@ def LoadAudio(
     
     Pack: comfy_core
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoadAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -1371,8 +1583,7 @@ def LoadAudio(
     return node(wf, 'LoadAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     pass_raw: bool = False,
@@ -1383,7 +1594,12 @@ def LoadImage(
     
     Pack: comfy
     Returns: IMAGE, MASK
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoadImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -1391,8 +1607,7 @@ def LoadImage(
     return node(wf, 'LoadImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     file: Any = _UNSET,
     pass_raw: bool = False,
@@ -1403,7 +1618,12 @@ def LoadVideo(
     
     Pack: comfy_core
     Returns: VIDEO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoadVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if file is not _UNSET:
         _kwargs['file'] = file
@@ -1411,8 +1631,7 @@ def LoadVideo(
     return node(wf, 'LoadVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoraLoaderModelOnly(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     lora_name: Any = _UNSET,
@@ -1425,7 +1644,12 @@ def LoraLoaderModelOnly(
     
     Pack: comfy
     Returns: MODEL
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"LoraLoaderModelOnly() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1437,8 +1661,7 @@ def LoraLoaderModelOnly(
     return node(wf, 'LoraLoaderModelOnly', _id, pass_raw=pass_raw, **_kwargs)
 
 def ManualSigmas(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     sigmas: Any = _UNSET,
     pass_raw: bool = False,
@@ -1447,7 +1670,12 @@ def ManualSigmas(
     """
     Pack: comfy_core
     Returns: SIGMAS
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ManualSigmas() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if sigmas is not _UNSET:
         _kwargs['sigmas'] = sigmas
@@ -1455,8 +1683,7 @@ def ManualSigmas(
     return node(wf, 'ManualSigmas', _id, pass_raw=pass_raw, **_kwargs)
 
 def MaskPreview(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     pass_raw: bool = False,
@@ -1467,7 +1694,12 @@ def MaskPreview(
     
     Pack: comfy_core
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"MaskPreview() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -1475,8 +1707,7 @@ def MaskPreview(
     return node(wf, 'MaskPreview', _id, pass_raw=pass_raw, **_kwargs)
 
 def MaskToImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     pass_raw: bool = False,
@@ -1487,7 +1718,12 @@ def MaskToImage(
     
     Pack: comfy_core
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"MaskToImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -1495,8 +1731,7 @@ def MaskToImage(
     return node(wf, 'MaskToImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def ModelSamplingAuraFlow(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     shift: Any = _UNSET,
@@ -1508,7 +1743,12 @@ def ModelSamplingAuraFlow(
     
     Pack: comfy_extras
     Returns: MODEL
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ModelSamplingAuraFlow() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1518,8 +1758,7 @@ def ModelSamplingAuraFlow(
     return node(wf, 'ModelSamplingAuraFlow', _id, pass_raw=pass_raw, **_kwargs)
 
 def ModelSamplingSD3(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     shift: Any = _UNSET,
@@ -1531,7 +1770,12 @@ def ModelSamplingSD3(
     
     Pack: comfy_extras
     Returns: MODEL
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ModelSamplingSD3() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -1541,8 +1785,7 @@ def ModelSamplingSD3(
     return node(wf, 'ModelSamplingSD3', _id, pass_raw=pass_raw, **_kwargs)
 
 def PixelPerfectResolution(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     original_image: Any = _UNSET,
     image_gen_width: Any = _UNSET,
@@ -1556,7 +1799,12 @@ def PixelPerfectResolution(
     
     Pack: comfy_extras
     Returns: RESOLUTION (INT)
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PixelPerfectResolution() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if original_image is not _UNSET:
         _kwargs['original_image'] = original_image
@@ -1570,8 +1818,7 @@ def PixelPerfectResolution(
     return node(wf, 'PixelPerfectResolution', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewAny(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     source: Any = _UNSET,
     pass_raw: bool = False,
@@ -1582,7 +1829,12 @@ def PreviewAny(
     
     Pack: comfy_extras
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PreviewAny() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if source is not _UNSET:
         _kwargs['source'] = source
@@ -1590,8 +1842,7 @@ def PreviewAny(
     return node(wf, 'PreviewAny', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     pass_raw: bool = False,
@@ -1602,7 +1853,12 @@ def PreviewAudio(
     
     Pack: comfy_core
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PreviewAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -1610,8 +1866,7 @@ def PreviewAudio(
     return node(wf, 'PreviewAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     pass_raw: bool = False,
@@ -1622,7 +1877,12 @@ def PreviewImage(
     
     Pack: comfy
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PreviewImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -1630,8 +1890,7 @@ def PreviewImage(
     return node(wf, 'PreviewImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def PrimitiveStringMultiline(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     value: Any = _UNSET,
     pass_raw: bool = False,
@@ -1642,7 +1901,12 @@ def PrimitiveStringMultiline(
     
     Pack: comfy_core
     Returns: STRING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"PrimitiveStringMultiline() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if value is not _UNSET:
         _kwargs['value'] = value
@@ -1650,8 +1914,7 @@ def PrimitiveStringMultiline(
     return node(wf, 'PrimitiveStringMultiline', _id, pass_raw=pass_raw, **_kwargs)
 
 def RandomNoise(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     noise_seed: Any = _UNSET,
     pass_raw: bool = False,
@@ -1660,7 +1923,12 @@ def RandomNoise(
     """
     Pack: comfy_core
     Returns: NOISE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"RandomNoise() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if noise_seed is not _UNSET:
         _kwargs['noise_seed'] = noise_seed
@@ -1668,8 +1936,7 @@ def RandomNoise(
     return node(wf, 'RandomNoise', _id, pass_raw=pass_raw, **_kwargs)
 
 def ReferenceLatent(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     conditioning: Any = _UNSET,
     latent: Any = _UNSET,
@@ -1681,7 +1948,12 @@ def ReferenceLatent(
     
     Pack: comfy_core
     Returns: CONDITIONING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ReferenceLatent() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if conditioning is not _UNSET:
         _kwargs['conditioning'] = conditioning
@@ -1691,8 +1963,7 @@ def ReferenceLatent(
     return node(wf, 'ReferenceLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def RepeatImageBatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     amount: Any = _UNSET,
@@ -1702,7 +1973,12 @@ def RepeatImageBatch(
     """
     Pack: comfy_core
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"RepeatImageBatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -1712,8 +1988,7 @@ def RepeatImageBatch(
     return node(wf, 'RepeatImageBatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def ResizeImageMaskNode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     input: Any = _UNSET,
     resize_type: Any = _UNSET,
@@ -1726,7 +2001,12 @@ def ResizeImageMaskNode(
     
     Pack: comfy_core
     Returns: resized
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ResizeImageMaskNode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if input is not _UNSET:
         _kwargs['input'] = input
@@ -1738,8 +2018,7 @@ def ResizeImageMaskNode(
     return node(wf, 'ResizeImageMaskNode', _id, pass_raw=pass_raw, **_kwargs)
 
 def ResizeImagesByLongerEdge(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     longer_edge: Any = _UNSET,
@@ -1751,7 +2030,12 @@ def ResizeImagesByLongerEdge(
     
     Pack: comfy_core
     Returns: images
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"ResizeImagesByLongerEdge() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -1761,8 +2045,7 @@ def ResizeImagesByLongerEdge(
     return node(wf, 'ResizeImagesByLongerEdge', _id, pass_raw=pass_raw, **_kwargs)
 
 def SamplerCustomAdvanced(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     noise: Any = _UNSET,
     guider: Any = _UNSET,
@@ -1775,7 +2058,12 @@ def SamplerCustomAdvanced(
     """
     Pack: comfy_core
     Returns: output, denoised_output
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SamplerCustomAdvanced() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if noise is not _UNSET:
         _kwargs['noise'] = noise
@@ -1791,8 +2079,7 @@ def SamplerCustomAdvanced(
     return node(wf, 'SamplerCustomAdvanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def SamplerEulerAncestral(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     eta: Any = _UNSET,
     s_noise: Any = _UNSET,
@@ -1802,7 +2089,12 @@ def SamplerEulerAncestral(
     """
     Pack: comfy_core
     Returns: SAMPLER
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SamplerEulerAncestral() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if eta is not _UNSET:
         _kwargs['eta'] = eta
@@ -1812,8 +2104,7 @@ def SamplerEulerAncestral(
     return node(wf, 'SamplerEulerAncestral', _id, pass_raw=pass_raw, **_kwargs)
 
 def SaveAudioMP3(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     filename_prefix: Any = _UNSET,
@@ -1826,7 +2117,12 @@ def SaveAudioMP3(
     
     Pack: comfy_core
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SaveAudioMP3() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -1838,8 +2134,7 @@ def SaveAudioMP3(
     return node(wf, 'SaveAudioMP3', _id, pass_raw=pass_raw, **_kwargs)
 
 def SaveImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     filename_prefix: Any = _UNSET,
@@ -1851,7 +2146,12 @@ def SaveImage(
     
     Pack: comfy
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SaveImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -1861,8 +2161,7 @@ def SaveImage(
     return node(wf, 'SaveImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def SaveVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     filename_prefix: Any = _UNSET,
@@ -1876,7 +2175,12 @@ def SaveVideo(
     
     Pack: comfy_core
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SaveVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -1890,8 +2194,7 @@ def SaveVideo(
     return node(wf, 'SaveVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def SetLatentNoiseMask(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     mask: Any = _UNSET,
@@ -1903,7 +2206,12 @@ def SetLatentNoiseMask(
     
     Pack: comfy
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SetLatentNoiseMask() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -1913,8 +2221,7 @@ def SetLatentNoiseMask(
     return node(wf, 'SetLatentNoiseMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def SimpleMath(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     value: Any = _UNSET,
     a: Any = _UNSET,
@@ -1928,7 +2235,12 @@ def SimpleMath(
     
     Pack: comfy_extras
     Returns: INT, FLOAT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SimpleMath() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if value is not _UNSET:
         _kwargs['value'] = value
@@ -1942,8 +2254,7 @@ def SimpleMath(
     return node(wf, 'SimpleMath+', _id, pass_raw=pass_raw, **_kwargs)
 
 def SolidMask(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     value: Any = _UNSET,
     width: Any = _UNSET,
@@ -1954,7 +2265,12 @@ def SolidMask(
     """
     Pack: comfy_core
     Returns: MASK
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"SolidMask() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if value is not _UNSET:
         _kwargs['value'] = value
@@ -1966,8 +2282,7 @@ def SolidMask(
     return node(wf, 'SolidMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def StringConcatenate(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     string_a: Any = _UNSET,
     string_b: Any = _UNSET,
@@ -1980,7 +2295,12 @@ def StringConcatenate(
     
     Pack: comfy_core
     Returns: STRING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"StringConcatenate() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if string_a is not _UNSET:
         _kwargs['string_a'] = string_a
@@ -1992,8 +2312,7 @@ def StringConcatenate(
     return node(wf, 'StringConcatenate', _id, pass_raw=pass_raw, **_kwargs)
 
 def TextEncodeAceStepAudio1_5(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip: Any = _UNSET,
     tags: Any = _UNSET,
@@ -2016,7 +2335,12 @@ def TextEncodeAceStepAudio1_5(
     """
     Pack: comfy_core
     Returns: CONDITIONING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"TextEncodeAceStepAudio1_5() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip is not _UNSET:
         _kwargs['clip'] = clip
@@ -2052,8 +2376,7 @@ def TextEncodeAceStepAudio1_5(
     return node(wf, 'TextEncodeAceStepAudio1.5', _id, pass_raw=pass_raw, **_kwargs)
 
 def TextEncodeQwenImageEdit(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip: Any = _UNSET,
     prompt: Any = _UNSET,
@@ -2065,7 +2388,12 @@ def TextEncodeQwenImageEdit(
     """
     Pack: comfy_core
     Returns: CONDITIONING
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"TextEncodeQwenImageEdit() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip is not _UNSET:
         _kwargs['clip'] = clip
@@ -2079,8 +2407,7 @@ def TextEncodeQwenImageEdit(
     return node(wf, 'TextEncodeQwenImageEdit', _id, pass_raw=pass_raw, **_kwargs)
 
 def TextGenerateLTX2Prompt(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     clip: Any = _UNSET,
     prompt: Any = _UNSET,
@@ -2094,7 +2421,12 @@ def TextGenerateLTX2Prompt(
     """
     Pack: comfy_core
     Returns: generated_text
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"TextGenerateLTX2Prompt() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if clip is not _UNSET:
         _kwargs['clip'] = clip
@@ -2112,8 +2444,7 @@ def TextGenerateLTX2Prompt(
     return node(wf, 'TextGenerateLTX2Prompt', _id, pass_raw=pass_raw, **_kwargs)
 
 def TrimAudioDuration(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     start_index: Any = _UNSET,
@@ -2126,7 +2457,12 @@ def TrimAudioDuration(
     
     Pack: comfy_core
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"TrimAudioDuration() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -2138,8 +2474,7 @@ def TrimAudioDuration(
     return node(wf, 'TrimAudioDuration', _id, pass_raw=pass_raw, **_kwargs)
 
 def TrimVideoLatent(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     trim_amount: Any = _UNSET,
@@ -2149,7 +2484,12 @@ def TrimVideoLatent(
     """
     Pack: comfy_core
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"TrimVideoLatent() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -2159,8 +2499,7 @@ def TrimVideoLatent(
     return node(wf, 'TrimVideoLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def UNETLoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     unet_name: Any = _UNSET,
     weight_dtype: Any = _UNSET,
@@ -2172,7 +2511,12 @@ def UNETLoader(
     
     Pack: comfy
     Returns: MODEL
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"UNETLoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if unet_name is not _UNSET:
         _kwargs['unet_name'] = unet_name
@@ -2182,8 +2526,7 @@ def UNETLoader(
     return node(wf, 'UNETLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEDecode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     vae: Any = _UNSET,
@@ -2195,7 +2538,12 @@ def VAEDecode(
     
     Pack: comfy
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VAEDecode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -2205,8 +2553,7 @@ def VAEDecode(
     return node(wf, 'VAEDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEDecodeAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     vae: Any = _UNSET,
@@ -2218,7 +2565,12 @@ def VAEDecodeAudio(
     
     Pack: comfy_core
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VAEDecodeAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -2228,8 +2580,7 @@ def VAEDecodeAudio(
     return node(wf, 'VAEDecodeAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEDecodeTiled(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     vae: Any = _UNSET,
@@ -2245,7 +2596,12 @@ def VAEDecodeTiled(
     
     Pack: comfy
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VAEDecodeTiled() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -2263,8 +2619,7 @@ def VAEDecodeTiled(
     return node(wf, 'VAEDecodeTiled', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEEncode(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pixels: Any = _UNSET,
     vae: Any = _UNSET,
@@ -2276,7 +2631,12 @@ def VAEEncode(
     
     Pack: comfy
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VAEEncode() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if pixels is not _UNSET:
         _kwargs['pixels'] = pixels
@@ -2286,8 +2646,7 @@ def VAEEncode(
     return node(wf, 'VAEEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAELoader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vae_name: Any = _UNSET,
     pass_raw: bool = False,
@@ -2298,7 +2657,12 @@ def VAELoader(
     
     Pack: comfy
     Returns: VAE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VAELoader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vae_name is not _UNSET:
         _kwargs['vae_name'] = vae_name
@@ -2306,8 +2670,7 @@ def VAELoader(
     return node(wf, 'VAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanAnimateToVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -2331,7 +2694,12 @@ def WanAnimateToVideo(
     """
     Pack: comfy_core
     Returns: positive, negative, latent, trim_latent, trim_image, video_frame_offset
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanAnimateToVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive
@@ -2369,8 +2737,7 @@ def WanAnimateToVideo(
     return node(wf, 'WanAnimateToVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanImageToVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     positive: Any = _UNSET,
     negative: Any = _UNSET,
@@ -2387,7 +2754,12 @@ def WanImageToVideo(
     """
     Pack: comfy_core
     Returns: positive, negative, latent
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"WanImageToVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if positive is not _UNSET:
         _kwargs['positive'] = positive

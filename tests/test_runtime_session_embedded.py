@@ -248,14 +248,21 @@ def test_embedded_stop_reraises_inflight_run_exception_before_teardown(
 
         monkeypatch.setattr(fake_comfy, "queue_prompt_api", failing_queue)
         session = EmbeddedSession()
-        task = asyncio.create_task(session.run(_workflow()))
+        workflow = _workflow()
+        workflow.metadata["id_map"] = {"sampler": "2"}
+        workflow.nodes["2"].metadata["source_id"] = "7"
+        task = asyncio.create_task(session.run(workflow))
         await started.wait()
         stop_task = asyncio.create_task(session.stop(wait_for_inflight=True))
         await asyncio.sleep(0)
         assert not stop_task.done()
         release.set()
-        with pytest.raises(RuntimeError, match="Workflow queue failed: boom"):
+        with pytest.raises(RuntimeError, match="Workflow queue failed: boom") as exc_info:
             await stop_task
+        message = str(exc_info.value)
+        assert "id_map=" in message
+        assert "'sampler': '2'" in message
+        assert "'7': '2'" in message
         assert task.done()
         assert fake_comfy.exit_count == 0
         await session.stop()

@@ -8,10 +8,12 @@ import pprint
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any, Literal, Mapping
 
+from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.porting.widget_aliases import resolve_widget_name
-from vibecomfy.porting.object_info import class_defaults
+from vibecomfy.porting.object_info import class_defaults, class_has_list_output, class_output_count
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 
 # -- readability warning codes ------------------------------------------------
@@ -84,7 +86,7 @@ class _PublicInputSpec:
 
 GENERATED_HEADER = (
     "# vibecomfy: generated - converted by tools/convert_ready_templates.py\n"
-    "# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`\n"
+    "# Edits will be overwritten on regeneration. Put the manual opt-out\n"
     "# marker on the first line if hand-editing is required.\n"
 )
 
@@ -673,7 +675,7 @@ def _format_models_block(model_assets: list[Mapping[str, Any]]) -> list[str]:
         filename = asset.get("filename", asset.get("name"))
         subdir = asset.get("subdir") or asset.get("directory") or "checkpoints"
         args: list[str] = []
-        if filename is not None:
+        if filename is not None and not _filename_is_url_derived(str(filename), asset.get("url")):
             args.append(f"filename={_format_value(filename)}")
         for field_name in ("url", "target_path", "sha256", "hf_revision", "size_bytes"):
             value = asset.get(field_name)
@@ -684,6 +686,15 @@ def _format_models_block(model_assets: list[Mapping[str, Any]]) -> list[str]:
         lines.append(f"    {key!r}: ModelAsset({', '.join(args)}),")
     lines.append("}")
     return lines
+
+
+def _filename_is_url_derived(filename: str, url: Any) -> bool:
+    if not isinstance(url, str) or not url:
+        return False
+    path = url.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    if not path:
+        return False
+    return Path(path).name == filename
 
 
 def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -699,12 +710,28 @@ def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "id_map",
         "ready_template_path",
         "python_policy_applied",
+        "source_role",
+        "source_workflow",
+        "vibecomfy_version",
+        "comfy_core",
+        "coverage_tier",
+        "custom_node_packs",
     }
-    return {
+    extras = {
         str(key): value
         for key, value in metadata.items()
         if key not in derived_keys and value is not None
     }
+    provenance = metadata.get("provenance")
+    if isinstance(provenance, Mapping) and not _is_derivable_provenance(provenance):
+        extras["provenance"] = dict(provenance)
+    return extras
+
+
+def _is_derivable_provenance(provenance: Mapping[str, Any]) -> bool:
+    """Return true when ReadyMetadata.build can recreate the provenance."""
+
+    return set(provenance).issubset({"source_workflow", "source_role"})
 
 
 def _requirements_expr_for_emit(requirements: Mapping[str, Any], *, has_models: bool) -> str | None:
@@ -719,26 +746,92 @@ def _requirements_expr_for_emit(requirements: Mapping[str, Any], *, has_models: 
     return _format_value(retained)
 
 
+def _lock_entries_by_class(lockfile_path: Path = Path("custom_nodes.lock")) -> dict[str, LockEntry]:
+    by_class: dict[str, LockEntry] = {}
+    try:
+        entries = read_lockfile(lockfile_path)
+    except (OSError, ValueError):
+        return {}
+    for entry in entries:
+        for class_type in entry.class_set:
+            by_class.setdefault(str(class_type), entry)
+    return by_class
+
+
+def _custom_node_packs_for_emit(
+    workflow_nodes: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    requirements: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    explicit = metadata.get("custom_node_packs")
+    if isinstance(explicit, Mapping):
+        return {str(key): dict(value) for key, value in explicit.items() if isinstance(value, Mapping)}
+
+    by_class = _lock_entries_by_class()
+    if not by_class:
+        return {}
+
+    requirement_names = {
+        str(item)
+        for key in ("custom_nodes", "custom_node_refs")
+        for item in (requirements.get(key) or [])
+        if item
+    }
+    grouped: dict[str, dict[str, Any]] = {}
+    for node in workflow_nodes.values():
+        class_type = str(getattr(node, "class_type", ""))
+        entry = by_class.get(class_type)
+        if entry is None:
+            continue
+        commit = entry.commit or entry.git_commit_sha
+        if not commit:
+            continue
+        row = grouped.setdefault(
+            entry.name,
+            {
+                "commit": commit,
+                "url": entry.url,
+                "class_schema_sha256": entry.class_schema_sha256 or entry.schema_hash,
+                "classes_used": [],
+                "pip_packages": list(entry.pip_packages),
+                "status": "pinned" if entry.name in requirement_names or entry.slug in requirement_names else "discovered",
+            },
+        )
+        if class_type not in row["classes_used"]:
+            row["classes_used"].append(class_type)
+
+    for row in grouped.values():
+        row["classes_used"] = sorted(row["classes_used"])
+        row["pip_packages"] = sorted(row["pip_packages"])
+        for key in ("url", "class_schema_sha256"):
+            if row.get(key) is None:
+                row.pop(key, None)
+    return dict(sorted(grouped.items(), key=lambda item: item[0].lower()))
+
+
 def _format_ready_metadata_build(
     metadata: Mapping[str, Any],
     requirements: Mapping[str, Any],
     *,
     has_models: bool,
+    custom_node_packs: Mapping[str, Any] | None = None,
 ) -> list[str]:
     template_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
     capability = str(metadata.get("capability") or "unknown")
     output_prefix = str(metadata.get("output_prefix") or template_id)
     lines = [
         "READY_METADATA = ReadyMetadata.build(",
-        f"    template_id={template_id!r},",
         f"    capability={capability!r},",
         "    inputs=PUBLIC_INPUTS,",
         "    models=MODELS,",
-        f"    output_prefix={output_prefix!r},",
     ]
+    if output_prefix != template_id:
+        lines.append(f"    output_prefix={output_prefix!r},")
     requirements_expr = _requirements_expr_for_emit(requirements, has_models=has_models)
     if requirements_expr is not None:
         lines.append(f"    requirements={requirements_expr},")
+    if custom_node_packs:
+        lines.append(f"    custom_node_packs={_format_value(dict(custom_node_packs))},")
     for key, value in _metadata_extras_for_emit(metadata).items():
         lines.append(f"    {key}={_format_value(value)},")
     lines.append(")")
@@ -781,6 +874,7 @@ def emit_ready_template_python(
         constant_map=constant_map,
     )
     model_assets = _model_assets_for_emit(metadata, requirements)
+    custom_node_packs = _custom_node_packs_for_emit(workflow_nodes, metadata, requirements)
 
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
@@ -788,7 +882,7 @@ def emit_ready_template_python(
     out_lines.append("from __future__ import annotations")
     out_lines.append("")
     out_lines.append(
-        "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node, ref"
+        "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref"
     )
     for module_name, names in sorted(wrapper_imports.items()):
         out_lines.append(f"from vibecomfy.nodes.{module_name} import {', '.join(names)}")
@@ -805,7 +899,14 @@ def emit_ready_template_python(
     out_lines.append("")
     out_lines.extend(_format_public_inputs_block(public_inputs))
     out_lines.append("")
-    out_lines.extend(_format_ready_metadata_build(metadata, requirements, has_models=bool(model_assets)))
+    out_lines.extend(
+        _format_ready_metadata_build(
+            metadata,
+            requirements,
+            has_models=bool(model_assets),
+            custom_node_packs=custom_node_packs,
+        )
+    )
     out_lines.append("")
     out_lines.extend(
         _emit_build_function(
@@ -815,6 +916,7 @@ def emit_ready_template_python(
             source_type="ready_template",
             source_provenance=None,
             registered_inputs=registered_inputs,
+            public_inputs=public_inputs,
             tail_lines=_ready_template_tail_lines(has_ltx_tail, workflow_nodes, edges_in, var_names, metadata),
             diagnostics=diagnostics,
             use_shared_helpers=True,
@@ -868,6 +970,7 @@ def emit_scratchpad_python(
             source_type="scratchpad",
             source_provenance=provenance or {},
             registered_inputs=registered_inputs,
+            public_inputs=None,
             tail_lines=["    wf.finalize_metadata()"],
             diagnostics=diagnostics,
         )
@@ -1048,6 +1151,7 @@ def _emit_build_function(
     source_type: str,
     source_provenance: dict[str, Any] | None,
     registered_inputs: dict[str, tuple[str, str]] | None,
+    public_inputs: list[_PublicInputSpec] | None,
     tail_lines: list[str],
     diagnostics: list[EmissionDiagnostic] | None = None,
     use_shared_helpers: bool = False,
@@ -1062,6 +1166,19 @@ def _emit_build_function(
         constant_map = {}
     if section_groups is None:
         section_groups = {}
+    var_to_nid = {var: nid for nid, var in var_names.items()}
+    public_preserve_fields: dict[str, set[str]] = {}
+    for spec in public_inputs or []:
+        node_ref = spec.node_ref
+        if not node_ref.startswith("ref("):
+            continue
+        try:
+            ref_name = ast.literal_eval(node_ref[4:-1])
+        except Exception:
+            continue
+        nid = var_to_nid.get(str(ref_name))
+        if nid is not None:
+            public_preserve_fields.setdefault(nid, set()).add(spec.field)
 
     # Build a set of node IDs covered by section groups for fast lookup
     section_nids: set[str] = set()
@@ -1083,7 +1200,9 @@ def _emit_build_function(
         provenance_part = f",\n            provenance={_format_value(source_provenance)}"
 
     if use_shared_helpers:
-        out_lines.append(f"    wf = new_workflow({workflow_id_expr}, source_path={source_path_expr})")
+        out_lines.append(f"    with new_workflow({workflow_id_expr}, source_path={source_path_expr}) as wf:")
+        body_indent = "        "
+        continuation_indent = "            "
     else:
         out_lines.append(
             "    wf = VibeWorkflow(\n"
@@ -1096,6 +1215,8 @@ def _emit_build_function(
             "        ),\n"
             "    )"
         )
+        body_indent = "    "
+        continuation_indent = "        "
     out_lines.append("")
 
     last_section: str | None = None
@@ -1122,7 +1243,7 @@ def _emit_build_function(
         # Emit section comment if entering a new section group
         section = section_order_map.get(nid)
         if section is not None and section != last_section:
-            out_lines.append(f"    # {section}")
+            out_lines.append(f"{body_indent}# {section}")
             last_section = section
 
         wrapper_module = _wrapper_module_for_class(str(node.class_type)) if use_shared_helpers else None
@@ -1131,13 +1252,16 @@ def _emit_build_function(
             for old_id, field in (registered_inputs or {}).values()
             if old_id == nid
         }
+        preserve_fields.update(public_preserve_fields.get(nid, set()))
         kwargs = _node_kwargs(
             node, edges_in, var_names,
             workflow_nodes=workflow_nodes,
             diagnostics=diagnostics,
             constant_map=constant_map,
             use_ui_widget_aliases=use_shared_helpers,
-            strip_schema_defaults=False,
+            strip_schema_defaults=use_shared_helpers,
+            omit_single_output_metadata=use_shared_helpers,
+            bare_single_output_refs=use_shared_helpers,
             emit_reserved_keyword_args=wrapper_module is not None,
             preserve_fields=preserve_fields,
         )
@@ -1175,11 +1299,11 @@ def _emit_build_function(
             # Multi-line formatting: use multi-line when >3 kwargs or any line would exceed ~88 chars
             kwarg_lines = [f"**{expr}" if key == "**" else f"{key}={expr}" for key, expr in all_args]
             if use_wrapper:
-                call_args = ", ".join(["wf", *kwarg_lines])
-                single_line = f"    {var} = {call_name}({call_args})"
+                call_args = ", ".join(kwarg_lines)
+                single_line = f"{body_indent}{var} = {call_name}({call_args})"
             else:
                 call_args = ", ".join([repr(node.class_type), repr(nid), *kwarg_lines])
-                single_line = f"    {var} = node(wf, {call_args})"
+                single_line = f"{body_indent}{var} = raw_call(wf, {call_args})"
 
             # -- readability diagnostic: long one-line node call ----------
             if diagnostics is not None and len(single_line) > 120:
@@ -1199,19 +1323,21 @@ def _emit_build_function(
 
             if len(all_args) > 3 or len(single_line) > 88:
                 if use_wrapper:
-                    lines = [f"    {var} = {call_name}("]
-                    lines.append("        wf,")
+                    lines = [f"{body_indent}{var} = {call_name}("]
                 else:
-                    lines = [f"    {var} = node(wf, {node.class_type!r}, {nid!r},"]
+                    lines = [f"{body_indent}{var} = raw_call(wf, {node.class_type!r}, {nid!r},"]
                 for key, expr in all_args:
                     if key == "**":
-                        lines.append(f"        **{expr},")
+                        lines.append(f"{continuation_indent}**{expr},")
                     else:
-                        lines.append(f"        {key}={expr},")
-                lines.append("    )")
+                        lines.append(f"{continuation_indent}{key}={expr},")
+                lines.append(f"{body_indent})")
                 out_lines.extend(lines)
+                out_lines.append(f"{body_indent}wf.metadata.setdefault('id_map', {{}})[{var!r}] = {var}.node.id")
+                out_lines.append("")
             else:
                 out_lines.append(single_line)
+                out_lines.append(f"{body_indent}wf.metadata.setdefault('id_map', {{}})[{var!r}] = {var}.node.id")
         else:
             head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
             if not kwargs:
@@ -1222,10 +1348,13 @@ def _emit_build_function(
                     out_lines.append(f"        {key}={expr},")
                 out_lines.append("    )")
 
+    if use_shared_helpers:
+        if out_lines and out_lines[-1] != "":
+            out_lines.append("")
+        out_lines.extend("    " + line if line else line for line in tail_lines)
+        return out_lines
     out_lines.append("")
     out_lines.extend(tail_lines)
-    if use_shared_helpers:
-        return out_lines
     if registered_inputs:
         for input_name, (old_id, field) in registered_inputs.items():
             resolved_field = field
@@ -1550,6 +1679,8 @@ def _node_kwargs(
     constant_map: dict[tuple[str, str], str] | None = None,
     use_ui_widget_aliases: bool = False,
     strip_schema_defaults: bool = False,
+    omit_single_output_metadata: bool = False,
+    bare_single_output_refs: bool = False,
     emit_reserved_keyword_args: bool = False,
     preserve_fields: set[str] | None = None,
 ) -> list[tuple[str, str]]:
@@ -1638,7 +1769,7 @@ def _node_kwargs(
     out: list[tuple[str, str]] = []
     extras: list[tuple[str, str]] = []
     output_names = _node_output_names(node)
-    if output_names:
+    if output_names and not (omit_single_output_metadata and _is_schema_confirmed_single_output(cls, output_names)):
         out.append(("_outputs", _format_value(tuple(output_names))))
     for key in ordered_static_keys:
         if key in incoming:
@@ -1660,16 +1791,19 @@ def _node_kwargs(
         from_node, from_slot = incoming[to_input]
         from_node_str = str(from_node)
         if from_node_str in var_names:
-            safe_name = _safe_output_name(workflow_nodes, from_node_str, from_slot)
-            if safe_name is not None:
-                expr = f"{var_names[from_node_str]}.out({safe_name!r})"
+            if bare_single_output_refs and _is_single_output_ref(workflow_nodes, from_node_str, from_slot):
+                expr = var_names[from_node_str]
             else:
-                expr = f"{var_names[from_node_str]}.out({from_slot})"
-                if diagnostics is not None and workflow_nodes is not None:
-                    _output_fallback_diagnostic(
-                        diagnostics, workflow_nodes, from_node_str, from_slot,
-                        target_node=node, target_input=to_input,
-                    )
+                safe_name = _safe_output_name(workflow_nodes, from_node_str, from_slot)
+                if safe_name is not None:
+                    expr = f"{var_names[from_node_str]}.out({safe_name!r})"
+                else:
+                    expr = f"{var_names[from_node_str]}.out({from_slot})"
+                    if diagnostics is not None and workflow_nodes is not None:
+                        _output_fallback_diagnostic(
+                            diagnostics, workflow_nodes, from_node_str, from_slot,
+                            target_node=node, target_input=to_input,
+                        )
         else:
             expr = f"[{from_node_str!r}, {from_slot}]"
         if not _is_python_ident(to_input) and not (emit_reserved_keyword_args and to_input in RESERVED_WRAPPER_INPUT_NAMES):
@@ -1964,6 +2098,27 @@ def _output_fallback_diagnostic(
 def _format_metadata_dict(name: str, value: dict[str, Any]) -> str:
     formatted = pprint.pformat(value, width=110, sort_dicts=False)
     return f"{name} = {formatted}"
+
+
+def _is_schema_confirmed_single_output(class_type: str, output_names: list[str] | tuple[str, ...]) -> bool:
+    try:
+        return class_output_count(class_type) == 1 and not class_has_list_output(class_type)
+    except Exception:
+        return len(output_names) == 1
+
+
+def _is_single_output_ref(
+    workflow_nodes: dict[str, Any] | None,
+    from_node: str,
+    from_slot: int,
+) -> bool:
+    if from_slot != 0 or workflow_nodes is None:
+        return False
+    src_node = workflow_nodes.get(from_node)
+    if src_node is None:
+        return False
+    output_names = _node_output_names(src_node)
+    return _is_schema_confirmed_single_output(str(src_node.class_type), output_names)
 
 
 def _has_ltx_lowvram_tail(category_id: str) -> bool:

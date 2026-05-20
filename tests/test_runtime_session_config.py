@@ -449,14 +449,12 @@ def test_run_metadata_omits_memory_profile_telemetry_when_unset() -> None:
 def test_model_fingerprint_wan_snapshot() -> None:
     api = json.loads(Path("tests/snapshots/wan_t2v.api.json").read_text(encoding="utf-8"))
 
-    # Post-conversion the snapshot uses canonical input names rather than
-    # positional widget_X. Expectations updated to match the converted shape.
+    # Post-v2.6 conversion strips schema-default loader fields from ready
+    # templates and snapshots while preserving semantically selected models.
     assert model_fingerprint(api) == (
         ("CLIPLoader", "clip_name", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
-        ("CLIPLoader", "device", "default"),
         ("CLIPLoader", "type", "wan"),
         ("UNETLoader", "unet_name", "wan2.1_t2v_1.3B_fp16.safetensors"),
-        ("UNETLoader", "weight_dtype", "default"),
         ("VAELoader", "vae_name", "wan_2.1_vae.safetensors"),
     )
 

@@ -1,20 +1,8 @@
 [
   [
-    "CFGNorm",
-    "strength",
-    "1",
-    1
-  ],
-  [
     "CLIPLoader",
     "clip_name",
     "'qwen_2.5_vl_7b_fp8_scaled.safetensors'",
-    1
-  ],
-  [
-    "CLIPLoader",
-    "device",
-    "'default'",
     1
   ],
   [
@@ -31,32 +19,14 @@
   ],
   [
     "ImageScaleToTotalPixels",
-    "resolution_steps",
-    "1",
-    1
-  ],
-  [
-    "ImageScaleToTotalPixels",
     "upscale_method",
     "'lanczos'",
     1
   ],
   [
     "KSampler",
-    "denoise",
-    "1",
-    1
-  ],
-  [
-    "KSampler",
     "sampler_name",
     "'euler'",
-    1
-  ],
-  [
-    "KSampler",
-    "scheduler",
-    "'simple'",
     1
   ],
   [
@@ -75,12 +45,6 @@
     "LoraLoaderModelOnly",
     "lora_name",
     "'Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors'",
-    1
-  ],
-  [
-    "LoraLoaderModelOnly",
-    "strength_model",
-    "1",
     1
   ],
   [
@@ -120,12 +84,6 @@
     1
   ],
   [
-    "SaveImage",
-    "filename_prefix",
-    "'ComfyUI'",
-    1
-  ],
-  [
     "TextEncodeQwenImageEdit",
     "prompt",
     "''",
@@ -141,12 +99,6 @@
     "UNETLoader",
     "unet_name",
     "'qwen_image_edit_fp8_e4m3fn.safetensors'",
-    1
-  ],
-  [
-    "UNETLoader",
-    "weight_dtype",
-    "'default'",
     1
   ],
   [

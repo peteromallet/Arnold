@@ -8,16 +8,14 @@
   "102:37": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "qwen_image_edit_fp8_e4m3fn.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "qwen_image_edit_fp8_e4m3fn.safetensors"
     }
   },
   "102:38": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-      "type": "qwen_image",
-      "device": "default"
+      "type": "qwen_image"
     }
   },
   "102:39": {
@@ -61,7 +59,6 @@
     "inputs": {
       "upscale_method": "lanczos",
       "megapixels": 1.5,
-      "resolution_steps": 1,
       "image": [
         "78",
         0
@@ -76,12 +73,12 @@
         "102:38",
         0
       ],
-      "image": [
-        "78",
-        0
-      ],
       "vae": [
         "102:39",
+        0
+      ],
+      "image": [
+        "78",
         0
       ]
     }
@@ -94,12 +91,12 @@
         "102:38",
         0
       ],
-      "image": [
-        "78",
-        0
-      ],
       "vae": [
         "102:39",
+        0
+      ],
+      "image": [
+        "78",
         0
       ]
     }
@@ -121,7 +118,6 @@
     "class_type": "LoraLoaderModelOnly",
     "inputs": {
       "lora_name": "Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
-      "strength_model": 1,
       "model": [
         "102:37",
         0
@@ -131,6 +127,10 @@
   "102:109": {
     "class_type": "ComfySwitchNode",
     "inputs": {
+      "switch": [
+        "102:111",
+        0
+      ],
       "on_false": [
         "102:107",
         0
@@ -138,16 +138,16 @@
       "on_true": [
         "102:105",
         0
-      ],
-      "switch": [
-        "102:111",
-        0
       ]
     }
   },
   "102:110": {
     "class_type": "ComfySwitchNode",
     "inputs": {
+      "switch": [
+        "102:111",
+        0
+      ],
       "on_false": [
         "102:106",
         0
@@ -155,26 +155,22 @@
       "on_true": [
         "102:103",
         0
-      ],
-      "switch": [
-        "102:111",
-        0
       ]
     }
   },
   "102:108": {
     "class_type": "ComfySwitchNode",
     "inputs": {
+      "switch": [
+        "102:111",
+        0
+      ],
       "on_false": [
         "102:37",
         0
       ],
       "on_true": [
         "102:89",
-        0
-      ],
-      "switch": [
-        "102:111",
         0
       ]
     }
@@ -192,7 +188,6 @@
   "102:75": {
     "class_type": "CFGNorm",
     "inputs": {
-      "strength": 1,
       "model": [
         "102:66",
         0
@@ -204,8 +199,10 @@
     "inputs": {
       "seed": 344147753686358,
       "sampler_name": "euler",
-      "scheduler": "simple",
-      "denoise": 1,
+      "model": [
+        "102:75",
+        0
+      ],
       "steps": [
         "102:110",
         0
@@ -214,20 +211,16 @@
         "102:109",
         0
       ],
-      "latent_image": [
-        "102:88",
-        0
-      ],
-      "model": [
-        "102:75",
+      "positive": [
+        "102:76",
         0
       ],
       "negative": [
         "102:77",
         0
       ],
-      "positive": [
-        "102:76",
+      "latent_image": [
+        "102:88",
         0
       ]
     }
@@ -248,7 +241,6 @@
   "60": {
     "class_type": "SaveImage",
     "inputs": {
-      "filename_prefix": "ComfyUI",
       "images": [
         "102:8",
         0

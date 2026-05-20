@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def DownloadAndLoadSAM2Model(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     segmentor: Any = _UNSET,
@@ -27,7 +26,12 @@ def DownloadAndLoadSAM2Model(
     
     Pack: ComfyUI-segment-anything-2
     Returns: sam2_model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"DownloadAndLoadSAM2Model() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -41,8 +45,7 @@ def DownloadAndLoadSAM2Model(
     return node(wf, 'DownloadAndLoadSAM2Model', _id, pass_raw=pass_raw, **_kwargs)
 
 def Florence2toCoordinates(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     data: Any = _UNSET,
     index: Any = _UNSET,
@@ -55,7 +58,12 @@ def Florence2toCoordinates(
     
     Pack: ComfyUI-segment-anything-2
     Returns: center_coordinates, bboxes
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Florence2toCoordinates() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if data is not _UNSET:
         _kwargs['data'] = data
@@ -67,8 +75,7 @@ def Florence2toCoordinates(
     return node(wf, 'Florence2toCoordinates', _id, pass_raw=pass_raw, **_kwargs)
 
 def Sam2AutoSegmentation(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     sam2_model: Any = _UNSET,
     image: Any = _UNSET,
@@ -94,7 +101,12 @@ def Sam2AutoSegmentation(
     
     Pack: ComfyUI-segment-anything-2
     Returns: mask, segmented_image, bbox
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Sam2AutoSegmentation() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if sam2_model is not _UNSET:
         _kwargs['sam2_model'] = sam2_model
@@ -132,8 +144,7 @@ def Sam2AutoSegmentation(
     return node(wf, 'Sam2AutoSegmentation', _id, pass_raw=pass_raw, **_kwargs)
 
 def Sam2Segmentation(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     sam2_model: Any = _UNSET,
     image: Any = _UNSET,
@@ -151,7 +162,12 @@ def Sam2Segmentation(
     
     Pack: ComfyUI-segment-anything-2
     Returns: mask
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Sam2Segmentation() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if sam2_model is not _UNSET:
         _kwargs['sam2_model'] = sam2_model
@@ -173,8 +189,7 @@ def Sam2Segmentation(
     return node(wf, 'Sam2Segmentation', _id, pass_raw=pass_raw, **_kwargs)
 
 def Sam2VideoSegmentation(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     sam2_model: Any = _UNSET,
     inference_state: Any = _UNSET,
@@ -187,7 +202,12 @@ def Sam2VideoSegmentation(
     
     Pack: ComfyUI-segment-anything-2
     Returns: mask
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Sam2VideoSegmentation() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if sam2_model is not _UNSET:
         _kwargs['sam2_model'] = sam2_model
@@ -199,8 +219,7 @@ def Sam2VideoSegmentation(
     return node(wf, 'Sam2VideoSegmentation', _id, pass_raw=pass_raw, **_kwargs)
 
 def Sam2VideoSegmentationAddPoints(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     sam2_model: Any = _UNSET,
     coordinates_positive: Any = _UNSET,
@@ -217,7 +236,12 @@ def Sam2VideoSegmentationAddPoints(
     
     Pack: ComfyUI-segment-anything-2
     Returns: sam2_model, inference_state
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Sam2VideoSegmentationAddPoints() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if sam2_model is not _UNSET:
         _kwargs['sam2_model'] = sam2_model

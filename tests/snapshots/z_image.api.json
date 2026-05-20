@@ -2,22 +2,27 @@
   "1": {
     "class_type": "UNETLoader",
     "inputs": {
-      "unet_name": "z_image_bf16.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "z_image_bf16.safetensors"
     }
   },
   "2": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_3_4b.safetensors",
-      "type": "lumina2",
-      "device": "default"
+      "type": "lumina2"
     }
   },
   "3": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "ae.safetensors"
+    }
+  },
+  "7": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1024
     }
   },
   "4": {
@@ -50,14 +55,6 @@
       ]
     }
   },
-  "7": {
-    "class_type": "EmptySD3LatentImage",
-    "inputs": {
-      "width": 1024,
-      "height": 1024,
-      "batch_size": 1
-    }
-  },
   "8": {
     "class_type": "KSampler",
     "inputs": {
@@ -65,8 +62,6 @@
       "steps": 25,
       "cfg": 4.0,
       "sampler_name": "res_multistep",
-      "scheduler": "simple",
-      "denoise": 1.0,
       "model": [
         "4",
         0

@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def VHS_AudioToVHSAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     pass_raw: bool = False,
@@ -24,7 +23,12 @@ def VHS_AudioToVHSAudio(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: vhs_audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_AudioToVHSAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -32,8 +36,7 @@ def VHS_AudioToVHSAudio(
     return node(wf, 'VHS_AudioToVHSAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_BatchManager(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     frames_per_batch: Any = _UNSET,
     pass_raw: bool = False,
@@ -44,7 +47,12 @@ def VHS_BatchManager(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: meta_batch
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_BatchManager() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if frames_per_batch is not _UNSET:
         _kwargs['frames_per_batch'] = frames_per_batch
@@ -52,8 +60,7 @@ def VHS_BatchManager(
     return node(wf, 'VHS_BatchManager', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_DuplicateImages(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     multiply_by: Any = _UNSET,
@@ -65,7 +72,12 @@ def VHS_DuplicateImages(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_DuplicateImages() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -75,8 +87,7 @@ def VHS_DuplicateImages(
     return node(wf, 'VHS_DuplicateImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_DuplicateLatents(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     latents: Any = _UNSET,
     multiply_by: Any = _UNSET,
@@ -88,7 +99,12 @@ def VHS_DuplicateLatents(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: LATENT, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_DuplicateLatents() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if latents is not _UNSET:
         _kwargs['latents'] = latents
@@ -98,8 +114,7 @@ def VHS_DuplicateLatents(
     return node(wf, 'VHS_DuplicateLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_DuplicateMasks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     multiply_by: Any = _UNSET,
@@ -111,7 +126,12 @@ def VHS_DuplicateMasks(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: MASK, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_DuplicateMasks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -121,8 +141,7 @@ def VHS_DuplicateMasks(
     return node(wf, 'VHS_DuplicateMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_GetImageCount(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     pass_raw: bool = False,
@@ -133,7 +152,12 @@ def VHS_GetImageCount(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_GetImageCount() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -141,8 +165,7 @@ def VHS_GetImageCount(
     return node(wf, 'VHS_GetImageCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_GetLatentCount(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     latents: Any = _UNSET,
     pass_raw: bool = False,
@@ -153,7 +176,12 @@ def VHS_GetLatentCount(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_GetLatentCount() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if latents is not _UNSET:
         _kwargs['latents'] = latents
@@ -161,8 +189,7 @@ def VHS_GetLatentCount(
     return node(wf, 'VHS_GetLatentCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_GetMaskCount(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     pass_raw: bool = False,
@@ -173,7 +200,12 @@ def VHS_GetMaskCount(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_GetMaskCount() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -181,8 +213,7 @@ def VHS_GetMaskCount(
     return node(wf, 'VHS_GetMaskCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio_file: Any = _UNSET,
     seek_seconds: Any = _UNSET,
@@ -195,7 +226,12 @@ def VHS_LoadAudio(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: audio, duration
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio_file is not _UNSET:
         _kwargs['audio_file'] = audio_file
@@ -207,8 +243,7 @@ def VHS_LoadAudio(
     return node(wf, 'VHS_LoadAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadAudioUpload(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     start_time: Any = _UNSET,
@@ -221,7 +256,12 @@ def VHS_LoadAudioUpload(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: audio, duration
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadAudioUpload() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio
@@ -233,8 +273,7 @@ def VHS_LoadAudioUpload(
     return node(wf, 'VHS_LoadAudioUpload', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadImagePath(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     custom_width: Any = _UNSET,
@@ -248,7 +287,12 @@ def VHS_LoadImagePath(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, mask
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadImagePath() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -262,8 +306,7 @@ def VHS_LoadImagePath(
     return node(wf, 'VHS_LoadImagePath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadImages(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     directory: Any = _UNSET,
     image_load_cap: Any = _UNSET,
@@ -278,7 +321,12 @@ def VHS_LoadImages(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, MASK, frame_count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadImages() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if directory is not _UNSET:
         _kwargs['directory'] = directory
@@ -294,8 +342,7 @@ def VHS_LoadImages(
     return node(wf, 'VHS_LoadImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadImagesPath(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     directory: Any = _UNSET,
     image_load_cap: Any = _UNSET,
@@ -310,7 +357,12 @@ def VHS_LoadImagesPath(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, MASK, frame_count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadImagesPath() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if directory is not _UNSET:
         _kwargs['directory'] = directory
@@ -326,8 +378,7 @@ def VHS_LoadImagesPath(
     return node(wf, 'VHS_LoadImagesPath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     force_rate: Any = _UNSET,
@@ -347,7 +398,12 @@ def VHS_LoadVideo(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, frame_count, audio, video_info
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadVideo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -373,8 +429,7 @@ def VHS_LoadVideo(
     return node(wf, 'VHS_LoadVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideoFFmpeg(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     force_rate: Any = _UNSET,
@@ -393,7 +448,12 @@ def VHS_LoadVideoFFmpeg(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, mask, audio, video_info
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadVideoFFmpeg() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -417,8 +477,7 @@ def VHS_LoadVideoFFmpeg(
     return node(wf, 'VHS_LoadVideoFFmpeg', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideoFFmpegPath(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     force_rate: Any = _UNSET,
@@ -437,7 +496,12 @@ def VHS_LoadVideoFFmpegPath(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, mask, audio, video_info
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadVideoFFmpegPath() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -461,8 +525,7 @@ def VHS_LoadVideoFFmpegPath(
     return node(wf, 'VHS_LoadVideoFFmpegPath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideoPath(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video: Any = _UNSET,
     force_rate: Any = _UNSET,
@@ -482,7 +545,12 @@ def VHS_LoadVideoPath(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, frame_count, audio, video_info
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_LoadVideoPath() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video is not _UNSET:
         _kwargs['video'] = video
@@ -508,8 +576,7 @@ def VHS_LoadVideoPath(
     return node(wf, 'VHS_LoadVideoPath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_MergeImages(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images_A: Any = _UNSET,
     images_B: Any = _UNSET,
@@ -524,7 +591,12 @@ def VHS_MergeImages(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_MergeImages() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images_A is not _UNSET:
         _kwargs['images_A'] = images_A
@@ -540,8 +612,7 @@ def VHS_MergeImages(
     return node(wf, 'VHS_MergeImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_MergeLatents(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     latents_A: Any = _UNSET,
     latents_B: Any = _UNSET,
@@ -556,7 +627,12 @@ def VHS_MergeLatents(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: LATENT, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_MergeLatents() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if latents_A is not _UNSET:
         _kwargs['latents_A'] = latents_A
@@ -572,8 +648,7 @@ def VHS_MergeLatents(
     return node(wf, 'VHS_MergeLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_MergeMasks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask_A: Any = _UNSET,
     mask_B: Any = _UNSET,
@@ -588,7 +663,12 @@ def VHS_MergeMasks(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: MASK, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_MergeMasks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask_A is not _UNSET:
         _kwargs['mask_A'] = mask_A
@@ -604,8 +684,7 @@ def VHS_MergeMasks(
     return node(wf, 'VHS_MergeMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_PruneOutputs(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     filenames: Any = _UNSET,
     options: Any = _UNSET,
@@ -617,7 +696,12 @@ def VHS_PruneOutputs(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: None
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_PruneOutputs() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if filenames is not _UNSET:
         _kwargs['filenames'] = filenames
@@ -627,8 +711,7 @@ def VHS_PruneOutputs(
     return node(wf, 'VHS_PruneOutputs', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectEveryNthImage(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     select_every_nth: Any = _UNSET,
@@ -641,7 +724,12 @@ def VHS_SelectEveryNthImage(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectEveryNthImage() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -653,8 +741,7 @@ def VHS_SelectEveryNthImage(
     return node(wf, 'VHS_SelectEveryNthImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectEveryNthLatent(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     latents: Any = _UNSET,
     select_every_nth: Any = _UNSET,
@@ -667,7 +754,12 @@ def VHS_SelectEveryNthLatent(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: LATENT, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectEveryNthLatent() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if latents is not _UNSET:
         _kwargs['latents'] = latents
@@ -679,8 +771,7 @@ def VHS_SelectEveryNthLatent(
     return node(wf, 'VHS_SelectEveryNthLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectEveryNthMask(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     select_every_nth: Any = _UNSET,
@@ -693,7 +784,12 @@ def VHS_SelectEveryNthMask(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: MASK, count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectEveryNthMask() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -705,8 +801,7 @@ def VHS_SelectEveryNthMask(
     return node(wf, 'VHS_SelectEveryNthMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectFilename(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     filenames: Any = _UNSET,
     index: Any = _UNSET,
@@ -718,7 +813,12 @@ def VHS_SelectFilename(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: Filename
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectFilename() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if filenames is not _UNSET:
         _kwargs['filenames'] = filenames
@@ -728,8 +828,7 @@ def VHS_SelectFilename(
     return node(wf, 'VHS_SelectFilename', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectImages(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     image: Any = _UNSET,
     indexes: Any = _UNSET,
@@ -755,7 +854,12 @@ def VHS_SelectImages(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectImages() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if image is not _UNSET:
         _kwargs['image'] = image
@@ -769,8 +873,7 @@ def VHS_SelectImages(
     return node(wf, 'VHS_SelectImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectLatents(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     latent: Any = _UNSET,
     indexes: Any = _UNSET,
@@ -796,7 +899,12 @@ def VHS_SelectLatents(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectLatents() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if latent is not _UNSET:
         _kwargs['latent'] = latent
@@ -810,8 +918,7 @@ def VHS_SelectLatents(
     return node(wf, 'VHS_SelectLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectLatest(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     filename_prefix: Any = _UNSET,
     filename_postfix: Any = _UNSET,
@@ -823,7 +930,12 @@ def VHS_SelectLatest(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: Filename
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectLatest() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if filename_prefix is not _UNSET:
         _kwargs['filename_prefix'] = filename_prefix
@@ -833,8 +945,7 @@ def VHS_SelectLatest(
     return node(wf, 'VHS_SelectLatest', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectMasks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     indexes: Any = _UNSET,
@@ -860,7 +971,12 @@ def VHS_SelectMasks(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: MASK
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SelectMasks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -874,8 +990,7 @@ def VHS_SelectMasks(
     return node(wf, 'VHS_SelectMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SplitImages(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     split_index: Any = _UNSET,
@@ -887,7 +1002,12 @@ def VHS_SplitImages(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE_A, A_count, IMAGE_B, B_count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SplitImages() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -897,8 +1017,7 @@ def VHS_SplitImages(
     return node(wf, 'VHS_SplitImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SplitLatents(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     latents: Any = _UNSET,
     split_index: Any = _UNSET,
@@ -910,7 +1029,12 @@ def VHS_SplitLatents(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: LATENT_A, A_count, LATENT_B, B_count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SplitLatents() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if latents is not _UNSET:
         _kwargs['latents'] = latents
@@ -920,8 +1044,7 @@ def VHS_SplitLatents(
     return node(wf, 'VHS_SplitLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SplitMasks(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     mask: Any = _UNSET,
     split_index: Any = _UNSET,
@@ -933,7 +1056,12 @@ def VHS_SplitMasks(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: MASK_A, A_count, MASK_B, B_count
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_SplitMasks() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if mask is not _UNSET:
         _kwargs['mask'] = mask
@@ -943,8 +1071,7 @@ def VHS_SplitMasks(
     return node(wf, 'VHS_SplitMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_Unbatch(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     batched: Any = _UNSET,
     pass_raw: bool = False,
@@ -955,7 +1082,12 @@ def VHS_Unbatch(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: unbatched
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_Unbatch() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if batched is not _UNSET:
         _kwargs['batched'] = batched
@@ -963,8 +1095,7 @@ def VHS_Unbatch(
     return node(wf, 'VHS_Unbatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VAEDecodeBatched(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     samples: Any = _UNSET,
     vae: Any = _UNSET,
@@ -977,7 +1108,12 @@ def VHS_VAEDecodeBatched(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: IMAGE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VAEDecodeBatched() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if samples is not _UNSET:
         _kwargs['samples'] = samples
@@ -989,8 +1125,7 @@ def VHS_VAEDecodeBatched(
     return node(wf, 'VHS_VAEDecodeBatched', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VAEEncodeBatched(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     pixels: Any = _UNSET,
     vae: Any = _UNSET,
@@ -1003,7 +1138,12 @@ def VHS_VAEEncodeBatched(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: LATENT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VAEEncodeBatched() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if pixels is not _UNSET:
         _kwargs['pixels'] = pixels
@@ -1015,8 +1155,7 @@ def VHS_VAEEncodeBatched(
     return node(wf, 'VHS_VAEEncodeBatched', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VHSAudioToAudio(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     vhs_audio: Any = _UNSET,
     pass_raw: bool = False,
@@ -1027,7 +1166,12 @@ def VHS_VHSAudioToAudio(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VHSAudioToAudio() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if vhs_audio is not _UNSET:
         _kwargs['vhs_audio'] = vhs_audio
@@ -1035,8 +1179,7 @@ def VHS_VHSAudioToAudio(
     return node(wf, 'VHS_VHSAudioToAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoCombine(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     images: Any = _UNSET,
     frame_rate: Any = _UNSET,
@@ -1056,7 +1199,12 @@ def VHS_VideoCombine(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: Filenames
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VideoCombine() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if images is not _UNSET:
         _kwargs['images'] = images
@@ -1082,8 +1230,7 @@ def VHS_VideoCombine(
     return node(wf, 'VHS_VideoCombine', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoInfo(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video_info: Any = _UNSET,
     pass_raw: bool = False,
@@ -1094,7 +1241,12 @@ def VHS_VideoInfo(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: source_fps🟨, source_frame_count🟨, source_duration🟨, source_width🟨, source_height🟨, loaded_fps🟦, loaded_frame_count🟦, loaded_duration🟦, loaded_width🟦, loaded_height🟦
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VideoInfo() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video_info is not _UNSET:
         _kwargs['video_info'] = video_info
@@ -1102,8 +1254,7 @@ def VHS_VideoInfo(
     return node(wf, 'VHS_VideoInfo', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoInfoLoaded(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video_info: Any = _UNSET,
     pass_raw: bool = False,
@@ -1114,7 +1265,12 @@ def VHS_VideoInfoLoaded(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: fps🟦, frame_count🟦, duration🟦, width🟦, height🟦
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VideoInfoLoaded() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video_info is not _UNSET:
         _kwargs['video_info'] = video_info
@@ -1122,8 +1278,7 @@ def VHS_VideoInfoLoaded(
     return node(wf, 'VHS_VideoInfoLoaded', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoInfoSource(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     video_info: Any = _UNSET,
     pass_raw: bool = False,
@@ -1134,7 +1289,12 @@ def VHS_VideoInfoSource(
     
     Pack: ComfyUI-VideoHelperSuite
     Returns: fps🟨, frame_count🟨, duration🟨, width🟨, height🟨
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"VHS_VideoInfoSource() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if video_info is not _UNSET:
         _kwargs['video_info'] = video_info

@@ -512,11 +512,12 @@ def test_analyze_source_covers_simple_template_and_wan_animate_target() -> None:
     assert "source_hash" in simple
     assert any("port convert" in item for item in simple["recommendations"])
 
-    assert wan["ok"] is True
+    assert wan["ok"] is False
     assert wan["provenance"]["source_kind"] == "ready"
     assert wan["workflow_id"] == "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai"
     assert wan["workflow_shape"]["runtime_nodes"] > 0
     assert wan["workflow_shape"]["helper_nodes"] > 0
+    assert any(item["code"] == "known_runtime_required_input_missing" for item in wan["diagnostics"])
     assert "ComfyUI-WanAnimatePreprocess" in {pack["pack_name"] for pack in wan["node_pack_suggestions"]}
     assert "ComfyUI-WanVideoWrapper" in {pack["pack_name"] for pack in wan["node_pack_suggestions"]}
     assert "helper_broadcast_resolved" in {issue["code"] for issue in wan["diagnostics"]}

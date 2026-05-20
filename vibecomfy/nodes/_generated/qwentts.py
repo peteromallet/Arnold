@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def AILab_Qwen3TTSCustomVoice(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     text: Any = _UNSET,
     speaker: Any = _UNSET,
@@ -30,7 +29,12 @@ def AILab_Qwen3TTSCustomVoice(
     
     Pack: AILab_QwenTTS
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSCustomVoice() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if text is not _UNSET:
         _kwargs['text'] = text
@@ -50,8 +54,7 @@ def AILab_Qwen3TTSCustomVoice(
     return node(wf, 'AILab_Qwen3TTSCustomVoice', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSCustomVoice_Advanced(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     text: Any = _UNSET,
     speaker: Any = _UNSET,
@@ -77,7 +80,12 @@ def AILab_Qwen3TTSCustomVoice_Advanced(
     
     Pack: AILab_QwenTTS
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSCustomVoice_Advanced() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if text is not _UNSET:
         _kwargs['text'] = text
@@ -115,8 +123,7 @@ def AILab_Qwen3TTSCustomVoice_Advanced(
     return node(wf, 'AILab_Qwen3TTSCustomVoice_Advanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSLoadVoice(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     voice_name: Any = _UNSET,
     custom_path: Any = _UNSET,
@@ -128,7 +135,12 @@ def AILab_Qwen3TTSLoadVoice(
     
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSLoadVoice() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if voice_name is not _UNSET:
         _kwargs['voice_name'] = voice_name
@@ -138,8 +150,7 @@ def AILab_Qwen3TTSLoadVoice(
     return node(wf, 'AILab_Qwen3TTSLoadVoice', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceClone(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     target_text: Any = _UNSET,
     model_size: Any = _UNSET,
@@ -158,7 +169,12 @@ def AILab_Qwen3TTSVoiceClone(
     
     Pack: AILab_QwenTTS
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoiceClone() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if target_text is not _UNSET:
         _kwargs['target_text'] = target_text
@@ -182,8 +198,7 @@ def AILab_Qwen3TTSVoiceClone(
     return node(wf, 'AILab_Qwen3TTSVoiceClone', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceClone_Advanced(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     target_text: Any = _UNSET,
     model_size: Any = _UNSET,
@@ -211,7 +226,12 @@ def AILab_Qwen3TTSVoiceClone_Advanced(
     
     Pack: AILab_QwenTTS
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoiceClone_Advanced() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if target_text is not _UNSET:
         _kwargs['target_text'] = target_text
@@ -253,8 +273,7 @@ def AILab_Qwen3TTSVoiceClone_Advanced(
     return node(wf, 'AILab_Qwen3TTSVoiceClone_Advanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceDesign(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     text: Any = _UNSET,
     instruct: Any = _UNSET,
@@ -270,7 +289,12 @@ def AILab_Qwen3TTSVoiceDesign(
     
     Pack: AILab_QwenTTS
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoiceDesign() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if text is not _UNSET:
         _kwargs['text'] = text
@@ -288,8 +312,7 @@ def AILab_Qwen3TTSVoiceDesign(
     return node(wf, 'AILab_Qwen3TTSVoiceDesign', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceDesign_Advanced(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     text: Any = _UNSET,
     instruct: Any = _UNSET,
@@ -314,7 +337,12 @@ def AILab_Qwen3TTSVoiceDesign_Advanced(
     
     Pack: AILab_QwenTTS
     Returns: audio
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoiceDesign_Advanced() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if text is not _UNSET:
         _kwargs['text'] = text
@@ -350,8 +378,7 @@ def AILab_Qwen3TTSVoiceDesign_Advanced(
     return node(wf, 'AILab_Qwen3TTSVoiceDesign_Advanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceInstruct(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     character: Any = _UNSET,
     style: Any = _UNSET,
@@ -364,7 +391,12 @@ def AILab_Qwen3TTSVoiceInstruct(
     
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE_INSTRUCT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoiceInstruct() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if character is not _UNSET:
         _kwargs['character'] = character
@@ -376,8 +408,7 @@ def AILab_Qwen3TTSVoiceInstruct(
     return node(wf, 'AILab_Qwen3TTSVoiceInstruct', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceInstructZH(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     角色: Any = _UNSET,
     风格: Any = _UNSET,
@@ -390,7 +421,12 @@ def AILab_Qwen3TTSVoiceInstructZH(
     
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE_INSTRUCT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoiceInstructZH() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if 角色 is not _UNSET:
         _kwargs['角色'] = 角色
@@ -402,8 +438,7 @@ def AILab_Qwen3TTSVoiceInstructZH(
     return node(wf, 'AILab_Qwen3TTSVoiceInstructZH', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoicesLibrary(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     reference_audio: Any = _UNSET,
     reference_text: Any = _UNSET,
@@ -422,7 +457,12 @@ def AILab_Qwen3TTSVoicesLibrary(
     
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSVoicesLibrary() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if reference_audio is not _UNSET:
         _kwargs['reference_audio'] = reference_audio
@@ -446,8 +486,7 @@ def AILab_Qwen3TTSVoicesLibrary(
     return node(wf, 'AILab_Qwen3TTSVoicesLibrary', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSWhisperSTT(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     audio: Any = _UNSET,
     model_size: Any = _UNSET,
@@ -461,7 +500,12 @@ def AILab_Qwen3TTSWhisperSTT(
     
     Pack: AILab_QwenTTS_Tools
     Returns: text
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"AILab_Qwen3TTSWhisperSTT() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if audio is not _UNSET:
         _kwargs['audio'] = audio

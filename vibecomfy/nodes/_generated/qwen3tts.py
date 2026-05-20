@@ -6,14 +6,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.templates import node
+from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
 _UNSET = object()
 
 def Qwen3AudioCompare(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     reference_audio: Any = _UNSET,
     generated_audio: Any = _UNSET,
@@ -27,7 +26,12 @@ def Qwen3AudioCompare(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: report
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3AudioCompare() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if reference_audio is not _UNSET:
         _kwargs['reference_audio'] = reference_audio
@@ -41,8 +45,7 @@ def Qwen3AudioCompare(
     return node(wf, 'Qwen3AudioCompare', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3CustomVoice(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     text: Any = _UNSET,
@@ -60,7 +63,12 @@ def Qwen3CustomVoice(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3CustomVoice() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -82,8 +90,7 @@ def Qwen3CustomVoice(
     return node(wf, 'Qwen3CustomVoice', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3DataPrep(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     jsonl_path: Any = _UNSET,
     tokenizer_repo: Any = _UNSET,
@@ -97,7 +104,12 @@ def Qwen3DataPrep(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: processed_jsonl_path
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3DataPrep() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if jsonl_path is not _UNSET:
         _kwargs['jsonl_path'] = jsonl_path
@@ -111,8 +123,7 @@ def Qwen3DataPrep(
     return node(wf, 'Qwen3DataPrep', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3DatasetFromFolder(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     folder_path: Any = _UNSET,
     output_filename: Any = _UNSET,
@@ -125,7 +136,12 @@ def Qwen3DatasetFromFolder(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: jsonl_path
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3DatasetFromFolder() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if folder_path is not _UNSET:
         _kwargs['folder_path'] = folder_path
@@ -137,8 +153,7 @@ def Qwen3DatasetFromFolder(
     return node(wf, 'Qwen3DatasetFromFolder', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3FineTune(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     train_jsonl: Any = _UNSET,
     init_model: Any = _UNSET,
@@ -170,7 +185,12 @@ def Qwen3FineTune(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: model_path, custom_speaker_name
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3FineTune() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if train_jsonl is not _UNSET:
         _kwargs['train_jsonl'] = train_jsonl
@@ -220,8 +240,7 @@ def Qwen3FineTune(
     return node(wf, 'Qwen3FineTune', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3LoadPrompt(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     prompt_file: Any = _UNSET,
     pass_raw: bool = False,
@@ -232,7 +251,12 @@ def Qwen3LoadPrompt(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: prompt
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3LoadPrompt() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if prompt_file is not _UNSET:
         _kwargs['prompt_file'] = prompt_file
@@ -240,8 +264,7 @@ def Qwen3LoadPrompt(
     return node(wf, 'Qwen3LoadPrompt', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3Loader(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     repo_id: Any = _UNSET,
     source: Any = _UNSET,
@@ -256,7 +279,12 @@ def Qwen3Loader(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: model
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3Loader() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if repo_id is not _UNSET:
         _kwargs['repo_id'] = repo_id
@@ -272,8 +300,7 @@ def Qwen3Loader(
     return node(wf, 'Qwen3Loader', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3PromptMaker(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     ref_audio: Any = _UNSET,
@@ -287,7 +314,12 @@ def Qwen3PromptMaker(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: QWEN3_PROMPT
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3PromptMaker() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -301,8 +333,7 @@ def Qwen3PromptMaker(
     return node(wf, 'Qwen3PromptMaker', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3SavePrompt(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     prompt: Any = _UNSET,
     filename: Any = _UNSET,
@@ -314,7 +345,12 @@ def Qwen3SavePrompt(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: filepath
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3SavePrompt() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if prompt is not _UNSET:
         _kwargs['prompt'] = prompt
@@ -324,8 +360,7 @@ def Qwen3SavePrompt(
     return node(wf, 'Qwen3SavePrompt', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3VoiceClone(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     text: Any = _UNSET,
@@ -344,7 +379,12 @@ def Qwen3VoiceClone(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3VoiceClone() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model
@@ -368,8 +408,7 @@ def Qwen3VoiceClone(
     return node(wf, 'Qwen3VoiceClone', _id, pass_raw=pass_raw, **_kwargs)
 
 def Qwen3VoiceDesign(
-    wf: VibeWorkflow,
-    *,
+    *args: VibeWorkflow,
     _id: str | None = None,
     model: Any = _UNSET,
     text: Any = _UNSET,
@@ -384,7 +423,12 @@ def Qwen3VoiceDesign(
     
     Pack: ComfyUI-Qwen3-TTS
     Returns: AUDIO
+    
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
+    if len(args) > 1:
+        raise TypeError(f"Qwen3VoiceDesign() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
     _kwargs: dict[str, Any] = {}
     if model is not _UNSET:
         _kwargs['model'] = model

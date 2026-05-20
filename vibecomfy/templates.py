@@ -14,6 +14,7 @@ from vibecomfy.handles import Handle
 from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output, ready_node, ready_workflow
 from vibecomfy.workflow import VibeInput, VibeWorkflow
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
+from vibecomfy.workflow_context import _current_workflow_or_raise
 
 
 _OUTPUT_KIND_HEURISTIC: dict[str, str] = {
@@ -353,6 +354,7 @@ class ReadyMetadata:
         output_prefix: str | None = None,
         edit_guide_extra: str | None = None,
         requirements: Mapping[str, Any] | None = None,
+        custom_node_packs: Mapping[str, Any] | None = None,
         **extras: Any,
     ) -> dict[str, Any]:
         source_path = _caller_source_path()
@@ -379,7 +381,14 @@ class ReadyMetadata:
             "model_assets": model_assets,
             "edit_guide": _derive_edit_guide(inputs, edit_guide_extra),
             "requirements": derived_requirements,
+            "source_role": "materialized_ready_python_template",
         }
+        if custom_node_packs:
+            metadata["custom_node_packs"] = {
+                str(name): dict(value)
+                for name, value in custom_node_packs.items()
+                if isinstance(value, Mapping)
+            }
         if "coverage_tier" not in extras and isinstance(coverage_row.get("coverage_tier"), str):
             metadata["coverage_tier"] = coverage_row["coverage_tier"]
         source_workflow = _derive_source_workflow(extras, coverage_row, source_path)
@@ -817,6 +826,7 @@ __all__ = [
     "ModelAsset",
     "ReadyMetadata",
     "_at",
+    "_current_workflow_or_raise",
     "_derive_output_kind",
     "finalize",
     "finalize_ready",

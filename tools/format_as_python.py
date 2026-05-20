@@ -42,7 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # Top-of-file generator marker.
 GENERATED_HEADER = (
     "# vibecomfy: generated — converted by tools/convert_ready_templates.py\n"
-    "# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`\n"
+    "# Edits will be overwritten on regeneration. Put the manual opt-out\n"
     "# marker on the first line if hand-editing is required.\n"
 )
 
@@ -609,6 +609,8 @@ def _apply_overrides(nodes: dict, edges_in: dict, patches: list[dict]) -> None:
 # This definition OVERRIDES the legacy ``format_as_python`` above.
 # All callers (CLI, tests, driver scripts) reach this path, which delegates
 # to the canonical ``vibecomfy.porting.emitter.emit_ready_template_python``.
+# v2.6 context-bound build emission is implemented there, not in the legacy
+# formatter retained above.
 def format_as_python(
     workflow,
     *,

@@ -106,12 +106,20 @@ def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FailingClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
-    with pytest.raises(RuntimeError, match="Workflow queue failed: runtime rejected prompt"):
-        asyncio.run(runtime_run_module.run(_workflow(), server_url="http://runtime.test"))
+    workflow = _workflow()
+    workflow.metadata["id_map"] = {"save": "1"}
+    workflow.nodes["1"].metadata["source_id"] = "7"
+
+    with pytest.raises(RuntimeError, match="Workflow queue failed: runtime rejected prompt") as exc_info:
+        asyncio.run(runtime_run_module.run(workflow, server_url="http://runtime.test"))
 
     assert queued_prompts == [
         {"1": {"class_type": "SaveImage", "inputs": {"filename_prefix": "test"}}}
     ]
+    message = str(exc_info.value)
+    assert "id_map=" in message
+    assert "'save': '1'" in message
+    assert "'7': '1'" in message
 
 
 def test_run_managed_server_uses_workflow_session_config(

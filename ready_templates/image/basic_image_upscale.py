@@ -1,50 +1,54 @@
-# vibecomfy: manual
-"""Core ComfyUI image upscale template for Reigh image-upscale parity.
-
-Output: unknown.
-
-Source:  ComfyUI core LoadImage -> ImageScaleBy -> SaveImage
-"""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import ImageScaleBy, LoadImage, SaveImage
+
+
 MODELS = {}
 
-PUBLIC_INPUTS = {}
+PUBLIC_INPUTS = {
+    'image': InputSpec(node=ref('loadimage'), field='image', default='image_upscale_input.png'),
+    'input_image': InputSpec(node=ref('loadimage'), field='image', default='image_upscale_input.png'),
+}
 
 READY_METADATA = ReadyMetadata.build(
-    template_id='basic_image_upscale',
     capability='image_upscale',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
-    output_prefix='',
-    provenance={'source_workflow': 'ComfyUI core LoadImage -> ImageScaleBy -> SaveImage', 'source_role': 'reigh_parity_manual_template', 'approach': 'Core ComfyUI lanczos ImageScaleBy; maps Reigh image-upscale parameters without external API calls.'},
-    coverage_tier='production_parity_candidate',
+    approach='Core ComfyUI lanczos ImageScaleBy; maps Reigh image-upscale parameters without external API calls.',
     runtime_note='This preserves the task contract but is not FlashVSR/RealESRGAN model super-resolution.',
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    provenance={'source_workflow': 'ready_templates/image/basic_image_upscale.py'},
 )
 
 def build() -> VibeWorkflow:
-    wf = new_workflow(READY_METADATA, source_path=__file__)
-    # ════ SAMPLING ════
-    image = node(wf, "LoadImage", "1", image="image_upscale_input.png")
-    # ════ IMAGE PREP ════
-    upscaled = node(
-        wf,
-        "ImageScaleBy",
-        "2",
-        image=image.out('IMAGE'),
-        upscale_method="lanczos",
-        scale_by=2.0,
-    )
-    node(wf, "SaveImage", "3", filename_prefix="image-upscale", images=upscaled.out(0))
+    """Build the workflow (auto-generated)."""
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='3',
-        source_path=__file__,
-    )
+        loadimage = LoadImage(
+            _id='1',
+            image='image_upscale_input.png',
+            _outputs=('IMAGE', 'MASK'),
+        )
+        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
+
+        imagescaleby = ImageScaleBy(
+            _id='2',
+            upscale_method='lanczos',
+            scale_by=2.0,
+            image=loadimage.out('IMAGE'),
+        )
+        wf.metadata.setdefault('id_map', {})['imagescaleby'] = imagescaleby.node.id
+
+        saveimage = SaveImage(
+            _id='3',
+            filename_prefix='image-upscale',
+            images=imagescaleby,
+        )
+        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='image-upscale')
+

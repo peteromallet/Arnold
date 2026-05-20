@@ -13,12 +13,6 @@
   ],
   [
     "CLIPLoader",
-    "device",
-    "'default'",
-    1
-  ],
-  [
-    "CLIPLoader",
     "type",
     "'flux2'",
     1
@@ -28,18 +22,6 @@
     "text",
     "''",
     2
-  ],
-  [
-    "EmptyFlux2LatentImage",
-    "batch_size",
-    "1",
-    1
-  ],
-  [
-    "Flux2Scheduler",
-    "steps",
-    "20",
-    1
   ],
   [
     "KSamplerSelect",
@@ -69,12 +51,6 @@
     "UNETLoader",
     "unet_name",
     "'flux-2-klein-base-9b-fp8.safetensors'",
-    1
-  ],
-  [
-    "UNETLoader",
-    "weight_dtype",
-    "'default'",
     1
   ],
   [

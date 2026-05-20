@@ -111,6 +111,25 @@ class VibeWorkflow:
     requirements: WorkflowRequirements = field(default_factory=WorkflowRequirements)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __enter__(self) -> "VibeWorkflow":
+        from vibecomfy.workflow_context import bind_workflow
+
+        if getattr(self, "_workflow_context_token", None) is not None:
+            raise RuntimeError(
+                "Nested workflow contexts not supported. The outer `with new_workflow(...)` "
+                "block is still active."
+            )
+        self._workflow_context_token = bind_workflow(self)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        from vibecomfy.workflow_context import reset_workflow
+
+        token = getattr(self, "_workflow_context_token", None)
+        if token is not None:
+            reset_workflow(token)
+            self._workflow_context_token = None
+
     def set_prompt(self, value: str) -> "VibeWorkflow":
         return self.set_input("prompt", value)
 

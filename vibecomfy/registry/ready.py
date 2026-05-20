@@ -176,7 +176,7 @@ def _classify_ready_template_ast(tree: ast.AST) -> dict[str, Any]:
             has_build = True
         if isinstance(node, ast.Call):
             call_name = _ast_call_name(node.func)
-            if call_name.endswith("VibeWorkflow"):
+            if call_name.endswith("VibeWorkflow") or call_name == "new_workflow":
                 constructs_vibeworkflow = True
             if call_name == "workflow_from_ready":
                 forks_ready_workflow = True

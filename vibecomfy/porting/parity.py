@@ -13,6 +13,11 @@ from typing import Any
 
 from vibecomfy.testing.canonical import canonical_equal
 
+try:
+    from vibecomfy.porting.object_info import class_defaults
+except Exception:  # pragma: no cover - object-info availability is environment-dependent
+    class_defaults = None  # type: ignore[assignment]
+
 
 # UI-only node classes the converter strips at IR build. Match the
 # stripped set in `tools/format_as_python.py`.
@@ -22,6 +27,20 @@ UI_ONLY = frozenset(
         "MarkdownNote",
     }
 )
+
+CURATED_SCHEMA_DEFAULTS: dict[str, dict[str, Any]] = {
+    "UNETLoader": {"weight_dtype": "default"},
+    "CLIPLoader": {"device": "default"},
+    "KSampler": {"scheduler": "simple", "denoise": 1},
+    "KSamplerAdvanced": {"scheduler": "simple"},
+    "EmptyLatentImage": {"batch_size": 1},
+    "EmptySD3LatentImage": {"batch_size": 1},
+    "EmptyFlux2LatentImage": {"batch_size": 1},
+    "ImageScale": {"crop": "none"},
+    "ImageResizeKJv2": {"crop": "none"},
+    "VHS_VideoCombine": {"format": "auto", "codec": "auto"},
+    "WanVideoSampler": {"shift": 8},
+}
 
 
 def _is_link(value: Any) -> bool:
@@ -105,6 +124,16 @@ def _is_runtime_ignored_input(key: str, value: Any) -> bool:
     return False
 
 
+def _is_schema_default_input(class_type: str, key: str, value: Any) -> bool:
+    defaults = dict(CURATED_SCHEMA_DEFAULTS.get(class_type, {}))
+    if class_defaults is not None:
+        try:
+            defaults.update(class_defaults(class_type))
+        except Exception:
+            pass
+    return key in defaults and value == defaults[key]
+
+
 def widget_value_counter(
     api: dict,
     *,
@@ -123,6 +152,8 @@ def widget_value_counter(
             if canonical is None:
                 continue  # UI-only widget; drop from both sides for stable equivalence
             if _is_runtime_ignored_input(canonical, value):
+                continue
+            if _is_schema_default_input(class_type, canonical, value):
                 continue
             # Some legacy API fixtures contain both widget_N and the schema
             # alias for the same Comfy input. Generated Python intentionally
@@ -241,6 +272,8 @@ def _canonicalize_api_inputs(
             if canonical is None:
                 continue
             if _is_runtime_ignored_input(canonical, value):
+                continue
+            if _is_schema_default_input(class_type, canonical, value):
                 continue
             if not _is_link(value):
                 value_repr = repr(value)

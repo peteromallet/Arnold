@@ -1,106 +1,194 @@
-# vibecomfy: manual
-"""Wan 2.2 14B single-frame T2I template for Reigh parity.
-
-Output: unknown.
-
-Source:  ComfyUI-WanVideoWrapper/example_workflows/wanvideo_2_2_14B_Pusa_extension_example_01.json
-
-Packs:   ComfyUI-WanVideoWrapper
-"""
+# vibecomfy: generated - converted by tools/convert_ready_templates.py
+# Edits will be overwritten on regeneration. Put the manual opt-out
+# marker on the first line if hand-editing is required.
+"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.nodes.core import SaveImage
+from vibecomfy.nodes.wanvideowrapper import WanVideoBlockSwap, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoVAELoader
 
-DEFAULT_PROMPT = "A compact cinematic still of a red cube on a clean white tabletop."
-DEFAULT_NEGATIVE = "fading, breaking, shot cuts, jumpcuts, blurry, noise, distorted"
+
+BASE_PRECISION = 'fp16'
+BATCHED_CFG = ''
+DEFAULT_FRAMES = 1
+DEFAULT_NEGATIVE = 'fading, breaking, shot cuts, jumpcuts, blurry, noise, distorted'
+DEFAULT_PROMPT = 'A compact cinematic still of a red cube on a clean white tabletop.'
+DEFAULT_SEED = 12345
+GUIDE_STRENGTH = 3.0
+GUIDE_STRENGTH_2 = 1.0
+MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
+MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_3 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+MODEL_NAME_4 = 'WanVideo\\2_2\\Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_5 = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
+QUANTIZATION = 'fp8_e4m3fn_scaled'
+SCHEDULER = 'euler'
+
+
 MODELS = {
-    "wan2_2_t2v_a14b_high": ModelAsset(
-        filename="Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors",
-        url="https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/T2V/Wan2_2-T2V-A14B_HIGH_fp8_e4m3fn_scaled_KJ.safetensors",
-        subdir="diffusion_models/WanVideo/2_2",
-        sha256='15384a1da9b5aa463464ba50a596b84f6c0929bfb72ec47df6bb48cb2e0b6f0c',
-        hf_revision='5571ff9d81a631ee97946a703e94911d63214c44',
-        size_bytes=15001361458,
-    ),
-    "wan2_2_t2v_a14b_low": ModelAsset(
-        filename="Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors",
-        url="https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/T2V/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors",
-        subdir="diffusion_models/WanVideo/2_2",
-        sha256='ce74fff05e37f995a0ae845f53510e43f98b838f4e75d846eb3e2929e7f555cc',
-        hf_revision='5571ff9d81a631ee97946a703e94911d63214c44',
-        size_bytes=15001361458,
-    ),
-    "wan_lightx2v_lora": ModelAsset(
-        filename="lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
-        url="https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
-        subdir="loras/WanVideo/Lightx2v",
-        sha256='37d49218544b9e0bfb8e831d1399f451fbc5068aff6474f42a90c928363c3573',
-        hf_revision='87badb1f794c15daf51db60838a433ca08bb218f',
-        size_bytes=630697104,
-    ),
-    "wan_vae": ModelAsset(
-        filename="Wan2_1_VAE_bf16.safetensors",
-        url="https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors",
-        subdir="vae",
-        sha256='1ab9a32cc2c740f6e39d80d367ce5dcc28db8c71b79b28670546b8973e9d75f9',
-        hf_revision='87badb1f794c15daf51db60838a433ca08bb218f',
-        size_bytes=253806278,
-    ),
-    "wan_text_encoder": ModelAsset(
-        filename="umt5-xxl-enc-bf16.safetensors",
-        url="https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors",
-        subdir="text_encoders",
-        sha256='4fa971faf306cad919033d5bbe192e571dc08452f800cbf2ec3c73977c01b2cc',
-        hf_revision='87badb1f794c15daf51db60838a433ca08bb218f',
-        size_bytes=11361845464,
-    ),
+    'wan2_2_t2v_a14b_high_fp8_e4m3fn_scaled_kj': ModelAsset(filename='Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors', url='https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/T2V/Wan2_2-T2V-A14B_HIGH_fp8_e4m3fn_scaled_KJ.safetensors', sha256='15384a1da9b5aa463464ba50a596b84f6c0929bfb72ec47df6bb48cb2e0b6f0c', hf_revision='5571ff9d81a631ee97946a703e94911d63214c44', size_bytes=15001361458, subdir='diffusion_models/WanVideo/2_2'),
+    'wan2_2_t2v_a14b_low_fp8_e4m3fn_scaled_kj': ModelAsset(url='https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/T2V/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors', sha256='ce74fff05e37f995a0ae845f53510e43f98b838f4e75d846eb3e2929e7f555cc', hf_revision='5571ff9d81a631ee97946a703e94911d63214c44', size_bytes=15001361458, subdir='diffusion_models/WanVideo/2_2'),
+    'lightx2v_t2v_14b_cfg_step_distill_v2_lora_rank64_bf16': ModelAsset(url='https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors', sha256='37d49218544b9e0bfb8e831d1399f451fbc5068aff6474f42a90c928363c3573', hf_revision='87badb1f794c15daf51db60838a433ca08bb218f', size_bytes=630697104, subdir='loras/WanVideo/Lightx2v'),
+    'wan2_1_vae_bf16': ModelAsset(url='https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors', sha256='1ab9a32cc2c740f6e39d80d367ce5dcc28db8c71b79b28670546b8973e9d75f9', hf_revision='87badb1f794c15daf51db60838a433ca08bb218f', size_bytes=253806278, subdir='vae'),
+    'umt5_xxl_enc_bf16': ModelAsset(url='https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors', sha256='4fa971faf306cad919033d5bbe192e571dc08452f800cbf2ec3c73977c01b2cc', hf_revision='87badb1f794c15daf51db60838a433ca08bb218f', size_bytes=11361845464, subdir='text_encoders'),
 }
 
-PUBLIC_INPUTS = {}
+PUBLIC_INPUTS = {
+    'model': InputSpec(node=ref('wanvideovaeloader'), field='model_name', default=MODEL_NAME_3),
+    'seed': InputSpec(node=ref('wanvideosampler'), field='seed', default=DEFAULT_SEED),
+    'width': InputSpec(node=ref('wanvideoemptyembeds'), field='width', default=832),
+    'height': InputSpec(node=ref('wanvideoemptyembeds'), field='height', default=480),
+}
 
 READY_METADATA = ReadyMetadata.build(
-    template_id='wanvideo_wrapper_22_14b_t2i',
     capability='text_to_image_single_frame',
     inputs=PUBLIC_INPUTS,
     models=MODELS,
-    output_prefix='',
     requirements={'custom_nodes': ['ComfyUI-WanVideoWrapper']},
-    provenance={'approach': 'Wan 2.2 14B high/low two-phase text-to-video graph decoded as one image frame', 'smoke_resolution': '832x480x1_frame', 'source_role': 'reigh_parity_manual_template', 'source_workflow': 'ComfyUI-WanVideoWrapper/example_workflows/wanvideo_2_2_14B_Pusa_extension_example_01.json'},
-    coverage_tier='production_parity_candidate',
+    custom_node_packs={'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEmptyEmbeds', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncodeCached', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
+    approach='Wan 2.2 14B high/low two-phase text-to-video graph decoded as one image frame',
+    smoke_resolution='832x480x1_frame',
     runtime_note='Intended to match Reigh wan_2_2_t2i, which forces video_length=1 and returns PNG.',
-    vibecomfy_version='0.1.0',
-    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+    provenance={'source_workflow': 'ready_templates/video/wanvideo_wrapper_22_14b_t2i.py'},
 )
 
 def build() -> VibeWorkflow:
-    wf = new_workflow(READY_METADATA, source_path=__file__)
+    """Build the workflow (auto-generated)."""
+    with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-    # ════ LOADERS ════
-    vae = node(wf, "WanVideoVAELoader", "38", model_name="wanvideo\\Wan2_1_VAE_bf16.safetensors", precision="bf16")
-    # ════ SAMPLING ════
-    block_swap = node(wf, "WanVideoBlockSwap", "39", blocks_to_swap=30, offload_img_emb=False, offload_txt_emb=False, use_non_blocking=False, vace_blocks_to_swap=0, prefetch_blocks=0, block_swap_debug=False)
-    high_lora = node(wf, "WanVideoLoraSelectMulti", "98", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", lora_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", strength_0=1.0, lora_1="none", strength_1=1, lora_2="none", strength_2=1, lora_3="none", strength_3=1, lora_4="none", strength_4=1, low_mem_load=False, merge_loras=False)
-    low_lora = node(wf, "WanVideoLoraSelectMulti", "93", widget_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", lora_0="WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors", strength_0=1.0, lora_1="none", strength_1=1, lora_2="none", strength_2=1, lora_3="none", strength_3=1, lora_4="none", strength_4=1, low_mem_load=False, merge_loras=False)
-    high_model_raw = node(wf, "WanVideoModelLoader", "22", model="WanVideo\\2_2\\Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors", widget_1="fp16", base_precision="fp16", quantization="fp8_e4m3fn_scaled", load_device="offload_device", attention_mode="sdpa")
-    low_model_raw = node(wf, "WanVideoModelLoader", "92", model="WanVideo\\2_2\\Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors", widget_1="fp16", base_precision="fp16", quantization="fp8_e4m3fn_scaled", load_device="offload_device", attention_mode="sdpa")
-    high_model_lora = node(wf, "WanVideoSetLoRAs", "79", model=high_model_raw.out(0), lora=high_lora.out(0))
-    low_model_lora = node(wf, "WanVideoSetLoRAs", "80", model=low_model_raw.out(0), lora=low_lora.out(0))
-    high_model = node(wf, "WanVideoSetBlockSwap", "86", model=high_model_lora.out(0), block_swap_args=block_swap.out(0))
-    low_model = node(wf, "WanVideoSetBlockSwap", "91", model=low_model_lora.out(0), block_swap_args=block_swap.out(0))
-    embeds = node(wf, "WanVideoEmptyEmbeds", "78", widget_0=832, widget_1=480, widget_2=1, width=832, height=480, num_frames=1)
-    # ════ TEXT CONDITIONING ════
-    text = node(wf, "WanVideoTextEncodeCached", "16", model_name=MODELS["wan_text_encoder"].filename, precision="bf16", positive_prompt=DEFAULT_PROMPT, negative_prompt=DEFAULT_NEGATIVE, quantization="disabled", use_disk_cache=True, device="gpu")
-    high_samples = node(wf, "WanVideoSampler", "27", steps=6,  cfg=3.0, shift=5, seed=12345,force_offload=True, scheduler="euler", riflex_freq_index=0, denoise_strength=1, batched_cfg="", rope_function="comfy", start_step=0,  add_noise_to_samples=False, model=high_model.out(0), image_embeds=embeds.out(0), text_embeds=text.out(0), end_step=2)
-    low_samples = node(wf, "WanVideoSampler", "87", steps=6,  cfg=1.0, shift=5, seed=12345,force_offload=True, scheduler="euler", riflex_freq_index=0, denoise_strength=1, batched_cfg="", rope_function="comfy",  end_step=-1, add_noise_to_samples=False, model=low_model.out(0), image_embeds=embeds.out(0), text_embeds=text.out(0), samples=high_samples.out(0), start_step=2)
-    # ════ DECODE ════
-    decoded = node(wf, "WanVideoDecode", "28", enable_vae_tiling=False, tile_x=272, tile_y=272, tile_stride_x=144, tile_stride_y=128, normalization="default", samples=low_samples.out(0), vae=vae.out(0))
-    node(wf, "SaveImage", "60", filename_prefix="Wan-2-2-T2I", images=decoded.out(0))
+        wanvideotextencodecached = WanVideoTextEncodeCached(
+            _id='16',
+            model_name=MODEL_NAME,
+            positive_prompt=DEFAULT_PROMPT,
+            negative_prompt=DEFAULT_NEGATIVE,
+            _outputs=('TEXT_EMBEDS', 'NEGATIVE_TEXT_EMBEDS', 'POSITIVE_PROMPT'),
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideotextencodecached'] = wanvideotextencodecached.node.id
 
-    return finalize(
-        wf,
-        PUBLIC_INPUTS,
-        READY_METADATA,
-        output_node='',
-        source_path=__file__,
-    )
+        wanvideomodelloader = WanVideoModelLoader(
+            _id='22',
+            model=MODEL_NAME_2,
+            base_precision=BASE_PRECISION,
+            quantization=QUANTIZATION,
+            widget_1='fp16',
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideomodelloader'] = wanvideomodelloader.node.id
+
+        wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=MODEL_NAME_3)
+        wf.metadata.setdefault('id_map', {})['wanvideovaeloader'] = wanvideovaeloader.node.id
+        wanvideoblockswap = WanVideoBlockSwap(_id='39', blocks_to_swap=30)
+        wf.metadata.setdefault('id_map', {})['wanvideoblockswap'] = wanvideoblockswap.node.id
+        wanvideoemptyembeds = WanVideoEmptyEmbeds(
+            _id='78',
+            height=480,
+            num_frames=DEFAULT_FRAMES,
+            widget_0=832,
+            widget_1=480,
+            widget_2=1,
+            width=832,
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideoemptyembeds'] = wanvideoemptyembeds.node.id
+
+        wanvideomodelloader_2 = WanVideoModelLoader(
+            _id='92',
+            model=MODEL_NAME_4,
+            base_precision=BASE_PRECISION,
+            quantization=QUANTIZATION,
+            widget_1='fp16',
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideomodelloader_2'] = wanvideomodelloader_2.node.id
+
+        wanvideoloraselectmulti = WanVideoLoraSelectMulti(
+            _id='93',
+            lora_0=MODEL_NAME_5,
+            merge_loras=False,
+            widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideoloraselectmulti'] = wanvideoloraselectmulti.node.id
+
+        wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
+            _id='98',
+            lora_0=MODEL_NAME_5,
+            merge_loras=False,
+            widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideoloraselectmulti_2'] = wanvideoloraselectmulti_2.node.id
+
+        wanvideosetloras = WanVideoSetLoRAs(
+            _id='79',
+            lora=wanvideoloraselectmulti_2,
+            model=wanvideomodelloader,
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideosetloras'] = wanvideosetloras.node.id
+
+        wanvideosetloras_2 = WanVideoSetLoRAs(
+            _id='80',
+            lora=wanvideoloraselectmulti,
+            model=wanvideomodelloader_2,
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideosetloras_2'] = wanvideosetloras_2.node.id
+
+        wanvideosetblockswap = WanVideoSetBlockSwap(
+            _id='86',
+            block_swap_args=wanvideoblockswap,
+            model=wanvideosetloras,
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideosetblockswap'] = wanvideosetblockswap.node.id
+
+        wanvideosetblockswap_2 = WanVideoSetBlockSwap(
+            _id='91',
+            block_swap_args=wanvideoblockswap,
+            model=wanvideosetloras_2,
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideosetblockswap_2'] = wanvideosetblockswap_2.node.id
+
+        wanvideosampler = WanVideoSampler(
+            _id='27',
+            steps=6,
+            cfg=GUIDE_STRENGTH,
+            seed=DEFAULT_SEED,
+            scheduler=SCHEDULER,
+            batched_cfg=BATCHED_CFG,
+            end_step=2,
+            image_embeds=wanvideoemptyembeds,
+            model=wanvideosetblockswap,
+            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
+            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideosampler'] = wanvideosampler.node.id
+
+        wanvideosampler_2 = WanVideoSampler(
+            _id='87',
+            steps=6,
+            cfg=GUIDE_STRENGTH_2,
+            seed=DEFAULT_SEED,
+            scheduler=SCHEDULER,
+            batched_cfg=BATCHED_CFG,
+            start_step=2,
+            image_embeds=wanvideoemptyembeds,
+            model=wanvideosetblockswap_2,
+            samples=wanvideosampler.out('SAMPLES'),
+            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
+            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideosampler_2'] = wanvideosampler_2.node.id
+
+        wanvideodecode = WanVideoDecode(
+            _id='28',
+            normalization='default',
+            samples=wanvideosampler_2.out('SAMPLES'),
+            vae=wanvideovaeloader,
+        )
+        wf.metadata.setdefault('id_map', {})['wanvideodecode'] = wanvideodecode.node.id
+
+        # Outputs
+        saveimage = SaveImage(
+            _id='60',
+            filename_prefix='Wan-2-2-T2I',
+            images=wanvideodecode,
+        )
+        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
+

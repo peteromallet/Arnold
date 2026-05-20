@@ -34,6 +34,10 @@ OVERRIDES_INCLUDE: set[str] = set()
 OVERRIDES_EXCLUDE: set[str] = set()
 
 
+def _workflow_queue_failure_message(workflow: VibeWorkflow, exc: Exception) -> str:
+    return f"Workflow queue failed: {exc}; id_map={workflow.id_map()}"
+
+
 def _node_packs_from_requirements(workflow: VibeWorkflow):
     from vibecomfy.node_packs import KNOWN_NODE_PACKS, resolve_node_packs
 
@@ -290,7 +294,7 @@ class EmbeddedSession:
                 raise
             except Exception as exc:
                 stop_reason = "exception"
-                raise RuntimeError(f"Workflow queue failed: {exc}") from exc
+                raise RuntimeError(_workflow_queue_failure_message(workflow, exc)) from exc
         finally:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)
@@ -449,7 +453,7 @@ class ServerSession:
                 raise
             except Exception as exc:
                 stop_reason = "exception"
-                raise RuntimeError(f"Workflow queue failed: {exc}") from exc
+                raise RuntimeError(_workflow_queue_failure_message(workflow, exc)) from exc
         finally:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)

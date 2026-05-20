@@ -182,7 +182,7 @@ def _load_lockfile() -> set[str]:
 
 
 def _extract_node_classes(source: str, file_path: Path) -> list[tuple[str, str, int]]:
-    """Extract (class_name, node_id, lineno) for every node(wf, ...) call."""
+    """Extract (class_name, node_id, lineno) for every raw node call."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -193,14 +193,15 @@ def _extract_node_classes(source: str, file_path: Path) -> list[tuple[str, str, 
     for node_ in ast.walk(tree):
         if not isinstance(node_, ast.Call):
             continue
-        # Match node(wf, 'ClassName', 'id', ...) or _node(wf, 'ClassName', 'id', ...)
+        # Match node(wf, 'ClassName', 'id', ...), _node(...), or the v2.6
+        # ready-template alias raw_call(wf, 'ClassName', 'id', ...).
         func = node_.func
         func_name: str | None = None
         if isinstance(func, ast.Name):
             func_name = func.id
         elif isinstance(func, ast.Attribute):
             func_name = func.attr
-        if func_name not in ("node", "_node"):
+        if func_name not in ("node", "_node", "raw_call"):
             continue
         if len(node_.args) < 2:
             continue

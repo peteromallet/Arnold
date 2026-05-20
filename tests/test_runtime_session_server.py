@@ -61,6 +61,39 @@ def test_server_session_two_runs_share_one_subprocess(
     assert [post[0] for post in FakeAsyncClient.posts].count("http://127.0.0.1:8200/prompt") == 2
 
 
+def test_server_session_queue_failure_includes_id_map(
+    fake_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    from tests._runtime_session_helpers import FakeResponse
+
+    async def post(self, url: str, json: dict | None = None):
+        if url.endswith("/prompt"):
+            raise RuntimeError("queue refused prompt")
+        return FakeResponse(200, {})
+
+    monkeypatch.setattr(FakeAsyncClient, "post", post)
+
+    workflow = _workflow()
+    workflow.metadata["id_map"] = {"sampler": "2"}
+    workflow.nodes["2"].metadata["source_id"] = "7"
+
+    async def run_case() -> None:
+        session = ServerSession(SessionConfig(port=8200))
+        try:
+            with pytest.raises(RuntimeError, match="Workflow queue failed: queue refused prompt") as exc_info:
+                await session.run(workflow)
+            message = str(exc_info.value)
+            assert "id_map=" in message
+            assert "'sampler': '2'" in message
+            assert "'7': '2'" in message
+        finally:
+            await session.stop()
+
+    asyncio.run(run_case())
+
+
 def test_server_session_waits_for_history_and_records_outputs(
     fake_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
