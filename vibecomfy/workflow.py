@@ -271,6 +271,10 @@ class VibeWorkflow:
         return node
 
     def node(self, class_type: str, **kwargs: Any) -> "_NodeBuilder":
+        pass_raw = bool(kwargs.pop("pass_raw", False))
+        from vibecomfy.templates import coerce_node_kwargs
+
+        kwargs = coerce_node_kwargs(self, class_type, kwargs, pass_raw=pass_raw)
         node = self.add_node(class_type)
         for key, value in kwargs.items():
             if isinstance(value, Handle):

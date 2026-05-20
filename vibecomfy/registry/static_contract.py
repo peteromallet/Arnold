@@ -16,6 +16,15 @@ from vibecomfy.metadata import (
 
 
 _UNSUPPORTED = object()
+_FILENAME_KWARGS = frozenset({
+    "unet_name",
+    "vae_name",
+    "clip_name",
+    "clip_name1",
+    "clip_name2",
+    "lora_name",
+    "ckpt_name",
+})
 
 
 def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
@@ -386,7 +395,7 @@ def _infer_common_input_contracts(
     calls = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and _call_name(node.func) in {"_node", "node", "ready_node"}
+        if isinstance(node, ast.Call) and _is_static_node_call(node)
     ]
     for call in sorted(calls, key=lambda item: (getattr(item, "lineno", 0), getattr(item, "col_offset", 0))):
         node_info = _runtime_node_call(call, next_auto_id, assignments)
@@ -443,6 +452,10 @@ def _runtime_node_call(node: ast.Call, next_auto_id: int, assignments: dict[str,
         )
         node_id = str(raw_node_id) if isinstance(raw_node_id, (str, int)) and raw_node_id is not _UNSUPPORTED else str(next_auto_id)
         keyword_inputs = _literal_keyword_inputs(node, assignments=assignments)
+    elif _wrapper_class_type(call_name) is not None:
+        class_type = _wrapper_class_type(call_name)
+        node_id = str(next_auto_id)
+        keyword_inputs = _literal_keyword_inputs(node, excluded={"pass_raw"}, assignments=assignments)
     else:
         return None
     if not isinstance(class_type, str) or not isinstance(node_id, str):
@@ -460,8 +473,32 @@ def _literal_keyword_inputs(node: ast.Call, *, excluded: set[str] | None = None,
         value = _literal_value(keyword.value, lookup)
         if value is _UNSUPPORTED:
             continue
+        value = _coerce_static_node_value(keyword.arg, value)
         result[keyword.arg] = value
     return result
+
+
+def _coerce_static_node_value(keyword: str, value: Any) -> Any:
+    if isinstance(value, dict) and keyword in _FILENAME_KWARGS and isinstance(value.get("filename"), str):
+        return value["filename"]
+    if isinstance(value, dict) and "default" in value and {"node", "field"}.issubset(value):
+        return value.get("default")
+    return value
+
+
+def _is_static_node_call(node: ast.Call) -> bool:
+    call_name = _call_name(node.func)
+    return call_name in {"_node", "node", "ready_node"} or _wrapper_class_type(call_name) is not None
+
+
+def _wrapper_class_type(call_name: str) -> str | None:
+    if not call_name or call_name in {"InputSpec", "ModelAsset", "ReadyMetadata"}:
+        return None
+    try:
+        from vibecomfy.porting.object_info import get_class
+    except ImportError:
+        return None
+    return call_name if get_class(call_name) is not None else None
 
 
 def _common_input_name(class_type: str, field: str, value: Any) -> str | None:

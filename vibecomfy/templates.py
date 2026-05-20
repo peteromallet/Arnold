@@ -6,6 +6,7 @@ import inspect
 from pathlib import Path
 from typing import Any, Mapping
 
+from vibecomfy.handles import Handle
 from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output, ready_node, ready_workflow
 from vibecomfy.workflow import VibeInput, VibeWorkflow
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
@@ -23,6 +24,15 @@ _OUTPUT_KIND_HEURISTIC: dict[str, str] = {
 }
 
 _MODEL_DISAGREEMENT_WARNED = False
+_FILENAME_KWARGS = frozenset({
+    "unet_name",
+    "vae_name",
+    "clip_name",
+    "clip_name1",
+    "clip_name2",
+    "lora_name",
+    "ckpt_name",
+})
 
 
 def _category_qualified_template_id(template_id: str, source_path: str | None) -> str:
@@ -85,8 +95,78 @@ def node(
     supplied it is preserved as the runtime node id for back-compat.
     """
     explicit_outputs = kwargs.pop("_outputs", None)
+    pass_raw = bool(kwargs.pop("pass_raw", False))
     outputs = tuple(explicit_outputs) if explicit_outputs is not None else _normalized_output_names(class_type)
+    kwargs = coerce_node_kwargs(wf, class_type, kwargs, pass_raw=pass_raw)
+    if pass_raw:
+        kwargs["pass_raw"] = True
     return ready_node(wf, class_type, source_id=str(_id) if _id is not None else None, outputs=outputs or None, extras=_extras, **kwargs)
+
+
+def coerce_node_kwargs(
+    wf: VibeWorkflow,
+    class_type: str,
+    kwargs: Mapping[str, Any],
+    *,
+    pass_raw: bool = False,
+) -> dict[str, Any]:
+    """Normalize v2.5 natural-form values before a node is created.
+
+    This is deliberately shared by ready-template ``node(...)`` and raw
+    ``wf.node(...)`` so generated wrappers remain thin and behavior is uniform.
+    """
+    if pass_raw:
+        return dict(kwargs)
+    coerced: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if _is_node_builder(value):
+            value = _auto_resolve_node_builder(value)
+        if isinstance(value, ModelAsset) and key in _FILENAME_KWARGS:
+            value = value.filename
+        elif isinstance(value, InputSpec):
+            if key in _FILENAME_KWARGS:
+                raise TypeError(
+                    f"expected str for {key}, got InputSpec; did you mean InputSpec.default?"
+                )
+            value = value.default
+        if key in _FILENAME_KWARGS and not isinstance(value, str):
+            raise TypeError(f"expected str for {key}, got {type(value).__name__}")
+        coerced[key] = value
+    return coerced
+
+
+def _is_node_builder(value: Any) -> bool:
+    node = getattr(value, "node", None)
+    return node is not None and hasattr(node, "class_type") and hasattr(node, "id") and callable(getattr(value, "out", None))
+
+
+def _auto_resolve_node_builder(value: Any) -> Handle:
+    node = value.node
+    class_type = str(node.class_type)
+    try:
+        from vibecomfy.porting.object_info import class_has_list_output, class_output_count, output_names
+    except ImportError as exc:
+        raise ValueError(
+            f"{class_type} node {node.id!r} requires explicit .out(...) because object_info schema is unavailable"
+        ) from exc
+
+    names = [str(name).strip().replace(" ", "_").upper() for name in output_names(class_type)]
+    count = class_output_count(class_type)
+    if class_has_list_output(class_type):
+        raise ValueError(
+            f"{class_type} node {node.id!r} has list outputs; specify .out('NAME') explicitly"
+        )
+    if count == 1 and not class_has_list_output(class_type):
+        return value.out(0)
+    if count > 1:
+        detail = ", ".join(names) if names else f"{count} outputs"
+        raise ValueError(
+            f"{class_type} node {node.id!r} has {count} outputs ({detail}); "
+            "specify .out('NAME') explicitly"
+        )
+    raise ValueError(
+        f"{class_type} node {node.id!r} requires explicit .out(...) because output schema is missing"
+    )
 
 
 def _at(

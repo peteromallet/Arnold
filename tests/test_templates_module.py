@@ -624,6 +624,77 @@ def test_legacy_bind_input_still_works_and_warns() -> None:
     assert all(issubclass(w.category, PendingDeprecationWarning) for w in caught)
 
 
+def test_node_auto_resolves_single_output_builder_kwargs_and_keeps_explicit_out() -> None:
+    wf = _workflow()
+    sampler = node(
+        wf,
+        "KSampler",
+        "sampler",
+        model="model",
+        sampler_name="euler",
+        scheduler="simple",
+        positive="p",
+        negative="n",
+        latent_image="latent",
+    )
+
+    decoded = node(wf, "VAEDecode", "decoded", samples=sampler, vae="vae")
+    encoded = node(wf, "VAEEncode", "encoded", pixels=decoded.out("IMAGE"), vae="vae")
+
+    assert any(edge.from_node == "sampler" and edge.to_node == "decoded" and edge.to_input == "samples" for edge in wf.edges)
+    assert any(edge.from_node == "decoded" and edge.to_node == "encoded" and edge.to_input == "pixels" for edge in wf.edges)
+
+
+def test_node_rejects_multi_output_builder_kwargs_with_output_names() -> None:
+    wf = _workflow()
+    wan_video = node(
+        wf,
+        "WanImageToVideo",
+        "wan_video",
+        positive="p",
+        negative="n",
+        vae="vae",
+        width=832,
+        height=480,
+        length=81,
+        batch_size=1,
+    )
+
+    with pytest.raises(ValueError, match=r"WanImageToVideo node 'wan_video' has 3 outputs .*POSITIVE.*NEGATIVE.*LATENT"):
+        node(wf, "KSampler", samples=wan_video)
+
+
+def test_node_rejects_list_output_builder_kwargs() -> None:
+    wf = _workflow()
+    images = node(wf, "RebatchImages", "rebatch", images="image", batch_size=1)
+
+    with pytest.raises(ValueError, match="list outputs; specify"):
+        node(wf, "PreviewImage", images=images)
+
+
+def test_node_coerces_inputspec_and_modelasset_values() -> None:
+    wf = _workflow()
+    model = ModelAsset("model.safetensors", "https://example.test/model.safetensors", "diffusion_models")
+    prompt = InputSpec("prompt_node", "text", "a clean prompt", "STRING")
+
+    loader = node(wf, "UNETLoader", unet_name=model, weight_dtype="default")
+    text = node(wf, "CLIPTextEncode", text=prompt, clip="clip")
+
+    assert loader.node.inputs["unet_name"] == "model.safetensors"
+    assert text.node.inputs["text"] == "a clean prompt"
+
+
+def test_node_rejects_inputspec_for_filename_kwargs_unless_pass_raw() -> None:
+    wf = _workflow()
+    spec = InputSpec("model_node", "unet_name", "model.safetensors", "STRING")
+
+    with pytest.raises(TypeError, match="expected str for unet_name, got InputSpec; did you mean InputSpec.default"):
+        node(wf, "UNETLoader", unet_name=spec, weight_dtype="default")
+
+    raw = node(wf, "UNETLoader", unet_name=spec, weight_dtype="default", pass_raw=True)
+    assert raw.node.inputs["unet_name"] is spec
+
+
 def test_legacy_bind_output_still_works_and_warns() -> None:
     """T19: bind_output still works but emits PendingDeprecationWarning."""
     from vibecomfy.registry.ready_template import bind_output
@@ -820,6 +891,47 @@ READY_METADATA = ReadyMetadata.build(
             "size_bytes": 42,
         }
     ]
+
+
+def test_static_contract_coerces_modelasset_and_inputspec_in_wrapper_kwargs(tmp_path: Path) -> None:
+    from vibecomfy.registry.static_contract import extract_ready_template_contract
+
+    source = tmp_path / "template.py"
+    source.write_text(
+        """
+from vibecomfy.nodes.core import CLIPTextEncode, UNETLoader
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
+
+MODELS = {
+    "main": ModelAsset(
+        filename="model.safetensors",
+        url="https://example.test/model.safetensors",
+        subdir="diffusion_models",
+    )
+}
+PUBLIC_INPUTS = {"prompt": InputSpec("2", "text", "a prompt", "STRING")}
+READY_METADATA = ReadyMetadata.build(
+    template_id="image/example",
+    capability="test",
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix="out/example",
+)
+
+def build():
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+    model = UNETLoader(wf, unet_name=MODELS["main"], weight_dtype="default")
+    text = CLIPTextEncode(wf, text=PUBLIC_INPUTS["prompt"], clip="clip")
+    return wf
+""",
+        encoding="utf-8",
+    )
+
+    contract = extract_ready_template_contract(source)
+
+    inferred = {item["name"]: item for item in contract["public_inputs"]}
+    assert inferred["model"]["value"] == "model.safetensors"
+    assert inferred["prompt"]["value"] == "a prompt"
 
 
 def test_ready_template_metadata_handles_ready_metadata_build_call() -> None:
