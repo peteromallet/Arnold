@@ -78,6 +78,7 @@ export type TrackDefinition = {
   volume?: number;
   muted?: boolean;
   blendMode?: TrackBlendMode;
+  app?: Record<string, unknown>;
 };
 
 export type ClipEntrance = {
@@ -151,6 +152,7 @@ export type TimelineClip = {
   clip_order?: number;
   source_uuid?: string;
   generation?: Record<string, unknown>;
+  app?: Record<string, unknown>;
 };
 
 export type TimelineOutput = {
@@ -235,6 +237,7 @@ export type TimelineConfig = {
   theme?: string;
   theme_overrides?: ThemeOverrides;
   generation_defaults?: GenerationDefaults;
+  app?: Record<string, unknown>;
 };
 
 export type AssetRegistryEntry = {
@@ -268,6 +271,7 @@ export type ResolvedTimelineConfig = {
   theme?: string;
   theme_overrides?: ThemeOverrides;
   generation_defaults?: GenerationDefaults;
+  app?: Record<string, unknown>;
 };
 
 export type TimelineCompositionProps = {

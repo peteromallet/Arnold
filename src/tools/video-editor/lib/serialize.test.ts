@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { repairConfig } from '@/tools/video-editor/lib/migrate';
 import { serializeForDisk, validateSerializedConfig } from '@/tools/video-editor/lib/serialize';
-import { TimelineDomainError, serializeTimelineConfigSnapshot, serializeTimelinePair } from '@/tools/video-editor/lib/timeline-domain';
+import {
+  TimelineDomainError,
+  serializeTimelineConfigSnapshot,
+  serializeTimelinePair,
+  validateTimelineConfigSnapshot,
+} from '@/tools/video-editor/lib/timeline-domain';
 import type { ResolvedTimelineConfig, TimelineConfig, TimelineClip } from '@/tools/video-editor/types';
 
 describe('video-editor serialization', () => {
@@ -333,5 +338,110 @@ describe('video-editor serialization', () => {
     expect(pairAware.level).toBe('pair-aware');
     expect(pairAware.config.clips[0]).toMatchObject({ from: 0, to: 3.5 });
     expect(pairAware.registry.assets['asset-1']).toEqual({ file: 'video.mp4', duration: 3.5 });
+  });
+
+  it('round-trips top-level app extension data through validation and serialization', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 1 }],
+      app: { foo: 'bar' },
+    };
+
+    expect(validateTimelineConfigSnapshot(config).ok).toBe(true);
+
+    const serialized = serializeTimelineConfigSnapshot(config).config;
+    expect(serialized.app).toEqual({ foo: 'bar' });
+    expect(serialized.app).not.toBe(config.app);
+  });
+
+  it('round-trips clip-level app extension data through validation and serialization', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-1',
+          at: 0,
+          track: 'V1',
+          clipType: 'hold',
+          hold: 1,
+          app: { 'x-reigh': { pinned: true } },
+        },
+      ],
+    };
+
+    expect(validateTimelineConfigSnapshot(config).ok).toBe(true);
+
+    const serialized = serializeTimelineConfigSnapshot(config).config;
+    expect(serialized.clips[0].app).toEqual({ 'x-reigh': { pinned: true } });
+    expect(serialized.clips[0].app).not.toBe(config.clips[0].app);
+    expect(serialized.clips[0].app?.['x-reigh']).not.toBe(config.clips[0].app?.['x-reigh']);
+  });
+
+  it('round-trips track-level app extension data through validation and serialization', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1', app: { 'x-host': { mutedByPreset: true } } }],
+      clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 1 }],
+    };
+
+    expect(validateTimelineConfigSnapshot(config).ok).toBe(true);
+
+    const serialized = serializeTimelineConfigSnapshot(config).config;
+    expect(serialized.tracks?.[0].app).toEqual({ 'x-host': { mutedByPreset: true } });
+    expect(serialized.tracks?.[0].app).not.toBe(config.tracks?.[0].app);
+    expect(serialized.tracks?.[0].app?.['x-host']).not.toBe(config.tracks?.[0].app?.['x-host']);
+  });
+
+  it('still rejects unknown sibling keys outside the app extension namespace', () => {
+    const validation = validateTimelineConfigSnapshot({
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 1 }],
+      garbage: 1,
+    } as unknown as TimelineConfig);
+
+    expect(validation.ok).toBe(false);
+    expect(validation.issues).toMatchObject([
+      {
+        code: 'unexpected_top_level_key',
+        message: "Serialized timeline has unexpected top-level key 'garbage'.",
+        path: 'garbage',
+      },
+    ]);
+  });
+
+  it('preserves nested app x-reigh pinnedShotGroups data for the migration target', () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1280x720', fps: 30, file: 'output.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 1 }],
+      app: {
+        'x-reigh': {
+          pinnedShotGroups: [
+            {
+              shotId: 'shot-1',
+              trackId: 'V1',
+              clipIds: ['clip-1'],
+            },
+          ],
+        },
+      },
+    };
+
+    expect(validateTimelineConfigSnapshot(config).ok).toBe(true);
+
+    const serialized = serializeTimelineConfigSnapshot(config).config;
+    expect(serialized.app?.['x-reigh']).toEqual({
+      pinnedShotGroups: [
+        {
+          shotId: 'shot-1',
+          trackId: 'V1',
+          clipIds: ['clip-1'],
+        },
+      ],
+    });
+    expect(serialized.app?.['x-reigh']).not.toBe(config.app?.['x-reigh']);
   });
 });
