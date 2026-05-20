@@ -211,6 +211,78 @@ def test_nodes_spec_reads_object_info_cache(tmp_path: Path, capsys: pytest.Captu
     assert payload["outputs"][0]["name"] == "image"
 
 
+def test_nodes_spec_uuid_reads_subgraph_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    uuid = "7b34ab90-36f9-45ba-a665-71d418f0df18"
+    corpus_dir = tmp_path / "workflow_corpus" / "official" / "edit"
+    corpus_dir.mkdir(parents=True)
+    workflow = corpus_dir / "workflow.json"
+    workflow.write_text(
+        json.dumps(
+            {
+                "definitions": {
+                    "subgraphs": [
+                        {
+                            "id": uuid,
+                            "name": "Image Edit (Flux.2 Klein 9B)",
+                            "inputs": [{"name": "prompt", "type": "STRING"}],
+                            "outputs": [{"name": "IMAGE", "type": "IMAGE"}],
+                            "nodes": [
+                                {"id": 1, "type": "KSampler"},
+                                {"id": 2, "type": "CLIPTextEncode"},
+                                {"id": 3, "type": "CLIPTextEncode"},
+                            ],
+                            "links": [[1, 1, 0, 2, 0, "CONDITIONING"]],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_nodes_spec(
+        argparse.Namespace(
+            class_type=uuid,
+            object_info_cache=None,
+            source=None,
+            verbose=True,
+            json=True,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["uuid"] == uuid
+    assert payload["name"] == "Image Edit (Flux.2 Klein 9B)"
+    assert payload["inputs"] == [{"name": "prompt", "type": "STRING"}]
+    assert payload["outputs"] == [{"name": "IMAGE", "type": "IMAGE"}]
+    assert payload["inner_node_count"] == 3
+    assert payload["inner_node_class_types"] == {"CLIPTextEncode": 2, "KSampler": 1}
+    assert payload["inner_graph"]["edges"] == [[1, 1, 0, 2, 0, "CONDITIONING"]]
+
+
+def test_nodes_spec_uuid_missing_reports_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    workflow = tmp_path / "workflow.json"
+    workflow.write_text(json.dumps({"definitions": {"subgraphs": []}}), encoding="utf-8")
+
+    code = _cmd_nodes_spec(
+        argparse.Namespace(
+            class_type="7b34ab90-36f9-45ba-a665-71d418f0df18",
+            object_info_cache=None,
+            source=str(workflow),
+            verbose=False,
+            json=True,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "subgraph UUID not found" in captured.err
+
+
 def test_nodes_install_plan_suggests_pack_for_missing_class(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

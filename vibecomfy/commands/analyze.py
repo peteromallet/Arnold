@@ -6,6 +6,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from vibecomfy.analysis import graph
+from vibecomfy.commands.analyze_names import analyze_names
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.workflow import VibeWorkflow
@@ -70,6 +71,12 @@ def _cmd_unconnected(args: argparse.Namespace) -> int:
     workflow = _load_workflow(args.workflow)
     rows = graph.unconnected(workflow, schema_provider=get_schema_provider("auto"))
     return _emit(rows, _selected_format(args), text=_format_dict_rows)
+
+
+def _cmd_names(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    result = analyze_names(workflow, strategy=args.strategy)
+    return _emit(result, _selected_format(args), text=_format_names)
 
 
 def _selected_format(args: argparse.Namespace) -> str:
@@ -201,6 +208,41 @@ def _format_dict_rows(rows: list[dict[str, Any]]) -> str:
     return "\n".join(json.dumps(row, sort_keys=True) for row in rows)
 
 
+def _format_names(data: dict[str, Any]) -> str:
+    rows = data["rows"]
+    summary = data["summary"]
+    workflow = data["workflow"]
+    strategy = data["strategy"]
+    lines = [f"Template: {workflow}", f"Strategy: {strategy}", ""]
+    if not rows:
+        lines.append("  node_id  current_name  proposed_name")
+        lines.append("  -")
+    else:
+        node_width = max(7, *(len(row["node_id"]) for row in rows))
+        current_width = max(12, *(len(row["current_name"]) for row in rows))
+        proposed_width = max(13, *(len(row["proposed_name"]) for row in rows))
+        header = f"  {'node_id':<{node_width}}  {'current_name':<{current_width}}  {'proposed_name':<{proposed_width}}"
+        lines.append(header)
+        lines.append("  " + "-" * (len(header) - 2))
+        for row in rows:
+            reason = f"  ({row['reason']})" if row["reason"] else ""
+            lines.append(
+                f"  {row['node_id']:<{node_width}}  "
+                f"{row['current_name']:<{current_width}}  "
+                f"{row['proposed_name']:<{proposed_width}}"
+                f"{reason}"
+            )
+    lines.extend(
+        [
+            "",
+            f"Renames: {summary['rename_count']}/{summary['node_count']} ({summary['rename_percent']}%)",
+            f"Ambiguous (multiple plausible names): {summary['ambiguous_count']}",
+            f"Fallback to class-name (no role inferable): {summary['fallback_count']}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _indent_rows(rows: Any) -> list[str]:
     if not rows:
         return ["  -"]
@@ -280,3 +322,9 @@ def register(subparsers) -> None:
     unconnected = verbs.add_parser("unconnected")
     _add_common(unconnected)
     unconnected.set_defaults(func=_cmd_unconnected)
+
+    names = verbs.add_parser("names")
+    _add_common(names)
+    names.add_argument("--strategy", choices=("current", "role-based"), default="role-based")
+    names.add_argument("--json", action="store_true")
+    names.set_defaults(func=_cmd_names)

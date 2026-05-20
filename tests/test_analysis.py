@@ -151,3 +151,42 @@ def test_analyze_info_cli_smoke_returns_output(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
     assert "nodes: 2" in result.stdout
+
+
+def test_analyze_names_cli_reports_role_based_preview(tmp_path: Path) -> None:
+    fixture = tmp_path / "workflow.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "hello"}},
+                "2": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+                "3": {"class_type": "KSampler", "inputs": {"positive": ["1", 0], "negative": ["2", 0], "seed": 7}},
+                "4": {"class_type": "SaveImage", "inputs": {"images": ["3", 0]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    text_result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "analyze", "names", str(fixture), "--strategy", "role-based"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    json_result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "analyze", "names", str(fixture), "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert text_result.returncode == 0, text_result.stderr
+    assert "Strategy: role-based" in text_result.stdout
+    assert "positive_text" in text_result.stdout
+    assert "negative_text" in text_result.stdout
+    assert "terminal, no rename" in text_result.stdout
+    assert json_result.returncode == 0, json_result.stderr
+    payload = json.loads(json_result.stdout)
+    assert payload["summary"]["node_count"] == 4
+    assert payload["rows"][0]["proposed_name"] == "positive_text"
+    assert payload["rows"][0]["reason"] == "PUBLIC_INPUTS['prompt']"

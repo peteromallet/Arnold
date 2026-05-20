@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import difflib
 import hashlib
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any
 
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._index_files import IndexReadError, print_index_error, read_index_json
@@ -18,6 +21,11 @@ from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceS
 from vibecomfy.schema.cache import object_info_cache_candidates
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.node_packs_lockfile import LockEntry, compute_schema_hash, read_lockfile, write_lockfile
+
+
+UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 
 def _cmd_nodes_list(args: argparse.Namespace) -> int:
@@ -34,6 +42,8 @@ def _cmd_nodes_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_nodes_spec(args: argparse.Namespace) -> int:
+    if UUID_RE.match(args.class_type):
+        return _cmd_nodes_subgraph_spec(args)
     provider = ObjectInfoSchemaProvider(args.object_info_cache) if args.object_info_cache else get_schema_provider("auto")
     try:
         schema = provider.get_schema(args.class_type)
@@ -58,6 +68,111 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(asdict(schema), indent=2, sort_keys=True))
     return 0
+
+
+def _cmd_nodes_subgraph_spec(args: argparse.Namespace) -> int:
+    try:
+        path, subgraph = _find_subgraph_definition(args.class_type, getattr(args, "source", None))
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    payload = _summarize_subgraph(args.class_type, path, subgraph, verbose=getattr(args, "verbose", False))
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(_render_subgraph_spec(payload, verbose=getattr(args, "verbose", False)))
+    return 0
+
+
+def _find_subgraph_definition(uuid: str, source: str | None) -> tuple[Path, dict[str, Any]]:
+    paths = [Path(source)] if source else sorted(Path("workflow_corpus").glob("**/*.json"))
+    for path in paths:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise FileNotFoundError(f"workflow JSON not found: {path}") from None
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        subgraph = _subgraph_by_uuid(raw, uuid)
+        if subgraph is not None:
+            return path, subgraph
+    scope = f" in {source}" if source else " under workflow_corpus/**/*.json"
+    raise ValueError(f"subgraph UUID not found{scope}: {uuid}")
+
+
+def _subgraph_by_uuid(raw: dict[str, Any], uuid: str) -> dict[str, Any] | None:
+    definitions = raw.get("definitions", {})
+    if not isinstance(definitions, dict):
+        return None
+    subgraphs = definitions.get("subgraphs", [])
+    if isinstance(subgraphs, dict):
+        iterable = subgraphs.values()
+    elif isinstance(subgraphs, list):
+        iterable = subgraphs
+    else:
+        return None
+    for subgraph in iterable:
+        if isinstance(subgraph, dict) and subgraph.get("id") == uuid:
+            return subgraph
+    return None
+
+
+def _summarize_subgraph(uuid: str, path: Path, subgraph: dict[str, Any], *, verbose: bool) -> dict[str, Any]:
+    nodes = [node for node in subgraph.get("nodes", []) if isinstance(node, dict)]
+    class_counts: Counter[str] = Counter()
+    for node in nodes:
+        class_type = node.get("type") or node.get("class_type")
+        if class_type:
+            class_counts[str(class_type)] += 1
+    payload: dict[str, Any] = {
+        "uuid": uuid,
+        "source": str(path),
+        "name": subgraph.get("name"),
+        "inputs": [_port_item(item) for item in subgraph.get("inputs", []) if isinstance(item, dict)],
+        "outputs": [_port_item(item) for item in subgraph.get("outputs", []) if isinstance(item, dict)],
+        "inner_node_count": len(nodes),
+        "inner_node_class_types": dict(sorted(class_counts.items())),
+    }
+    if verbose:
+        payload["inner_graph"] = {
+            "nodes": nodes,
+            "edges": subgraph.get("links", []) if isinstance(subgraph.get("links", []), list) else [],
+        }
+    return payload
+
+
+def _port_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {"name": item.get("name"), "type": item.get("type")}
+
+
+def _render_subgraph_spec(payload: dict[str, Any], *, verbose: bool) -> str:
+    lines = [
+        f"Subgraph {payload['uuid']}",
+        f"source: {payload['source']}",
+        f"name: {payload.get('name') or '<unnamed>'}",
+        f"inputs: {_render_ports(payload.get('inputs', []))}",
+        f"outputs: {_render_ports(payload.get('outputs', []))}",
+        f"inner nodes: {payload['inner_node_count']}",
+        "inner node class types:",
+    ]
+    class_types = payload.get("inner_node_class_types") or {}
+    if isinstance(class_types, dict) and class_types:
+        lines.extend(f"- {name}: {count}" for name, count in class_types.items())
+    else:
+        lines.append("- <none>")
+    if verbose:
+        inner_graph = payload.get("inner_graph") if isinstance(payload.get("inner_graph"), dict) else {}
+        lines.append("inner graph:")
+        lines.append(json.dumps(inner_graph, indent=2, sort_keys=True))
+    return "\n".join(lines)
+
+
+def _render_ports(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "<none>"
+    return ", ".join(f"{item.get('name')}:{item.get('type')}" for item in items if isinstance(item, dict))
 
 
 def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
@@ -457,6 +572,17 @@ def register(subparsers) -> None:
         "--object-info-cache",
         help="Use a captured ComfyUI /object_info JSON file, for example one fetched from a RunPod runtime.",
     )
+    nodes_spec.add_argument(
+        "--in",
+        dest="source",
+        help="Source workflow JSON to inspect when class_type is a subgraph UUID.",
+    )
+    nodes_spec.add_argument(
+        "--verbose",
+        action="store_true",
+        help="For subgraph UUIDs, include full inner nodes and edges.",
+    )
+    nodes_spec.add_argument("--json", action="store_true", help="Emit JSON output.")
     nodes_spec.set_defaults(func=_cmd_nodes_spec)
     nodes_lookup = nodes_sub.add_parser("lookup")
     nodes_lookup.add_argument("query")
