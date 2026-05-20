@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import vibecomfy.templates as templates
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, _derive_output_kind, finalize, new_workflow, node
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, SymbolicNodeRef, _derive_output_kind, finalize, new_workflow, node
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -44,6 +44,39 @@ def test_node_preserves_source_id_extras_and_rewrites_edges() -> None:
     assert consumer.node.id == "scaled"
     assert wf.nodes["scaled"].inputs["resize_type.multiple"] == "area"
     assert any(edge.from_node == "source" and edge.to_node == "scaled" and edge.to_input == "image" for edge in wf.edges)
+
+
+def test_node_allows_id_free_creation_and_legacy_source_ids() -> None:
+    wf = _workflow()
+
+    first = node(wf, "PrimitiveString", value="hello")
+    second = node(wf, "PrimitiveString", "legacy", value="world")
+
+    assert first.node.id == "1"
+    assert second.node.id == "legacy"
+    assert wf.id_map()["legacy"] == "legacy"
+
+
+def test_finalize_resolves_symbolic_inputspec_from_build_locals() -> None:
+    def build() -> VibeWorkflow:
+        wf = _workflow("image/symbolic")
+        prompt_node = node(wf, "PrimitiveString", value="current")
+        saved = node(wf, "SaveImage")
+        inputs = {"prompt": InputSpec(SymbolicNodeRef("prompt_node"), "value", "default", "STRING")}
+        metadata = ReadyMetadata.build(
+            template_id="image/symbolic",
+            capability="text_to_image",
+            inputs=inputs,
+            models={},
+            output_prefix="out",
+        )
+        return finalize(wf, inputs, metadata, output_node=saved.node.id, output_kind="image", output_type="SaveImage")
+
+    wf = build()
+
+    assert wf.inputs["prompt"].node_id == "1"
+    assert wf.inputs["prompt"].value == "current"
+    assert wf.id_map()["prompt_node"] == "1"
 
 
 def test_new_workflow_constructs_ready_workflow_with_metadata() -> None:

@@ -396,6 +396,18 @@ class VibeWorkflow:
             api[str(edge.to_node)]["inputs"][edge.to_input] = edge_source
         return api
 
+    def id_map(self) -> dict[str, str]:
+        """Return debug mappings from source/symbolic ids to current node ids."""
+        mapping: dict[str, str] = {}
+        raw = self.metadata.get("id_map")
+        if isinstance(raw, dict):
+            mapping.update({str(key): str(value) for key, value in raw.items()})
+        for node_id, node in self.nodes.items():
+            source_id = node.metadata.get("source_id")
+            if source_id is not None:
+                mapping[str(source_id)] = str(node_id)
+        return dict(sorted(mapping.items()))
+
     def _compile_graphbuilder(self) -> dict[str, Any]:
         try:
             from comfy_execution.graph_utils import GraphBuilder

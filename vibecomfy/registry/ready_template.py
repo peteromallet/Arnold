@@ -252,6 +252,11 @@ def ready_node(
     builder = wf.node(class_type, **kwargs)
     if outputs is not None:
         builder.node.metadata["output_names"] = list(outputs)
+    if source_id is not None:
+        builder.node.metadata["source_id"] = str(source_id)
+        if not str(source_id).isdigit():
+            builder.node.metadata["source_id_nonnumeric"] = True
+        wf.metadata.setdefault("id_map", {})[str(source_id)] = builder.node.id
     if extras:
         for key, value in extras.items():
             if isinstance(value, Handle):
@@ -263,6 +268,7 @@ def ready_node(
         node = wf.nodes.pop(old_id)
         node.id = source_id
         wf.nodes[source_id] = node
+        wf.metadata.setdefault("id_map", {})[str(source_id)] = source_id
         for edge in wf.edges:
             if edge.to_node == old_id:
                 edge.to_node = source_id

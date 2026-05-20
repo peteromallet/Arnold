@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+import inspect
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -73,19 +74,19 @@ def new_workflow(metadata: Mapping[str, Any], *, source_path: str | None = None)
 def node(
     wf: VibeWorkflow,
     class_type: str,
-    _id: str,
+    _id: str | None = None,
     _extras: Mapping[str, Any] | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Create a ready-template node while preserving the source graph id.
+    """Create a ready-template node.
 
-    Convenience wrapper for template authoring; it delegates to
-    ``vibecomfy.registry.ready_template.ready_node`` to keep id-rewrite and
-    edge-rewrite behavior centralized.
+    Supports both legacy ``node(wf, class_type, source_id, ...)`` and the
+    v2.5 id-free ``node(wf, class_type, ...)`` form. When a source id is
+    supplied it is preserved as the runtime node id for back-compat.
     """
     explicit_outputs = kwargs.pop("_outputs", None)
     outputs = tuple(explicit_outputs) if explicit_outputs is not None else _normalized_output_names(class_type)
-    return ready_node(wf, class_type, source_id=str(_id), outputs=outputs or None, extras=_extras, **kwargs)
+    return ready_node(wf, class_type, source_id=str(_id) if _id is not None else None, outputs=outputs or None, extras=_extras, **kwargs)
 
 
 def _at(
@@ -117,8 +118,41 @@ def _normalized_output_names(class_type: str) -> tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class SymbolicNodeRef:
+    """Module-level public-input binding resolved from build() locals."""
+
+    label: str
+
+    def resolve(self, namespace: Mapping[str, Any], wf: VibeWorkflow) -> str:
+        value = namespace.get(self.label)
+        node_id = _node_id_from_binding(value)
+        if node_id is None or node_id not in wf.nodes:
+            raise ValueError(
+                f"SymbolicNodeRef({self.label!r}) could not be resolved to a node "
+                f"in workflow {wf.id!r}"
+            )
+        wf.metadata.setdefault("id_map", {})[self.label] = node_id
+        return node_id
+
+
+def ref(label: str) -> SymbolicNodeRef:
+    return SymbolicNodeRef(label)
+
+
+def _node_id_from_binding(value: Any) -> str | None:
+    node = getattr(value, "node", None)
+    if node is not None and hasattr(node, "id"):
+        return str(node.id)
+    if hasattr(value, "id"):
+        return str(value.id)
+    if isinstance(value, str):
+        return value
+    return None
+
+
+@dataclass(frozen=True)
 class InputSpec:
-    node: str
+    node: str | SymbolicNodeRef | Any
     field: str
     default: Any
     type: str
@@ -127,8 +161,8 @@ class InputSpec:
     description: str | None = None
     media_semantics: str | None = None
 
-    def register(self, wf: VibeWorkflow, name: str) -> None:
-        node_id = str(self.node)
+    def register(self, wf: VibeWorkflow, name: str, namespace: Mapping[str, Any] | None = None) -> None:
+        node_id = self.resolve_node_id(wf, namespace=namespace)
         node = wf.nodes.get(node_id)
         if node is None:
             raise ValueError(
@@ -169,6 +203,14 @@ class InputSpec:
                 aliases=(),
                 media_semantics=self.media_semantics,
             )
+
+    def resolve_node_id(self, wf: VibeWorkflow, namespace: Mapping[str, Any] | None = None) -> str:
+        if isinstance(self.node, SymbolicNodeRef):
+            return self.node.resolve(namespace or {}, wf)
+        node_id = _node_id_from_binding(self.node)
+        if node_id is None:
+            node_id = str(self.node)
+        return node_id
 
 
 @dataclass(frozen=True)
@@ -275,6 +317,7 @@ def finalize(
         derived_output_kind = _derive_output_kind(str(bind_kwargs.get("output_type") or ""))
 
     requirements = _requirements_with_models(requirements, metadata.get("model_assets", []))
+    caller_locals = _caller_build_locals()
 
     wf.finalize_metadata()
     with warnings.catch_warnings():
@@ -282,9 +325,9 @@ def finalize(
         apply_ready_template_policy(wf, metadata, source_path=str(source_path), requirements=requirements)
 
     for name, spec in inputs.items():
-        spec.register(wf, name)
+        spec.register(wf, name, namespace=caller_locals)
 
-    _assert_public_input_invariant(wf, inputs)
+    _assert_public_input_invariant(wf, inputs, namespace=caller_locals)
 
     artifact_kind = bind_kwargs.pop("artifact_kind", None) or derived_output_kind
     with warnings.catch_warnings():
@@ -296,6 +339,19 @@ def finalize(
             **bind_kwargs,
         )
     return wf
+
+
+def _caller_build_locals() -> Mapping[str, Any]:
+    frame = inspect.currentframe()
+    try:
+        cursor = frame.f_back if frame is not None else None
+        while cursor is not None:
+            if cursor.f_code.co_name == "build":
+                return dict(cursor.f_locals)
+            cursor = cursor.f_back
+        return {}
+    finally:
+        del frame
 
 
 def finalize_ready(
@@ -409,9 +465,13 @@ def _model_asset_metadata(model: ModelAsset) -> dict[str, str]:
     return data
 
 
-def _assert_public_input_invariant(wf: VibeWorkflow, inputs: Mapping[str, InputSpec]) -> None:
+def _assert_public_input_invariant(
+    wf: VibeWorkflow,
+    inputs: Mapping[str, InputSpec],
+    namespace: Mapping[str, Any] | None = None,
+) -> None:
     specs = {
-        name: (str(spec.node), spec.field)
+        name: (spec.resolve_node_id(wf, namespace=namespace), spec.field)
         for name, spec in inputs.items()
     }
     alias_names = {
