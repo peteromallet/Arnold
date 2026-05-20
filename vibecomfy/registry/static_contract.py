@@ -87,11 +87,11 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
         if not isinstance(node, ast.Call):
             continue
         call_name = _call_name(node.func)
-        if call_name in {"bind_input", "register_input"}:
+        if call_name in {"bind_input", "template_input", "register_input"}:
             descriptor = _extract_input_call(node, call_name, diagnostics)
             if descriptor is not None:
                 public_inputs.append(descriptor)
-        elif call_name in {"bind_output", "VibeOutput"}:
+        elif call_name in {"bind_output", "template_output", "VibeOutput"}:
             descriptor = _extract_output_call(node, call_name, diagnostics)
             if descriptor is not None:
                 public_outputs.append(descriptor)
@@ -184,7 +184,7 @@ def compare_public_contracts(
     static_input_keys = {_input_key(item) for item in static_inputs}
     built_input_keys = {_input_key(item) for item in built_inputs}
     static_output_keys = {_output_key(item) for item in static_outputs}
-    built_output_keys = {_output_key(item) for item in built_outputs}
+    built_output_keys = {_output_key(item) for item in built_outputs if item.get("name") is not None}
     return {
         "inputs_only_static": [_input_key_to_dict(key) for key in sorted(static_input_keys - built_input_keys)],
         "inputs_only_built": [_input_key_to_dict(key) for key in sorted(built_input_keys - static_input_keys)],
@@ -249,12 +249,14 @@ def _extract_input_call(
     call_name: str,
     diagnostics: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    offset = 1 if call_name == "bind_input" else 0
+    offset = 1 if call_name in {"bind_input", "template_input"} else 0
     name = _literal_arg_or_keyword(node, offset, "name", diagnostics, call_name)
     node_id = _literal_arg_or_keyword(node, offset + 1, "node_id", diagnostics, call_name)
     field = _literal_arg_or_keyword(node, offset + 2, "field", diagnostics, call_name)
     if not all(isinstance(value, str) for value in (name, node_id, field)):
         return None
+    if call_name == "template_input" and field == "widget_0":
+        field = "value"
     value = _literal_arg_or_keyword(node, offset + 3, "value", diagnostics, call_name, required=False)
     descriptor = {
         "name": name,
@@ -283,7 +285,7 @@ def _extract_output_call(
     call_name: str,
     diagnostics: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    offset = 1 if call_name == "bind_output" else 0
+    offset = 1 if call_name in {"bind_output", "template_output"} else 0
     node_id = _literal_arg_or_keyword(node, offset, "node_id", diagnostics, call_name)
     if not isinstance(node_id, str):
         return None

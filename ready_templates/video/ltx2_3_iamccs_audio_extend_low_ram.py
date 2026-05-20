@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.templates import finalize_ready
 
 
-READY_METADATA = {'model_assets': [
+READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},'model_assets': [
     {
         'name': 'LTX23_audio_vae_bf16.safetensors',
         'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors',
@@ -503,8 +504,7 @@ def build() -> VibeWorkflow:
         frames_dir=iamccs_ltx2_extensionmodule_disk_3.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
 
 

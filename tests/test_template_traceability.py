@@ -37,7 +37,7 @@ READY_METADATA = ReadyMetadata.build(
     requirements={{"custom_nodes": ["ExamplePack"], "custom_node_refs": [{{"slug": "ExamplePack", "source": "git", "commit": "{commit}"}}]}},
     provenance={{"source_workflow": "workflow_corpus/official/image/example.json"}},
     vibecomfy_version="0.1.0",
-    comfy_core={{"status": "unavailable", "commit": None, "min_version": None, "tested_at": None}},
+    comfy_core={{"status": "discovered", "version": "unknown", "commit": "unknown", "min_version": "unknown", "tested_at": "2026-05-20T00:00:00+00:00"}},
 )
 def build():
     wf = new_workflow(READY_METADATA, source_path=__file__)

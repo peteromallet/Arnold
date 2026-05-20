@@ -1,151 +1,142 @@
 # vibecomfy: generated — converted by tools/convert_ready_templates.py
 # Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
 # marker on the first line if hand-editing is required.
-"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
+"""Audio Image To Video.
+
+Output: unknown.
+
+Source:  workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json
+
+Packs:   ComfyUI-KJNodes, ComfyUI-VideoHelperSuite, ComfyUI-WanVideoWrapper
+"""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+MODELS = {}
 
+PUBLIC_INPUTS = {}
 
-READY_METADATA = {'model_assets': [],
- 'unbound_inputs': {'seed': 4588},
- 'ready_template': 'video/wanvideo_wrapper_22_5b_ovi_audio_i2v',
- 'workflow_template': 'wanvideo_wrapper_22_5b_ovi_audio_i2v',
- 'capability': 'audio_image_to_video',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json',
- 'coverage_tier': 'supplemental',
- 'approach': 'Ovi image-to-video with audio',
- 'runtime_note': None,
- 'discord_signal': None,
- 'smoke_resolution': '256x256x5_frames'}
-
-READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper'],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
-                      {'slug': 'ComfyUI-VideoHelperSuite',
-                       'source': 'git',
-                       'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
-                      {'slug': 'ComfyUI-WanVideoWrapper',
-                       'source': 'git',
-                       'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c',
-                       'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}]}
-
+READY_METADATA = ReadyMetadata.build(
+    template_id='wanvideo_wrapper_22_5b_ovi_audio_i2v',
+    capability='audio_image_to_video',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git',
+                       'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}, {'slug': 'ComfyUI-WanVideoWrapper', 'source': 'git', 'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}]},
+    provenance={'source_role': 'materialized_ready_python_template', 'smoke_resolution': '256x256x5_frames', 'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json', 'approach': 'Ovi image-to-video with audio'},
+    coverage_tier='supplemental',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    wanvideoextramodelselect = _node(wf, 'WanVideoExtraModelSelect', '78',
+    # ════ SAMPLING ════
+    wan_video_extra_model_select_78 = node(wf, 'WanVideoExtraModelSelect', '78',
         widget_0='WanVideo/Ovi/Wan_2_1_Ovi_audio_model_bf16.safetensors',
     )
-    wanvideoblockswap = _node(wf, 'WanVideoBlockSwap', '83',
-        widget_0=15,
-        widget_1=False,
-        widget_2=False,
-        widget_3=True,
-        widget_4=0,
-        widget_5=1,
-        widget_6=False,
+    wan_video_block_swap_83 = node(wf, 'WanVideoBlockSwap', '83',
+        blocks_to_swap=15,
+        offload_img_emb=False,
+        offload_txt_emb=False,
+        use_non_blocking=True,
+        vace_blocks_to_swap=0,
+        prefetch_blocks=1,
+        block_swap_debug=False,
     )
-    wanvideotextencodecached = _node(wf, 'WanVideoTextEncodeCached', '85',
-        widget_0='umt5-xxl-enc-bf16.safetensors',
-        widget_1='bf16',
-        widget_2='A tired old man is very sarcastically saying: <S>Oh great, they are making me talk now too.<E>. <AUDCAP>Clear older male voices speaking dialogue, subtle outdoor ambience.<ENDAUDCAP>',
-        widget_3='色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走',
-        widget_4='disabled',
-        widget_5=False,
-        widget_6='gpu',
+    # ════ TEXT CONDITIONING ════
+    wan_video_text_encode_cached_85 = node(wf, 'WanVideoTextEncodeCached', '85',
+        model_name='umt5-xxl-enc-bf16.safetensors',
+        precision='bf16',
+        positive_prompt='A tired old man is very sarcastically saying: <S>Oh great, they are making me talk now too.<E>. <AUDCAP>Clear older male voices speaking dialogue, subtle outdoor ambience.<ENDAUDCAP>',
+        negative_prompt='色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走',
+        quantization='disabled',
+        use_disk_cache=False,
+        device='gpu',
     )
-    wanvideovaeloader = _node(wf, 'WanVideoVAELoader', '87',
-        widget_0='Wan2_2_VAE_bf16.safetensors',
-        widget_1='bf16',
+    # ════ LOADERS ════
+    wan_video_vaeloader = node(wf, 'WanVideoVAELoader', '87',
+        model_name='Wan2_2_VAE_bf16.safetensors',
+        precision='bf16',
     )
-    ovimmaudiovaeloader = _node(wf, 'OviMMAudioVAELoader', '89',
+    ovi_mmaudio_vaeloader = node(wf, 'OviMMAudioVAELoader', '89',
         widget_0='mmaudio_vae_16k_fp32.safetensors',
         widget_1='mmaudio_vocoder_bigvgan_best_netG_fp32.safetensors',
         widget_2='fp32',
     )
-    wanvideotorchcompilesettings = _node(wf, 'WanVideoTorchCompileSettings', '91',
-        widget_0='inductor',
-        widget_1=False,
-        widget_2='default',
-        widget_3=False,
-        widget_4=64,
-        widget_5=True,
-        widget_6=128,
+    wan_video_torch_compile_settings_91 = node(wf, 'WanVideoTorchCompileSettings', '91',
+        backend='inductor',
+        fullgraph=False,
+        mode='default',
+        dynamic=False,
+        dynamo_cache_size_limit=64,
+        compile_transformer_blocks_only=True,
+        dynamo_recompile_limit=128,
     )
-    wanvideoslg = _node(wf, 'WanVideoSLG', '93',
+    wan_video_slg = node(wf, 'WanVideoSLG', '93',
         widget_0='11',
         widget_1=0,
         widget_2=1,
     )
-    wanvideotextencodecached_2 = _node(wf, 'WanVideoTextEncodeCached', '96',
-        widget_0='umt5-xxl-enc-bf16.safetensors',
-        widget_1='bf16',
-        widget_2='',
-        widget_3='robotic, muffled, echo, distorted',
-        widget_4='disabled',
-        widget_5=True,
-        widget_6='gpu',
+    wan_video_text_encode_cached_2 = node(wf, 'WanVideoTextEncodeCached', '96',
+        model_name='umt5-xxl-enc-bf16.safetensors',
+        precision='bf16',
+        positive_prompt='',
+        negative_prompt='robotic, muffled, echo, distorted',
+        quantization='disabled',
+        use_disk_cache=True,
+        device='gpu',
     )
-    loadimage = _node(wf, 'LoadImage', '109',
+    input_image = node(wf, 'LoadImage', '109',
         image='oldman_upscaled.png',
-        widget_1='image',
-    )
-    wanvideoeasycache = _node(wf, 'WanVideoEasyCache', '118',
+)
+    wan_video_easy_cache_118 = node(wf, 'WanVideoEasyCache', '118',
         widget_0=0.015,
         widget_1=10,
         widget_2=-1,
         widget_3='offload_device',
     )
-    wanvideoemptymmaudiolatents = _node(wf, 'WanVideoEmptyMMAudioLatents', '125',
+    # ════ LATENT ════
+    wan_video_empty_m_m_audio_latents_125 = node(wf, 'WanVideoEmptyMMAudioLatents', '125',
         widget_0=157,
     )
-    wanvideomodelloader = _node(wf, 'WanVideoModelLoader', '12',
-        widget_0='WanVideo/Ovi/Wan_2_1_Ovi_video_model_bf16.safetensors',
-        widget_1='bf16',
-        widget_2='disabled',
-        widget_3='offload_device',
-        widget_4='sdpa',
-        widget_5='default',
-        compile_args=wanvideotorchcompilesettings.out(0),
-        extra_model=wanvideoextramodelselect.out(0),
+    wan_video_model_loader_12 = node(wf, 'WanVideoModelLoader', '12',
+        model='WanVideo/Ovi/Wan_2_1_Ovi_video_model_bf16.safetensors',
+        base_precision='bf16',
+        quantization='disabled',
+        load_device='offload_device',
+        attention_mode='sdpa',
+        rms_norm_function='default',
+        compile_args=wan_video_torch_compile_settings_91.out(0),
+        extra_model=wan_video_extra_model_select_78.out(0),
     )
-    wanvideoovicfg = _node(wf, 'WanVideoOviCFG', '94',
+    wan_video_ovi_cfg = node(wf, 'WanVideoOviCFG', '94',
         widget_0=3,
-        original_text_embeds=wanvideotextencodecached.out(0),
-        ovi_negative_text_embeds=wanvideotextencodecached_2.out(1),
+        original_text_embeds=wan_video_text_encode_cached_85.out(0),
+        ovi_negative_text_embeds=wan_video_text_encode_cached_2.out(1),
     )
-    imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '110',
+    # ════ IMAGE PREP ════
+    resized_image = node(wf, 'ImageResizeKJv2', '110',
         height=256,
-        widget_0=256,
-        widget_1=256,
-        widget_2='lanczos',
-        widget_3='crop',
-        widget_4='0, 0, 0',
-        widget_5='center',
-        widget_6=32,
-        widget_7='cpu',
+        
+        upscale_method='lanczos',
+        keep_proportion='crop',
+        pad_color='0, 0, 0',
+        crop_position='center',
+        divisible_by=32,
+        device='cpu',
         width=256,
-        image=loadimage.out(0),
+        image=input_image.out('IMAGE'),
     )
-    wanvideosetblockswap = _node(wf, 'WanVideoSetBlockSwap', '84',
-        block_swap_args=wanvideoblockswap.out(0),
-        model=wanvideomodelloader.out(0),
+    wan_video_set_block_swap_84 = node(wf, 'WanVideoSetBlockSwap', '84',
+        block_swap_args=wan_video_block_swap_83.out(0),
+        model=wan_video_model_loader_12.out(0),
     )
-    wanvideoencode = _node(wf, 'WanVideoEncode', '111',
+    wan_video_encode_111 = node(wf, 'WanVideoEncode', '111',
         widget_0=False,
         widget_1=272,
         widget_2=272,
@@ -153,93 +144,69 @@ def build() -> VibeWorkflow:
         widget_4=128,
         widget_5=0,
         widget_6=1,
-        image=imageresizekjv2.out(0),
-        vae=wanvideovaeloader.out(0),
+        image=resized_image.out('IMAGE'),
+        vae=wan_video_vaeloader.out(0),
     )
-    wanvideoemptyembeds = _node(wf, 'WanVideoEmptyEmbeds', '81',
+    wan_video_empty_embeds_81 = node(wf, 'WanVideoEmptyEmbeds', '81',
         num_frames=5,
         widget_0=256,
         widget_1=256,
         widget_2=5,
-        extra_latents=wanvideoencode.out(0),
-        height=imageresizekjv2.out(2),
-        width=imageresizekjv2.out(1),
+        extra_latents=wan_video_encode_111.out(0),
+        height=resized_image.out(2),
+        width=resized_image.out(1),
     )
-    wanvideosampler = _node(wf, 'WanVideoSampler', '80',
+    wan_video_sampler_80 = node(wf, 'WanVideoSampler', '80',
         steps=1,
-        widget_0=1,
-        widget_1=4,
-        widget_10='default',
-        widget_11=0,
-        widget_12=-1,
-        widget_13=False,
-        widget_2=5,
-        widget_3=42,
-        widget_4='fixed',
-        widget_5=True,
-        widget_6='unipc',
-        widget_7=0,
-        widget_8=1,
-        widget_9=False,
-        cache_args=wanvideoeasycache.out(0),
-        image_embeds=wanvideoemptyembeds.out(0),
-        model=wanvideosetblockswap.out(0),
-        samples=wanvideoemptymmaudiolatents.out(0),
-        slg_args=wanvideoslg.out(0),
-        text_embeds=wanvideoovicfg.out(0),
+        cfg=4,
+        rope_function='default',
+        start_step=0,
+        end_step=-1,
+        add_noise_to_samples=False,
+        shift=5,
+        seed=42,
+force_offload=True,
+        scheduler='unipc',
+        riflex_freq_index=0,
+        denoise_strength=1,
+        batched_cfg=False,
+        cache_args=wan_video_easy_cache_118.out(0),
+        image_embeds=wan_video_empty_embeds_81.out(0),
+        model=wan_video_set_block_swap_84.out(0),
+        samples=wan_video_empty_m_m_audio_latents_125.out(0),
+        slg_args=wan_video_slg.out(0),
+        text_embeds=wan_video_ovi_cfg.out(0),
     )
-    wanvideodecode = _node(wf, 'WanVideoDecode', '86',
-        widget_0=False,
-        widget_1=272,
-        widget_2=272,
-        widget_3=144,
-        widget_4=128,
-        widget_5='default',
-        samples=wanvideosampler.out(0),
-        vae=wanvideovaeloader.out(0),
+    # ════ DECODE ════
+    wan_video_decode_86 = node(wf, 'WanVideoDecode', '86',
+        enable_vae_tiling=False,
+        tile_x=272,
+        tile_y=272,
+        tile_stride_x=144,
+        tile_stride_y=128,
+        normalization='default',
+        samples=wan_video_sampler_80.out(0),
+        vae=wan_video_vaeloader.out(0),
     )
-    wanvideodecodeoviaudio = _node(wf, 'WanVideoDecodeOviAudio', '90',
-        mmaudio_vae=ovimmaudiovaeloader.out(0),
-        samples=wanvideosampler.out(0),
+    wan_video_decode_ovi_audio_90 = node(wf, 'WanVideoDecodeOviAudio', '90',
+        mmaudio_vae=ovi_mmaudio_vaeloader.out(0),
+        samples=wan_video_sampler_80.out(0),
     )
-    vhs_videocombine = _node(wf, 'VHS_VideoCombine', '88',
+    # ════ OUTPUT ════
+    video_output = node(wf, 'VHS_VideoCombine', '88',
         save_output=True,
-        audio=wanvideodecodeoviaudio.out(0),
-        images=wanvideodecode.out(0),
+        audio=wan_video_decode_ovi_audio_90.out(0),
+        images=wan_video_decode_86.out(0),
     )
-    previewaudio = _node(wf, 'PreviewAudio', '108',
-        audio=wanvideodecodeoviaudio.out(0),
+    preview_audio_108 = node(wf, 'PreviewAudio', '108',
+        audio=wan_video_decode_ovi_audio_90.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
-
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='',
+        source_path=__file__,
+    )
 

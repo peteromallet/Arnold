@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.templates import finalize_ready
 
 
-READY_METADATA = {'model_assets': [],
+READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},'model_assets': [],
  'unbound_inputs': {'seed': 4952},
  'ready_template': 'video/ltx2_3_lightricks_iclora_union_control',
  'workflow_template': 'ltx2_3_lightricks_iclora_union_control',
@@ -35,6 +36,7 @@ READY_REQUIREMENTS = {'models': [],
                   'comfyui_controlnet_aux'],
  'custom_node_refs': [{'slug': 'ComfyUI-DepthAnythingV2',
                        'source': 'git',
+                       'commit': '553187872eeb1d52e50dc53209fa57e569609a72',
                        'url': 'https://github.com/kijai/ComfyUI-DepthAnythingV2.git'},
                       {'slug': 'ComfyUI-KJNodes',
                        'source': 'git',
@@ -42,9 +44,11 @@ READY_REQUIREMENTS = {'models': [],
                        'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
                       {'slug': 'ComfyUI-LTXVideo',
                        'source': 'git',
+                       'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543',
                        'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'},
                       {'slug': 'comfyui_controlnet_aux',
                        'source': 'git',
+                       'commit': 'e8b689a513c3e6b63edc44066560ca5919c0576e',
                        'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'}]}
 
 
@@ -287,8 +291,7 @@ def build() -> VibeWorkflow:
         video=createvideo.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
 
 

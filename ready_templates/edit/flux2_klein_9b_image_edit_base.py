@@ -1,109 +1,82 @@
 # vibecomfy: generated — converted by tools/convert_ready_templates.py
 # Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
 # marker on the first line if hand-editing is required.
-"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
+"""Image editing with Flux 2 Klein Base 9B.
+
+Output: unknown.
+
+Source:  workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json
+"""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+MODELS = {
+    'flux_2_klein_base_9b_fp8': ModelAsset(
+        filename='flux-2-klein-base-9b-fp8.safetensors',
+        url='https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors',
+        subdir='diffusion_models',
+    ),
+    'qwen_3_8b_fp8mixed': ModelAsset(
+        filename='qwen_3_8b_fp8mixed.safetensors',
+        url='https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
+        subdir='text_encoders',
+    ),
+    'full_encoder_small_decoder': ModelAsset(
+        filename='full_encoder_small_decoder.safetensors',
+        url='https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors',
+        subdir='vae',
+    ),
+}
 
+PUBLIC_INPUTS = {}
 
-READY_METADATA = {'model_assets': [{'name': 'flux-2-klein-base-9b-fp8.safetensors',
-                   'url': 'https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors',
-                   'subdir': 'diffusion_models'},
-                  {'name': 'qwen_3_8b_fp8mixed.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
-                   'subdir': 'text_encoders'},
-                  {'name': 'full_encoder_small_decoder.safetensors',
-                   'url': 'https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors',
-                   'subdir': 'vae'}],
- 'unbound_inputs': {'seed': 4006},
- 'ready_template': 'edit/flux2_klein_9b_image_edit_base',
- 'workflow_template': 'flux2_klein_9b_image_edit_base',
- 'capability': 'image_edit',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json',
- 'coverage_tier': 'supplemental',
- 'approach': 'official Flux.2 Klein 9B base image-edit workflow',
- 'runtime_note': None,
- 'discord_signal': None}
-
-READY_REQUIREMENTS = {'models': [{'name': 'flux-2-klein-base-9b-fp8.safetensors',
-             'url': 'https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors',
-             'subdir': 'diffusion_models'},
-            {'name': 'qwen_3_8b_fp8mixed.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'full_encoder_small_decoder.safetensors',
-             'url': 'https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors',
-             'subdir': 'vae'}],
- 'custom_nodes': []}
-
+# ported from workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json (sha256: 890fb265e74dad2d31c92ed173a35254a35c0d19aa702527b1cb4ca53d4738fe)
+READY_METADATA = ReadyMetadata.build(
+    template_id='flux2_klein_9b_image_edit_base',
+    capability='image_edit',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    provenance={'source_role': 'materialized_ready_python_template', 'approach': 'official Flux.2 Klein 9B base image-edit workflow', 'source_workflow': 'workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json'},
+    coverage_tier='supplemental',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadimage = _node(wf, 'LoadImage', '76',
+    # ════ SAMPLING ════
+    input_image_76 = node(wf, 'LoadImage', '76',
         image='car_interior_white.jpeg',
-        widget_1='image',
-    )
-    loadimage_2 = _node(wf, 'LoadImage', '81',
+)
+    input_image_2 = node(wf, 'LoadImage', '81',
         image='comfy_logo_blue.png',
-        widget_1='image',
+)
+    n_7b34ab90_36f9_45ba_a665_71d418f0df18 = node(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
+        image=input_image_76.out('IMAGE'),
     )
-    n_7b34ab90_36f9_45ba_a665_71d418f0df18 = _node(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
-        image=loadimage.out(0),
+    n_65c22b29_59aa_496b_89c6_55a603658670 = node(wf, '65c22b29-59aa-496b-89c6-55a603658670', '92',
+        image=input_image_76.out('IMAGE'),
+        image_1=input_image_2.out('IMAGE'),
     )
-    n_65c22b29_59aa_496b_89c6_55a603658670 = _node(wf, '65c22b29-59aa-496b-89c6-55a603658670', '92',
-        image=loadimage.out(0),
-        image_1=loadimage_2.out(0),
-    )
-    saveimage = _node(wf, 'SaveImage', '9',
+    # ════ OUTPUT ════
+    image_output_9 = node(wf, 'SaveImage', '9',
         filename_prefix='Flux2-Klein-4b-base',
         images=n_7b34ab90_36f9_45ba_a665_71d418f0df18.out(0),
     )
-    saveimage_2 = _node(wf, 'SaveImage', '94',
+    image_output_2 = node(wf, 'SaveImage', '94',
         filename_prefix='Flux2-Klein-4b-base',
         images=n_65c22b29_59aa_496b_89c6_55a603658670.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
-
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='',
+        source_path=__file__,
+    )
 

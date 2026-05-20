@@ -440,6 +440,15 @@ class _NodeBuilder:
             output_names = self.node.metadata.get("output_names")
             if isinstance(output_names, (list, tuple)) and slot in output_names:
                 return Handle(node_id=self.node.id, output_slot=output_names.index(slot), name=str(slot))
+            if isinstance(output_names, (list, tuple)):
+                normalized_slot = str(slot).upper()
+                normalized_names = [str(name).upper() for name in output_names]
+                if normalized_slot in normalized_names:
+                    return Handle(
+                        node_id=self.node.id,
+                        output_slot=normalized_names.index(normalized_slot),
+                        name=str(slot),
+                    )
             raise NotImplementedError(
                 f"Named output {slot!r} is not registered for {self.node.class_type} node {self.node.id}; "
                 "register output_names metadata or pass an integer slot. "

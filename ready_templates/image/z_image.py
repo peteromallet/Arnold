@@ -25,7 +25,7 @@ Pipeline:
 """
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
+from vibecomfy.templates import finalize_ready, template_input, template_output
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -58,6 +58,7 @@ DEFAULT_PROMPT = (
 
 
 READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
     "model_assets": [
         {
             "name": "qwen_3_4b.safetensors",
@@ -169,9 +170,8 @@ def build() -> VibeWorkflow:
         filename_prefix=IMAGE_OUTPUT_PREFIX,
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_input(
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    template_input(
         wf,
         "prompt",
         "5",
@@ -180,7 +180,7 @@ def build() -> VibeWorkflow:
         required=True,
         media_semantics="text",
     )
-    bind_input(
+    template_input(
         wf,
         "negative_prompt",
         "6",
@@ -189,11 +189,11 @@ def build() -> VibeWorkflow:
         aliases=["negative"],
         media_semantics="text",
     )
-    bind_input(wf, "seed", "8", "seed", type="INT")
-    bind_input(wf, "steps", "8", "steps", type="INT")
-    bind_input(wf, "width", "7", "width", type="INT")
-    bind_input(wf, "height", "7", "height", type="INT")
-    bind_output(
+    template_input(wf, "seed", "8", "seed", type="INT")
+    template_input(wf, "steps", "8", "steps", type="INT")
+    template_input(wf, "width", "7", "width", type="INT")
+    template_input(wf, "height", "7", "height", type="INT")
+    template_output(
         wf,
         "10",
         output_type="SaveImage",

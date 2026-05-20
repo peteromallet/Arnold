@@ -15,8 +15,6 @@ Public inputs:
 Output: SaveAudioMP3 (node 59).
 
 Source:  workflow_corpus/official/audio/ace_step_1_5_t2a_song.json
-
-Packs:   EmptyAceStep1, TextEncodeAceStepAudio1
 """
 from __future__ import annotations
 
@@ -72,7 +70,7 @@ READY_METADATA = ReadyMetadata.build(
     smoke_duration_seconds=2,
     subgraph_materialized=True,
     vibecomfy_version='0.1.0',
-    comfy_core={'min_version': None, 'tested_at': None, 'commit': None, 'status': 'unavailable'},
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
 )
 
 READY_METADATA["unbound_inputs"].update({'bpm': '124.bpm', 'duration': '124.duration', 'lyrics': '124.lyrics', 'seed': '124.seed', 'steps': '3.steps', 'tags': '124.tags'})

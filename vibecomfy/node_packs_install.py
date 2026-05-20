@@ -133,7 +133,7 @@ def _lock_entry_for_pack(name: str, sha: str, repo_url: str, *, pack: CustomNode
         commit=sha,
         class_set=class_set,
         pip_packages=pack.pip_packages if pack is not None else (),
-        class_schema_sha256=pack.class_schema_sha256 if pack is not None else None,
+        class_schema_sha256=pack.class_schema_sha256 if pack_ref is not None and pack is not None else None,
     )
 def _install_pack_pip_packages(name: str, pack: CustomNodePack | None, runner: Runner) -> str | None:
     if pack is None or not pack.pip_packages: return None

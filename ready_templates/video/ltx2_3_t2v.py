@@ -1,284 +1,276 @@
 # vibecomfy: manual
 # Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
-"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
+"""Text To Video with LTX 2.3 22B Dev Checkpoint.
+
+Public inputs:
+    prompt (required): Text prompt
+    negative_prompt: Negative text prompt
+    seed: Random seed
+    width: Output width
+    height: Output height
+    output_fps: Output playback frame rate
+    use_lora: Lightning LoRA branch toggle
+    length: Number of output frames
+
+Output: SaveVideo (node 4823).
+
+Source:  workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json
+
+Packs:   ComfyUI-LTXVideo
+"""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.resolution import resolution
 
+_PROMPT_DEFAULT = """A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words."""
 
-READY_METADATA = {'model_assets': [],
- 'unbound_inputs': {'seed': 1919},
- 'ready_template': 'video/ltx2_3_t2v',
- 'workflow_template': 'ltx2_3_t2v',
- 'capability': 'text_to_video',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json',
- 'coverage_tier': 'required',
- 'approach': None,
- 'runtime_note': None,
- 'discord_signal': None,
- 'smoke_resolution': '256x256x5_frames',
- 'ltx_best_practices': ['Use the official Lightricks workflows as runtime gates where possible.',
-                        'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
-                        'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes '
-                        'model_mmap_residency for LatentUpscaleModelManageable.',
-                        'Keep community audio, lip-sync, and long-form workflows as ready templates until '
-                        'their custom node packs and service credentials are declared.'],
- 'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
+MODELS = {
+    'ltx_2_3_22b_dev_checkpoint': ModelAsset(
+        filename='ltx-2.3-22b-dev.safetensors',
+        url='',
+        subdir='checkpoints',
+    ),
+}
 
-READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
-                      {'slug': 'ComfyUI-LTXVideo',
-                       'source': 'git',
-                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]}
+PUBLIC_INPUTS = {
+    'prompt': InputSpec(node='2483', field='text', default=_PROMPT_DEFAULT, type='STRING', required=True, description='Text prompt.', media_semantics='text'),
+    'negative_prompt': InputSpec(node='2612', field='text', default='pc game, console game, video game, cartoon, childish, ugly', type='STRING', aliases=('negative',), description='Negative text prompt.', media_semantics='text'),
+    'seed': InputSpec(node='4814', field='noise_seed', default=42, type='INT', description='Random seed.'),
+    'width': InputSpec(node='3059', field='width', default=960, type='INT', description='Output width.'),
+    'height': InputSpec(node='3059', field='height', default=544, type='INT', description='Output height.'),
+    'output_fps': InputSpec(node='4978', field='value', default=24, type='FLOAT', aliases=('fps',), description='Output playback frame rate.'),
+    'use_lora': InputSpec(node='4977', field='value', default=True, type='BOOLEAN', description='Lightning LoRA branch toggle.'),
+    'length': InputSpec(node='4979', field='value', default=121, type='INT', aliases=('frames',), description='Number of output frames.'),
+}
 
+READY_METADATA = ReadyMetadata.build(
+    template_id='ltx2_3_t2v',
+    capability='text_to_video',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-LTXVideo', 'source': 'git',
+                       'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]},
+    provenance={'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json', 'smoke_resolution': '256x256x5_frames', 'source_role': 'materialized_ready_python_template'},
+    coverage_tier='required',
+    ltx_best_practices=['Use the official Lightricks workflows as runtime gates where possible.', 'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.', 'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes model_mmap_residency for LatentUpscaleModelManageable.', 'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom node packs and service credentials are declared.'],
+    comfy_configuration={'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True},
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
+
+READY_METADATA["unbound_inputs"].update({'fps': '4978.value', 'frames': '4979.value', 'height': '3059.height', 'negative_prompt': '2612.text', 'prompt': '2483.text', 'seed': '4814.noise_seed', 'width': '3059.width'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadimage = _node(wf, 'LoadImage', '2004',
+    # ════ SAMPLING ════
+    input_image = node(wf, 'LoadImage', '2004',
         image='example.png',
     )
-    checkpointloadersimple = _node(wf, 'CheckpointLoaderSimple', '3940',
-        ckpt_name='ltx-2.3-22b-dev.safetensors',
+    # ════ LOADERS ════
+    checkpoint_loader_simple_3940 = node(wf, 'CheckpointLoaderSimple', '3940',
+        ckpt_name=MODELS['ltx_2_3_22b_dev_checkpoint'].filename,
     )
-    ltxvaudiovaeloader = _node(wf, 'LTXVAudioVAELoader', '4010',
-        ckpt_name='ltx-2.3-22b-dev.safetensors',
+    audio_vae = node(wf, 'LTXVAudioVAELoader', '4010',
+        ckpt_name=MODELS['ltx_2_3_22b_dev_checkpoint'].filename,
     )
-    randomnoise = _node(wf, 'RandomNoise', '4814',
-        noise_seed=42,
+    noise_4814 = node(wf, 'RandomNoise', '4814',
+        noise_seed=PUBLIC_INPUTS['seed'].default,
     )
-    ksamplerselect = _node(wf, 'KSamplerSelect', '4831',
+    sampler_kind = node(wf, 'KSamplerSelect', '4831',
         sampler_name='euler_ancestral_cfg_pp',
     )
-    randomnoise_2 = _node(wf, 'RandomNoise', '4832',
+    noise_2 = node(wf, 'RandomNoise', '4832',
         noise_seed=43,
     )
-    ltxavtextencoderloader = _node(wf, 'LTXAVTextEncoderLoader', '4960',
-        ckpt_name='ltx-2.3-22b-dev.safetensors',
+    # ════ TEXT CONDITIONING ════
+    ltxavtext_encoder_loader = node(wf, 'LTXAVTextEncoderLoader', '4960',
+        ckpt_name=MODELS['ltx_2_3_22b_dev_checkpoint'].filename,
         device='default',
         text_encoder='comfy_gemma_3_12B_it.safetensors',
     )
-    guiderparameters = _node(wf, 'GuiderParameters', '4963',
+    guider_parameters_4963 = node(wf, 'GuiderParameters', '4963',
         UNKNOWN=True,
     )
-    clownsampler_beta = _node(wf, 'ClownSampler_Beta', '4967',
+    clown_sampler__beta_4967 = node(wf, 'ClownSampler_Beta', '4967',
         UNKNOWN=True,
     )
-    manualsigmas = _node(wf, 'ManualSigmas', '4971',
+    sigmas = node(wf, 'ManualSigmas', '4971',
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
-    primitiveboolean = _node(wf, 'PrimitiveBoolean', '4977',
-        value=True,
+    # ════ INPUTS ════
+    use_lora = node(wf, 'PrimitiveBoolean', '4977', value=PUBLIC_INPUTS['use_lora'].default)
+    param_float = node(wf, 'PrimitiveFloat', '4978', value=PUBLIC_INPUTS['output_fps'].default)
+    param_int = node(wf, 'PrimitiveInt', '4979', value=PUBLIC_INPUTS['length'].default)
+    positive_prompt = node(wf, 'CLIPTextEncode', '2483',
+        text=PUBLIC_INPUTS['prompt'].default,
+        clip=ltxavtext_encoder_loader.out(0),
     )
-    primitivefloat = _node(wf, 'PrimitiveFloat', '4978',
-        value=24,
+    negative_prompt = node(wf, 'CLIPTextEncode', '2612',
+        text=PUBLIC_INPUTS['negative_prompt'].default,
+        clip=ltxavtext_encoder_loader.out(0),
     )
-    primitiveint = _node(wf, 'PrimitiveInt', '4979',
-        value=121,
-    )
-    cliptextencode = _node(wf, 'CLIPTextEncode', '2483',
-        text='A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.',
-        clip=ltxavtextencoderloader.out(0),
-    )
-    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '2612',
-        text='pc game, console game, video game, cartoon, childish, ugly',
-        clip=ltxavtextencoderloader.out(0),
-    )
-    emptyltxvlatentvideo = _node(wf, 'EmptyLTXVLatentVideo', '3059',
-        width=960,
-        height=544,
+    # ════ LATENT ════
+    empty_video_latent = node(wf, 'EmptyLTXVLatentVideo', '3059',
+        width=PUBLIC_INPUTS['width'].default,
+        height=PUBLIC_INPUTS['height'].default,
         batch_size=1,
-        length=primitiveint.out(0),
+        length=param_int.out('INT'),
     )
-    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '4922',
+    # ════ MODEL PATCH STACK ════
+    lora_4922 = node(wf, 'LoraLoaderModelOnly', '4922',
         lora_name='ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors',
         strength_model=0.5,
-        model=checkpointloadersimple.out(0),
+        model=checkpoint_loader_simple_3940.out(0),
     )
-    guiderparameters_2 = _node(wf, 'GuiderParameters', '4964',
+    guider_parameters_2 = node(wf, 'GuiderParameters', '4964',
         UNKNOWN=True,
-        parameters=guiderparameters.out(0),
+        parameters=guider_parameters_4963.out(0),
     )
-    loraloadermodelonly_2 = _node(wf, 'LoraLoaderModelOnly', '4968',
+    lora_2 = node(wf, 'LoraLoaderModelOnly', '4968',
         lora_name='ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors',
         strength_model=0.2,
-        model=checkpointloadersimple.out(0),
+        model=checkpoint_loader_simple_3940.out(0),
     )
-    resizeimagemasknode = _node(wf, 'ResizeImageMaskNode', '4981',
+    # ════ IMAGE PREP ════
+    resize_image_mask_node_4981 = node(wf, 'ResizeImageMaskNode', '4981',
         resize_type='scale longer dimension',
         scale_method='lanczos',
-        input=loadimage.out(0),
+        input=input_image.out('IMAGE'),
         _extras={'resize_type.longer_size': 1536},
     )
-    ltxfloattoint = _node(wf, 'LTXFloatToInt', '4985',
+    fps_int = node(wf, 'LTXFloatToInt', '4985',
         UNKNOWN=0,
-        a=primitivefloat.out(0),
+        a=param_float.out('FLOAT'),
     )
-    ltxvconditioning = _node(wf, 'LTXVConditioning', '1241',
-        frame_rate=primitivefloat.out(0),
-        negative=cliptextencode_2.out(0),
-        positive=cliptextencode.out(0),
+    conditioning = node(wf, 'LTXVConditioning', '1241',
+        frame_rate=param_float.out('FLOAT'),
+        negative=negative_prompt.out('CONDITIONING'),
+        positive=positive_prompt.out('CONDITIONING'),
     )
-    ltxvpreprocess = _node(wf, 'LTXVPreprocess', '3336',
+    preprocessed_image = node(wf, 'LTXVPreprocess', '3336',
         img_compression=18,
-        image=resizeimagemasknode.out(0),
+        image=resize_image_mask_node_4981.out(0),
     )
-    ltxvemptylatentaudio = _node(wf, 'LTXVEmptyLatentAudio', '3980',
+    empty_audio_latent = node(wf, 'LTXVEmptyLatentAudio', '3980',
         batch_size=1,
-        audio_vae=ltxvaudiovaeloader.out(0),
-        frame_rate=ltxfloattoint.out(0),
-        frames_number=primitiveint.out(0),
+        audio_vae=audio_vae.out('AUDIO_VAE'),
+        frame_rate=fps_int.out('INT'),
+        frames_number=param_int.out('INT'),
     )
-    ltxvimgtovideoconditiononly = _node(wf, 'LTXVImgToVideoConditionOnly', '3159',
+    ltxvimg_to_video_condition_only = node(wf, 'LTXVImgToVideoConditionOnly', '3159',
         UNKNOWN=False,
-        bypass=primitiveboolean.out(0),
-        image=ltxvpreprocess.out(0),
-        latent=emptyltxvlatentvideo.out(0),
-        vae=checkpointloadersimple.out(2),
+        bypass=use_lora.out('BOOLEAN'),
+        image=preprocessed_image.out('OUTPUT_IMAGE'),
+        latent=empty_video_latent.out('LATENT'),
+        vae=checkpoint_loader_simple_3940.out(2),
     )
-    multimodalguider = _node(wf, 'MultimodalGuider', '4808',
+    multimodal_guider_4808 = node(wf, 'MultimodalGuider', '4808',
         UNKNOWN='28',
-        model=loraloadermodelonly_2.out(0),
-        negative=ltxvconditioning.out(1),
-        parameters=guiderparameters_2.out(0),
-        positive=ltxvconditioning.out(0),
+        model=lora_2.out('MODEL'),
+        negative=conditioning.out('NEGATIVE'),
+        parameters=guider_parameters_2.out(0),
+        positive=conditioning.out('POSITIVE'),
     )
-    cfgguider = _node(wf, 'CFGGuider', '4828',
+    cfg_guider = node(wf, 'CFGGuider', '4828',
         cfg=1,
-        model=loraloadermodelonly.out(0),
-        negative=ltxvconditioning.out(1),
-        positive=ltxvconditioning.out(0),
+        model=lora_4922.out('MODEL'),
+        negative=conditioning.out('NEGATIVE'),
+        positive=conditioning.out('POSITIVE'),
     )
-    ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '4528',
-        audio_latent=ltxvemptylatentaudio.out(0),
-        video_latent=ltxvimgtovideoconditiononly.out(0),
+    av_latent = node(wf, 'LTXVConcatAVLatent', '4528',
+        audio_latent=empty_audio_latent.out('LATENT'),
+        video_latent=ltxvimg_to_video_condition_only.out(0),
     )
-    samplercustomadvanced_2 = _node(wf, 'SamplerCustomAdvanced', '4829',
-        guider=cfgguider.out(0),
-        latent_image=ltxvconcatavlatent.out(0),
-        noise=randomnoise_2.out(0),
-        sampler=ksamplerselect.out(0),
-        sigmas=manualsigmas.out(0),
+    sampled_latent_1 = node(wf, 'SamplerCustomAdvanced', '4829',
+        guider=cfg_guider.out('GUIDER'),
+        latent_image=av_latent.out('LATENT'),
+        noise=noise_2.out('NOISE'),
+        sampler=sampler_kind.out('SAMPLER'),
+        sigmas=sigmas.out('SIGMAS'),
     )
-    ltxvscheduler = _node(wf, 'LTXVScheduler', '4966',
+    ltxvscheduler = node(wf, 'LTXVScheduler', '4966',
         base_shift=0.95,
         max_shift=2.05,
         steps=15,
         stretch=True,
         terminal=0.1,
-        latent=ltxvconcatavlatent.out(0),
+        latent=av_latent.out('LATENT'),
     )
-    samplercustomadvanced = _node(wf, 'SamplerCustomAdvanced', '4802',
-        guider=multimodalguider.out(0),
-        latent_image=ltxvconcatavlatent.out(0),
-        noise=randomnoise.out(0),
-        sampler=clownsampler_beta.out(0),
+    sampled_latent_4802 = node(wf, 'SamplerCustomAdvanced', '4802',
+        guider=multimodal_guider_4808.out(0),
+        latent_image=av_latent.out('LATENT'),
+        noise=noise_4814.out('NOISE'),
+        sampler=clown_sampler__beta_4967.out(0),
         sigmas=ltxvscheduler.out(0),
     )
-    ltxvseparateavlatent_2 = _node(wf, 'LTXVSeparateAVLatent', '4845',
-        av_latent=samplercustomadvanced_2.out(0),
+    av_latent_separated_1 = node(wf, 'LTXVSeparateAVLatent', '4845',
+        av_latent=sampled_latent_1.out('OUTPUT'),
     )
-    ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '4824',
-        av_latent=samplercustomadvanced.out(0),
+    av_latent_separated_4824 = node(wf, 'LTXVSeparateAVLatent', '4824',
+        av_latent=sampled_latent_4802.out('OUTPUT'),
     )
-    ltxvaudiovaedecode_2 = _node(wf, 'LTXVAudioVAEDecode', '4848',
-        audio_vae=ltxvaudiovaeloader.out(0),
-        samples=ltxvseparateavlatent_2.out(1),
+    # ════ DECODE ════
+    decoded_audio_1 = node(wf, 'LTXVAudioVAEDecode', '4848',
+        audio_vae=audio_vae.out('AUDIO_VAE'),
+        samples=av_latent_separated_1.out('AUDIO_LATENT'),
     )
-    ltxvtiledvaedecode = _node(wf, 'LTXVTiledVAEDecode', '4982',
+    ltxvtiled_vaedecode_1 = node(wf, 'LTXVTiledVAEDecode', '4982',
         UNKNOWN='auto',
-        latents=ltxvseparateavlatent_2.out(0),
-        vae=checkpointloadersimple.out(2),
+        latents=av_latent_separated_1.out('VIDEO_LATENT'),
+        vae=checkpoint_loader_simple_3940.out(2),
     )
-    ltxvaudiovaedecode = _node(wf, 'LTXVAudioVAEDecode', '4818',
-        audio_vae=ltxvaudiovaeloader.out(0),
-        samples=ltxvseparateavlatent.out(1),
+    decoded_audio_4818 = node(wf, 'LTXVAudioVAEDecode', '4818',
+        audio_vae=audio_vae.out('AUDIO_VAE'),
+        samples=av_latent_separated_4824.out('AUDIO_LATENT'),
     )
-    createvideo_2 = _node(wf, 'CreateVideo', '4849',
-        fps=primitivefloat.out(0),
-        audio=ltxvaudiovaedecode_2.out(0),
-        images=ltxvtiledvaedecode.out(0),
+    # ════ OUTPUT ════
+    video_1 = node(wf, 'CreateVideo', '4849',
+        fps=param_float.out('FLOAT'),
+        audio=decoded_audio_1.out(0),
+        images=ltxvtiled_vaedecode_1.out(0),
     )
-    ltxvtiledvaedecode_2 = _node(wf, 'LTXVTiledVAEDecode', '4983',
+    ltxvtiled_vaedecode_2 = node(wf, 'LTXVTiledVAEDecode', '4983',
         UNKNOWN='auto',
-        latents=ltxvseparateavlatent.out(0),
-        vae=checkpointloadersimple.out(2),
+        latents=av_latent_separated_4824.out('VIDEO_LATENT'),
+        vae=checkpoint_loader_simple_3940.out(2),
     )
-    createvideo = _node(wf, 'CreateVideo', '4819',
-        fps=primitivefloat.out(0),
-        audio=ltxvaudiovaedecode.out(0),
-        images=ltxvtiledvaedecode_2.out(0),
+    video_4819 = node(wf, 'CreateVideo', '4819',
+        fps=param_float.out('FLOAT'),
+        audio=decoded_audio_4818.out(0),
+        images=ltxvtiled_vaedecode_2.out(0),
     )
-    savevideo_2 = _node(wf, 'SaveVideo', '4852',
+    saved_video_1 = node(wf, 'SaveVideo', '4852',
         filename_prefix='output_D',
         format='auto',
         codec='auto',
-        video=createvideo_2.out(0),
+        video=video_1.out('VIDEO'),
     )
-    savevideo = _node(wf, 'SaveVideo', '4823',
+    saved_video_4823 = node(wf, 'SaveVideo', '4823',
         filename_prefix='output_F',
         format='auto',
         codec='auto',
-        video=createvideo.out(0),
+        video=video_4819.out('VIDEO'),
     )
 
     apply_ltx_lowvram(wf)
     resolution(384, 256, 9).apply(wf)
-    ensure_custom_nodes(wf, READY_REQUIREMENTS["custom_nodes"])
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_input(wf, 'prompt', '2483', 'text', type='STRING', required=True, media_semantics='text')
-    bind_input(wf, 'negative_prompt', '2612', 'text', type='STRING', aliases=['negative'], media_semantics='text')
-    bind_input(wf, 'seed', '4814', 'noise_seed', type='INT')
-    bind_input(wf, 'width', '3059', 'width', type='INT')
-    bind_input(wf, 'height', '3059', 'height', type='INT')
-    bind_input(wf, 'frames', '4979', 'value', type='INT')
-    bind_input(wf, 'fps', '4978', 'value', type='FLOAT')
-    bind_output(wf, '4823', output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', filename_prefix='output_F', expected_cardinality='one')
-    bind_output(wf, '4852', output_type='SaveVideo', name='preview_video', artifact_kind='video', mime_type='video/mp4', filename_prefix='output_D', expected_cardinality='one')
-    return wf
+    ensure_custom_nodes(wf, READY_METADATA["requirements"]["custom_nodes"])
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='4852',
+        output_type='SaveVideo',
+        name='',
+        mime_type='video/mp4',
+        expected_cardinality='one',
+        source_path=__file__,
+    )
 
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder

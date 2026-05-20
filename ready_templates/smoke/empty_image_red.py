@@ -2,11 +2,12 @@
 """Minimal ready-template smoke used to validate the Python template runner."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.templates import finalize_ready
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
 READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
     "ready_template": "smoke/empty_image_red",
     "workflow_template": "smoke_empty_image_red",
     "capability": "runtime_smoke",
@@ -31,6 +32,5 @@ def build() -> VibeWorkflow:
     )
     image = wf.node("EmptyImage", width=64, height=64, batch_size=1, color=16711680)
     wf.node("SaveImage", images=image.out(0), filename_prefix="vibecomfy_ready_smoke_red")
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf

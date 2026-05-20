@@ -872,7 +872,18 @@ def _generate_structured_docstring(
     """
     capability = metadata.get("capability", "workflow")
     source_workflow = metadata.get("source_workflow", "")
-    model_keys = model_keys or list(metadata.get("model_assets", {}).keys())
+    if model_keys is None:
+        raw_model_assets = metadata.get("model_assets", {})
+        if isinstance(raw_model_assets, dict):
+            model_keys = list(raw_model_assets.keys())
+        elif isinstance(raw_model_assets, list):
+            model_keys = [
+                str(item.get("name") or item.get("filename"))
+                for item in raw_model_assets
+                if isinstance(item, dict) and (item.get("name") or item.get("filename"))
+            ]
+        else:
+            model_keys = []
 
     # ---- One-liner intent (preserve human edits) ----
     existing_first_sentence = ""
@@ -6013,6 +6024,19 @@ def _remove_top_level_assignments(source: str, names: set[str]) -> str:
     return "".join(line for idx, line in enumerate(lines, start=1) if idx not in drop)
 
 
+def _rewrite_ready_requirements_refs(source: str) -> str:
+    """Rewrite dangling v2.2 READY_REQUIREMENTS subscripts to v2.4 metadata."""
+    return re.sub(
+        r"READY_REQUIREMENTS\[(?P<quote>['\"])(?P<key>[^'\"]+)(?P=quote)\]",
+        r'READY_METADATA["requirements"]["\g<key>"]',
+        source,
+    )
+
+
+def _rewrite_legacy_workflow_method_names(source: str) -> str:
+    return source.replace(".removenode(", ".remove_node(")
+
+
 def _collect_params_literal_map(tree: ast.AST) -> dict[str, Any]:
     for stmt in getattr(tree, "body", []):
         if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
@@ -6352,21 +6376,37 @@ def _get_vibecomfy_version() -> str:
 
 
 def _get_comfy_core_info() -> dict[str, Any]:
-    """Try to discover ComfyUI version. Falls back to unavailable if not importable."""
+    """Return cached ComfyUI metadata, falling back to best-effort import."""
+    cached = Path(__file__).resolve().parents[1] / "vibecomfy" / "comfy_metadata.json"
+    if cached.exists():
+        try:
+            data = json.loads(cached.read_text(encoding="utf-8"))
+            version = data.get("version")
+            commit = data.get("commit")
+            tested_at = data.get("tested_at") or data.get("captured_at")
+            if version and commit:
+                return {
+                    "version": version,
+                    "tested_at": tested_at,
+                    "commit": commit,
+                    "status": data.get("status", "cached"),
+                }
+        except Exception:
+            pass
     try:
         import comfy
         version = getattr(comfy, "__version__", None)
         commit = getattr(comfy, "__git_commit__", None)
         if version:
             return {
-                "min_version": version,
+                "version": version,
                 "tested_at": version,
                 "commit": commit,
                 "status": "discovered",
             }
     except ImportError:
         pass
-    return {"min_version": None, "tested_at": None, "commit": None, "status": "unavailable"}
+    return {"version": None, "tested_at": None, "commit": None, "status": "unavailable"}
 
 
 def _derive_custom_node_packs_from_source(source: str) -> list[str]:
@@ -6836,9 +6876,43 @@ def _render_model_block(models: OrderedDict[str, dict[str, Any]]) -> str:
         lines.append(f"        subdir={model['subdir']!r},\n")
         if model.get("target_path"):
             lines.append(f"        target_path={model['target_path']!r},\n")
+        hf_meta = _hf_metadata_for_url(str(model.get("url") or ""))
+        if hf_meta.get("sha256"):
+            lines.append(f"        sha256={hf_meta['sha256']!r},\n")
+        elif hf_meta.get("status") == "gated":
+            lines.append("        sha256='gated',\n")
+        if hf_meta.get("hf_revision"):
+            lines.append(f"        hf_revision={hf_meta['hf_revision']!r},\n")
+        if hf_meta.get("size_bytes") is not None:
+            lines.append(f"        size_bytes={hf_meta['size_bytes']!r},\n")
+        if hf_meta.get("status") == "gated":
+            lines.append(f"        # gated: {hf_meta.get('repo_id', 'unknown')}\n")
         lines.append("    ),\n")
     lines.append("}\n\n")
     return "".join(lines)
+
+
+_HF_METADATA_CACHE: dict[str, Any] | None = None
+
+
+def _hf_metadata_for_url(url: str) -> dict[str, Any]:
+    global _HF_METADATA_CACHE
+    if _HF_METADATA_CACHE is None:
+        cache = Path(__file__).resolve().parents[1] / "out" / "cache" / "hf_metadata.json"
+        try:
+            _HF_METADATA_CACHE = json.loads(cache.read_text(encoding="utf-8")).get("urls", {})
+        except Exception:
+            _HF_METADATA_CACHE = {}
+    value = _HF_METADATA_CACHE.get(_canonical_hf_url(url)) or _HF_METADATA_CACHE.get(url)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _canonical_hf_url(url: str) -> str:
+    match = re.match(r"https://huggingface\\.co/(.+?)/resolve/([^/]+)/(.+)", url)
+    if not match:
+        return url
+    repo_id, revision, filename = match.groups()
+    return f"https://huggingface.co/{repo_id}/resolve/{revision}/{filename}"
 
 
 def _input_default_constant_name(name: str) -> str:
@@ -7818,7 +7892,9 @@ def _render_finalize_footer(bind_call: ast.Call | None, output_prefix: Any) -> s
 def _convert_restructure_to_v23(source: str) -> str:
     """Convert the v2.2 narrative output into the v2.3 single-source shape."""
     if _is_v231_generated_source(source):
-        return _remove_top_level_assignments(source, {"READY_REQUIREMENTS"})
+        return _rewrite_legacy_workflow_method_names(
+            _rewrite_ready_requirements_refs(_remove_top_level_assignments(source, {"READY_REQUIREMENTS"}))
+        )
     if "VibeWorkflow" not in source:
         return source
     try:
@@ -7832,7 +7908,8 @@ def _convert_restructure_to_v23(source: str) -> str:
     metadata = _collect_metadata_literal(tree)
     # Inject version pins (T12)
     metadata.setdefault("vibecomfy_version", _get_vibecomfy_version())
-    metadata.setdefault("comfy_core", _get_comfy_core_info())
+    if not isinstance(metadata.get("comfy_core"), dict) or metadata["comfy_core"].get("status") == "unavailable":
+        metadata["comfy_core"] = _get_comfy_core_info()
     req_extras = _collect_requirements_extras(tree)
     bind_call = _collect_bind_output_call(tree)
     model_files = _collect_model_files_map(tree)
@@ -7960,6 +8037,8 @@ def _convert_restructure_to_v23(source: str) -> str:
     )
     converted = _relocate_ready_metadata_update_lines(converted)
     converted = _remove_top_level_assignments(converted, {"ID", "READY_REQUIREMENTS"})
+    converted = _rewrite_ready_requirements_refs(converted)
+    converted = _rewrite_legacy_workflow_method_names(converted)
     converted = converted.replace("_node(", "node(")
 
     # Generate structured module docstring (T11)
@@ -7970,7 +8049,7 @@ def _convert_restructure_to_v23(source: str) -> str:
         pass
     output_type = _kw_literal(bind_call, "output_type", None) if bind_call is not None else None
     output_node_id = _bind_output_node_id(bind_call)
-    final_packs = all_custom_nodes if custom_node_packs else []
+    final_packs = list(custom_node_packs) if custom_node_packs else []
     model_keys_list = list(models.keys())
     new_doc = _generate_structured_docstring(
         metadata=metadata,

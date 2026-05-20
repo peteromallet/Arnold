@@ -75,7 +75,7 @@ READY_METADATA = ReadyMetadata.build(
     provenance={'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/video/wan_i2v.json'},
     coverage_tier='required',
     vibecomfy_version='0.1.0',
-    comfy_core={'min_version': None, 'tested_at': None, 'commit': None, 'status': 'unavailable'},
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
 )
 
 READY_METADATA["unbound_inputs"].update({'fps': '55.fps', 'image': '52.image', 'negative_prompt': '7.text', 'prompt': '6.text', 'seed': '3.seed', 'steps': '3.steps'})

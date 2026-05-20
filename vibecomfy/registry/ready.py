@@ -180,7 +180,7 @@ def _classify_ready_template_ast(tree: ast.AST) -> dict[str, Any]:
                 constructs_vibeworkflow = True
             if call_name == "workflow_from_ready":
                 forks_ready_workflow = True
-            if call_name == "apply_ready_template_policy":
+            if call_name in {"apply_ready_template_policy", "finalize_ready"}:
                 applies_ready_policy = True
             if call_name in {"json.load", "json.loads", "load_workflow_json", "load_template"}:
                 loads_json_runtime = True

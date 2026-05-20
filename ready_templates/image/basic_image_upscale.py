@@ -1,61 +1,50 @@
 # vibecomfy: manual
-"""Core ComfyUI image upscale template for Reigh image-upscale parity."""
+"""Core ComfyUI image upscale template for Reigh image-upscale parity.
+
+Output: unknown.
+
+Source:  ComfyUI core LoadImage -> ImageScaleBy -> SaveImage
+"""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+MODELS = {}
 
+PUBLIC_INPUTS = {}
 
-READY_METADATA = {
-    "model_assets": [],
-    "unbound_inputs": {
-        "image": "1.image",
-        "scale_factor": "2.scale_by",
-    },
-    "ready_template": "image/basic_image_upscale",
-    "workflow_template": "basic_image_upscale",
-    "capability": "image_upscale",
-    "source_role": "reigh_parity_manual_template",
-    "source_workflow": "ComfyUI core LoadImage -> ImageScaleBy -> SaveImage",
-    "coverage_tier": "production_parity_candidate",
-    "approach": "Core ComfyUI lanczos ImageScaleBy; maps Reigh image-upscale parameters without external API calls.",
-    "runtime_note": "This preserves the task contract but is not FlashVSR/RealESRGAN model super-resolution.",
-}
-
-READY_REQUIREMENTS = {"models": [], "custom_nodes": []}
-
+READY_METADATA = ReadyMetadata.build(
+    template_id='basic_image_upscale',
+    capability='image_upscale',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    provenance={'source_workflow': 'ComfyUI core LoadImage -> ImageScaleBy -> SaveImage', 'source_role': 'reigh_parity_manual_template', 'approach': 'Core ComfyUI lanczos ImageScaleBy; maps Reigh image-upscale parameters without external API calls.'},
+    coverage_tier='production_parity_candidate',
+    runtime_note='This preserves the task contract but is not FlashVSR/RealESRGAN model super-resolution.',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
 def build() -> VibeWorkflow:
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(id=READY_METADATA["ready_template"], path=__file__, source_type="ready_template"),
-    )
-    image = _node(wf, "LoadImage", "1", image="image_upscale_input.png")
-    upscaled = _node(
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+    # ════ SAMPLING ════
+    image = node(wf, "LoadImage", "1", image="image_upscale_input.png")
+    # ════ IMAGE PREP ════
+    upscaled = node(
         wf,
         "ImageScaleBy",
         "2",
-        image=image.out(0),
+        image=image.out('IMAGE'),
         upscale_method="lanczos",
         scale_by=2.0,
     )
-    _node(wf, "SaveImage", "3", filename_prefix="image-upscale", images=upscaled.out(0))
+    node(wf, "SaveImage", "3", filename_prefix="image-upscale", images=upscaled.out(0))
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
-
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, **kwargs):
-    builder = wf.node(class_type, **kwargs)
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='3',
+        source_path=__file__,
+    )

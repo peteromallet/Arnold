@@ -1,43 +1,42 @@
 # vibecomfy: manual
-"""Public-asset video enhancement template for Reigh video_enhance."""
+"""Public-asset video enhancement template for Reigh video_enhance.
+
+Output: unknown.
+
+Source:  ComfyUI core + VideoHelperSuite public-node baseline
+
+Packs:   ComfyUI-VideoHelperSuite
+"""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+MODELS = {}
 
+PUBLIC_INPUTS = {}
 
-READY_METADATA = {
-    "model_assets": [],
-    "unbound_inputs": {
-        "video": "1.video",
-        "scale_factor": "4.scale_by",
-    },
-    "ready_template": "video/basic_video_enhance",
-    "workflow_template": "basic_video_enhance",
-    "capability": "video_enhance",
-    "source_role": "reigh_parity_manual_template",
-    "source_workflow": "ComfyUI core + VideoHelperSuite public-node baseline",
-    "coverage_tier": "production_baseline",
-    "approach": "VHS_LoadVideo -> ImageScaleBy -> VHS_VideoCombine, avoiding gated model downloads.",
-    "runtime_note": "Frame interpolation is intentionally not enabled in the default app-active route because the prior GIMM-VFI asset is license-gated without HF_TOKEN.",
-}
-
-READY_REQUIREMENTS = {
-    "models": READY_METADATA["model_assets"],
-    "custom_nodes": ["ComfyUI-VideoHelperSuite"],
-}
-
+READY_METADATA = ReadyMetadata.build(
+    template_id='basic_video_enhance',
+    capability='video_enhance',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    requirements={'custom_nodes': ['ComfyUI-VideoHelperSuite']},
+    provenance={'approach': 'VHS_LoadVideo -> ImageScaleBy -> VHS_VideoCombine, avoiding gated model downloads.', 'source_role': 'reigh_parity_manual_template', 'source_workflow': 'ComfyUI core + VideoHelperSuite public-node baseline'},
+    coverage_tier='production_baseline',
+    runtime_note='Frame interpolation is intentionally not enabled in the default app-active route because the prior GIMM-VFI asset is license-gated without HF_TOKEN.',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
 def build() -> VibeWorkflow:
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(id=READY_METADATA["ready_template"], path=__file__, source_type="ready_template"),
-    )
-    video = _node(
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+    # ════ LOADERS ════
+    video = node(
         wf,
         "VHS_LoadVideo",
         "1",
-        video="video_enhance_input.mp4",
+        video='video_enhance_input.mp4',
         force_rate=0,
         custom_width=0,
         custom_height=0,
@@ -45,7 +44,8 @@ def build() -> VibeWorkflow:
         skip_first_frames=0,
         select_every_nth=1,
     )
-    upscaled = _node(
+    # ════ IMAGE PREP ════
+    upscaled = node(
         wf,
         "ImageScaleBy",
         "4",
@@ -53,7 +53,7 @@ def build() -> VibeWorkflow:
         upscale_method="lanczos",
         scale_by=2.0,
     )
-    _node(
+    node(
         wf,
         "VHS_VideoCombine",
         "5",
@@ -71,21 +71,11 @@ def build() -> VibeWorkflow:
         save_output=True,
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='',
+        source_path=__file__,
+    )
 
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, **kwargs):
-    builder = wf.node(class_type, **kwargs)
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder

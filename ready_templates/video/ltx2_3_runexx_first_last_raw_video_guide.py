@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from vibecomfy.handles import Handle
 from vibecomfy.registry.ready import workflow_from_ready
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
+from vibecomfy.templates import finalize_ready, template_input, template_output
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -45,6 +45,7 @@ OUTPUT_PREFIX = "reigh_vibecomfy_ltx_raw_guide"
 
 
 READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
     "model_assets": LTX_RUNEXX_MODEL_ASSETS,
     "unbound_inputs": {
         "seed": "14.noise_seed",
@@ -107,12 +108,15 @@ READY_REQUIREMENTS = {'models': [{'name': 'ltx-2.3_text_projection_bf16.safetens
                        'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
                       {'slug': 'ComfyUI-LTXVideo',
                        'source': 'git',
+                       'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543',
                        'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'},
                       {'slug': 'ComfyUI-VideoHelperSuite',
                        'source': 'git',
+                       'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b',
                        'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
                       {'slug': 'rgthree-comfy',
                        'source': 'git',
+                       'commit': '738105af5fb14e96fbecaf406dc356e284797e8c',
                        'url': 'https://github.com/rgthree/rgthree-comfy.git'}]}
 
 
@@ -158,24 +162,22 @@ def build() -> VibeWorkflow:
     _strip_raw_guide_attention_mask(wf)
     _apply_runtime_schema_defaults(wf)
 
-    wf.finalize_metadata()
-    wf.register_input("start_image", "45", "image", "example.png")
-    wf.register_input("end_image", "47", "image", "egyptian_queen.png")
-    wf.register_input("control_video", "5001", "video", "ltx_smoke_guide.mp4")
-    wf.register_input("prompt", "2103", "value", wf.nodes["2103"].inputs.get("value", ""))
-    wf.register_input("negative", "11", "text", wf.nodes["11"].inputs.get("text", ""))
-    wf.register_input("seed", "14", "noise_seed", 43)
-    wf.register_input("frames", "2078", "widget_0", 9)
-    wf.register_input("width", "2080", "widget_0", 256)
-    wf.register_input("height", "2079", "widget_0", 256)
-    wf.register_input("fps", "2076", "value", 8)
-    wf.register_input("strength", "6102", "value", 1)
-    wf.register_input("first_frame_strength", "2110", "value", 0.8)
-    wf.register_input("last_frame_strength", "2108", "value", 0.8)
-    wf.register_input("model", "175", "ckpt_name", wf.nodes["175"].inputs.get("ckpt_name", ""))
-
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_output(
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    template_input(wf, "start_image", "45", "image", "example.png")
+    template_input(wf, "end_image", "47", "image", "egyptian_queen.png")
+    template_input(wf, "control_video", "5001", "video", "ltx_smoke_guide.mp4")
+    template_input(wf, "prompt", "2103", "value", wf.nodes["2103"].inputs.get("value", ""))
+    template_input(wf, "negative", "11", "text", wf.nodes["11"].inputs.get("text", ""))
+    template_input(wf, "seed", "14", "noise_seed", 43)
+    template_input(wf, "frames", "2078", "widget_0", 9)
+    template_input(wf, "width", "2080", "widget_0", 256)
+    template_input(wf, "height", "2079", "widget_0", 256)
+    template_input(wf, "fps", "2076", "value", 8)
+    template_input(wf, "strength", "6102", "value", 1)
+    template_input(wf, "first_frame_strength", "2110", "value", 0.8)
+    template_input(wf, "last_frame_strength", "2108", "value", 0.8)
+    template_input(wf, "model", "175", "ckpt_name", wf.nodes["175"].inputs.get("ckpt_name", ""))
+    template_output(
         wf,
         "43",
         output_type="VHS_VideoCombine",

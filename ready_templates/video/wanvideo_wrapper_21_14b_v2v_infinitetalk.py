@@ -1,227 +1,218 @@
 # vibecomfy: generated — converted by tools/convert_ready_templates.py
 # Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
 # marker on the first line if hand-editing is required.
-"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
+"""Video To Video Talking Avatar with CLIP Vision H CLIP.
+
+Output: unknown.
+
+Source:  workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json
+
+Packs:   ComfyUI-KJNodes, ComfyUI-VideoHelperSuite, ComfyUI-WanVideoWrapper, rgthree-comfy
+"""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 
+def _getnode(wf, _id, **overrides):
+    kwargs = dict(widget_0='VAE')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+MODELS = {
+    'clip_vision_h_clip': ModelAsset(
+        filename='clip_vision_h.safetensors',
+        url='',
+        subdir='text_encoders',
+    ),
+}
 
-READY_METADATA = {'model_assets': [],
- 'unbound_inputs': {'seed': 4971},
- 'ready_template': 'video/wanvideo_wrapper_21_14b_v2v_infinitetalk',
- 'workflow_template': 'wanvideo_wrapper_21_14b_v2v_infinitetalk',
- 'capability': 'video_to_video_talking_avatar',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json',
- 'coverage_tier': 'supplemental',
- 'approach': 'InfiniteTalk video-to-video talking avatar',
- 'runtime_note': None,
- 'discord_signal': None,
- 'smoke_resolution': '256x256x5_frames'}
+PUBLIC_INPUTS = {}
 
-READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-KJNodes',
-                  'ComfyUI-VideoHelperSuite',
-                  'ComfyUI-WanVideoWrapper',
-                  'rgthree-comfy'],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
-                      {'slug': 'ComfyUI-VideoHelperSuite',
-                       'source': 'git',
-                       'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
-                      {'slug': 'ComfyUI-WanVideoWrapper',
-                       'source': 'git',
-                       'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c',
-                       'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'},
-                      {'slug': 'rgthree-comfy',
-                       'source': 'git',
-                       'url': 'https://github.com/rgthree/rgthree-comfy.git'}]}
-
+READY_METADATA = ReadyMetadata.build(
+    template_id='wanvideo_wrapper_21_14b_v2v_infinitetalk',
+    capability='video_to_video_talking_avatar',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper', 'rgthree-comfy'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git',
+                       'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}, {'slug': 'ComfyUI-WanVideoWrapper', 'source': 'git', 'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}, {'slug': 'rgthree-comfy', 'source': 'git',
+                       'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git'}]},
+    provenance={'approach': 'InfiniteTalk video-to-video talking avatar', 'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json', 'smoke_resolution': '256x256x5_frames', 'source_role': 'materialized_ready_python_template'},
+    coverage_tier='supplemental',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    multitalkmodelloader = _node(wf, 'MultiTalkModelLoader', '120',
+    # ════ LOADERS ════
+    multi_talk_model_loader_120 = node(wf, 'MultiTalkModelLoader', '120',
         widget_0='WanVideo\\InfiniteTalk\\InfiniteTalk\\Wan2_1-InfiniteTalk_Single_Q8.gguf',
     )
-    loadaudio = _node(wf, 'LoadAudio', '125',
+    load_audio_125 = node(wf, 'LoadAudio', '125',
         audio='one-does-not-simply-walk-into-mordor-its-black-gates-are-guarded-by-more-than-just-orcs.mp3',
         widget_1=None,
         widget_2=None,
     )
-    wanvideovaeloader = _node(wf, 'WanVideoVAELoader', '129',
-        widget_0='wanvideo\\Wan2_1_VAE_bf16.safetensors',
-        widget_1='bf16',
+    wan_video_vaeloader = node(wf, 'WanVideoVAELoader', '129',
+        model_name='wanvideo\\Wan2_1_VAE_bf16.safetensors',
+        precision='bf16',
     )
-    wanvideoblockswap = _node(wf, 'WanVideoBlockSwap', '134',
-        widget_0=20,
-        widget_1=False,
-        widget_2=False,
-        widget_3=True,
-        widget_4=0,
-        widget_5=1,
-        widget_6=False,
+    # ════ SAMPLING ════
+    wan_video_block_swap_134 = node(wf, 'WanVideoBlockSwap', '134',
+        blocks_to_swap=20,
+        offload_img_emb=False,
+        offload_txt_emb=False,
+        use_non_blocking=True,
+        vace_blocks_to_swap=0,
+        prefetch_blocks=1,
+        block_swap_debug=False,
     )
-    downloadandloadwav2vecmodel = _node(wf, 'DownloadAndLoadWav2VecModel', '137',
+    download_and_load_wav2_vec_model_137 = node(wf, 'DownloadAndLoadWav2VecModel', '137',
         widget_0='TencentGameMate/chinese-wav2vec2-base',
         widget_1='fp16',
         widget_2='main_device',
     )
-    wanvideoloraselect = _node(wf, 'WanVideoLoraSelect', '138',
-        widget_0='WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
-        widget_1=1,
-        widget_2=False,
-        widget_3=False,
+    wan_video_lora_select_138 = node(wf, 'WanVideoLoraSelect', '138',
+        lora='WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
+        strength=1,
+        low_mem_load=False,
+        merge_loras=False,
     )
-    wanvideotorchcompilesettings = _node(wf, 'WanVideoTorchCompileSettings', '177',
-        widget_0='inductor',
-        widget_1=False,
-        widget_2='default',
-        widget_3=False,
-        widget_4=64,
-        widget_5=True,
-        widget_6=128,
+    wan_video_torch_compile_settings_177 = node(wf, 'WanVideoTorchCompileSettings', '177',
+        backend='inductor',
+        fullgraph=False,
+        mode='default',
+        dynamic=False,
+        dynamo_cache_size_limit=64,
+        compile_transformer_blocks_only=True,
+        dynamo_recompile_limit=128,
     )
-    clipvisionloader = _node(wf, 'CLIPVisionLoader', '238',
-        widget_0='clip_vision_h.safetensors',
+    clip_vision = node(wf, 'CLIPVisionLoader', '238',
+        clip_name=MODELS['clip_vision_h_clip'].filename,
     )
-    wanvideotextencodecached = _node(wf, 'WanVideoTextEncodeCached', '241',
-        widget_0='umt5-xxl-enc-bf16.safetensors',
-        widget_1='bf16',
-        widget_2='a woman is singing a lullaby',
-        widget_3='bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards',
-        widget_4='disabled',
-        widget_5=False,
-        widget_6='gpu',
+    # ════ TEXT CONDITIONING ════
+    wan_video_text_encode_cached_241 = node(wf, 'WanVideoTextEncodeCached', '241',
+        model_name='umt5-xxl-enc-bf16.safetensors',
+        precision='bf16',
+        positive_prompt='a woman is singing a lullaby',
+        negative_prompt='bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards',
+        quantization='disabled',
+        use_disk_cache=False,
+        device='gpu',
     )
-    getnode = _node(wf, 'GetNode', '242',
-        widget_0='VAE',
+    get_node_242 = _getnode(wf, '242', )
+    getnode_2 = _getnode(wf, '243', )
+    getnode_3 = _getnode(wf, '244', )
+    param_int_245 = node(wf, 'INTConstant', '245',
+        value=640,
     )
-    getnode_2 = _node(wf, 'GetNode', '243',
-        widget_0='VAE',
+    param_INT = node(wf, 'INTConstant', '246',
+        value=640,
     )
-    getnode_3 = _node(wf, 'GetNode', '244',
-        widget_0='VAE',
-    )
-    intconstant = _node(wf, 'INTConstant', '245',
-        widget_0=640,
-    )
-    intconstant_2 = _node(wf, 'INTConstant', '246',
-        widget_0=640,
-    )
-    getnode_4 = _node(wf, 'GetNode', '249',
+    getnode_4 = node(wf, 'GetNode', '249',
         widget_0='height',
     )
-    getnode_5 = _node(wf, 'GetNode', '250',
+    getnode_5 = node(wf, 'GetNode', '250',
         widget_0='width',
     )
-    getnode_6 = _node(wf, 'GetNode', '254',
+    getnode_6 = node(wf, 'GetNode', '254',
         widget_0='input_audio',
     )
-    getnode_7 = _node(wf, 'GetNode', '261',
+    getnode_7 = node(wf, 'GetNode', '261',
         widget_0='wanmodel',
     )
-    getnode_8 = _node(wf, 'GetNode', '265',
+    getnode_8 = node(wf, 'GetNode', '265',
         widget_0='clip_vision_model',
     )
-    intconstant_3 = _node(wf, 'INTConstant', '270',
-        widget_0=1000,
+    param_INT_2 = node(wf, 'INTConstant', '270',
+        value=1000,
     )
-    getnode_9 = _node(wf, 'GetNode', '272',
+    getnode_9 = node(wf, 'GetNode', '272',
         widget_0='max_frames',
     )
-    melbandroformermodelloader = _node(wf, 'MelBandRoFormerModelLoader', '303',
+    mel_band_ro_former_model_loader_303 = node(wf, 'MelBandRoFormerModelLoader', '303',
         widget_0='MelBandRoFormer\\MelBandRoformer_fp16.safetensors',
     )
-    wav2vecmodelloader = _node(wf, 'Wav2VecModelLoader', '306',
+    wav2_vec_model_loader_306 = node(wf, 'Wav2VecModelLoader', '306',
         widget_0='wav2vec2-chinese-base_fp16.safetensors',
         widget_1='fp16',
         widget_2='main_device',
     )
-    wanvideomodelloader = _node(wf, 'WanVideoModelLoader', '122',
-        widget_0='WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf',
-        widget_1='fp16',
-        widget_2='disabled',
-        widget_3='offload_device',
-        widget_4='sdpa',
-        block_swap_args=wanvideoblockswap.out(0),
-        lora=wanvideoloraselect.out(0),
-        multitalk_model=multitalkmodelloader.out(0),
+    wan_video_model_loader_122 = node(wf, 'WanVideoModelLoader', '122',
+        model='WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf',
+        base_precision='fp16',
+        quantization='disabled',
+        load_device='offload_device',
+        attention_mode='sdpa',
+        block_swap_args=wan_video_block_swap_134.out(0),
+        lora=wan_video_lora_select_138.out(0),
+        multitalk_model=multi_talk_model_loader_120.out(0),
     )
-    vhs_loadvideo = _node(wf, 'VHS_LoadVideo', '228',
+    vhs__load_video = node(wf, 'VHS_LoadVideo', '228',
         video='wolf_interpolated.mp4',
         custom_height=getnode_4.out(0),
         custom_width=getnode_5.out(0),
     )
-    setnode = _node(wf, 'SetNode', '240',
+    set_node_240 = node(wf, 'SetNode', '240',
         widget_0='VAE',
-        WANVAE=wanvideovaeloader.out(0),
+        WANVAE=wan_video_vaeloader.out(0),
     )
-    setnode_2 = _node(wf, 'SetNode', '247',
+    setnode_2 = node(wf, 'SetNode', '247',
         widget_0='width',
-        INT=intconstant.out(0),
+        INT=param_int_245.out('VALUE'),
     )
-    setnode_3 = _node(wf, 'SetNode', '248',
+    setnode_3 = node(wf, 'SetNode', '248',
         widget_0='height',
-        INT=intconstant_2.out(0),
+        INT=param_INT.out('VALUE'),
     )
-    setnode_4 = _node(wf, 'SetNode', '253',
+    setnode_4 = node(wf, 'SetNode', '253',
         widget_0='input_audio',
-        AUDIO=loadaudio.out(0),
+        AUDIO=load_audio_125.out(0),
     )
-    setnode_6 = _node(wf, 'SetNode', '264',
+    setnode_6 = node(wf, 'SetNode', '264',
         widget_0='clip_vision_model',
-        CLIP_VISION=clipvisionloader.out(0),
+        CLIP_VISION=clip_vision.out('CLIP_VISION'),
     )
-    setnode_7 = _node(wf, 'SetNode', '271',
+    setnode_7 = node(wf, 'SetNode', '271',
         widget_0='max_frames',
-        INT=intconstant_3.out(0),
+        INT=param_INT_2.out('VALUE'),
     )
-    imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '230',
-        widget_0=256,
-        widget_1=256,
-        widget_2='lanczos',
-        widget_3='crop',
-        widget_4='0, 0, 0',
-        widget_5='center',
-        widget_6=16,
-        widget_7='cpu',
+    # ════ IMAGE PREP ════
+    resized_image = node(wf, 'ImageResizeKJv2', '230',
+        
+        upscale_method='lanczos',
+        keep_proportion='crop',
+        pad_color='0, 0, 0',
+        crop_position='center',
+        divisible_by=16,
+        device='cpu',
         height=getnode_4.out(0),
-        image=vhs_loadvideo.out(0),
+        image=vhs__load_video.out(0),
         width=getnode_5.out(0),
     )
-    setnode_5 = _node(wf, 'SetNode', '260',
+    setnode_5 = node(wf, 'SetNode', '260',
         widget_0='wanmodel',
-        WANVIDEOMODEL=wanvideomodelloader.out(0),
+        WANVIDEOMODEL=wan_video_model_loader_122.out(0),
     )
-    melbandroformersampler = _node(wf, 'MelBandRoFormerSampler', '304',
+    mel_band_ro_former_sampler_304 = node(wf, 'MelBandRoFormerSampler', '304',
         audio=setnode_4.out(0),
-        model=melbandroformermodelloader.out(0),
+        model=mel_band_ro_former_model_loader_303.out(0),
     )
-    multitalkwav2vecembeds = _node(wf, 'MultiTalkWav2VecEmbeds', '194',
+    multi_talk_wav2_vec_embeds_194 = node(wf, 'MultiTalkWav2VecEmbeds', '194',
         widget_0=True,
         widget_1=400,
         widget_2=25,
         widget_3=1.5,
         widget_4=1,
         widget_5='para',
-        audio_1=melbandroformersampler.out(0),
+        audio_1=mel_band_ro_former_sampler_304.out(0),
         num_frames=getnode_9.out(0),
-        wav2vec_model=downloadandloadwav2vecmodel.out(0),
+        wav2vec_model=download_and_load_wav2_vec_model_137.out(0),
     )
-    wanvideoencode = _node(wf, 'WanVideoEncode', '229',
+    wan_video_encode_229 = node(wf, 'WanVideoEncode', '229',
         widget_0=False,
         widget_1=272,
         widget_2=272,
@@ -229,36 +220,37 @@ def build() -> VibeWorkflow:
         widget_4=128,
         widget_5=0,
         widget_6=1,
-        image=imageresizekjv2.out(0),
+        image=resized_image.out('IMAGE'),
         vae=getnode_2.out(0),
     )
-    getimagerangefrombatch = _node(wf, 'GetImageRangeFromBatch', '231',
+    get_image_range_from_batch_231 = node(wf, 'GetImageRangeFromBatch', '231',
         widget_0=0,
         widget_1=1,
-        images=imageresizekjv2.out(0),
+        images=resized_image.out('IMAGE'),
     )
-    getimagesizeandcount = _node(wf, 'GetImageSizeAndCount', '291',
-        image=getimagerangefrombatch.out(0),
+    get_image_size_and_count_291 = node(wf, 'GetImageSizeAndCount', '291',
+        image=get_image_range_from_batch_231.out(0),
     )
-    setnode_8 = _node(wf, 'SetNode', '294',
+    setnode_8 = node(wf, 'SetNode', '294',
         widget_0='actual_audio_frames',
-        INT=multitalkwav2vecembeds.out(2),
+        INT=multi_talk_wav2_vec_embeds_194.out(2),
     )
-    wanvideoclipvisionencode = _node(wf, 'WanVideoClipVisionEncode', '237',
-        widget_0=1,
-        widget_1=1,
-        widget_2='center',
-        widget_3='average',
-        widget_4=True,
-        widget_5=0,
-        widget_6=0.5,
+    wan_video_clip_vision_encode_237 = node(wf, 'WanVideoClipVisionEncode', '237',
+        strength_1=1,
+        strength_2=1,
+        crop='center',
+        combine_embeds='average',
+        force_offload=True,
+        tiles=0,
+        ratio=0.5,
         clip_vision=getnode_8.out(0),
-        image_1=getimagesizeandcount.out(0),
+        image_1=get_image_size_and_count_291.out(0),
     )
-    previewany = _node(wf, 'PreviewAny', '293',
+    # ════ OUTPUT ════
+    preview_any_293 = node(wf, 'PreviewAny', '293',
         source=setnode_8.out(0),
     )
-    wanvideoimagetovideomultitalk = _node(wf, 'WanVideoImageToVideoMultiTalk', '192',
+    wan_video_image_to_video_multi_talk_192 = node(wf, 'WanVideoImageToVideoMultiTalk', '192',
         widget_0=832,
         widget_1=480,
         widget_2=81,
@@ -267,96 +259,71 @@ def build() -> VibeWorkflow:
         widget_5='disabled',
         widget_6=False,
         widget_7='infinitetalk',
-        clip_embeds=wanvideoclipvisionencode.out(0),
-        height=getimagesizeandcount.out(2),
-        start_image=getimagesizeandcount.out(0),
+        clip_embeds=wan_video_clip_vision_encode_237.out(0),
+        height=get_image_size_and_count_291.out(2),
+        start_image=get_image_size_and_count_291.out(0),
         vae=getnode_3.out(0),
-        width=getimagesizeandcount.out(1),
+        width=get_image_size_and_count_291.out(1),
     )
-    wanvideosampler = _node(wf, 'WanVideoSampler', '128',
+    wan_video_sampler_128 = node(wf, 'WanVideoSampler', '128',
         steps=1,
-        widget_0=1,
-        widget_1=1.0000000000000002,
-        widget_10='comfy',
-        widget_11=2,
-        widget_12=-1,
-        widget_13=True,
-        widget_2=11.000000000000002,
-        widget_3=2,
-        widget_4='fixed',
-        widget_5=True,
-        widget_6='dpm++_sde',
-        widget_7=0,
-        widget_8=1,
-        widget_9=False,
-        image_embeds=wanvideoimagetovideomultitalk.out(0),
+        cfg=1.0000000000000002,
+        rope_function='comfy',
+        start_step=2,
+        end_step=-1,
+        add_noise_to_samples=True,
+        shift=11.000000000000002,
+        seed=2,
+force_offload=True,
+        scheduler='dpm++_sde',
+        riflex_freq_index=0,
+        denoise_strength=1,
+        batched_cfg=False,
+        image_embeds=wan_video_image_to_video_multi_talk_192.out(0),
         model=getnode_7.out(0),
-        multitalk_embeds=multitalkwav2vecembeds.out(0),
-        samples=wanvideoencode.out(0),
-        text_embeds=wanvideotextencodecached.out(0),
+        multitalk_embeds=multi_talk_wav2_vec_embeds_194.out(0),
+        samples=wan_video_encode_229.out(0),
+        text_embeds=wan_video_text_encode_cached_241.out(0),
     )
-    wanvideodecode = _node(wf, 'WanVideoDecode', '130',
-        widget_0=False,
-        widget_1=272,
-        widget_2=272,
-        widget_3=144,
-        widget_4=128,
-        widget_5='default',
-        samples=wanvideosampler.out(0),
-        vae=getnode.out(0),
+    # ════ DECODE ════
+    wan_video_decode_130 = node(wf, 'WanVideoDecode', '130',
+        enable_vae_tiling=False,
+        tile_x=272,
+        tile_y=272,
+        tile_stride_x=144,
+        tile_stride_y=128,
+        normalization='default',
+        samples=wan_video_sampler_128.out(0),
+        vae=get_node_242.out(0),
     )
-    getimagesizeandcount_2 = _node(wf, 'GetImageSizeAndCount', '300',
-        image=wanvideodecode.out(0),
+    get_image_size_and_count_2 = node(wf, 'GetImageSizeAndCount', '300',
+        image=wan_video_decode_130.out(0),
     )
-    getimagerangefrombatch_2 = _node(wf, 'GetImageRangeFromBatch', '301',
+    get_image_range_from_batch_2 = node(wf, 'GetImageRangeFromBatch', '301',
         widget_0=0,
         widget_1=1,
-        images=getimagesizeandcount_2.out(0),
-        num_frames=getimagesizeandcount_2.out(3),
+        images=get_image_size_and_count_2.out(0),
+        num_frames=get_image_size_and_count_2.out(3),
     )
-    imageconcatmulti = _node(wf, 'ImageConcatMulti', '299',
-        widget_0=2,
-        widget_1='left',
-        widget_2=False,
-        widget_3=None,
-        image_1=getimagerangefrombatch_2.out(0),
-        image_2=imageresizekjv2.out(0),
+    image_concat_multi_299 = node(wf, 'ImageConcatMulti', '299',
+        inputcount=2,
+        direction='left',
+        match_image_size=False,
+        unused_3=None,
+        image_1=get_image_range_from_batch_2.out(0),
+        image_2=resized_image.out('IMAGE'),
     )
-    vhs_videocombine = _node(wf, 'VHS_VideoCombine', '131',
+    video_output = node(wf, 'VHS_VideoCombine', '131',
         save_output=True,
         audio=getnode_6.out(0),
-        images=imageconcatmulti.out(0),
+        images=image_concat_multi_299.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
-
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='',
+        source_path=__file__,
+    )
 

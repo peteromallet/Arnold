@@ -298,16 +298,23 @@ def _version_diagnostics(*, ready_id: str, target: str, metadata: Mapping[str, A
     comfy_core = metadata.get("comfy_core") or row.get("comfy_core")
     if not isinstance(comfy_core, Mapping):
         diagnostics.append(_diagnostic("template_comfy_core_missing", "Template is missing comfy_core metadata.", ready_id, target, {}))
-    elif not any(key in comfy_core for key in ("min_version", "commit", "tested_at", "status")):
+    elif not any(key in comfy_core for key in ("version", "min_version", "commit", "tested_at", "status")):
         diagnostics.append(
             _diagnostic(
                 "template_comfy_core_malformed",
-                "Template comfy_core metadata does not include min_version, commit, tested_at, or status.",
+                "Template comfy_core metadata does not include version, min_version, commit, tested_at, or status.",
                 ready_id,
                 target,
                 {"comfy_core": dict(comfy_core)},
             )
         )
+    else:
+        version = comfy_core.get("version") or comfy_core.get("min_version")
+        commit = comfy_core.get("commit")
+        if not isinstance(version, str) or not version:
+            diagnostics.append(_diagnostic("template_comfy_core_version_missing", "Template comfy_core.version is missing.", ready_id, target, {"comfy_core": dict(comfy_core)}))
+        if not isinstance(commit, str) or not commit:
+            diagnostics.append(_diagnostic("template_comfy_core_commit_missing", "Template comfy_core.commit is missing.", ready_id, target, {"comfy_core": dict(comfy_core)}))
     return diagnostics
 
 
@@ -370,6 +377,16 @@ def _pack_pin_diagnostics(
         for field in ("version", "commit"):
             expected = ref.get(field)
             actual = getattr(entry, field, None)
+            if field == "commit" and not expected:
+                diagnostics.append(
+                    _diagnostic(
+                        "template_custom_node_ref_commit_missing",
+                        f"Custom-node ref {slug!r} is missing commit.",
+                        ready_id,
+                        target,
+                        {"ref": dict(ref)},
+                    )
+                )
             if expected and actual and str(expected) != str(actual):
                 diagnostics.append(
                     _diagnostic(

@@ -4,362 +4,320 @@
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
-
-
-LTX_RUNEXX_MODEL_ASSETS = [
-    {
-        "name": "gemma_3_12B_it_fp4_mixed.safetensors",
-        "url": "https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors",
-        "subdir": "text_encoders",
-    },
-    {
-        "name": "ltx-2.3_text_projection_bf16.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors",
-        "subdir": "text_encoders",
-    },
-    {
-        "name": "LTX23_video_vae_bf16.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors",
-        "subdir": "vae",
-    },
-    {
-        "name": "LTX23_audio_vae_bf16.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
-        "subdir": "checkpoints",
-    },
-    {
-        "name": "taeltx2_3.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors",
-        "subdir": "vae",
-    },
-    {
-        "name": "ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
-        "subdir": "diffusion_models",
-    },
-    {
-        "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
-        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
-        "subdir": "loras",
-    },
-    {
-        "name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-        "url": "https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-        "subdir": "latent_upscale_models",
-    },
-]
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 
 OUTPUT_PREFIX = "reigh_vibecomfy_ltx_first_last"
 
 
-READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
- 'unbound_inputs': {'seed': 4113},
- 'ready_template': 'video/ltx2_3_runexx_first_last_frame',
- 'workflow_template': 'ltx2_3_runexx_first_last_frame',
- 'capability': 'first_last_frame_video',
- 'source_role': 'manual_ready_python_template',
- 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json',
- 'coverage_tier': 'required',
- 'approach': 'first/last-frame image anchors',
- 'runtime_note': None,
- 'discord_signal': None,
- 'runtime_packages': [{'name': 'sageattention',
-                       'reason': 'Required by PathchSageAttentionKJ auto mode for 4090-speed LTX Runexx validation.',
-                       'source': 'SageAttention-ada'}],
- 'smoke_resolution': '256x256x5_frames',
- 'ltx_best_practices': ['Use the official Lightricks workflows as runtime gates where possible.',
-                        'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.',
-                        'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes '
-                        'model_mmap_residency for LatentUpscaleModelManageable.',
-                        'Keep community audio, lip-sync, and long-form workflows as ready templates until '
-                        'their custom node packs and service credentials are declared.'],
- 'comfy_configuration': {'memory_profile': 3, 'fp8_e4m3fn_text_enc': True}}
+def _get_node_width(wf, _id, **overrides):
+    kwargs = dict(widget_0='width')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_height(wf, _id, **overrides):
+    kwargs = dict(widget_0='height')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_fps(wf, _id, **overrides):
+    kwargs = dict(widget_0='fps')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_vae(wf, _id, **overrides):
+    kwargs = dict(widget_0='vae')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_vae_audio(wf, _id, **overrides):
+    kwargs = dict(widget_0='vae_audio')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_clip(wf, _id, **overrides):
+    kwargs = dict(widget_0='clip')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_firstframe(wf, _id, **overrides):
+    kwargs = dict(widget_0='firstframe')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_negative(wf, _id, **overrides):
+    kwargs = dict(widget_0='negative')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_model_nag(wf, _id, **overrides):
+    kwargs = dict(widget_0='model_nag')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+def _get_node_positive(wf, _id, **overrides):
+    kwargs = dict(widget_0='positive')
+    kwargs.update(overrides)
+    return node(wf, 'GetNode', _id, **kwargs)
+MODELS = {
+    'gemma_3_12b_it_fp4_mixed': ModelAsset(
+        filename='gemma_3_12B_it_fp4_mixed.safetensors',
+        url='https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
+        subdir='text_encoders',
+    ),
+    'ltx_2_3_text_projection_bf16': ModelAsset(
+        filename='ltx-2.3_text_projection_bf16.safetensors',
+        url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors',
+        subdir='text_encoders',
+        hf_revision='main',
+    ),
+    'ltx23_video_vae_bf16': ModelAsset(
+        filename='LTX23_video_vae_bf16.safetensors',
+        url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors',
+        subdir='vae',
+        hf_revision='main',
+    ),
+    'ltx23_audio_vae_bf16': ModelAsset(
+        filename='LTX23_audio_vae_bf16.safetensors',
+        url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors',
+        subdir='checkpoints',
+        hf_revision='main',
+    ),
+    'taeltx2_3': ModelAsset(
+        filename='taeltx2_3.safetensors',
+        url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors',
+        subdir='vae',
+        hf_revision='main',
+    ),
+    'ltx_2_3_22b_distilled_1_1_transformer_only': ModelAsset(
+        filename='ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors',
+        url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors',
+        subdir='diffusion_models',
+        hf_revision='main',
+    ),
+    'ltx_2_3_22b_distilled_1_1_lora_dynamic_fro': ModelAsset(
+        filename='LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors',
+        url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors',
+        subdir='loras',
+        hf_revision='main',
+    ),
+    'ltx_2_3_spatial_upscaler_x2_1_1': ModelAsset(
+        filename='ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
+        url='https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
+        subdir='latent_upscale_models',
+    ),
+}
 
-READY_REQUIREMENTS = {'models': [{'name': 'gemma_3_12B_it_fp4_mixed.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'ltx-2.3_text_projection_bf16.safetensors',
-             'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'LTX23_video_vae_bf16.safetensors',
-             'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors',
-             'subdir': 'vae'},
-            {'name': 'LTX23_audio_vae_bf16.safetensors',
-             'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors',
-             'subdir': 'checkpoints'},
-            {'name': 'taeltx2_3.safetensors',
-             'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors',
-             'subdir': 'vae'},
-            {'name': 'ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors',
-             'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors',
-             'subdir': 'diffusion_models'},
-            {'name': 'LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors',
-             'url': 'https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors',
-             'subdir': 'loras'},
-            {'name': 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
-             'url': 'https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
-             'subdir': 'latent_upscale_models'}],
- 'custom_nodes': ['ComfyUI-KJNodes',
-                  'ComfyUI-LTXVideo',
-                  'ComfyUI-VideoHelperSuite',
-                  'rgthree-comfy'],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
-                      {'slug': 'ComfyUI-LTXVideo',
-                       'source': 'git',
-                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'},
-                      {'slug': 'ComfyUI-VideoHelperSuite',
-                       'source': 'git',
-                       'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
-                      {'slug': 'rgthree-comfy',
-                       'source': 'git',
-                       'url': 'https://github.com/rgthree/rgthree-comfy.git'}]}
+PUBLIC_INPUTS = {
+    'start_image': InputSpec(node='45', field='image', default='image (6).png', type='STRING', description='Starting image.', media_semantics='image'),
+    'end_image': InputSpec(node='47', field='image', default='0 (13).webp', type='STRING', description='Ending image.', media_semantics='image'),
+    'first_image': InputSpec(node='45', field='image', default='image (6).png', type='STRING', description='First image.'),
+    'last_image': InputSpec(node='47', field='image', default='0 (13).webp', type='STRING', description='Last image.'),
+    'prompt': InputSpec(node='2103', field='value', default="wf.nodes['2103'].inputs.get('value', '')", type='STRING', description='Text prompt.', media_semantics='text'),
+    'negative_prompt': InputSpec(node='11', field='text', default="wf.nodes['11'].inputs.get('text', '')", type='STRING', description='Negative text prompt.', media_semantics='text'),
+    'seed': InputSpec(node='15', field='noise_seed', default=42, type='STRING', description='Random seed.'),
+    'seed_first': InputSpec(node='15', field='noise_seed', default=42, type='STRING', description='Seed first.'),
+    'seed_last': InputSpec(node='14', field='noise_seed', default=43, type='STRING', description='Seed last.'),
+    'width': InputSpec(node='2080', field='value', default=1280, type='STRING', description='Output width.'),
+    'height': InputSpec(node='2079', field='value', default=720, type='STRING', description='Output height.'),
+    'output_fps': InputSpec(node='2076', field='value', default=24, type='STRING', aliases=('fps',), description='Output playback frame rate.'),
+    'fps_int': InputSpec(node='2076', field='value', default=24, type='STRING', description='Fps int.'),
+    'first_frame_strength': InputSpec(node='2110', field='value', default=1.0, type='STRING', description='First frame strength.'),
+    'last_frame_strength': InputSpec(node='2108', field='value', default=1.0, type='STRING', description='Last frame strength.'),
+    'first_strength': InputSpec(node='2110', field='value', default=1.0, type='STRING', description='First strength.'),
+    'last_strength': InputSpec(node='2108', field='value', default=1.0, type='STRING', description='Last strength.'),
+    'use_lora': InputSpec(node='2082', field='value', default=True, type='BOOLEAN', description='Lightning LoRA branch toggle.'),
+    'length': InputSpec(node='2078', field='value', default=81, type='STRING', aliases=('frames',), description='Number of output frames.'),
+}
 
+READY_METADATA = ReadyMetadata.build(
+    template_id='ltx2_3_runexx_first_last_frame',
+    capability='first_last_frame_video',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-LTXVideo', 'source': 'git',
+                       'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}, {'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git',
+                       'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}, {'slug': 'rgthree-comfy', 'source': 'git',
+                       'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git'}]},
+    provenance={'approach': 'first/last-frame image anchors', 'source_role': 'manual_ready_python_template', 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json', 'smoke_resolution': '256x256x5_frames'},
+    coverage_tier='required',
+    runtime_packages=[{'name': 'sageattention', 'reason': 'Required by PathchSageAttentionKJ auto mode for 4090-speed LTX Runexx validation.', 'source': 'SageAttention-ada'}],
+    ltx_best_practices=['Use the official Lightricks workflows as runtime gates where possible.', 'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.', 'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes model_mmap_residency for LatentUpscaleModelManageable.', 'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom node packs and service credentials are declared.'],
+    comfy_configuration={'memory_profile': 3, 'fp8_e4m3fn_text_enc': True},
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
+
+READY_METADATA["unbound_inputs"].update({'end_image': '47.image', 'first_frame_strength': '2110.value', 'first_image': '45.image', 'first_strength': '2110.value', 'fps': '2076.value', 'fps_int': '2076.value', 'frames': '2078.value', 'height': '2079.value', 'last_frame_strength': '2108.value', 'last_image': '47.image', 'last_strength': '2108.value', 'negative': '11.text', 'negative_prompt': '11.text', 'prompt': '2103.value', 'seed': '15.noise_seed', 'seed_first': '15.noise_seed', 'seed_last': '14.noise_seed', 'start_image': '45.image', 'width': '2080.value'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    ksamplerselect = _node(wf, 'KSamplerSelect', '1',
+    # ════ SAMPLING ════
+    sampler_kind_1 = node(wf, 'KSamplerSelect', '1',
         sampler_name='euler_ancestral_cfg_pp',
     )
-    ksamplerselect_2 = _node(wf, 'KSamplerSelect', '4',
+    sampler_kind_2 = node(wf, 'KSamplerSelect', '4',
         sampler_name='euler_cfg_pp',
     )
-    manualsigmas = _node(wf, 'ManualSigmas', '5',
-        widget_0='0.909375, 0.725, 0.421875, 0.0',
+    sigmas_5 = node(wf, 'ManualSigmas', '5',
+        sigmas='0.909375, 0.725, 0.421875, 0.0',
     )
-    randomnoise = _node(wf, 'RandomNoise', '14',
-        noise_seed=43,
+    noise_14 = node(wf, 'RandomNoise', '14',
+        noise_seed=PUBLIC_INPUTS['seed_last'].default,
         control_after_generate='fixed',
     )
-    randomnoise_2 = _node(wf, 'RandomNoise', '15',
-        noise_seed=42,
+    noise_2 = node(wf, 'RandomNoise', '15',
+        noise_seed=PUBLIC_INPUTS['seed_first'].default,
         control_after_generate='fixed',
     )
-    loadimage = _node(wf, 'LoadImage', '45',
-        image='image (6).png',
-        widget_1='image',
-    )
-    loadimage_2 = _node(wf, 'LoadImage', '47',
-        image='0 (13).webp',
-        widget_1='image',
-    )
-    getnode = _node(wf, 'GetNode', '70',
-        widget_0='width',
-    )
-    getnode_2 = _node(wf, 'GetNode', '71',
-        widget_0='height',
-    )
-    getnode_3 = _node(wf, 'GetNode', '91',
-        widget_0='fps',
-    )
-    getnode_4 = _node(wf, 'GetNode', '93',
-        widget_0='fps',
-    )
-    getnode_5 = _node(wf, 'GetNode', '111',
-        widget_0='vae',
-    )
-    getnode_6 = _node(wf, 'GetNode', '117',
-        widget_0='vae_audio',
-    )
-    getnode_7 = _node(wf, 'GetNode', '120',
-        widget_0='vae',
-    )
-    getnode_8 = _node(wf, 'GetNode', '122',
+    # ════ INPUTS ════
+    input_image_45 = node(wf, 'LoadImage', '45',
+        image=PUBLIC_INPUTS['first_image'].default,
+)
+    input_image_2 = node(wf, 'LoadImage', '47',
+        image=PUBLIC_INPUTS['last_image'].default,
+)
+    get_node_70 = _get_node_width(wf, '70', )
+    getnode_2 = _get_node_height(wf, '71', )
+    getnode_3 = _get_node_fps(wf, '91', )
+    getnode_4 = _get_node_fps(wf, '93', )
+    getnode_5 = _get_node_vae(wf, '111', )
+    getnode_6 = _get_node_vae_audio(wf, '117', )
+    getnode_7 = _get_node_vae(wf, '120', )
+    getnode_8 = node(wf, 'GetNode', '122',
         widget_0='model',
     )
-    getnode_9 = _node(wf, 'GetNode', '124',
-        widget_0='clip',
-    )
-    getnode_10 = _node(wf, 'GetNode', '127',
+    getnode_9 = _get_node_clip(wf, '124', )
+    getnode_10 = node(wf, 'GetNode', '127',
         widget_0='frames',
     )
-    getnode_11 = _node(wf, 'GetNode', '128',
-        widget_0='width',
-    )
-    getnode_12 = _node(wf, 'GetNode', '129',
-        widget_0='height',
-    )
-    getnode_13 = _node(wf, 'GetNode', '132',
-        widget_0='firstframe',
-    )
-    getnode_14 = _node(wf, 'GetNode', '133',
+    getnode_11 = _get_node_width(wf, '128', )
+    getnode_12 = _get_node_height(wf, '129', )
+    getnode_13 = _get_node_firstframe(wf, '132', )
+    getnode_14 = node(wf, 'GetNode', '133',
         widget_0='upscale_model',
     )
-    getnode_15 = _node(wf, 'GetNode', '137',
-        widget_0='fps',
+    getnode_15 = _get_node_fps(wf, '137', )
+    getnode_16 = _get_node_vae(wf, '147', )
+    getnode_17 = _get_node_vae_audio(wf, '148', )
+    # ════ LOADERS ════
+    vaeloaderkj = node(wf, 'LTXVAudioVAELoader', '175',
+        ckpt_name=MODELS['ltx23_audio_vae_bf16'].filename,
     )
-    getnode_16 = _node(wf, 'GetNode', '147',
-        widget_0='vae',
+    vae_180 = node(wf, 'VAELoader', '180',
+        vae_name=MODELS['taeltx2_3'].filename,
     )
-    getnode_17 = _node(wf, 'GetNode', '148',
-        widget_0='vae_audio',
+    vae_2 = node(wf, 'VAELoader', '181',
+        vae_name=MODELS['ltx23_video_vae_bf16'].filename,
     )
-    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '175',
-        ckpt_name='LTX23_audio_vae_bf16.safetensors',
+    # ════ LATENT ════
+    latent_upscale_model_loader_182 = node(wf, 'LatentUpscaleModelLoader', '182',
+        model_name=MODELS['ltx_2_3_spatial_upscaler_x2_1_1'].filename,
     )
-    vaeloader = _node(wf, 'VAELoader', '180',
-        vae_name='taeltx2_3.safetensors',
-    )
-    vaeloader_2 = _node(wf, 'VAELoader', '181',
-        vae_name='LTX23_video_vae_bf16.safetensors',
-    )
-    latentupscalemodelloader = _node(wf, 'LatentUpscaleModelLoader', '182',
-        widget_0='ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
-    )
-    unetloader = _node(wf, 'UNETLoader', '187',
-        unet_name='ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors',
+    base_diffusion_model = node(wf, 'UNETLoader', '187',
+        unet_name=MODELS['ltx_2_3_22b_distilled_1_1_transformer_only'].filename,
         weight_dtype='default',
     )
-    dualcliploader = _node(wf, 'DualCLIPLoader', '190',
-        clip_name1='gemma_3_12B_it_fp4_mixed.safetensors',
-        clip_name2='ltx-2.3_text_projection_bf16.safetensors',
+    text_encoder = node(wf, 'DualCLIPLoader', '190',
+        clip_name1=MODELS['gemma_3_12b_it_fp4_mixed'].filename,
+        clip_name2=MODELS['ltx_2_3_text_projection_bf16'].filename,
         type='ltxv',
         device='default',
     )
-    getnode_18 = _node(wf, 'GetNode', '193',
+    getnode_18 = node(wf, 'GetNode', '193',
         widget_0='vae_tiny',
     )
-    getnode_19 = _node(wf, 'GetNode', '196',
-        widget_0='negative',
-    )
-    getnode_20 = _node(wf, 'GetNode', '200',
-        widget_0='model_nag',
-    )
-    getnode_21 = _node(wf, 'GetNode', '201',
-        widget_0='model_nag',
-    )
-    getnode_22 = _node(wf, 'GetNode', '203',
+    getnode_19 = _get_node_negative(wf, '196', )
+    getnode_20 = _get_node_model_nag(wf, '200', )
+    getnode_21 = _get_node_model_nag(wf, '201', )
+    getnode_22 = node(wf, 'GetNode', '203',
         widget_0='final_video',
     )
-    getnode_23 = _node(wf, 'GetNode', '204',
+    getnode_23 = node(wf, 'GetNode', '204',
         widget_0='final_audio',
     )
-    getnode_24 = _node(wf, 'GetNode', '205',
-        widget_0='positive',
+    getnode_24 = _get_node_positive(wf, '205', )
+    getnode_25 = _get_node_negative(wf, '206', )
+    getnode_26 = _get_node_negative(wf, '207', )
+    getnode_27 = _get_node_positive(wf, '208', )
+    sigmas_2 = node(wf, 'ManualSigmas', '215',
+        sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
-    getnode_25 = _node(wf, 'GetNode', '206',
-        widget_0='negative',
+    sigmas_3 = node(wf, 'ManualSigmas', '216',
+        sigmas='0.909375, 0.725, 0.421875, 0.0',
     )
-    getnode_26 = _node(wf, 'GetNode', '207',
-        widget_0='negative',
-    )
-    getnode_27 = _node(wf, 'GetNode', '208',
-        widget_0='positive',
-    )
-    manualsigmas_2 = _node(wf, 'ManualSigmas', '215',
-        widget_0='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
-    )
-    manualsigmas_3 = _node(wf, 'ManualSigmas', '216',
-        widget_0='0.909375, 0.725, 0.421875, 0.0',
-    )
-    getnode_28 = _node(wf, 'GetNode', '219',
+    getnode_28 = node(wf, 'GetNode', '219',
         widget_0='height_downscaled',
     )
-    getnode_29 = _node(wf, 'GetNode', '220',
+    getnode_29 = node(wf, 'GetNode', '220',
         widget_0='width_downscaled',
     )
-    getnode_30 = _node(wf, 'GetNode', '224',
+    getnode_30 = node(wf, 'GetNode', '224',
         widget_0='lastframe_resized',
     )
-    getnode_31 = _node(wf, 'GetNode', '225',
-        widget_0='firstframe',
-    )
-    getnode_32 = _node(wf, 'GetNode', '2067',
-        widget_0='clip',
-    )
-    getnode_33 = _node(wf, 'GetNode', '2068',
+    getnode_31 = _get_node_firstframe(wf, '225', )
+    getnode_32 = _get_node_clip(wf, '2067', )
+    getnode_33 = node(wf, 'GetNode', '2068',
         widget_0='enhance_prompt',
     )
-    primitivefloat = _node(wf, 'PrimitiveFloat', '2076',
-        value=24,
+    param_float_2076 = node(wf, 'PrimitiveFloat', '2076', value=PUBLIC_INPUTS['fps_int'].default)
+    param_int_2078 = node(wf, 'INTConstant', '2078',
+        value=PUBLIC_INPUTS['length'].default,
     )
-    intconstant = _node(wf, 'INTConstant', '2078',
-        widget_0=81,
+    param_height = node(wf, 'INTConstant', '2079',
+        value=PUBLIC_INPUTS['height'].default,
     )
-    intconstant_2 = _node(wf, 'INTConstant', '2079',
-        widget_0=720,
+    param_width = node(wf, 'INTConstant', '2080',
+        value=PUBLIC_INPUTS['width'].default,
     )
-    intconstant_3 = _node(wf, 'INTConstant', '2080',
-        widget_0=1280,
+    use_lora = node(wf, 'PrimitiveBoolean', '2082', value=PUBLIC_INPUTS['use_lora'].default)
+    primitive_string_multiline_2103 = node(wf, 'PrimitiveStringMultiline', '2103',
+        value=PUBLIC_INPUTS['prompt'].default,
     )
-    primitiveboolean = _node(wf, 'PrimitiveBoolean', '2082',
-        value=True,
-    )
-    primitivestringmultiline = _node(wf, 'PrimitiveStringMultiline', '2103',
-        value="Make this image come alive with cinematic motion, smooth animation. \n\nA foggy night in in 1700's Amsterdam. The fog is thick and swirling, illuminating by streetlights. we see a bridge over a canal, cobblestone streets, canal buildings lining the canal The vibe is uneasy, moody, slightly dangerous.\n\nThe camera crane down high angle to a low angle ending with a close up of a vampire's hand with leather gloves on holding a walking cane.  Single continuous camera shot ",
-    )
-    getnode_34 = _node(wf, 'GetNode', '2106',
+    getnode_34 = node(wf, 'GetNode', '2106',
         widget_0='lastframe',
     )
-    primitivefloat_2 = _node(wf, 'PrimitiveFloat', '2108',
-        value=1.0,
-    )
-    primitivefloat_3 = _node(wf, 'PrimitiveFloat', '2110',
-        value=1.0,
-    )
-    getnode_35 = _node(wf, 'GetNode', '2114',
+    param_last_frame_strength = node(wf, 'PrimitiveFloat', '2108', value=PUBLIC_INPUTS['last_strength'].default)
+    param_first_frame_strength = node(wf, 'PrimitiveFloat', '2110', value=PUBLIC_INPUTS['first_strength'].default)
+    getnode_35 = node(wf, 'GetNode', '2114',
         widget_0='firstframe_strength',
     )
-    getnode_36 = _node(wf, 'GetNode', '2115',
+    getnode_36 = node(wf, 'GetNode', '2115',
         widget_0='lastframe_strength',
     )
-    getnode_37 = _node(wf, 'GetNode', '2154',
-        widget_0='negative',
-    )
-    getnode_38 = _node(wf, 'GetNode', '2155',
-        widget_0='vae',
-    )
-    getnode_39 = _node(wf, 'GetNode', '2162',
-        widget_0='vae',
-    )
-    getnode_40 = _node(wf, 'GetNode', '2163',
-        widget_0='positive',
-    )
-    getnode_41 = _node(wf, 'GetNode', '2166',
+    getnode_37 = _get_node_negative(wf, '2154', )
+    getnode_38 = _get_node_vae(wf, '2155', )
+    getnode_39 = _get_node_vae(wf, '2162', )
+    getnode_40 = _get_node_positive(wf, '2163', )
+    getnode_41 = node(wf, 'GetNode', '2166',
         widget_0='negative_guider',
     )
-    getnode_42 = _node(wf, 'GetNode', '2167',
+    getnode_42 = node(wf, 'GetNode', '2167',
         widget_0='positive_guider',
     )
-    cfgguider = _node(wf, 'CFGGuider', '8',
+    # Stage 1 (REFINE): NAG model (bypasses patch stack) + base conditioning
+    # Stage 2 (FINISH): IC-LoRA model (full patch chain)   + guided conditioning
+    cfg_guider_8 = node(wf, 'CFGGuider', '8',
         cfg=2.5,
         model=getnode_21.out(0),
         negative=getnode_25.out(0),
         positive=getnode_24.out(0),
     )
-    cliptextencode = _node(wf, 'CLIPTextEncode', '11',
-        text='blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud',
+    # ════ TEXT CONDITIONING ════
+    negative_prompt = node(wf, 'CLIPTextEncode', '11',
+        text=PUBLIC_INPUTS['negative_prompt'].default,
         clip=getnode_9.out(0),
     )
-    emptyltxvlatentvideo = _node(wf, 'EmptyLTXVLatentVideo', '32',
+    empty_video_latent = node(wf, 'EmptyLTXVLatentVideo', '32',
         batch_size=1,
-        widget_0=256,
-        widget_1=256,
-        widget_2=5,
+        
+        
         width=getnode_29.out(0),
         height=getnode_28.out(0),
         length=getnode_10.out(0),
     )
-    cfgguider_2 = _node(wf, 'CFGGuider', '36',
+    cfg_guider_2 = node(wf, 'CFGGuider', '36',
         cfg=2.5,
         model=getnode_20.out(0),
         negative=getnode_26.out(0),
         positive=getnode_27.out(0),
     )
-    vhs_videocombine = _node(wf, 'VHS_VideoCombine', '43',
+    # ════ OUTPUT ════
+    video_output = node(wf, 'VHS_VideoCombine', '43',
         filename_prefix='reigh_vibecomfy_ltx_first_last',
         format='video/h264-mp4',
         frame_rate=getnode_15.out(0),
@@ -368,255 +326,252 @@ def build() -> VibeWorkflow:
         pingpong=False,
         save_output=True,
     )
-    imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '44',
-        widget_0=960,
-        widget_1=544,
-        widget_2='nearest-exact',
-        widget_3='crop',
-        widget_4='0, 0, 0',
-        widget_5='center',
-        widget_6=32,
-        widget_7='cpu',
+    # ════ IMAGE PREP ════
+    resized_image_44 = node(wf, 'ImageResizeKJv2', '44',
+        
+        upscale_method='nearest-exact',
+        keep_proportion='crop',
+        pad_color='0, 0, 0',
+        crop_position='center',
+        divisible_by=32,
+        device='cpu',
         height=getnode_2.out(0),
-        image=loadimage.out(0),
-        width=getnode.out(0),
+        image=input_image_45.out('IMAGE'),
+        width=get_node_70.out(0),
     )
-    ltxvpreprocess = _node(wf, 'LTXVPreprocess', '50',
-        widget_0=18,
+    preprocessed_image_50 = node(wf, 'LTXVPreprocess', '50',
+        img_compression=18,
         image=getnode_30.out(0),
     )
-    simplecalculatorkj = _node(wf, 'SimpleCalculatorKJ', '92',
-        widget_0='a',
+    simple_calculator_k_j_92 = node(wf, 'SimpleCalculatorKJ', '92',
+        expression='a',
         a=getnode_3.out(0),
     )
-    setnode_7 = _node(wf, 'SetNode', '171',
+    setnode_7 = node(wf, 'SetNode', '171',
         widget_0='upscale_model',
-        LATENT_UPSCALE_MODEL=latentupscalemodelloader.out(0),
+        LATENT_UPSCALE_MODEL=latent_upscale_model_loader_182.out(0),
     )
-    setnode_8 = _node(wf, 'SetNode', '172',
+    setnode_8 = node(wf, 'SetNode', '172',
         widget_0='vae_audio',
-        VAE=vaeloaderkj.out(0),
+        VAE=vaeloaderkj.out('AUDIO_VAE'),
     )
-    setnode_9 = _node(wf, 'SetNode', '173',
+    setnode_9 = node(wf, 'SetNode', '173',
         widget_0='vae',
-        VAE=vaeloader_2.out(0),
+        VAE=vae_2.out('VAE'),
     )
-    setnode_10 = _node(wf, 'SetNode', '177',
+    setnode_10 = node(wf, 'SetNode', '177',
         widget_0='vae_tiny',
-        VAE=vaeloader.out(0),
+        VAE=vae_180.out('VAE'),
     )
-    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '186',
-        lora_name='LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors',
+    # ════ MODEL PATCH STACK ════
+    lora = node(wf, 'LoraLoaderModelOnly', '186',
+        lora_name=MODELS['ltx_2_3_22b_distilled_1_1_lora_dynamic_fro'].filename,
         strength_model=0.6,
-        model=unetloader.out(0),
+        model=base_diffusion_model.out('MODEL'),
     )
-    setnode_11 = _node(wf, 'SetNode', '188',
+    setnode_11 = node(wf, 'SetNode', '188',
         widget_0='clip',
-        CLIP=dualcliploader.out(0),
+        CLIP=text_encoder.out('CLIP'),
     )
-    setnode_17 = _node(wf, 'SetNode', '2072',
+    setnode_17 = node(wf, 'SetNode', '2072',
         widget_0='height',
-        INT=intconstant_2.out(0),
+        INT=param_height.out('VALUE'),
     )
-    setnode_18 = _node(wf, 'SetNode', '2073',
+    setnode_18 = node(wf, 'SetNode', '2073',
         widget_0='width',
-        INT=intconstant_3.out(0),
+        INT=param_width.out('VALUE'),
     )
-    setnode_19 = _node(wf, 'SetNode', '2074',
+    setnode_19 = node(wf, 'SetNode', '2074',
         widget_0='fps',
-        FLOAT=primitivefloat.out(0),
+        FLOAT=param_float_2076.out('FLOAT'),
     )
-    simplecalculatorkj_2 = _node(wf, 'SimpleCalculatorKJ', '2077',
-        widget_0='a',
-        a=intconstant.out(0),
-        b=primitivefloat.out(0),
+    simple_calculator_k_j_2 = node(wf, 'SimpleCalculatorKJ', '2077',
+        expression='a',
+        a=param_int_2078.out('VALUE'),
+        b=param_float_2076.out('FLOAT'),
     )
-    setnode_21 = _node(wf, 'SetNode', '2081',
+    setnode_21 = node(wf, 'SetNode', '2081',
         widget_0='enhance_prompt',
-        BOOLEAN=primitiveboolean.out(0),
+        BOOLEAN=use_lora.out('BOOLEAN'),
     )
-    ltxvpreprocess_2 = _node(wf, 'LTXVPreprocess', '2084',
-        widget_0=18,
+    preprocessed_image_2 = node(wf, 'LTXVPreprocess', '2084',
+        img_compression=18,
         image=getnode_31.out(0),
     )
-    setnode_22 = _node(wf, 'SetNode', '2112',
+    setnode_22 = node(wf, 'SetNode', '2112',
         widget_0='firstframe_strength',
-        FLOAT=primitivefloat_3.out(0),
+        FLOAT=param_first_frame_strength.out('FLOAT'),
     )
-    setnode_23 = _node(wf, 'SetNode', '2113',
+    setnode_23 = node(wf, 'SetNode', '2113',
         widget_0='lastframe_strength',
-        FLOAT=primitivefloat_2.out(0),
+        FLOAT=param_last_frame_strength.out('FLOAT'),
     )
-    ltxvemptylatentaudio = _node(wf, 'LTXVEmptyLatentAudio', '9',
-        widget_0=5,
-        widget_1=8,
-        widget_2=1,
+    empty_audio_latent = node(wf, 'LTXVEmptyLatentAudio', '9',
+        
+        batch_size=1,
         audio_vae=getnode_6.out(0),
-        frame_rate=simplecalculatorkj.out(1),
+        frame_rate=simple_calculator_k_j_92.out(1),
         frames_number=getnode_10.out(0),
     )
-    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '16',
-        widget_0='= enhanced prompt = ',
-        text=primitivestringmultiline.out(0),
+    positive_prompt = node(wf, 'CLIPTextEncode', '16',
+        text=primitive_string_multiline_2103.out(0),
         clip=getnode_9.out(0),
     )
-    wf.replace_edge('16.text', primitivestringmultiline.out(0))
+    wf.replace_edge('16.text', primitive_string_multiline_2103.out(0))
     wf.remove_node('2070')
     wf.remove_node('2102')
-    imagescaleby = _node(wf, 'ImageScaleBy', '26',
-        widget_0='lanczos',
-        widget_1=0.5,
-        image=imageresizekjv2.out(0),
+    image_scale_by_26 = node(wf, 'ImageScaleBy', '26',
+        upscale_method='lanczos',
+        scale_by=0.5,
+        image=resized_image_44.out('IMAGE'),
     )
-    imageresizekjv2_2 = _node(wf, 'ImageResizeKJv2', '48',
-        widget_0=512,
-        widget_1=512,
-        widget_2='nearest-exact',
-        widget_3='crop',
-        widget_4='0, 0, 0',
-        widget_5='center',
-        widget_6=32,
-        widget_7='cpu',
-        height=imageresizekjv2.out(2),
-        image=loadimage_2.out(0),
-        width=imageresizekjv2.out(1),
+    imageresizekjv2_2 = node(wf, 'ImageResizeKJv2', '48',
+        
+        upscale_method='nearest-exact',
+        keep_proportion='crop',
+        pad_color='0, 0, 0',
+        crop_position='center',
+        divisible_by=32,
+        device='cpu',
+        height=resized_image_44.out(2),
+        image=input_image_2.out('IMAGE'),
+        width=resized_image_44.out(1),
     )
-    ltx2_nag = _node(wf, 'LTX2_NAG', '197',
-        widget_0=11,
-        widget_1=0.25,
-        widget_2=2.5,
-        widget_3=True,
+    model_with_nag = node(wf, 'LTX2_NAG', '197',
+        nag_scale=11,
+        nag_alpha=0.25,
+        nag_tau=2.5,
+        inplace=True,
         model=getnode_8.out(0),
         nag_cond_audio=getnode_19.out(0),
         nag_cond_video=getnode_19.out(0),
     )
-    ltxvimgtovideoinplacekj = _node(wf, 'LTXVImgToVideoInplaceKJ', '210',
-        latent=emptyltxvlatentvideo.out(0),
+    anchored_latent_210 = node(wf, 'LTXVImgToVideoInplaceKJ', '210',
+        latent=empty_video_latent.out('LATENT'),
         num_images='2',
         vae=getnode_5.out(0),
         _extras={
-            'num_images.image_1': ltxvpreprocess_2.out(0),
-            'num_images.image_2': ltxvpreprocess.out(0),
+            'num_images.image_1': preprocessed_image_2.out('OUTPUT_IMAGE'),
+            'num_images.image_2': preprocessed_image_50.out('OUTPUT_IMAGE'),
             'num_images.index_1': 0,
             'num_images.index_2': -1,
             'num_images.strength_1': getnode_35.out(0),
             'num_images.strength_2': getnode_36.out(0),
         },
     )
-    pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
-        widget_0='auto',
-        widget_1=False,
-        model=loraloadermodelonly.out(0),
+    # Upstream class is misspelled; do not rename.
+    model_with_sage_attn = node(wf, 'PathchSageAttentionKJ', '226',
+        sage_attention='auto',
+        allow_compile=False,
+        model=lora.out('MODEL'),
     )
-    setnode_20 = _node(wf, 'SetNode', '2075',
+    setnode_20 = node(wf, 'SetNode', '2075',
         widget_0='frames',
-        INT=simplecalculatorkj_2.out(1),
+        INT=simple_calculator_k_j_2.out(1),
     )
-    resizeimagesbylongeredge_2 = _node(wf, 'ResizeImagesByLongerEdge', '2083',
-        widget_0=1536,
-        images=imageresizekjv2.out(0),
+    resize_images_by_longer_edge_1 = node(wf, 'ResizeImagesByLongerEdge', '2083',
+        longer_edge=1536,
+        images=resized_image_44.out('IMAGE'),
     )
-    ltxvconditioning = _node(wf, 'LTXVConditioning', '10',
-        widget_0=8,
+    conditioning = node(wf, 'LTXVConditioning', '10',
         frame_rate=getnode_4.out(0),
-        negative=cliptextencode.out(0),
-        positive=cliptextencode_2.out(0),
+        negative=negative_prompt.out('CONDITIONING'),
+        positive=positive_prompt.out('CONDITIONING'),
     )
-    ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '24',
-        audio_latent=ltxvemptylatentaudio.out(0),
-        video_latent=ltxvimgtovideoinplacekj.out(0),
+    av_latent_24 = node(wf, 'LTXVConcatAVLatent', '24',
+        audio_latent=empty_audio_latent.out('LATENT'),
+        video_latent=anchored_latent_210.out('LATENT'),
     )
-    getimagesize = _node(wf, 'GetImageSize', '28',
-        image=imagescaleby.out(0),
+    get_image_size_28 = node(wf, 'GetImageSize', '28',
+        image=image_scale_by_26.out(0),
     )
-    resizeimagesbylongeredge = _node(wf, 'ResizeImagesByLongerEdge', '49',
-        widget_0=1536,
-        images=imageresizekjv2_2.out(0),
+    resize_images_by_longer_edge_49 = node(wf, 'ResizeImagesByLongerEdge', '49',
+        longer_edge=1536,
+        images=imageresizekjv2_2.out('IMAGE'),
     )
-    setnode = _node(wf, 'SetNode', '75',
+    set_node_75 = node(wf, 'SetNode', '75',
         widget_0='firstframe',
-        IMAGE=resizeimagesbylongeredge_2.out(0),
+        IMAGE=resize_images_by_longer_edge_1.out(0),
     )
-    setnode_13 = _node(wf, 'SetNode', '199',
+    setnode_13 = node(wf, 'SetNode', '199',
         widget_0='model_nag',
-        MODEL=ltx2_nag.out(0),
+        MODEL=model_with_nag.out('MODEL'),
     )
-    setnode_24 = _node(wf, 'SetNode', '2129',
+    setnode_24 = node(wf, 'SetNode', '2129',
         widget_0='lastframe_resized',
-        IMAGE=imageresizekjv2_2.out(0),
+        IMAGE=imageresizekjv2_2.out('IMAGE'),
     )
-    ltxvscheduler = _node(wf, 'LTXVScheduler', '2',
+    ltxvscheduler = node(wf, 'LTXVScheduler', '2',
         steps=1,
-        widget_0=1,
-        widget_1=2.05,
-        widget_2=0.95,
-        widget_3=True,
-        widget_4=0.1,
-        latent=ltxvconcatavlatent.out(0),
+        max_shift=2.05,
+        base_shift=0.95,
+        stretch=True,
+        terminal=0.1,
+        latent=av_latent_24.out('LATENT'),
     )
-    samplercustomadvanced = _node(wf, 'SamplerCustomAdvanced', '13',
-        guider=cfgguider_2.out(0),
-        latent_image=ltxvconcatavlatent.out(0),
-        noise=randomnoise_2.out(0),
-        sampler=ksamplerselect.out(0),
-        sigmas=manualsigmas_2.out(0),
+    sampled_latent_13 = node(wf, 'SamplerCustomAdvanced', '13',
+        guider=cfg_guider_2.out('GUIDER'),
+        latent_image=av_latent_24.out('LATENT'),
+        noise=noise_2.out('NOISE'),
+        sampler=sampler_kind_1.out('SAMPLER'),
+        sigmas=sigmas_2.out('SIGMAS'),
     )
-    setnode_2 = _node(wf, 'SetNode', '78',
+    setnode_2 = node(wf, 'SetNode', '78',
         widget_0='lastframe',
-        IMAGE=resizeimagesbylongeredge.out(0),
+        IMAGE=resize_images_by_longer_edge_49.out(0),
     )
-    setnode_3 = _node(wf, 'SetNode', '125',
+    setnode_3 = node(wf, 'SetNode', '125',
         widget_0='positive',
-        CONDITIONING=ltxvconditioning.out(0),
+        CONDITIONING=conditioning.out('POSITIVE'),
     )
-    setnode_4 = _node(wf, 'SetNode', '126',
+    setnode_4 = node(wf, 'SetNode', '126',
         widget_0='negative',
-        CONDITIONING=ltxvconditioning.out(1),
+        CONDITIONING=conditioning.out('NEGATIVE'),
     )
-    setnode_14 = _node(wf, 'SetNode', '217',
+    setnode_14 = node(wf, 'SetNode', '217',
         widget_0='width_downscaled',
-        INT=getimagesize.out(0),
+        INT=get_image_size_28.out(0),
     )
-    setnode_15 = _node(wf, 'SetNode', '218',
+    setnode_15 = node(wf, 'SetNode', '218',
         widget_0='height_downscaled',
-        INT=getimagesize.out(1),
+        INT=get_image_size_28.out(1),
     )
-    ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '228',
-        widget_0=2,
-        widget_1=4096,
-        model=pathchsageattentionkj.out(0),
+    model_chunked_ffn = node(wf, 'LTXVChunkFeedForward', '228',
+        chunks=2,
+        dim_threshold=4096,
+        model=model_with_sage_attn.out('MODEL'),
     )
-    ltxvseparateavlatent = _node(wf, 'LTXVSeparateAVLatent', '18',
-        av_latent=samplercustomadvanced.out(0),
+    av_latent_separated_18 = node(wf, 'LTXVSeparateAVLatent', '18',
+        av_latent=sampled_latent_13.out('OUTPUT'),
     )
-    ltxvlatentupsampler = _node(wf, 'LTXVLatentUpsampler', '25',
+    ltxvlatent_upsampler = node(wf, 'LTXVLatentUpsampler', '25',
         _outputs=("latent",),
-        samples=ltxvseparateavlatent.out(0),
+        samples=av_latent_separated_18.out('VIDEO_LATENT'),
         upscale_model=getnode_14.out(0),
         vae=getnode_7.out(0),
     )
-    stage_boundary = _node(wf, 'VRAM_Debug', '1846',
+    stage_boundary = node(wf, 'VRAM_Debug', '1846',
         _outputs=("any_output", "image_pass", "model_pass", "freemem_before", "freemem_after"),
-        any_input=ltxvlatentupsampler.out("latent"),
+        any_input=ltxvlatent_upsampler.out('LATENT'),
         empty_cache=True,
         gc_collect=True,
         unload_all_models=True,
     )
-    ltx2attentiontunerpatch = _node(wf, 'LTX2AttentionTunerPatch', '229',
-        widget_0='',
-        widget_1=1,
-        widget_2=1,
-        widget_3=1,
-        widget_4=1,
-        widget_5=False,
-        model=ltxvchunkfeedforward.out(0),
+    model_attention_tuned = node(wf, 'LTX2AttentionTunerPatch', '229',
+        blocks='',
+        video_scale=1,
+        audio_scale=1,
+        video_to_audio_scale=1,
+        audio_to_video_scale=1,
+        triton_kernels=False,
+        model=model_chunked_ffn.out('MODEL'),
     )
-    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '2291',
+    l_t_x2_memory_efficient_sage_attention_patch_2291 = node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '2291',
         triton_kernels=True,
-        model=ltx2attentiontunerpatch.out(0),
+        model=model_attention_tuned.out('MODEL'),
     )
-    ltxvimgtovideoinplacekj_2 = _node(wf, 'LTXVImgToVideoInplaceKJ', '2105',
-        latent=stage_boundary.out("any_output"),
+    anchored_latent_2 = node(wf, 'LTXVImgToVideoInplaceKJ', '2105',
+        latent=stage_boundary.out('ANY_OUTPUT'),
         num_images='1',
         vae=getnode_39.out(0),
         _extras={
@@ -625,110 +580,87 @@ def build() -> VibeWorkflow:
             'num_images.strength_1': getnode_35.out(0),
         },
     )
-    power_lora_loader__rgthree_ = _node(wf, 'Power Lora Loader (rgthree)', '2107',
-        widget_3='',
-        model=ltx2memoryefficientsageattentionpatch.out(0),
+    power_lora_loader__rgthree_ = node(wf, 'Power Lora Loader (rgthree)', '2107',
+model=l_t_x2_memory_efficient_sage_attention_patch_2291.out(0),
     )
-    setnode_12 = _node(wf, 'SetNode', '192',
+    setnode_12 = node(wf, 'SetNode', '192',
         widget_0='model',
         MODEL=power_lora_loader__rgthree_.out(0),
     )
-    setnode_16 = _node(wf, 'SetNode', '230',
+    setnode_16 = node(wf, 'SetNode', '230',
         widget_0='model_with_lora',
         MODEL=power_lora_loader__rgthree_.out(0),
     )
-    ltxvaddguide = _node(wf, 'LTXVAddGuide', '2152',
-        widget_0=-1,
-        widget_1=1,
+    ltxvadd_guide = node(wf, 'LTXVAddGuide', '2152',
+        frame_idx=-1,
         image=getnode_34.out(0),
-        latent=ltxvimgtovideoinplacekj_2.out(0),
+        latent=anchored_latent_2.out('LATENT'),
         negative=getnode_37.out(0),
         positive=getnode_40.out(0),
         strength=getnode_36.out(0),
         vae=getnode_38.out(0),
     )
-    ltxvconcatavlatent_2 = _node(wf, 'LTXVConcatAVLatent', '34',
-        audio_latent=ltxvseparateavlatent.out(1),
-        video_latent=ltxvaddguide.out(2),
+    av_latent_2 = node(wf, 'LTXVConcatAVLatent', '34',
+        audio_latent=av_latent_separated_18.out('AUDIO_LATENT'),
+        video_latent=ltxvadd_guide.out(2),
     )
-    setnode_25 = _node(wf, 'SetNode', '2164',
+    setnode_25 = node(wf, 'SetNode', '2164',
         widget_0='positive_guider',
-        CONDITIONING=ltxvaddguide.out(0),
+        CONDITIONING=ltxvadd_guide.out(0),
     )
-    setnode_26 = _node(wf, 'SetNode', '2165',
+    setnode_26 = node(wf, 'SetNode', '2165',
         widget_0='negative_guider',
-        CONDITIONING=ltxvaddguide.out(1),
+        CONDITIONING=ltxvadd_guide.out(1),
     )
-    samplercustomadvanced_2 = _node(wf, 'SamplerCustomAdvanced', '21',
-        guider=cfgguider.out(0),
-        latent_image=ltxvconcatavlatent_2.out(0),
-        noise=randomnoise.out(0),
-        sampler=ksamplerselect_2.out(0),
-        sigmas=manualsigmas_3.out(0),
+    sampled_latent_2 = node(wf, 'SamplerCustomAdvanced', '21',
+        guider=cfg_guider_8.out('GUIDER'),
+        latent_image=av_latent_2.out('LATENT'),
+        noise=noise_14.out('NOISE'),
+        sampler=sampler_kind_2.out('SAMPLER'),
+        sigmas=sigmas_3.out('SIGMAS'),
     )
-    ltxvseparateavlatent_2 = _node(wf, 'LTXVSeparateAVLatent', '146',
-        av_latent=samplercustomadvanced_2.out(0),
+    av_latent_separated_2 = node(wf, 'LTXVSeparateAVLatent', '146',
+        av_latent=sampled_latent_2.out('OUTPUT'),
     )
-    ltxvaudiovaedecode = _node(wf, 'LTXVAudioVAEDecode', '150',
+    # ════ DECODE ════
+    decoded_audio = node(wf, 'LTXVAudioVAEDecode', '150',
         audio_vae=getnode_17.out(0),
-        samples=ltxvseparateavlatent_2.out(1),
+        samples=av_latent_separated_2.out('AUDIO_LATENT'),
     )
-    ltxvcropguides = _node(wf, 'LTXVCropGuides', '2156',
-        latent=ltxvseparateavlatent_2.out(0),
+    cropped_latent = node(wf, 'LTXVCropGuides', '2156',
+        latent=av_latent_separated_2.out('VIDEO_LATENT'),
         negative=getnode_41.out(0),
         positive=getnode_42.out(0),
     )
-    vaedecodetiled = _node(wf, 'VAEDecodeTiled', '149',
+    decoded_video = node(wf, 'VAEDecodeTiled', '149',
         tile_size=512,
         overlap=64,
         temporal_size=4096,
         temporal_overlap=8,
-        samples=ltxvcropguides.out(2),
+        samples=cropped_latent.out(2),
         vae=getnode_16.out(0),
     )
-    setnode_6 = _node(wf, 'SetNode', '154',
+    setnode_6 = node(wf, 'SetNode', '154',
         widget_0='final_audio',
-        AUDIO=ltxvaudiovaedecode.out(0),
+        AUDIO=decoded_audio.out(0),
     )
-    setnode_5 = _node(wf, 'SetNode', '153',
+    setnode_5 = node(wf, 'SetNode', '153',
         widget_0='final_video',
-        IMAGE=vaedecodetiled.out(0),
+        IMAGE=decoded_video.out('IMAGE'),
     )
 
     _apply_runtime_schema_defaults(wf)
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    wf.register_input("start_image", "45", "image", "image (6).png")
-    wf.register_input("end_image", "47", "image", "0 (13).webp")
-    wf.register_input("first_image", "45", "image", "image (6).png")
-    wf.register_input("last_image", "47", "image", "0 (13).webp")
-    wf.register_input("prompt", "2103", "value", wf.nodes["2103"].inputs.get("value", ""))
-    wf.register_input("negative", "11", "text", wf.nodes["11"].inputs.get("text", ""))
-    wf.register_input("negative_prompt", "11", "text", wf.nodes["11"].inputs.get("text", ""))
-    wf.register_input("seed", "15", "noise_seed", 42)
-    wf.register_input("seed_first", "15", "noise_seed", 42)
-    wf.register_input("seed_last", "14", "noise_seed", 43)
-    wf.register_input("frames", "2078", "widget_0", 81)
-    wf.register_input("width", "2080", "widget_0", 1280)
-    wf.register_input("height", "2079", "widget_0", 720)
-    wf.register_input("fps", "2076", "value", 24)
-    wf.register_input("fps_int", "2076", "value", 24)
-    wf.register_input("first_frame_strength", "2110", "value", 1.0)
-    wf.register_input("last_frame_strength", "2108", "value", 1.0)
-    wf.register_input("first_strength", "2110", "value", 1.0)
-    wf.register_input("last_strength", "2108", "value", 1.0)
-    bind_output(
+    return finalize(
         wf,
-        "43",
-        output_type="VHS_VideoCombine",
-        name="video",
-        artifact_kind="video",
-        mime_type="video/mp4",
-        filename_prefix="reigh_vibecomfy_ltx_first_last",
-        expected_cardinality="one",
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='43',
+        output_type='VHS_VideoCombine',
+        name='video',
+        mime_type='video/mp4',
+        expected_cardinality='one',
+        source_path=__file__,
     )
-    return wf
-
 
 def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
     """Fill schema-required inputs that older exported widget JSON omitted."""
@@ -748,39 +680,3 @@ def _apply_runtime_schema_defaults(wf: VibeWorkflow) -> None:
             }
         )
 
-
-def _node(
-    wf: VibeWorkflow,
-    class_type: str,
-    _id: str,
-    _extras: dict | None = None,
-    _outputs: tuple[str, ...] | None = None,
-    **kwargs,
-):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _outputs is not None:
-        builder.node.metadata["output_names"] = list(_outputs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder

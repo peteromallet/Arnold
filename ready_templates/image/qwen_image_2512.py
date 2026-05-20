@@ -66,7 +66,7 @@ READY_METADATA = ReadyMetadata.build(
     provenance={'smoke_resolution': '768x768', 'runtime_variant': 'qwen-image-2512-lightning-4step-768px', 'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/image/qwen_image_2512.json', 'approach': 'official Qwen-Image-2512 text-to-image workflow using the 4-step Lightning LoRA path for smoke/runtime validation'},
     coverage_tier='required',
     vibecomfy_version='0.1.0',
-    comfy_core={'min_version': None, 'tested_at': None, 'commit': None, 'status': 'unavailable'},
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
 )
 
 READY_METADATA.setdefault("unbound_inputs", {}).update({'height': '238:232.height', 'negative_prompt': '238:228.text', 'prompt': '238:227.text', 'seed': '238:230.seed', 'width': '238:232.width'})

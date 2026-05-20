@@ -122,6 +122,35 @@ VibeComfy is a thin Python authoring layer. The real work belongs to:
 
 ![Code quality scorecard](docs/assets/scorecard.png)
 
+## v2.4 Ready Templates
+
+Ready templates use the v2.4 reproducibility shape:
+
+```python
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+
+MODELS = {"main": ModelAsset(filename="model.safetensors", url="https://...", subdir="checkpoints")}
+PUBLIC_INPUTS = {"prompt": InputSpec(node="6", field="text", default="", type="STRING", required=True)}
+READY_METADATA = ReadyMetadata.build(
+    template_id="image/example",
+    capability="text_to_image",
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    requirements={"custom_nodes": ["ComfyUI-Example"]},
+    comfy_core={"version": "unknown", "commit": "unknown", "tested_at": "2026-05-20T00:00:00Z"},
+    vibecomfy_version="0.1.0",
+)
+
+def build():
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+    # node(...)
+    return finalize(wf, PUBLIC_INPUTS, READY_METADATA, output_node="9", output_type="SaveImage")
+```
+
+`bind_input`, `bind_output`, direct `wf.register_input` calls in templates, and `apply_ready_template_policy` are compatibility APIs only. New templates declare public inputs in `PUBLIC_INPUTS`, model files in `MODELS`, and pack pins through `READY_METADATA.requirements`. The pack registry is `custom_nodes.lock`; rich TOML entries carry `slug`, `source`, `url`, `commit`, `version`, `schema_hash`, `class_set`, and `last_seen_at` so templates can be checked offline.
+
+See [docs/authoring.md](docs/authoring.md) and [docs/adding_templates_models.md](docs/adding_templates_models.md) for the full authoring and promotion flow.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

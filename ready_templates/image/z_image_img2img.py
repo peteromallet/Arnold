@@ -2,7 +2,7 @@
 """Z-Image Turbo image-to-image template for Reigh parity."""
 from __future__ import annotations
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.templates import finalize_ready
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -10,6 +10,7 @@ DEFAULT_PROMPT = "A compact red cube on a clean white tabletop, product-photo li
 DEFAULT_NEGATIVE = ""
 
 READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
     "model_assets": [
         {
             "name": "z_image_bf16.safetensors",
@@ -79,6 +80,5 @@ def build() -> VibeWorkflow:
     decoded = wf.node("VAEDecode", samples=sampled.out(0), vae=vae.out(0))
     wf.node("SaveImage", images=decoded.out(0), filename_prefix="z-image-img2img")
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf

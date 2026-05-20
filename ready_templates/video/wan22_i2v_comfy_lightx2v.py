@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.templates import finalize_ready
 
 
-READY_METADATA = {'ready_template': 'video/wan22_i2v_comfy_lightx2v',
+READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},'ready_template': 'video/wan22_i2v_comfy_lightx2v',
  'workflow_template': 'wan22_i2v_comfy_lightx2v',
  'capability': 'image_to_video',
  'coverage_tier': 'production_parity_candidate',
@@ -178,8 +179,7 @@ def build() -> VibeWorkflow:
         video=createvideo.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
 
 

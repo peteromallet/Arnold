@@ -1,181 +1,208 @@
 # vibecomfy: generated - converted by tools/convert_ready_templates.py
 # Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
 # marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+"""Animate Character with Wan 2.2 Animate 14B Fp 8 E4m3fn Scaled Kj.
+
+Public inputs:
+    cfg: Classifier-free guidance scale
+    sampler_name: Sampler algorithm
+
+Output: unknown.
+
+Packs:   ComfyUI-KJNodes, ComfyUI-segment-anything-2, comfyui_controlnet_aux
+"""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
+MODELS = {
+    'wan2_2_animate_14b_fp8_e4m3fn_scaled_kj': ModelAsset(
+        filename='Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
+        url='https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
+        subdir='diffusion_models',
+    ),
+    'lightx2v_i2v_14b_480p_cfg_step_distill_ran': ModelAsset(
+        filename='lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
+        url='https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
+        subdir='',
+    ),
+    'wananimate_relight_lora_fp16': ModelAsset(
+        filename='WanAnimate_relight_lora_fp16.safetensors',
+        url='https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/LoRAs/Wan22_relight/WanAnimate_relight_lora_fp16.safetensors',
+        subdir='loras',
+    ),
+    'clip_vision_h': ModelAsset(
+        filename='clip_vision_h.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors',
+        subdir='',
+        hf_revision='main',
+    ),
+    'sam2_hiera_base_plus': ModelAsset(
+        filename='sam2_hiera_base_plus.safetensors',
+        url='https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2_hiera_base_plus.safetensors',
+        subdir='',
+    ),
+    'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(
+        filename='umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+        subdir='',
+        hf_revision='main',
+    ),
+    'wan_2_1_vae': ModelAsset(
+        filename='wan_2.1_vae.safetensors',
+        url='https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors',
+        subdir='',
+    ),
+    'yolox_l': ModelAsset(
+        filename='yolox_l.onnx',
+        url='https://huggingface.co/hr16/yolox-onnx/resolve/main/yolox_l.onnx',
+        subdir='',
+    ),
+    'dw_ll_ucoco_384_bs5_torchscript': ModelAsset(
+        filename='dw-ll_ucoco_384_bs5.torchscript.pt',
+        url='https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt',
+        subdir='',
+        hf_revision='main',
+    ),
+}
 
+PUBLIC_INPUTS = {
+    'cfg': InputSpec(node='232:63', field='cfg', default=1, type='INT', description='Classifier-free guidance scale.'),
+    'sampler_name': InputSpec(node='232:63', field='sampler_name', default='euler', type='STRING', description='Sampler algorithm.'),
+}
 
-READY_METADATA = {'approach': 'Native ComfyUI Wan 2.2 Animate first-stage replacement workflow using DWPose, SAM2 masking, '
-             'and native WanAnimateToVideo.',
- 'capability': 'animate_character',
- 'coverage_tier': 'production_parity_candidate',
- 'ready_template': 'video/wan22_animate_native_first_stage',
- 'runtime_note': 'Worker scratchpads patch reference image, motion video, prompt, negative prompt, seed, '
-                 'steps, width, height, frame count, and output options.',
- 'source_role': 'materialized_native_comfy_workflow',
- 'source_url': 'https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_14B_animate.json',
- 'unbound_inputs': {'height': '160.value',
-                    'motion_video': '145.file',
-                    'negative_prompt': '1.text',
-                    'num_frames': '232:62.length',
-                    'prompt': '21.text',
-                    'reference_image': '10.image',
-                    'seed': '232:63.seed',
-                    'steps': '232:63.steps',
-                    'width': '159.value'},
- 'workflow_template': 'wan22_animate_native_first_stage'}
+READY_METADATA = ReadyMetadata.build(
+    template_id='wan22_animate_native_first_stage',
+    capability='animate_character',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='',
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-segment-anything-2', 'comfyui_controlnet_aux'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-segment-anything-2', 'source': 'git',
+                       'commit': '0c35fff5f382803e2310103357b5e985f5437f32', 'url': 'https://github.com/kijai/ComfyUI-segment-anything-2.git'}, {'slug': 'comfyui_controlnet_aux', 'source': 'git',
+                       'commit': 'e8b689a513c3e6b63edc44066560ca5919c0576e', 'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'}]},
+    provenance={'approach': 'Native ComfyUI Wan 2.2 Animate first-stage replacement workflow using DWPose, SAM2 masking, and native WanAnimateToVideo.', 'source_role': 'materialized_native_comfy_workflow'},
+    coverage_tier='production_parity_candidate',
+    runtime_note='Worker scratchpads patch reference image, motion video, prompt, negative prompt, seed, steps, width, height, frame count, and output options.',
+    source_url='https://github.com/Comfy-Org/workflow_templates/blob/main/templates/video_wan2_2_14B_animate.json',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
-READY_REQUIREMENTS = {'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-segment-anything-2', 'comfyui_controlnet_aux'],
- 'models': [{'directory': 'diffusion_models',
-             'name': 'Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
-             'url': 'https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'},
-            {'directory': 'loras',
-             'name': 'lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
-             'url': 'https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'},
-            {'directory': 'loras',
-             'name': 'WanAnimate_relight_lora_fp16.safetensors',
-             'url': 'https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/LoRAs/Wan22_relight/WanAnimate_relight_lora_fp16.safetensors'},
-            {'directory': 'clip_vision',
-             'name': 'clip_vision_h.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors'},
-            {'directory': 'sam2',
-             'name': 'sam2_hiera_base_plus.safetensors',
-             'url': 'https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2_hiera_base_plus.safetensors'},
-            {'directory': 'text_encoders',
-             'name': 'umt5_xxl_fp8_e4m3fn_scaled.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors'},
-            {'directory': 'vae',
-             'name': 'wan_2.1_vae.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors'},
-            {'directory': 'onnx/yolo',
-             'name': 'yolox_l.onnx',
-             'url': 'https://huggingface.co/hr16/yolox-onnx/resolve/main/yolox_l.onnx'},
-            {'directory': 'onnx/dwpose',
-             'name': 'dw-ll_ucoco_384_bs5.torchscript.pt',
-             'url': 'https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt'}],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
-                      {'slug': 'ComfyUI-segment-anything-2',
-                       'source': 'git',
-                       'url': 'https://github.com/kijai/ComfyUI-segment-anything-2.git'},
-                      {'slug': 'comfyui_controlnet_aux',
-                       'source': 'git',
-                       'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'}]}
+READY_METADATA["unbound_inputs"].update({'num_frames': '232:62.length'})
 
+PRIVATE_KNOBS = {
+    'prompt': 'a person moving naturally, cinematic motion',
+    'negative_prompt': 'low quality, blurry, distorted',
+    'seed': 42,
+    'steps': 20,
+    'width': 832,
+    'height': 480,
+    'num_frames': 81,
+}
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type='ready_template',
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    cliploader = _node(wf, 'CLIPLoader', '2',
-        clip_name='umt5_xxl_fp8_e4m3fn_scaled.safetensors',
+    # ════ LOADERS ════
+    text_encoder = node(wf, 'CLIPLoader', '2',
+        clip_name=MODELS['umt5_xxl_fp8_e4m3fn_scaled'].filename,
         type='wan',
         device='default',
     )
-    vaeloader = _node(wf, 'VAELoader', '3',
-        vae_name='wan_2.1_vae.safetensors',
+    vae = node(wf, 'VAELoader', '3',
+        vae_name=MODELS['wan_2_1_vae'].filename,
     )
-    clipvisionloader = _node(wf, 'CLIPVisionLoader', '4',
-        clip_name='clip_vision_h.safetensors',
+    clip_vision = node(wf, 'CLIPVisionLoader', '4',
+        clip_name=MODELS['clip_vision_h'].filename,
     )
-    loadimage = _node(wf, 'LoadImage', '10',
+    # ════ SAMPLING ════
+    input_image = node(wf, 'LoadImage', '10',
         image='reference_image.png',
     )
-    unetloader = _node(wf, 'UNETLoader', '20',
-        unet_name='Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
+    base_diffusion_model = node(wf, 'UNETLoader', '20',
+        unet_name=MODELS['wan2_2_animate_14b_fp8_e4m3fn_scaled_kj'].filename,
         weight_dtype='default',
     )
-    downloadandloadsam2model = _node(wf, 'DownloadAndLoadSAM2Model', '108',
-        model='sam2_hiera_base_plus.safetensors',
+    download_and_load_s_a_m2_model_108 = node(wf, 'DownloadAndLoadSAM2Model', '108',
+        model=MODELS['sam2_hiera_base_plus'].filename,
         segmentor='video',
         device='cuda',
         precision='fp16',
     )
-    loadvideo = _node(wf, 'LoadVideo', '145',
+    input_video = node(wf, 'LoadVideo', '145',
         file='motion_video.mp4',
     )
-    primitiveint = _node(wf, 'PrimitiveInt', '159',
-        value=640,
+    param_int_159 = node(wf, 'PrimitiveInt', '159', value=PRIVATE_KNOBS['width'])
+    param_int_2 = node(wf, 'PrimitiveInt', '160', value=PRIVATE_KNOBS['height'])
+    # ════ TEXT CONDITIONING ════
+    negative_prompt = node(wf, 'CLIPTextEncode', '1',
+        text=PRIVATE_KNOBS['negative_prompt'],
+        clip=text_encoder.out('CLIP'),
     )
-    primitiveint_2 = _node(wf, 'PrimitiveInt', '160',
-        value=640,
-    )
-    cliptextencode = _node(wf, 'CLIPTextEncode', '1',
-        text='overexposed, static, blurry details, captions, text, watermark, low quality, jpeg artifacts, ugly, deformed, disfigured, bad hands, bad face, malformed limbs, fused fingers, still frame, cluttered background',
-        clip=cliploader.out(0),
-    )
-    clipvisionencode = _node(wf, 'CLIPVisionEncode', '9',
+    clip_vision_features = node(wf, 'CLIPVisionEncode', '9',
         crop='none',
-        clip_vision=clipvisionloader.out(0),
-        image=loadimage.out(0),
+        clip_vision=clip_vision.out('CLIP_VISION'),
+        image=input_image.out('IMAGE'),
     )
-    loraloadermodelonly = _node(wf, 'LoraLoaderModelOnly', '18',
-        lora_name='lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
+    # ════ MODEL PATCH STACK ════
+    lora_18 = node(wf, 'LoraLoaderModelOnly', '18',
+        lora_name=MODELS['lightx2v_i2v_14b_480p_cfg_step_distill_ran'].filename,
         strength_model=1,
-        model=unetloader.out(0),
+        model=base_diffusion_model.out('MODEL'),
     )
-    cliptextencode_2 = _node(wf, 'CLIPTextEncode', '21',
-        text='The character is dancing in the room',
-        clip=cliploader.out(0),
+    positive_prompt = node(wf, 'CLIPTextEncode', '21',
+        text=PRIVATE_KNOBS['prompt'],
+        clip=text_encoder.out('CLIP'),
     )
-    getvideocomponents = _node(wf, 'GetVideoComponents', '23',
-        video=loadvideo.out(0),
+    # ════ IMAGE PREP ════
+    video_components = node(wf, 'GetVideoComponents', '23',
+        video=input_video.out('VIDEO'),
     )
-    loraloadermodelonly_2 = _node(wf, 'LoraLoaderModelOnly', '99',
-        lora_name='WanAnimate_relight_lora_fp16.safetensors',
+    lora_2 = node(wf, 'LoraLoaderModelOnly', '99',
+        lora_name=MODELS['wananimate_relight_lora_fp16'].filename,
         strength_model=1,
-        model=loraloadermodelonly.out(0),
+        model=lora_18.out('MODEL'),
     )
-    pixelperfectresolution = _node(wf, 'PixelPerfectResolution', '158',
+    pixel_perfect_resolution_158 = node(wf, 'PixelPerfectResolution', '158',
         resize_mode='Just Resize',
-        image_gen_height=primitiveint_2.out(0),
-        image_gen_width=primitiveint.out(0),
-        original_image=getvideocomponents.out(0),
+        image_gen_height=param_int_2.out('INT'),
+        image_gen_width=param_int_159.out('INT'),
+        original_image=video_components.out('IMAGES'),
     )
-    imagescale = _node(wf, 'ImageScale', '212',
+    image_scale_212 = node(wf, 'ImageScale', '212',
         upscale_method='lanczos',
         crop='center',
-        width=primitiveint.out(0),
-        height=primitiveint_2.out(0),
-        image=getvideocomponents.out(0),
+        width=param_int_159.out('INT'),
+        height=param_int_2.out('INT'),
+        image=video_components.out('IMAGES'),
     )
-    modelsamplingsd3 = _node(wf, 'ModelSamplingSD3', '60',
+    model_sampling = node(wf, 'ModelSamplingSD3', '60',
         shift=8,
-        model=loraloadermodelonly_2.out(0),
+        model=lora_2.out('MODEL'),
     )
-    dwpreprocessor = _node(wf, 'DWPreprocessor', '100',
+    # ════ CONTROL ════
+    pose_estimated_100 = node(wf, 'DWPreprocessor', '100',
         detect_hand='disable',
         detect_body='disable',
         detect_face='enable',
-        bbox_detector='yolox_l.onnx',
-        pose_estimator='dw-ll_ucoco_384_bs5.torchscript.pt',
+        bbox_detector=MODELS['yolox_l'].filename,
+        pose_estimator=MODELS['dw_ll_ucoco_384_bs5_torchscript'].filename,
         scale_stick_for_xinsr_cn='disable',
-        resolution=pixelperfectresolution.out(0),
-        image=imagescale.out(0),
+        resolution=pixel_perfect_resolution_158.out(0),
+        image=image_scale_212.out(0),
     )
-    dwpreprocessor_2 = _node(wf, 'DWPreprocessor', '101',
+    pose_estimated_2 = node(wf, 'DWPreprocessor', '101',
         detect_hand='enable',
         detect_body='enable',
         detect_face='disable',
-        bbox_detector='yolox_l.onnx',
-        pose_estimator='dw-ll_ucoco_384_bs5.torchscript.pt',
+        bbox_detector=MODELS['yolox_l'].filename,
+        pose_estimator=MODELS['dw_ll_ucoco_384_bs5_torchscript'].filename,
         scale_stick_for_xinsr_cn='disable',
-        resolution=pixelperfectresolution.out(0),
-        image=imagescale.out(0),
+        resolution=pixel_perfect_resolution_158.out(0),
+        image=image_scale_212.out(0),
     )
-    pointseditor = _node(wf, 'PointsEditor', '229',
+    points_editor_229 = node(wf, 'PointsEditor', '229',
         points_store='[{}]',
         coordinates='[{"x":320,"y":320}]',
         neg_coordinates='[]',
@@ -185,112 +212,90 @@ def build() -> VibeWorkflow:
         width=640,
         height=640,
         normalize=False,
-        bg_image=imagescale.out(0),
+        bg_image=image_scale_212.out(0),
     )
-    sam2segmentation = _node(wf, 'Sam2Segmentation', '107',
+    sam2_segmentation_107 = node(wf, 'Sam2Segmentation', '107',
         keep_model_loaded=True,
         individual_objects=False,
-        coordinates_positive=pointseditor.out(0),
-        image=imagescale.out(0),
-        sam2_model=downloadandloadsam2model.out(0),
+        coordinates_positive=points_editor_229.out(0),
+        image=image_scale_212.out(0),
+        sam2_model=download_and_load_s_a_m2_model_108.out(0),
     )
-    growmask = _node(wf, 'GrowMask', '274',
+    grow_mask_274 = node(wf, 'GrowMask', '274',
         expand=10,
         tapered_corners=True,
-        mask=sam2segmentation.out(0),
+        mask=sam2_segmentation_107.out(0),
     )
-    blockifymask = _node(wf, 'BlockifyMask', '276',
+    blockify_mask_276 = node(wf, 'BlockifyMask', '276',
         block_size=32,
-        masks=growmask.out(0),
+        masks=grow_mask_274.out(0),
     )
-    drawmaskonimage = _node(wf, 'DrawMaskOnImage', '275',
+    draw_mask_on_image_275 = node(wf, 'DrawMaskOnImage', '275',
         color='0, 0, 0',
-        image=imagescale.out(0),
-        mask=blockifymask.out(0),
+        image=image_scale_212.out(0),
+        mask=blockify_mask_276.out(0),
     )
-    wananimatetovideo = _node(wf, 'WanAnimateToVideo', '232:62',
+    wan_animate_to_video = node(wf, 'WanAnimateToVideo', '232:62',
         batch_size=1,
         continue_motion_max_frames=5,
-        length=77,
+        length=PRIVATE_KNOBS['num_frames'],
         video_frame_offset=0,
-        background_video=drawmaskonimage.out(0),
-        character_mask=blockifymask.out(0),
-        clip_vision_output=clipvisionencode.out(0),
-        face_video=dwpreprocessor.out(0),
-        height=primitiveint_2.out(0),
-        negative=cliptextencode.out(0),
-        pose_video=dwpreprocessor_2.out(0),
-        positive=cliptextencode_2.out(0),
-        reference_image=loadimage.out(0),
-        vae=vaeloader.out(0),
-        width=primitiveint.out(0),
+        background_video=draw_mask_on_image_275.out(0),
+        character_mask=blockify_mask_276.out(0),
+        clip_vision_output=clip_vision_features.out('CLIP_VISION_OUTPUT'),
+        face_video=pose_estimated_100.out('IMAGE'),
+        height=param_int_2.out('INT'),
+        negative=negative_prompt.out('CONDITIONING'),
+        pose_video=pose_estimated_2.out('IMAGE'),
+        positive=positive_prompt.out('CONDITIONING'),
+        reference_image=input_image.out('IMAGE'),
+        vae=vae.out('VAE'),
+        width=param_int_159.out('INT'),
     )
-    ksampler = _node(wf, 'KSampler', '232:63',
-        seed=1106558644923357,
-        steps=6,
-        cfg=1,
-        sampler_name='euler',
+    sampler = node(wf, 'KSampler', '232:63',
+        seed=PRIVATE_KNOBS['seed'],
+        steps=PRIVATE_KNOBS['steps'],
+        cfg=PUBLIC_INPUTS['cfg'].default,
+        sampler_name=PUBLIC_INPUTS['sampler_name'].default,
         scheduler='simple',
         denoise=1,
-        latent_image=wananimatetovideo.out(2),
-        model=modelsamplingsd3.out(0),
-        negative=wananimatetovideo.out(1),
-        positive=wananimatetovideo.out(0),
+        latent_image=wan_animate_to_video.out(2),
+        model=model_sampling.out('MODEL'),
+        negative=wan_animate_to_video.out(1),
+        positive=wan_animate_to_video.out(0),
     )
-    trimvideolatent = _node(wf, 'TrimVideoLatent', '232:57',
-        samples=ksampler.out(0),
-        trim_amount=wananimatetovideo.out(3),
+    # ════ LATENT ════
+    trim_video_latent = node(wf, 'TrimVideoLatent', '232:57',
+        samples=sampler.out('LATENT'),
+        trim_amount=wan_animate_to_video.out(3),
     )
-    vaedecode = _node(wf, 'VAEDecode', '232:58',
-        samples=trimvideolatent.out(0),
-        vae=vaeloader.out(0),
+    # ════ DECODE ════
+    decoded_image = node(wf, 'VAEDecode', '232:58',
+        samples=trim_video_latent.out(0),
+        vae=vae.out('VAE'),
     )
-    imagefrombatch = _node(wf, 'ImageFromBatch', '232:230',
+    image_from_batch = node(wf, 'ImageFromBatch', '232:230',
         length=4096,
-        batch_index=wananimatetovideo.out(4),
-        image=vaedecode.out(0),
+        batch_index=wan_animate_to_video.out(4),
+        image=decoded_image.out('IMAGE'),
     )
-    createvideo = _node(wf, 'CreateVideo', '232:15',
+    # ════ OUTPUT ════
+    video = node(wf, 'CreateVideo', '232:15',
         fps=16,
-        audio=getvideocomponents.out(1),
-        images=imagefrombatch.out(0),
+        audio=video_components.out(1),
+        images=image_from_batch.out(0),
     )
-    savevideo = _node(wf, 'SaveVideo', '19',
+    saved_video = node(wf, 'SaveVideo', '19',
         filename_prefix='video/ComfyUI',
         format='auto',
         codec='auto',
-        video=createvideo.out(0),
+        video=video.out('VIDEO'),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    return wf
-
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder
-
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='',
+        source_path=__file__,
+    )

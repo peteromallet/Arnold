@@ -1,175 +1,169 @@
 # vibecomfy: manual
 # Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
-"""Auto-generated ready_template — see tools/convert_ready_templates.py."""
+"""Image editing with Flux 2 Klein 4B.
+
+Public inputs:
+    image (required): Image
+    prompt (required): Text prompt
+    seed: Random seed
+
+Output: SaveImage (node 9).
+
+Source:  workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json
+
+Packs:   ComfyUI-KJNodes
+"""
 from __future__ import annotations
 
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
+from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node
 
+MODELS = {
+    'flux_2_klein_4b_fp8': ModelAsset(
+        filename='flux-2-klein-4b-fp8.safetensors',
+        url='https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors',
+        subdir='diffusion_models',
+    ),
+    'qwen_3_4b': ModelAsset(
+        filename='qwen_3_4b.safetensors',
+        url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors',
+        subdir='text_encoders',
+    ),
+    'flux2_vae': ModelAsset(
+        filename='flux2-vae.safetensors',
+        url='https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors',
+        subdir='vae',
+    ),
+}
 
-READY_METADATA = {'model_assets': [{'name': 'flux-2-klein-4b-fp8.safetensors',
-                   'url': 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors',
-                   'subdir': 'diffusion_models'},
-                  {'name': 'qwen_3_4b.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors',
-                   'subdir': 'text_encoders'},
-                  {'name': 'flux2-vae.safetensors',
-                   'url': 'https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors',
-                   'subdir': 'vae'}],
- 'unbound_inputs': {'seed': 4548},
- 'ready_template': 'edit/flux2_klein_4b_image_edit_distilled',
- 'workflow_template': 'flux2_klein_4b_image_edit_distilled',
- 'capability': 'image_edit',
- 'source_role': 'materialized_ready_python_template',
- 'source_workflow': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json',
- 'coverage_tier': 'required',
- 'approach': None,
- 'runtime_note': None,
- 'discord_signal': None}
+PUBLIC_INPUTS = {
+    'image': InputSpec(node='76', field='image', default='handbag_white.png', type='IMAGE', required=True, aliases=('input_image',), description='Image.'),
+    'prompt': InputSpec(node='75:74', field='text', default='Change the bag color to blue.', type='STRING', required=True, description='Text prompt.', media_semantics='text'),
+    'seed': InputSpec(node='75:73', field='noise_seed', default=43301611940728, type='INT', description='Random seed.'),
+}
 
-READY_REQUIREMENTS = {'models': [{'name': 'flux-2-klein-4b-fp8.safetensors',
-             'url': 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors',
-             'subdir': 'diffusion_models'},
-            {'name': 'qwen_3_4b.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors',
-             'subdir': 'text_encoders'},
-            {'name': 'flux2-vae.safetensors',
-             'url': 'https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors',
-             'subdir': 'vae'}],
- 'custom_nodes': ['ComfyUI-KJNodes'],
- 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
-                       'source': 'git',
-                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
-                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}]}
+# ported from workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json (sha256: 0f80c2530a50fad061dea855c55c50f586a331c5f2d3f37efe7fea59b4ab9610)
+READY_METADATA = ReadyMetadata.build(
+    template_id='flux2_klein_4b_image_edit_distilled',
+    capability='image_edit',
+    inputs=PUBLIC_INPUTS,
+    models=MODELS,
+    output_prefix='Flux2-Klein',
+    requirements={'custom_nodes': ['ComfyUI-KJNodes'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}]},
+    provenance={'source_role': 'materialized_ready_python_template', 'source_workflow': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json'},
+    coverage_tier='required',
+    vibecomfy_version='0.1.0',
+    comfy_core={'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},
+)
 
+READY_METADATA["unbound_inputs"].update({'image': '76.image', 'prompt': '75:74.text', 'seed': '75:73.noise_seed'})
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    wf = VibeWorkflow(
-        READY_METADATA["ready_template"],
-        WorkflowSource(
-            id=READY_METADATA["ready_template"],
-            path=__file__,
-            source_type="ready_template",
-        ),
-    )
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    ksamplerselect = _node(wf, 'KSamplerSelect', '75:61',
+    # ════ SAMPLING ════
+    sampler_kind = node(wf, 'KSamplerSelect', '75:61',
         sampler_name='euler',
     )
-    unetloader = _node(wf, 'UNETLoader', '75:70',
-        unet_name='flux-2-klein-4b-fp8.safetensors',
+    # ════ LOADERS ════
+    base_diffusion_model = node(wf, 'UNETLoader', '75:70',
+        unet_name=MODELS['flux_2_klein_4b_fp8'].filename,
         weight_dtype='default',
     )
-    cliploader = _node(wf, 'CLIPLoader', '75:71',
-        clip_name='qwen_3_4b.safetensors',
+    text_encoder = node(wf, 'CLIPLoader', '75:71',
+        clip_name=MODELS['qwen_3_4b'].filename,
         type='flux2',
         device='default',
     )
-    vaeloader = _node(wf, 'VAELoader', '75:72',
-        vae_name='flux2-vae.safetensors',
+    vae = node(wf, 'VAELoader', '75:72',
+        vae_name=MODELS['flux2_vae'].filename,
     )
-    randomnoise = _node(wf, 'RandomNoise', '75:73',
-        noise_seed=43301611940728,
+    noise = node(wf, 'RandomNoise', '75:73',
+        noise_seed=PUBLIC_INPUTS['seed'].default,
     )
-    loadimage = _node(wf, 'LoadImage', '76',
-        image='handbag_white.png',
+    # ════ INPUTS ════
+    input_image_76 = node(wf, 'LoadImage', '76',
+        image=PUBLIC_INPUTS['image'].default,
     )
-    loadimage_2 = _node(wf, 'LoadImage', '81',
+    input_image_2 = node(wf, 'LoadImage', '81',
         image='comfy_logo_blue.png',
     )
-    cliptextencode = _node(wf, 'CLIPTextEncode', '75:74',
-        text='Change the bag color to blue.',
-        clip=cliploader.out(0),
+    # ════ TEXT CONDITIONING ════
+    prompt_embedding = node(wf, 'CLIPTextEncode', '75:74',
+        text=PUBLIC_INPUTS['prompt'].default,
+        clip=text_encoder.out('CLIP'),
     )
-    imagescaletototalpixels = _node(wf, 'ImageScaleToTotalPixels', '75:80',
+    # ════ IMAGE PREP ════
+    image_scale_to_total_pixels = node(wf, 'ImageScaleToTotalPixels', '75:80',
         upscale_method='nearest-exact',
         megapixels=1,
         resolution_steps=1,
-        image=loadimage.out(0),
+        image=input_image_76.out('IMAGE'),
     )
-    conditioningzeroout = _node(wf, 'ConditioningZeroOut', '75:82',
-        conditioning=cliptextencode.out(0),
+    conditioning_zero_out = node(wf, 'ConditioningZeroOut', '75:82',
+        conditioning=prompt_embedding.out('CONDITIONING'),
     )
-    getimagesize = _node(wf, 'GetImageSize', '75:99',
-        image=imagescaletototalpixels.out(0),
+    get_image_size = node(wf, 'GetImageSize', '75:99',
+        image=image_scale_to_total_pixels.out('IMAGE'),
     )
-    vaeencode = _node(wf, 'VAEEncode', '75:122',
-        pixels=imagescaletototalpixels.out(0),
-        vae=vaeloader.out(0),
+    vaeencode = node(wf, 'VAEEncode', '75:122',
+        pixels=image_scale_to_total_pixels.out('IMAGE'),
+        vae=vae.out('VAE'),
     )
-    flux2scheduler = _node(wf, 'Flux2Scheduler', '75:62',
+    flux2_scheduler = node(wf, 'Flux2Scheduler', '75:62',
         steps=4,
-        height=getimagesize.out(1),
-        width=getimagesize.out(0),
+        height=get_image_size.out(1),
+        width=get_image_size.out(0),
     )
-    emptyflux2latentimage = _node(wf, 'EmptyFlux2LatentImage', '75:66',
+    # ════ LATENT ════
+    empty_flux2_latent_image = node(wf, 'EmptyFlux2LatentImage', '75:66',
         batch_size=1,
-        width=getimagesize.out(0),
-        height=getimagesize.out(1),
+        width=get_image_size.out(0),
+        height=get_image_size.out(1),
     )
-    referencelatent = _node(wf, 'ReferenceLatent', '75:121',
-        conditioning=conditioningzeroout.out(0),
-        latent=vaeencode.out(0),
+    reference_latent_1 = node(wf, 'ReferenceLatent', '75:121',
+        conditioning=conditioning_zero_out.out('CONDITIONING'),
+        latent=vaeencode.out('LATENT'),
     )
-    referencelatent_2 = _node(wf, 'ReferenceLatent', '75:123',
-        conditioning=cliptextencode.out(0),
-        latent=vaeencode.out(0),
+    reference_latent_2 = node(wf, 'ReferenceLatent', '75:123',
+        conditioning=prompt_embedding.out('CONDITIONING'),
+        latent=vaeencode.out('LATENT'),
     )
-    cfgguider = _node(wf, 'CFGGuider', '75:63',
+    cfg_guider = node(wf, 'CFGGuider', '75:63',
         cfg=1,
-        model=unetloader.out(0),
-        negative=referencelatent.out(0),
-        positive=referencelatent_2.out(0),
+        model=base_diffusion_model.out('MODEL'),
+        negative=reference_latent_1.out(0),
+        positive=reference_latent_2.out(0),
     )
-    samplercustomadvanced = _node(wf, 'SamplerCustomAdvanced', '75:64',
-        guider=cfgguider.out(0),
-        latent_image=emptyflux2latentimage.out(0),
-        noise=randomnoise.out(0),
-        sampler=ksamplerselect.out(0),
-        sigmas=flux2scheduler.out(0),
+    sampled_latent = node(wf, 'SamplerCustomAdvanced', '75:64',
+        guider=cfg_guider.out('GUIDER'),
+        latent_image=empty_flux2_latent_image.out(0),
+        noise=noise.out('NOISE'),
+        sampler=sampler_kind.out('SAMPLER'),
+        sigmas=flux2_scheduler.out(0),
     )
-    vaedecode = _node(wf, 'VAEDecode', '75:65',
-        samples=samplercustomadvanced.out(0),
-        vae=vaeloader.out(0),
+    # ════ DECODE ════
+    decoded_image = node(wf, 'VAEDecode', '75:65',
+        samples=sampled_latent.out('OUTPUT'),
+        vae=vae.out('VAE'),
     )
-    saveimage = _node(wf, 'SaveImage', '9',
+    # ════ OUTPUT ════
+    image_output = node(wf, 'SaveImage', '9',
         filename_prefix='Flux2-Klein',
-        images=vaedecode.out(0),
+        images=decoded_image.out('IMAGE'),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
-    bind_input(wf, 'image', '76', 'image', type='IMAGE', required=True, aliases=['input_image'], media_semantics='image')
-    bind_input(wf, 'prompt', '75:74', 'text', type='STRING', required=True, media_semantics='text')
-    bind_input(wf, 'seed', '75:73', 'noise_seed', type='INT')
-    bind_output(wf, '9', output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', filename_prefix='Flux2-Klein', expected_cardinality='one')
-    return wf
+    return finalize(
+        wf,
+        PUBLIC_INPUTS,
+        READY_METADATA,
+        output_node='9',
+        output_type='SaveImage',
+        name='image',
+        mime_type='image/png',
+        expected_cardinality='one',
+        filename_prefix='Flux2-Klein',
+        source_path=__file__,
+    )
 
-
-def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = None, **kwargs):
-    """Create a node, preserving the original node id from the source workflow.
-
-    `_extras` carries kwargs whose names are not valid Python identifiers
-    (e.g. "resize_type.multiple") which Python disallows as kwarg syntax.
-    They are applied to the new node post-construction.
-    """
-    from vibecomfy.handles import Handle
-    builder = wf.node(class_type, **kwargs)
-    if _extras:
-        for key, value in _extras.items():
-            if isinstance(value, Handle):
-                wf.connect(value, f"{builder.node.id}.{key}")
-            else:
-                builder.node.inputs[key] = value
-    if builder.node.id != _id:
-        old_id = builder.node.id
-        node = wf.nodes.pop(old_id)
-        node.id = _id
-        wf.nodes[_id] = node
-        for edge in wf.edges:
-            if edge.to_node == old_id:
-                edge.to_node = _id
-            if edge.from_node == old_id:
-                edge.from_node = _id
-    return builder

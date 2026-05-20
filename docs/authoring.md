@@ -20,6 +20,24 @@ See [template_porting_workbench.md](template_porting_workbench.md) for the full 
 
 The canonical promotion path is raw workflow source -> `port check` -> optional scratchpad -> `port convert --ready-id` or hand-authored Python ready template -> `tools.refresh_template_index` -> `validate`/`doctor`/strict-ready checks. Raw JSON and compiled API dictionaries are source/runtime material, not the reusable authoring surface.
 
+## v2.4 Ready Template Surface
+
+New ready templates declare data first and build the graph second:
+
+- `MODELS: dict[str, ModelAsset]` lists every authored model file, including URL, Comfy subdir, and when available `sha256`, `hf_revision`, and `size_bytes`.
+- `PUBLIC_INPUTS: dict[str, InputSpec]` is the public contract. Each input points at a node id and field and can carry aliases, type, required state, default, and media semantics.
+- `READY_METADATA = ReadyMetadata.build(...)` is the reproducibility identity: template id, capability, provenance, requirements, model assets, `vibecomfy_version`, `comfy_core`, optional hardware, and optional `python_env`.
+- `return finalize(wf, PUBLIC_INPUTS, READY_METADATA, output_node="...")` applies metadata, registers inputs, binds the output, and checks that the graph still matches the public contract.
+
+Deprecated for generated or newly authored templates:
+
+- `bind_input(...)`
+- `bind_output(...)`
+- `apply_ready_template_policy(...)`
+- direct `wf.register_input(...)` calls inside `build()`
+
+Those APIs remain for old templates and tests, but they emit `PendingDeprecationWarning`. Use `python -m tools.narrate_template ready_templates/<kind>/<id>.py --out ready_templates/<kind>/<id>.py` to migrate compatible legacy templates to v2.4 form.
+
 ## Blocks
 
 A block is a small function that mutates a workflow and returns `Handles`. Most blocks use `workflow.add_node()` plus `workflow.connect()`, but blocks may use any `VibeWorkflow` method — including `disconnect()` and `replace_edge()` for blocks that splice into existing topology. The contract is "mutate and return handles," not "add_node/connect only."

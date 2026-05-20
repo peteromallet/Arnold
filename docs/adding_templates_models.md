@@ -77,6 +77,24 @@ Use `--head-check-models` only when you intentionally want model URL HEAD checks
 12. Run the focused RunPod matrix.
 13. Document any new incompatibility or structural issue.
 
+## v2.4 Reproducibility Data
+
+Ready templates must be reproducible offline before GPU validation:
+
+- `MODELS` uses `ModelAsset(filename, url, subdir, target_path=None, sha256=None, hf_revision=None, size_bytes=None)`. Run `python -m tools.fetch_hf_metadata` to populate `out/cache/hf_metadata.json`; `tools.narrate_template` reads that cache when rendering model blocks. Gated/private repositories should keep `hf_revision="gated"` and an inline `# gated: <repo_id>` note rather than silently leaving fields empty.
+- `READY_METADATA.comfy_core` comes from `python -m tools.refresh_comfy_metadata`, which writes `vibecomfy/comfy_metadata.json`. The narrator copies version, commit, and tested timestamp into regenerated templates.
+- `READY_METADATA.requirements["custom_node_refs"]` mirrors `custom_nodes.lock`. Rich lock entries are TOML tables with `slug`, `source`, `url`, `commit`, `version`, `schema_hash`, `class_set`, and `last_seen_at`.
+- `hardware` is required where there is known evidence, especially pilots, LTX, and Qwen TTS families. Use `vram_gb_min`, `vram_gb_recommended`, `requires_flash_attention`, and `tested_on`.
+- `python_env` is only required when a family has known constraints, such as torch or custom-node package minimums.
+
+The local gates for template changes are:
+
+```bash
+python -m tools.check_strict_ready_templates
+python -m tools.validate_templates_against_packs
+python -m tools.validate_template_traceability --strict
+```
+
 ## 1. Template Id
 
 Use lower snake case and encode the model family plus capability:

@@ -5,8 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output, ready_node, ready_workflow
-from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output, ready_node, ready_workflow
+from vibecomfy.workflow import VibeInput, VibeWorkflow
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 
 
@@ -83,7 +83,8 @@ def node(
     ``vibecomfy.registry.ready_template.ready_node`` to keep id-rewrite and
     edge-rewrite behavior centralized.
     """
-    outputs = _normalized_output_names(class_type)
+    explicit_outputs = kwargs.pop("_outputs", None)
+    outputs = tuple(explicit_outputs) if explicit_outputs is not None else _normalized_output_names(class_type)
     return ready_node(wf, class_type, source_id=str(_id), outputs=outputs or None, extras=_extras, **kwargs)
 
 
@@ -151,17 +152,17 @@ class InputSpec:
             type=self.type,
             default=self.default,
             required=self.required,
-            aliases=(),
+            aliases=self.aliases,
             media_semantics=self.media_semantics,
         )
         for alias in self.aliases:
             if alias in wf.inputs:
                 continue
-            wf.register_input(
-                alias,
-                node_id,
-                self.field,
-                value,
+            wf.inputs[alias] = VibeInput(
+                name=alias,
+                node_id=node_id,
+                field=self.field,
+                value=value,
                 type=self.type,
                 default=self.default,
                 required=self.required,
@@ -297,6 +298,43 @@ def finalize(
     return wf
 
 
+def finalize_ready(
+    wf: VibeWorkflow,
+    metadata: Mapping[str, Any],
+    *,
+    source_path: str,
+    requirements: Mapping[str, Any] | None = None,
+) -> VibeWorkflow:
+    """Finalize a hand-authored ready template without exposing legacy helpers."""
+    wf.finalize_metadata()
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+        apply_ready_template_policy(wf, metadata, source_path=source_path, requirements=requirements)
+    return wf
+
+
+def template_input(wf: VibeWorkflow, name: str, node_id: str, field: str, *args: Any, **kwargs: Any) -> None:
+    """Bind a public input from a hand-authored ready template."""
+    if args:
+        if len(args) > 1 or "default" in kwargs:
+            raise TypeError("template_input accepts at most one positional default")
+        kwargs["default"] = args[0]
+    node = wf.nodes.get(str(node_id))
+    if field == "widget_0" and node is not None and field not in node.inputs and field not in node.widgets:
+        if "value" in node.inputs or "value" in node.widgets:
+            field = "value"
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+        bind_input(wf, name, node_id, field, **kwargs)
+
+
+def template_output(wf: VibeWorkflow, node_id: str, **kwargs: Any) -> None:
+    """Bind a public output from a hand-authored ready template."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+        bind_output(wf, node_id, **kwargs)
+
+
 def _derive_edit_guide(inputs: Mapping[str, InputSpec], extra: str | None = None) -> str:
     if not inputs and not extra:
         return ""
@@ -376,6 +414,11 @@ def _assert_public_input_invariant(wf: VibeWorkflow, inputs: Mapping[str, InputS
         name: (str(spec.node), spec.field)
         for name, spec in inputs.items()
     }
+    alias_names = {
+        str(alias)
+        for spec in inputs.values()
+        for alias in spec.aliases
+    }
     for name, (node_id, field) in specs.items():
         registered = wf.inputs.get(name)
         if registered is None:
@@ -387,11 +430,12 @@ def _assert_public_input_invariant(wf: VibeWorkflow, inputs: Mapping[str, InputS
             )
 
     unexpected = {
-        name
-        for name, registered in wf.inputs.items()
-        if name not in specs
-        and (str(registered.node_id), registered.field) in set(specs.values())
-    }
+            name
+            for name, registered in wf.inputs.items()
+            if name not in specs
+            and name not in alias_names
+            and (str(registered.node_id), registered.field) in set(specs.values())
+        }
     if unexpected:
         raise AssertionError(
             "registered inputs target PUBLIC_INPUTS nodes but are not declared: "
@@ -406,6 +450,9 @@ __all__ = [
     "_at",
     "_derive_output_kind",
     "finalize",
+    "finalize_ready",
     "new_workflow",
     "node",
+    "template_input",
+    "template_output",
 ]

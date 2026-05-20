@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.templates import finalize_ready
 
 
-READY_METADATA = {'model_assets': [],
+READY_METADATA = {
+    'comfy_core': {'version': '0.18.2', 'tested_at': '2026-05-20T09:19:32.302139+00:00', 'commit': 'f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68', 'status': 'discovered'},'model_assets': [],
  'unbound_inputs': {'seed': 3976},
  'ready_template': 'video/wanvideo_wrapper_wan_animate',
  'workflow_template': 'wanvideo_wrapper_wan_animate',
@@ -34,6 +35,7 @@ READY_REQUIREMENTS = {'models': [],
                        'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
                       {'slug': 'ComfyUI-VideoHelperSuite',
                        'source': 'git',
+                       'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b',
                        'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
                       {'slug': 'ComfyUI-WanVideoWrapper',
                        'source': 'git',
@@ -41,12 +43,15 @@ READY_REQUIREMENTS = {'models': [],
                        'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'},
                       {'slug': 'ComfyUI-segment-anything-2',
                        'source': 'git',
+                       'commit': '0c35fff5f382803e2310103357b5e985f5437f32',
                        'url': 'https://github.com/kijai/ComfyUI-segment-anything-2.git'},
                       {'slug': 'comfyui_controlnet_aux',
                        'source': 'git',
+                       'commit': 'e8b689a513c3e6b63edc44066560ca5919c0576e',
                        'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'},
                       {'slug': 'rgthree-comfy',
                        'source': 'git',
+                       'commit': '738105af5fb14e96fbecaf406dc356e284797e8c',
                        'url': 'https://github.com/rgthree/rgthree-comfy.git'}]}
 
 
@@ -425,8 +430,7 @@ def build() -> VibeWorkflow:
         images=setnode_2.out(0),
     )
 
-    wf.finalize_metadata()
-    apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    finalize_ready(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
     return wf
 
 
