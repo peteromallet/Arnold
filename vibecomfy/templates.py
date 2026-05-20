@@ -276,16 +276,29 @@ def finalize(
     inputs: dict[str, InputSpec],
     metadata: dict[str, Any],
     *,
-    output_node: str,
+    output_node: Any = None,
+    output_kind: str | None = None,
+    **bind_kwargs: Any,
+) -> VibeWorkflow:
+    """Backward-compatible free-function shim for ``VibeWorkflow.finalize``."""
+    return wf.finalize(inputs, metadata=metadata, output_node=output_node, output_kind=output_kind, **bind_kwargs)
+
+
+def _finalize_impl(
+    wf: VibeWorkflow,
+    inputs: dict[str, InputSpec],
+    metadata: dict[str, Any],
+    *,
+    output_node: Any = None,
     output_kind: str | None = None,
     **bind_kwargs: Any,
 ) -> VibeWorkflow:
     """Finalize ready-template metadata, public inputs, and output binding.
 
     When ``output_kind`` is omitted, it is inferred best-effort from the
-    explicit ``output_node`` class type, then from ``output_type`` if present.
-    The output node itself stays explicit; this helper never graph-walks to
-    choose which node should be returned.
+    output node class type, then from ``output_type`` if present. If
+    ``output_node`` is omitted, a single terminal Save/Create/Preview node is
+    selected; multiple candidates require an explicit output binding.
     """
     source_path = bind_kwargs.pop("source_path", None)
     requirements = bind_kwargs.pop("requirements", None)
@@ -311,13 +324,15 @@ def finalize(
         if output_prefix_fallback is not None:
             bind_kwargs["filename_prefix"] = output_prefix_fallback
 
-    output_class_type = wf.nodes.get(str(output_node)).class_type if str(output_node) in wf.nodes else None
+    caller_locals = _caller_build_locals()
+    output_node_id = _resolve_output_node(wf, output_node, caller_locals)
+
+    output_class_type = wf.nodes.get(output_node_id).class_type if output_node_id in wf.nodes else None
     derived_output_kind = output_kind or _derive_output_kind(output_class_type)
     if derived_output_kind is None:
         derived_output_kind = _derive_output_kind(str(bind_kwargs.get("output_type") or ""))
 
     requirements = _requirements_with_models(requirements, metadata.get("model_assets", []))
-    caller_locals = _caller_build_locals()
 
     wf.finalize_metadata()
     with warnings.catch_warnings():
@@ -334,11 +349,49 @@ def finalize(
         warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
         bind_output(
             wf,
-            str(output_node),
+            output_node_id,
             artifact_kind=artifact_kind,
             **bind_kwargs,
         )
     return wf
+
+
+def _resolve_output_node(wf: VibeWorkflow, output_node: Any, namespace: Mapping[str, Any]) -> str:
+    if output_node is None:
+        return _autodetect_output_node(wf)
+    if isinstance(output_node, SymbolicNodeRef):
+        return output_node.resolve(namespace, wf)
+    node_id = _node_id_from_binding(output_node)
+    if node_id is not None:
+        return node_id
+    return str(output_node)
+
+
+def _autodetect_output_node(wf: VibeWorkflow) -> str:
+    outgoing = {str(edge.from_node) for edge in wf.edges}
+    candidates = [
+        str(node_id)
+        for node_id, node in wf.nodes.items()
+        if str(node_id) not in outgoing and _is_terminal_output_class(node.class_type)
+    ]
+    candidates.sort(key=lambda item: (int(item) if item.isdigit() else 1 << 30, item))
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ValueError("output_node could not be auto-detected; specify explicitly")
+    detail = ", ".join(f"{node_id}:{wf.nodes[node_id].class_type}" for node_id in candidates)
+    raise ValueError(f"ambiguous output_node; specify explicitly ({detail})")
+
+
+def _is_terminal_output_class(class_type: str) -> bool:
+    if class_type in _OUTPUT_KIND_HEURISTIC:
+        return True
+    lowered = class_type.lower()
+    return (
+        lowered.startswith(("save", "preview", "create"))
+        or "save" in lowered
+        or "preview" in lowered
+    )
 
 
 def _caller_build_locals() -> Mapping[str, Any]:

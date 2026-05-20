@@ -79,6 +79,62 @@ def test_finalize_resolves_symbolic_inputspec_from_build_locals() -> None:
     assert wf.id_map()["prompt_node"] == "1"
 
 
+def test_workflow_finalize_method_autodetects_single_terminal_output() -> None:
+    wf = _workflow("image/method")
+    node(wf, "PrimitiveString", "1", value="current")
+    node(wf, "SaveImage", "2", filename_prefix="out")
+    inputs = {"prompt": InputSpec("1", "value", "default", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/method",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="out",
+    )
+
+    result = wf.finalize(inputs, metadata=metadata, output_type="SaveImage", name="image")
+
+    assert result is wf
+    assert wf.outputs[0].node_id == "2"
+    assert wf.outputs[0].name == "image"
+
+
+def test_workflow_finalize_method_accepts_output_node_handle() -> None:
+    wf = _workflow("image/method_handle")
+    node(wf, "PrimitiveString", "1", value="current")
+    saved = node(wf, "SaveImage", "2", filename_prefix="out")
+    inputs = {"prompt": InputSpec("1", "value", "default", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/method_handle",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="out",
+    )
+
+    wf.finalize(inputs, metadata=metadata, output_node=saved, output_type="SaveImage", name="image")
+
+    assert wf.outputs[0].node_id == "2"
+
+
+def test_workflow_finalize_method_rejects_ambiguous_terminal_outputs() -> None:
+    wf = _workflow("image/ambiguous")
+    node(wf, "PrimitiveString", "1", value="current")
+    node(wf, "SaveImage", "2", filename_prefix="a")
+    node(wf, "PreviewImage", "3")
+    inputs = {"prompt": InputSpec("1", "value", "default", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/ambiguous",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="out",
+    )
+
+    with pytest.raises(ValueError, match="ambiguous output_node; specify explicitly"):
+        wf.finalize(inputs, metadata=metadata, output_type="SaveImage")
+
+
 def test_new_workflow_constructs_ready_workflow_with_metadata() -> None:
     metadata = {
         "ready_template": "image/example",
@@ -657,6 +713,69 @@ def test_static_contract_extracts_public_outputs_from_finalize() -> None:
     output = finalize_outputs[0]
     assert output["node_id"] == "56"
     assert output.get("output_type") == "SaveVideo"
+
+
+def test_static_contract_extracts_public_outputs_from_workflow_finalize_method(tmp_path: Path) -> None:
+    from vibecomfy.registry.static_contract import extract_ready_template_contract
+
+    source = tmp_path / "method_template.py"
+    source.write_text(
+        """
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node
+
+PUBLIC_INPUTS = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+READY_METADATA = ReadyMetadata.build(
+    template_id="image/method",
+    capability="text_to_image",
+    inputs=PUBLIC_INPUTS,
+    models={},
+    output_prefix="out",
+)
+
+def build():
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+    prompt = node(wf, "PrimitiveString", "1", value="hello")
+    saved = node(wf, "SaveImage", "2", filename_prefix="out")
+    return wf.finalize(PUBLIC_INPUTS, metadata=READY_METADATA, output_node=saved, output_type="SaveImage", name="image")
+""",
+        encoding="utf-8",
+    )
+
+    contract = extract_ready_template_contract(source)
+
+    assert contract["public_outputs"][0]["node_id"] == "2"
+    assert contract["public_outputs"][0]["source"] == "finalize"
+
+
+def test_static_contract_extracts_autodetected_workflow_finalize_output(tmp_path: Path) -> None:
+    from vibecomfy.registry.static_contract import extract_ready_template_contract
+
+    source = tmp_path / "auto_template.py"
+    source.write_text(
+        """
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node
+
+PUBLIC_INPUTS = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+READY_METADATA = ReadyMetadata.build(
+    template_id="image/auto",
+    capability="text_to_image",
+    inputs=PUBLIC_INPUTS,
+    models={},
+    output_prefix="out",
+)
+
+def build():
+    wf = new_workflow(READY_METADATA, source_path=__file__)
+    prompt = node(wf, "PrimitiveString", "1", value="hello")
+    saved = node(wf, "SaveImage", "2", filename_prefix="out")
+    return wf.finalize(PUBLIC_INPUTS, metadata=READY_METADATA, output_type="SaveImage", name="image")
+""",
+        encoding="utf-8",
+    )
+
+    contract = extract_ready_template_contract(source)
+
+    assert contract["public_outputs"][0]["node_id"] == "2"
 
 
 def test_static_contract_preserves_model_asset_reproducibility_pins(tmp_path: Path) -> None:

@@ -143,12 +143,18 @@ def _extract_finalize_outputs(
     diagnostics: list[dict[str, Any]],
 ) -> None:
     """Derive public outputs from ``finalize(..., output_node=..., ...)`` calls."""
+    node_assignments = _node_assignment_ids(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if _call_name(node.func) != "finalize":
+        call_name = _call_name(node.func)
+        if call_name != "finalize" and not call_name.endswith(".finalize"):
             continue
         output_node = _keyword_literal(node, "output_node", diagnostics, "finalize")
+        if output_node is None:
+            output_node = _keyword_node_ref(node, "output_node", node_assignments)
+        if output_node is None:
+            output_node = _single_terminal_output_id(tree)
         if not isinstance(output_node, str):
             continue
         output_type = _keyword_literal(node, "output_type", diagnostics, "finalize")
@@ -171,6 +177,66 @@ def _extract_finalize_outputs(
             "source": "finalize",
         }
         public_outputs.append(descriptor)
+
+
+def _node_assignment_ids(tree: ast.Module) -> dict[str, str]:
+    ids: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        node_id = _node_call_source_id(node.value)
+        if node_id is not None:
+            ids[node.targets[0].id] = node_id
+    return ids
+
+
+def _node_call_source_id(node: ast.Call) -> str | None:
+    call_name = _call_name(node.func)
+    if call_name == "node" and len(node.args) >= 3:
+        value = node.args[2]
+        if isinstance(value, ast.Constant):
+            return str(value.value)
+    for kw in node.keywords:
+        if kw.arg == "_id" and isinstance(kw.value, ast.Constant):
+            return str(kw.value.value)
+    return None
+
+
+def _keyword_node_ref(node: ast.Call, name: str, node_assignments: dict[str, str]) -> str | None:
+    for kw in node.keywords:
+        if kw.arg == name and isinstance(kw.value, ast.Name):
+            return node_assignments.get(kw.value.id)
+    return None
+
+
+def _single_terminal_output_id(tree: ast.Module) -> str | None:
+    candidates: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        node_id = _node_call_source_id(node)
+        if node_id is None:
+            continue
+        class_type = _node_call_class_type(node)
+        if class_type and _is_static_terminal_output_class(class_type):
+            candidates.append(node_id)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _node_call_class_type(node: ast.Call) -> str | None:
+    call_name = _call_name(node.func)
+    if call_name == "node" and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+        return str(node.args[1].value)
+    if call_name.endswith(".node") and node.args and isinstance(node.args[0], ast.Constant):
+        return str(node.args[0].value)
+    return None
+
+
+def _is_static_terminal_output_class(class_type: str) -> bool:
+    lowered = class_type.lower()
+    return class_type in {"SaveImage", "PreviewImage", "SaveVideo", "VHS_VideoCombine", "CreateVideo", "SaveAudio", "SaveAudioMP3", "PreviewAudio"} or lowered.startswith(("save", "preview", "create"))
 
 
 def compare_public_contracts(

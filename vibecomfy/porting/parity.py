@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from vibecomfy.testing.canonical import canonical_equal
+
 
 # UI-only node classes the converter strips at IR build. Match the
 # stripped set in `tools/format_as_python.py`.
@@ -166,10 +168,10 @@ def compile_equivalent(
 ) -> tuple[bool, list[str]]:
     """Compare two compiled API workflows for semantic equivalence.
 
-    Returns `(True, [])` if both API dicts have the same class-type
-    multiset, the same widget value multiset (per (class, key, repr)), and
-    the same topology (per (target_class, target_input, source_class,
-    source_slot)).
+    The main gate is the shared canonical graph comparator, which ignores
+    concrete node ids while preserving class types, literal inputs, topology,
+    and collision multiplicity. The older class/widget/topology counters are
+    retained only to produce compact supplemental diagnostics on mismatch.
 
     Returns `(False, diffs)` with one human-readable diff line per
     mismatching counter group when not equivalent.
@@ -179,8 +181,12 @@ def compile_equivalent(
     than the static `WIDGET_SCHEMA` table - preventing both sides from
     comparing equal under the same (potentially wrong) alias mapping.
     """
-    diffs: list[str] = []
+    normalized_a = _canonicalize_api_inputs(api_a, class_widget_aliases=class_widget_aliases)
+    normalized_b = _canonicalize_api_inputs(api_b)
+    if canonical_equal(normalized_a, normalized_b):
+        return True, []
 
+    diffs: list[str] = ["canonical_form mismatch"]
     classes_a, classes_b = class_type_counter(api_a), class_type_counter(api_b)
     if classes_a != classes_b:
         only_a = (classes_a - classes_b)
@@ -216,6 +222,34 @@ def compile_equivalent(
             diffs.append(f"... (additional topology diffs truncated; +{len(only_a) + len(only_b) - 20})")
 
     return (not diffs, diffs)
+
+
+def _canonicalize_api_inputs(
+    api: dict,
+    *,
+    class_widget_aliases: dict[str, list[str | None]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
+    for node_id, node in sorted(api.items(), key=lambda item: str(item[0])):
+        class_type = node.get("class_type", "")
+        if _is_ui_only(class_type):
+            continue
+        inputs: dict[str, Any] = {}
+        seen_literals: set[tuple[str, str]] = set()
+        for key, value in sorted(node.get("inputs", {}).items()):
+            canonical = _canonical_key(class_type, key, class_widget_aliases=class_widget_aliases)
+            if canonical is None:
+                continue
+            if _is_runtime_ignored_input(canonical, value):
+                continue
+            if not _is_link(value):
+                value_repr = repr(value)
+                if (canonical, value_repr) in seen_literals:
+                    continue
+                seen_literals.add((canonical, value_repr))
+            inputs[canonical] = value
+        normalized[str(node_id)] = {"class_type": class_type, "inputs": inputs}
+    return normalized
 
 
 __all__ = [

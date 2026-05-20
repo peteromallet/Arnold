@@ -1,0 +1,541 @@
+{
+  "AILab_Qwen3TTSLoadVoice": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Load Voice (QwenTTS)",
+    "function": "AILab_Qwen3TTSLoadVoice",
+    "input_order": {
+      "optional": [
+        "custom_path"
+      ],
+      "required": [
+        "voice_name"
+      ]
+    },
+    "input_order_all": [
+      "voice_name",
+      "custom_path"
+    ],
+    "inputs": {
+      "optional": {
+        "custom_path": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": false,
+            "tooltip": "Load a voice .pt from a custom full path. Overrides voice_name if set."
+          }
+        ]
+      },
+      "required": {
+        "voice_name": [
+          [
+            ""
+          ],
+          {
+            "default": "",
+            "tooltip": "Pick a saved voice from the default voice library folder."
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSLoadVoice",
+    "object_info_widget_order": [
+      "voice_name",
+      "custom_path"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "VOICE",
+        "type": "VOICE"
+      }
+    ],
+    "pack": "AILab_QwenTTS_Tools",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS_Tools"
+  },
+  "AILab_Qwen3TTSVoiceInstruct": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Voice Instruct (QwenTTS)",
+    "function": "AILab_Qwen3TTSVoiceInstruct",
+    "input_order": {
+      "optional": [
+        "custom_instruct"
+      ],
+      "required": [
+        "character",
+        "style"
+      ]
+    },
+    "input_order_all": [
+      "character",
+      "style",
+      "custom_instruct"
+    ],
+    "inputs": {
+      "optional": {
+        "custom_instruct": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Custom instruction. Overrides presets if provided."
+          }
+        ]
+      },
+      "required": {
+        "character": [
+          [
+            "Auto",
+            "Female",
+            "Male",
+            "Young Female",
+            "Young Male",
+            "Girl",
+            "Boy",
+            "Child",
+            "Teen",
+            "Adult",
+            "Senior Female",
+            "Senior Male",
+            "Narrator",
+            "Announcer"
+          ],
+          {
+            "default": "Auto",
+            "tooltip": "Voice character preset (from presets/voice_instruct.json)."
+          }
+        ],
+        "style": [
+          [
+            "Auto",
+            "Warm",
+            "Gentle",
+            "Calm",
+            "Cheerful",
+            "Friendly",
+            "Serious",
+            "Sad",
+            "Angry",
+            "Excited",
+            "Soft",
+            "Deep",
+            "Clear",
+            "Emotional",
+            "Dramatic",
+            "Whisper",
+            "Breathy",
+            "Husky",
+            "Authoritative",
+            "Storytelling",
+            "News Anchor",
+            "Documentary",
+            "Customer Support",
+            "Teacher",
+            "Audiobook",
+            "Energetic",
+            "Relaxed",
+            "Playful",
+            "Mysterious",
+            "Romantic",
+            "Inspirational",
+            "Formal",
+            "Casual",
+            "ASMR",
+            "Noir",
+            "Cinematic",
+            "Trailer",
+            "Motivational",
+            "Robotic",
+            "Vintage Radio",
+            "Lullaby",
+            "Comedy",
+            "Interview",
+            "Poetic",
+            "Philosophical",
+            "Sportscaster",
+            "Meditation"
+          ],
+          {
+            "default": "Auto",
+            "tooltip": "Voice style preset (from presets/voice_instruct.json)."
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoiceInstruct",
+    "object_info_widget_order": [
+      "character",
+      "style",
+      "custom_instruct"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "VOICE_INSTRUCT",
+        "type": "STRING"
+      }
+    ],
+    "pack": "AILab_QwenTTS_Tools",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS_Tools"
+  },
+  "AILab_Qwen3TTSVoiceInstructZH": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "声音风格指引 (QwenTTS)",
+    "function": "AILab_Qwen3TTSVoiceInstructZH",
+    "input_order": {
+      "optional": [
+        "自定义风格指引"
+      ],
+      "required": [
+        "角色",
+        "风格"
+      ]
+    },
+    "input_order_all": [
+      "角色",
+      "风格",
+      "自定义风格指引"
+    ],
+    "inputs": {
+      "optional": {
+        "自定义风格指引": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "自定义中文指令，优先级最高。"
+          }
+        ]
+      },
+      "required": {
+        "角色": [
+          [
+            "自动",
+            "女声",
+            "男声",
+            "年轻女声",
+            "年轻男声",
+            "小女孩",
+            "小男孩",
+            "童声",
+            "青少年",
+            "成年",
+            "老年女声",
+            "老年男声",
+            "旁白",
+            "播报"
+          ],
+          {
+            "default": "自动",
+            "tooltip": "中文角色预设（voice_instruct_zh.json）。"
+          }
+        ],
+        "风格": [
+          [
+            "自动",
+            "温暖",
+            "轻柔",
+            "平静",
+            "愉快",
+            "友好",
+            "严肃",
+            "悲伤",
+            "愤怒",
+            "兴奋",
+            "轻声",
+            "低沉",
+            "清晰",
+            "情感",
+            "戏剧",
+            "耳语",
+            "气声",
+            "沙哑",
+            "权威",
+            "讲故事",
+            "新闻主播",
+            "纪录片",
+            "客服",
+            "老师",
+            "有声书",
+            "有活力",
+            "放松",
+            "俏皮",
+            "神秘",
+            "浪漫",
+            "励志",
+            "正式",
+            "随意",
+            "ASMR",
+            "黑色电影",
+            "电影感",
+            "预告片",
+            "激励",
+            "机械",
+            "复古电台",
+            "摇篮曲",
+            "喜剧",
+            "访谈",
+            "诗意",
+            "哲思",
+            "体育解说",
+            "冥想"
+          ],
+          {
+            "default": "自动",
+            "tooltip": "中文语气预设（voice_instruct_zh.json）。"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoiceInstructZH",
+    "object_info_widget_order": [
+      "角色",
+      "风格",
+      "自定义风格指引"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "VOICE_INSTRUCT",
+        "type": "STRING"
+      }
+    ],
+    "pack": "AILab_QwenTTS_Tools",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS_Tools"
+  },
+  "AILab_Qwen3TTSVoicesLibrary": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Create Voice (QwenTTS)",
+    "function": "AILab_Qwen3TTSVoicesLibrary",
+    "input_order": {
+      "optional": [
+        "save_path",
+        "unload_models"
+      ],
+      "required": [
+        "reference_audio",
+        "reference_text",
+        "model_size",
+        "device",
+        "precision",
+        "x_vector_only",
+        "voice_name"
+      ]
+    },
+    "input_order_all": [
+      "reference_audio",
+      "reference_text",
+      "model_size",
+      "device",
+      "precision",
+      "x_vector_only",
+      "voice_name",
+      "save_path",
+      "unload_models"
+    ],
+    "inputs": {
+      "optional": {
+        "save_path": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": false,
+            "tooltip": "Custom folder to save voices. Leave empty to use ComfyUI output/qwen3-tts_voices."
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Unload cached models after generation"
+          }
+        ]
+      },
+      "required": {
+        "device": [
+          [
+            "auto",
+            "cuda",
+            "cpu"
+          ],
+          {
+            "default": "auto",
+            "tooltip": "Compute device for prompt building (auto/cpu/cuda/mps)."
+          }
+        ],
+        "model_size": [
+          [
+            "0.6B",
+            "1.7B"
+          ],
+          {
+            "default": "1.7B",
+            "tooltip": "Base model size used to extract speaker features."
+          }
+        ],
+        "precision": [
+          [
+            "bf16",
+            "fp16",
+            "fp32"
+          ],
+          {
+            "default": "bf16",
+            "tooltip": "Compute precision for prompt building. bf16 recommended on modern GPUs."
+          }
+        ],
+        "reference_audio": [
+          "AUDIO",
+          {
+            "tooltip": "Reference audio used to build the speaker prompt (required)."
+          }
+        ],
+        "reference_text": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Transcript of the reference audio. Required unless x_vector_only is enabled."
+          }
+        ],
+        "voice_name": [
+          "STRING",
+          {
+            "default": "voice_1",
+            "multiline": false,
+            "tooltip": "Saved voice name (file name without extension)."
+          }
+        ],
+        "x_vector_only": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Use speaker embedding only. If enabled, reference_text can be empty."
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoicesLibrary",
+    "object_info_widget_order": [
+      null,
+      "reference_text",
+      "model_size",
+      "device",
+      "precision",
+      "x_vector_only",
+      "voice_name",
+      "save_path",
+      "unload_models"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "VOICE",
+        "type": "VOICE"
+      }
+    ],
+    "pack": "AILab_QwenTTS_Tools",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS_Tools"
+  },
+  "AILab_Qwen3TTSWhisperSTT": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Whisper STT (QwenTTS)",
+    "function": "AILab_Qwen3TTSWhisperSTT",
+    "input_order": {
+      "optional": [
+        "unload_models"
+      ],
+      "required": [
+        "audio",
+        "model_size",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "audio",
+      "model_size",
+      "language",
+      "unload_models"
+    ],
+    "inputs": {
+      "optional": {
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Unload cached models after transcription"
+          }
+        ]
+      },
+      "required": {
+        "audio": [
+          "AUDIO",
+          {
+            "tooltip": "Audio input to transcribe."
+          }
+        ],
+        "language": [
+          [
+            "auto",
+            "en",
+            "zh",
+            "ja",
+            "ko",
+            "de",
+            "fr",
+            "es",
+            "it",
+            "pt",
+            "ru"
+          ],
+          {
+            "default": "auto",
+            "tooltip": "Force language or use auto detection."
+          }
+        ],
+        "model_size": [
+          [
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large",
+            "large-v2",
+            "large-v3",
+            "large-v3-turbo"
+          ],
+          {
+            "default": "small",
+            "tooltip": "Whisper model size. Larger models are slower but more accurate."
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSWhisperSTT",
+    "object_info_widget_order": [
+      null,
+      "model_size",
+      "language",
+      "unload_models"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "text",
+        "type": "STRING"
+      }
+    ],
+    "pack": "AILab_QwenTTS_Tools",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS_Tools"
+  }
+}

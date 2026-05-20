@@ -15,6 +15,7 @@ from vibecomfy.registry.ready import ready_template_ids, ready_template_source_i
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 from vibecomfy.registry.static_contract import compare_public_contracts, extract_ready_template_contract
 from vibecomfy.runtime.session import SessionConfig, _model_assets_from_workflow
+from vibecomfy.testing.canonical import canonical_equal
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 
 
@@ -1049,8 +1050,7 @@ def test_representative_video_ready_templates_compile_under_memory_profiles(
     assert config.memory_profile == memory_profile
     assert workflow.validate().ok
     assert api
-    assert _class_type_counter(api) == _class_type_counter(baseline_api)
-    assert _topology_counter(api) == _topology_counter(baseline_api)
+    assert canonical_equal(api, baseline_api)
 
 
 @pytest.mark.parametrize("template_id", SNAPSHOT_IDS)
@@ -1066,9 +1066,7 @@ def test_snapshotted_ready_template_graph_matches_pre_refactor_api(template_id: 
         resolution(384, 256, 9).apply(expected_workflow)
         expected = expected_workflow.compile("api")
 
-    assert _class_type_counter(actual) == _class_type_counter(expected)
-    assert _widget_value_counter(actual) == _widget_value_counter(expected)
-    assert _topology_counter(actual) == _topology_counter(expected)
+    assert canonical_equal(actual, expected)
 
 
 def _class_type_counter(api: dict) -> Counter[str]:

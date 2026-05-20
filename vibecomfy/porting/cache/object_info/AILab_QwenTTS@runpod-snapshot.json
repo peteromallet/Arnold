@@ -1,0 +1,1070 @@
+{
+  "AILab_Qwen3TTSCustomVoice": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Custom Voice (QwenTTS)",
+    "function": "AILab_Qwen3TTSCustomVoice",
+    "input_order": {
+      "optional": [
+        "instruct",
+        "unload_models",
+        "seed"
+      ],
+      "required": [
+        "text",
+        "speaker",
+        "model_size",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "text",
+      "speaker",
+      "model_size",
+      "language",
+      "instruct",
+      "unload_models",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "instruct": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Style instruction"
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": -1,
+            "max": 18446744073709551615,
+            "min": -1
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Unload cached models after generation"
+          }
+        ]
+      },
+      "required": {
+        "language": [
+          [
+            "Auto",
+            "Chinese",
+            "English",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian"
+          ],
+          {
+            "default": "Auto"
+          }
+        ],
+        "model_size": [
+          [
+            "0.6B",
+            "1.7B"
+          ],
+          {
+            "default": "1.7B"
+          }
+        ],
+        "speaker": [
+          [
+            "Aiden",
+            "Dylan",
+            "Eric",
+            "Ono_Anna",
+            "Ryan",
+            "Serena",
+            "Sohee",
+            "Uncle_Fu",
+            "Vivian"
+          ],
+          {
+            "default": "Ryan"
+          }
+        ],
+        "text": [
+          "STRING",
+          {
+            "default": "Hello from Qwen3-TTS.",
+            "multiline": true,
+            "tooltip": "Text to synthesize"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSCustomVoice",
+    "object_info_widget_order": [
+      "text",
+      "speaker",
+      "model_size",
+      "language",
+      "instruct",
+      "unload_models",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio",
+        "type": "AUDIO"
+      }
+    ],
+    "pack": "AILab_QwenTTS",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS"
+  },
+  "AILab_Qwen3TTSCustomVoice_Advanced": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Custom Voice (QwenTTS) Advanced",
+    "function": "AILab_Qwen3TTSCustomVoice_Advanced",
+    "input_order": {
+      "optional": [
+        "instruct",
+        "max_new_tokens",
+        "do_sample",
+        "top_p",
+        "top_k",
+        "temperature",
+        "repetition_penalty",
+        "attention",
+        "unload_models",
+        "seed"
+      ],
+      "required": [
+        "text",
+        "speaker",
+        "model_size",
+        "device",
+        "precision",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "text",
+      "speaker",
+      "model_size",
+      "device",
+      "precision",
+      "language",
+      "instruct",
+      "max_new_tokens",
+      "do_sample",
+      "top_p",
+      "top_k",
+      "temperature",
+      "repetition_penalty",
+      "attention",
+      "unload_models",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "attention": [
+          [
+            "auto",
+            "sage_attn",
+            "flash_attn",
+            "sdpa",
+            "eager"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "do_sample": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "instruct": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Style instruction"
+          }
+        ],
+        "max_new_tokens": [
+          "INT",
+          {
+            "default": 2048,
+            "max": 4096,
+            "min": 256,
+            "step": 256
+          }
+        ],
+        "repetition_penalty": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 2.0,
+            "min": 0.5,
+            "step": 0.05
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": -1,
+            "max": 18446744073709551615,
+            "min": -1
+          }
+        ],
+        "temperature": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 2.0,
+            "min": 0.1,
+            "step": 0.05
+          }
+        ],
+        "top_k": [
+          "INT",
+          {
+            "default": 50,
+            "max": 200,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "top_p": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.05
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Unload cached models after generation"
+          }
+        ]
+      },
+      "required": {
+        "device": [
+          [
+            "auto",
+            "cuda",
+            "cpu"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "language": [
+          [
+            "Auto",
+            "Chinese",
+            "English",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian"
+          ],
+          {
+            "default": "Auto"
+          }
+        ],
+        "model_size": [
+          [
+            "0.6B",
+            "1.7B"
+          ],
+          {
+            "default": "1.7B"
+          }
+        ],
+        "precision": [
+          [
+            "bf16",
+            "fp16",
+            "fp32"
+          ],
+          {
+            "default": "bf16"
+          }
+        ],
+        "speaker": [
+          [
+            "Aiden",
+            "Dylan",
+            "Eric",
+            "Ono_Anna",
+            "Ryan",
+            "Serena",
+            "Sohee",
+            "Uncle_Fu",
+            "Vivian"
+          ],
+          {
+            "default": "Ryan"
+          }
+        ],
+        "text": [
+          "STRING",
+          {
+            "default": "Hello from Qwen3-TTS.",
+            "multiline": true,
+            "tooltip": "Text to synthesize"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSCustomVoice_Advanced",
+    "object_info_widget_order": [
+      "text",
+      "speaker",
+      "model_size",
+      "device",
+      "precision",
+      "language",
+      "instruct",
+      "max_new_tokens",
+      "do_sample",
+      "top_p",
+      "top_k",
+      "temperature",
+      "repetition_penalty",
+      "attention",
+      "unload_models",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio",
+        "type": "AUDIO"
+      }
+    ],
+    "pack": "AILab_QwenTTS",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS"
+  },
+  "AILab_Qwen3TTSVoiceClone": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Voice Clone (QwenTTS)",
+    "function": "AILab_Qwen3TTSVoiceClone",
+    "input_order": {
+      "optional": [
+        "reference_audio",
+        "reference_text",
+        "x_vector_only",
+        "voice",
+        "unload_models",
+        "seed"
+      ],
+      "required": [
+        "target_text",
+        "model_size",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "target_text",
+      "model_size",
+      "language",
+      "reference_audio",
+      "reference_text",
+      "x_vector_only",
+      "voice",
+      "unload_models",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "reference_audio": [
+          "AUDIO",
+          {
+            "tooltip": "Reference audio for cloning (not needed if voice is provided)"
+          }
+        ],
+        "reference_text": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Transcript of reference audio"
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": -1,
+            "max": 18446744073709551615,
+            "min": -1
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Unload cached models after generation"
+          }
+        ],
+        "voice": [
+          "VOICE"
+        ],
+        "x_vector_only": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Skip ref_text by using speaker embedding only"
+          }
+        ]
+      },
+      "required": {
+        "language": [
+          [
+            "Auto",
+            "Chinese",
+            "English",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian"
+          ],
+          {
+            "default": "Auto"
+          }
+        ],
+        "model_size": [
+          [
+            "0.6B",
+            "1.7B"
+          ],
+          {
+            "default": "1.7B"
+          }
+        ],
+        "target_text": [
+          "STRING",
+          {
+            "default": "Hello, this is a cloned voice.",
+            "multiline": true,
+            "tooltip": "Text to speak"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoiceClone",
+    "object_info_widget_order": [
+      "target_text",
+      "model_size",
+      "language",
+      null,
+      "reference_text",
+      "x_vector_only",
+      "voice",
+      "unload_models",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio",
+        "type": "AUDIO"
+      }
+    ],
+    "pack": "AILab_QwenTTS",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS"
+  },
+  "AILab_Qwen3TTSVoiceClone_Advanced": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Voice Clone (QwenTTS) Advanced",
+    "function": "AILab_Qwen3TTSVoiceClone_Advanced",
+    "input_order": {
+      "optional": [
+        "reference_audio",
+        "reference_text",
+        "x_vector_only",
+        "voice",
+        "max_new_tokens",
+        "do_sample",
+        "top_p",
+        "top_k",
+        "temperature",
+        "repetition_penalty",
+        "attention",
+        "unload_models",
+        "seed"
+      ],
+      "required": [
+        "target_text",
+        "model_size",
+        "device",
+        "precision",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "target_text",
+      "model_size",
+      "device",
+      "precision",
+      "language",
+      "reference_audio",
+      "reference_text",
+      "x_vector_only",
+      "voice",
+      "max_new_tokens",
+      "do_sample",
+      "top_p",
+      "top_k",
+      "temperature",
+      "repetition_penalty",
+      "attention",
+      "unload_models",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "attention": [
+          [
+            "auto",
+            "sage_attn",
+            "flash_attn",
+            "sdpa",
+            "eager"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "do_sample": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "max_new_tokens": [
+          "INT",
+          {
+            "default": 2048,
+            "max": 4096,
+            "min": 256,
+            "step": 256
+          }
+        ],
+        "reference_audio": [
+          "AUDIO",
+          {
+            "tooltip": "Reference audio for cloning (not needed if voice is provided)"
+          }
+        ],
+        "reference_text": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Transcript of reference audio"
+          }
+        ],
+        "repetition_penalty": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 2.0,
+            "min": 0.5,
+            "step": 0.05
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": -1,
+            "max": 18446744073709551615,
+            "min": -1
+          }
+        ],
+        "temperature": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 2.0,
+            "min": 0.1,
+            "step": 0.05
+          }
+        ],
+        "top_k": [
+          "INT",
+          {
+            "default": 50,
+            "max": 200,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "top_p": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.05
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "voice": [
+          "VOICE"
+        ],
+        "x_vector_only": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Skip ref_text by using speaker embedding only"
+          }
+        ]
+      },
+      "required": {
+        "device": [
+          [
+            "auto",
+            "cuda",
+            "cpu"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "language": [
+          [
+            "Auto",
+            "Chinese",
+            "English",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian"
+          ],
+          {
+            "default": "Auto"
+          }
+        ],
+        "model_size": [
+          [
+            "0.6B",
+            "1.7B"
+          ],
+          {
+            "default": "1.7B"
+          }
+        ],
+        "precision": [
+          [
+            "bf16",
+            "fp16",
+            "fp32"
+          ],
+          {
+            "default": "bf16"
+          }
+        ],
+        "target_text": [
+          "STRING",
+          {
+            "default": "Hello, this is a cloned voice.",
+            "multiline": true,
+            "tooltip": "Text to speak"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoiceClone_Advanced",
+    "object_info_widget_order": [
+      "target_text",
+      "model_size",
+      "device",
+      "precision",
+      "language",
+      null,
+      "reference_text",
+      "x_vector_only",
+      "voice",
+      "max_new_tokens",
+      "do_sample",
+      "top_p",
+      "top_k",
+      "temperature",
+      "repetition_penalty",
+      "attention",
+      "unload_models",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio",
+        "type": "AUDIO"
+      }
+    ],
+    "pack": "AILab_QwenTTS",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS"
+  },
+  "AILab_Qwen3TTSVoiceDesign": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Voice Design (QwenTTS)",
+    "function": "AILab_Qwen3TTSVoiceDesign",
+    "input_order": {
+      "optional": [
+        "unload_models",
+        "seed"
+      ],
+      "required": [
+        "text",
+        "instruct",
+        "model_size",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "text",
+      "instruct",
+      "model_size",
+      "language",
+      "unload_models",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "seed": [
+          "INT",
+          {
+            "default": -1,
+            "max": 18446744073709551615,
+            "min": -1
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Unload cached models after generation"
+          }
+        ]
+      },
+      "required": {
+        "instruct": [
+          "STRING",
+          {
+            "default": "A warm, gentle female voice.",
+            "multiline": true,
+            "tooltip": "Voice description"
+          }
+        ],
+        "language": [
+          [
+            "Auto",
+            "Chinese",
+            "English",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian"
+          ],
+          {
+            "default": "Auto"
+          }
+        ],
+        "model_size": [
+          [
+            "1.7B"
+          ],
+          {
+            "default": "1.7B"
+          }
+        ],
+        "text": [
+          "STRING",
+          {
+            "default": "Hello from Qwen3-TTS VoiceDesign.",
+            "multiline": true,
+            "tooltip": "Text to synthesize"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoiceDesign",
+    "object_info_widget_order": [
+      "text",
+      "instruct",
+      "model_size",
+      "language",
+      "unload_models",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio",
+        "type": "AUDIO"
+      }
+    ],
+    "pack": "AILab_QwenTTS",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS"
+  },
+  "AILab_Qwen3TTSVoiceDesign_Advanced": {
+    "category": "🧪AILab/🎙️QwenTTS",
+    "description": "",
+    "display_name": "Voice Design (QwenTTS) Advanced",
+    "function": "AILab_Qwen3TTSVoiceDesign_Advanced",
+    "input_order": {
+      "optional": [
+        "max_new_tokens",
+        "do_sample",
+        "top_p",
+        "top_k",
+        "temperature",
+        "repetition_penalty",
+        "attention",
+        "unload_models",
+        "seed"
+      ],
+      "required": [
+        "text",
+        "instruct",
+        "model_size",
+        "device",
+        "precision",
+        "language"
+      ]
+    },
+    "input_order_all": [
+      "text",
+      "instruct",
+      "model_size",
+      "device",
+      "precision",
+      "language",
+      "max_new_tokens",
+      "do_sample",
+      "top_p",
+      "top_k",
+      "temperature",
+      "repetition_penalty",
+      "attention",
+      "unload_models",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "attention": [
+          [
+            "auto",
+            "sage_attn",
+            "flash_attn",
+            "sdpa",
+            "eager"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "do_sample": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "max_new_tokens": [
+          "INT",
+          {
+            "default": 2048,
+            "max": 4096,
+            "min": 256,
+            "step": 256
+          }
+        ],
+        "repetition_penalty": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 2.0,
+            "min": 0.5,
+            "step": 0.05
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": -1,
+            "max": 18446744073709551615,
+            "min": -1
+          }
+        ],
+        "temperature": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 2.0,
+            "min": 0.1,
+            "step": 0.05
+          }
+        ],
+        "top_k": [
+          "INT",
+          {
+            "default": 50,
+            "max": 200,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "top_p": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.05
+          }
+        ],
+        "unload_models": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ]
+      },
+      "required": {
+        "device": [
+          [
+            "auto",
+            "cuda",
+            "cpu"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "instruct": [
+          "STRING",
+          {
+            "default": "A warm, gentle female voice.",
+            "multiline": true,
+            "tooltip": "Voice description"
+          }
+        ],
+        "language": [
+          [
+            "Auto",
+            "Chinese",
+            "English",
+            "Japanese",
+            "Korean",
+            "French",
+            "German",
+            "Spanish",
+            "Portuguese",
+            "Russian",
+            "Italian"
+          ],
+          {
+            "default": "Auto"
+          }
+        ],
+        "model_size": [
+          [
+            "1.7B"
+          ],
+          {
+            "default": "1.7B"
+          }
+        ],
+        "precision": [
+          [
+            "bf16",
+            "fp16",
+            "fp32"
+          ],
+          {
+            "default": "bf16"
+          }
+        ],
+        "text": [
+          "STRING",
+          {
+            "default": "Hello from Qwen3-TTS VoiceDesign.",
+            "multiline": true,
+            "tooltip": "Text to synthesize"
+          }
+        ]
+      }
+    },
+    "name": "AILab_Qwen3TTSVoiceDesign_Advanced",
+    "object_info_widget_order": [
+      "text",
+      "instruct",
+      "model_size",
+      "device",
+      "precision",
+      "language",
+      "max_new_tokens",
+      "do_sample",
+      "top_p",
+      "top_k",
+      "temperature",
+      "repetition_penalty",
+      "attention",
+      "unload_models",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio",
+        "type": "AUDIO"
+      }
+    ],
+    "pack": "AILab_QwenTTS",
+    "pack_version": "runpod-snapshot",
+    "python_module": "AILab_QwenTTS"
+  }
+}

@@ -136,6 +136,32 @@ class VibeWorkflow:
         self.requirements = _infer_requirements(self)
         return self
 
+    def finalize(
+        self,
+        public_inputs: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+        output_node: Any = None,
+        output_kind: str | None = None,
+        **bind_kwargs: Any,
+    ) -> "VibeWorkflow":
+        """Finalize ready-template public inputs and output binding.
+
+        ``metadata`` is optional for the v2.5 method form; when omitted, the
+        workflow's current metadata is used. The legacy free function remains
+        available in ``vibecomfy.templates.finalize``.
+        """
+        from vibecomfy.templates import _finalize_impl
+
+        return _finalize_impl(
+            self,
+            public_inputs,
+            dict(self.metadata if metadata is None else metadata),
+            output_node=output_node,
+            output_kind=output_kind,
+            **bind_kwargs,
+        )
+
     def register_input(
         self,
         name: str,

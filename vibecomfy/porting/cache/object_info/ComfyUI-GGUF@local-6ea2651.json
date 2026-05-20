@@ -1,0 +1,72 @@
+{
+  "DualCLIPLoaderGGUF": {
+    "pack": "ComfyUI-GGUF",
+    "pack_version": "local-6ea2651",
+    "python_module": "ComfyUI-GGUF.nodes",
+    "category": "",
+    "name": "DualCLIPLoaderGGUF",
+    "display_name": "DualCLIPLoaderGGUF",
+    "description": "",
+    "inputs": {
+      "required": {
+        "clip_name1": "file_options",
+        "clip_name2": "file_options",
+        "type": "base"
+      }
+    },
+    "input_order": {
+      "required": [
+        "clip_name1",
+        "clip_name2",
+        "type"
+      ]
+    },
+    "input_order_all": [
+      "clip_name1",
+      "clip_name2",
+      "type"
+    ],
+    "object_info_widget_order": [
+      null,
+      null,
+      null
+    ],
+    "outputs": [],
+    "function": "DualCLIPLoaderGGUF"
+  },
+  "UnetLoaderGGUF": {
+    "pack": "ComfyUI-GGUF",
+    "pack_version": "local-6ea2651",
+    "python_module": "ComfyUI-GGUF.nodes",
+    "category": "bootleg",
+    "name": "UnetLoaderGGUF",
+    "display_name": "UnetLoaderGGUF",
+    "description": "",
+    "inputs": {
+      "required": {
+        "unet_name": [
+          "unet_names"
+        ]
+      }
+    },
+    "input_order": {
+      "required": [
+        "unet_name"
+      ]
+    },
+    "input_order_all": [
+      "unet_name"
+    ],
+    "object_info_widget_order": [
+      "unet_name"
+    ],
+    "outputs": [
+      {
+        "type": "MODEL",
+        "name": "MODEL",
+        "is_list": false
+      }
+    ],
+    "function": "load_unet"
+  }
+}

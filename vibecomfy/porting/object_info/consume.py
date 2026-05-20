@@ -190,7 +190,10 @@ def object_info_widget_order(class_type: str) -> list[str | None]:
     entry = _resolve_class_type(class_type)
     if entry is None:
         return list(_CURATED_WIDGET_ORDERS.get(class_type, []))
-    return list(entry.get("object_info_widget_order", []))
+    order = list(entry.get("object_info_widget_order", []))
+    if class_type in _CURATED_WIDGET_ORDERS and "apply_to_all" not in order:
+        return list(_CURATED_WIDGET_ORDERS[class_type])
+    return order
 
 
 def effective_widget_names_for_class(class_type: str, *, allow_object_info_fallback: bool = False) -> list[str | None]:
@@ -229,12 +232,84 @@ def output_types(class_type: str) -> list[str]:
     return types or [o["type"] for o in _CURATED_OUTPUTS.get(class_type, [])]
 
 
+def class_defaults(class_type: str) -> dict[str, Any]:
+    """Return schema default values by input name for *class_type*.
+
+    Only inputs with an explicit object_info ``default`` are returned. The
+    lookup is offline and deterministic; unknown classes return ``{}``.
+    """
+    entry = get_class(class_type)
+    if entry is None:
+        return {}
+    defaults: dict[str, Any] = {}
+    for name, spec in _iter_input_specs(entry):
+        metadata = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+        if "default" in metadata:
+            defaults[name] = metadata["default"]
+    return defaults
+
+
+def class_input_types(class_type: str) -> dict[str, str]:
+    """Return best-effort input type names by input name for *class_type*."""
+    entry = get_class(class_type)
+    if entry is None:
+        return {}
+    return {
+        name: _normalize_input_type(spec[0] if spec else None)
+        for name, spec in _iter_input_specs(entry)
+    }
+
+
+def class_output_count(class_type: str) -> int:
+    """Return the number of declared outputs for *class_type*."""
+    return len(output_names(class_type))
+
+
+def class_has_list_output(class_type: str) -> bool:
+    """Return True when any declared output is marked OUTPUT_IS_LIST."""
+    entry = get_class(class_type)
+    if entry is None:
+        return any(bool(o.get("is_list")) for o in _CURATED_OUTPUTS.get(class_type, []))
+    return any(bool(o.get("is_list")) for o in entry.get("outputs", []))
+
+
 def list_classes() -> list[str]:
     """Return all class types in the cache, sorted deterministically."""
     idx = _load_index()
     if idx:
         return sorted(idx.keys())
     return sorted(_CURATED_OUTPUTS)
+
+
+def _iter_input_specs(entry: dict[str, Any]) -> list[tuple[str, list[Any]]]:
+    inputs = entry.get("inputs")
+    if not isinstance(inputs, dict):
+        return []
+    ordered = entry.get("input_order_all")
+    names: list[str] = [str(name) for name in ordered] if isinstance(ordered, list) else []
+    by_name: dict[str, list[Any]] = {}
+    for section in ("required", "optional"):
+        values = inputs.get(section)
+        if not isinstance(values, dict):
+            continue
+        for name, spec in values.items():
+            if isinstance(spec, list):
+                by_name[str(name)] = spec
+            elif isinstance(spec, str):
+                by_name[str(name)] = [spec]
+    if not names:
+        names = sorted(by_name)
+    return [(name, by_name[name]) for name in names if name in by_name]
+
+
+def _normalize_input_type(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "ENUM"
+    if value is None:
+        return ""
+    return str(value)
 
 
 def cache_stats() -> dict[str, Any]:
