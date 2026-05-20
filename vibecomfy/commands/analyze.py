@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, is_dataclass
+from pathlib import Path
 from typing import Any
 
 from vibecomfy.analysis import graph
-from vibecomfy.commands.analyze_names import analyze_names
+from vibecomfy.analysis.corpus import build_corpus_snapshot
+from vibecomfy.analysis.fields import trace_public_field
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.workflow import VibeWorkflow
 
@@ -73,10 +76,34 @@ def _cmd_unconnected(args: argparse.Namespace) -> int:
     return _emit(rows, _selected_format(args), text=_format_dict_rows)
 
 
-def _cmd_names(args: argparse.Namespace) -> int:
-    workflow = _load_workflow(args.workflow)
-    result = analyze_names(workflow, strategy=args.strategy)
-    return _emit(result, _selected_format(args), text=_format_names)
+def _cmd_corpus(args: argparse.Namespace) -> int:
+    snapshot = build_corpus_snapshot()
+    payload = snapshot.to_json()
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(_format_corpus(payload))
+    return 0
+
+
+def _cmd_tracefield(args: argparse.Namespace) -> int:
+    try:
+        loaded = load_port_source(args.workflow, schema_provider=get_schema_provider("auto"))
+    except Exception as exc:
+        print(f"Failed to load workflow: {type(exc).__name__}: {exc}", __import__("sys").stderr)
+        return 1
+    result = trace_public_field(loaded.workflow, args.field, source_file=loaded.source_path)
+    if result.get("error"):
+        if getattr(args, "json", False):
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"Error: {result['error']}")
+        return 1
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(_format_tracefield(result))
+    return 0
 
 
 def _selected_format(args: argparse.Namespace) -> str:
@@ -208,38 +235,68 @@ def _format_dict_rows(rows: list[dict[str, Any]]) -> str:
     return "\n".join(json.dumps(row, sort_keys=True) for row in rows)
 
 
-def _format_names(data: dict[str, Any]) -> str:
-    rows = data["rows"]
-    summary = data["summary"]
-    workflow = data["workflow"]
-    strategy = data["strategy"]
-    lines = [f"Template: {workflow}", f"Strategy: {strategy}", ""]
-    if not rows:
-        lines.append("  node_id  current_name  proposed_name")
-        lines.append("  -")
-    else:
-        node_width = max(7, *(len(row["node_id"]) for row in rows))
-        current_width = max(12, *(len(row["current_name"]) for row in rows))
-        proposed_width = max(13, *(len(row["proposed_name"]) for row in rows))
-        header = f"  {'node_id':<{node_width}}  {'current_name':<{current_width}}  {'proposed_name':<{proposed_width}}"
-        lines.append(header)
-        lines.append("  " + "-" * (len(header) - 2))
-        for row in rows:
-            reason = f"  ({row['reason']})" if row["reason"] else ""
-            lines.append(
-                f"  {row['node_id']:<{node_width}}  "
-                f"{row['current_name']:<{current_width}}  "
-                f"{row['proposed_name']:<{proposed_width}}"
-                f"{reason}"
-            )
-    lines.extend(
-        [
-            "",
-            f"Renames: {summary['rename_count']}/{summary['node_count']} ({summary['rename_percent']}%)",
-            f"Ambiguous (multiple plausible names): {summary['ambiguous_count']}",
-            f"Fallback to class-name (no role inferable): {summary['fallback_count']}",
-        ]
+def _format_corpus(payload: dict[str, Any]) -> str:
+    lines = ["Corpus snapshot"]
+    lines.append(
+        f"  templates: {payload['templates_total']} "
+        f"({payload['templates_regeneratable']} regeneratable, "
+        f"{payload['templates_deferred']} deferred per v2.6.1 audit)"
     )
+    lines.append(f"  total LOC: {payload['total_loc']}")
+    lines.append("  by category:")
+    by_cat = payload.get("by_category", {})
+    for cat, info in sorted(by_cat.items()):
+        lines.append(
+            f"    {cat}: {info['templates']} templates, avg LOC {info['avg_loc']}"
+        )
+    node_dist = payload.get("node_type_distribution", [])
+    if node_dist:
+        lines.append("  node-type distribution (top 10):")
+        for item in node_dist:
+            lines.append(
+                f"    {item['class_type']}: {item['occurrences']} occurrences "
+                f"across {item['templates']} templates"
+            )
+    custom_packs = payload.get("custom_pack_usage", {})
+    if custom_packs:
+        lines.append("  custom-pack usage:")
+        for pack, count in sorted(custom_packs.items(), key=lambda x: (-x[1], x[0])):
+            lines.append(f"    {pack}: {count} templates")
+    lines.append(
+        f"  UUID subgraph instances: {payload['uuid_subgraph_instances']} "
+        f"(across {payload['uuid_subgraph_templates']} templates)"
+    )
+    lines.append(
+        f"  templates with manual opt-out marker: {payload['templates_with_manual_marker']}"
+    )
+    return "\n".join(lines)
+
+
+def _format_tracefield(result: dict[str, Any]) -> str:
+    lines = [f"field: {result['field']}"]
+    lines.append("resolution chain (highest priority first):")
+    for entry in result.get("resolution_chain", []):
+        desc = entry.get("description", "")
+        detail = ""
+        if "value" in entry:
+            detail = f" ({entry['value']!r})" if not isinstance(entry['value'], str) or len(str(entry['value'])) < 80 else f" ({str(entry['value'])[:77]}...)"
+        if "node_id" in entry:
+            detail = f" at node {entry['node_id']!r} (id={entry.get('node_id')}): {entry.get('field','')}={entry.get('value','')!r}" if "value" in entry else detail
+        lines.append(f"  {entry['priority']}. {desc}{detail}")
+    aliases = result.get("aliases", [])
+    if aliases:
+        lines.append("aliases (resolve to same node+field):")
+        for alias in aliases:
+            lines.append(f"  • {alias!r}")
+        lines.append(f"  • {result['field']!r} (canonical)")
+    else:
+        lines.append(f"aliases: (none)")
+    bound = result.get("bound_node")
+    if bound:
+        lines.append(
+            f"bound to: node id={bound['node_id']} "
+            f"({bound['class_type']}.{bound['field']})"
+        )
     return "\n".join(lines)
 
 
@@ -323,8 +380,12 @@ def register(subparsers) -> None:
     _add_common(unconnected)
     unconnected.set_defaults(func=_cmd_unconnected)
 
-    names = verbs.add_parser("names")
-    _add_common(names)
-    names.add_argument("--strategy", choices=("current", "role-based"), default="role-based")
-    names.add_argument("--json", action="store_true")
-    names.set_defaults(func=_cmd_names)
+    corpus = verbs.add_parser("corpus", help="Aggregate statistics across all ready templates.")
+    corpus.add_argument("--json", action="store_true")
+    corpus.set_defaults(func=_cmd_corpus)
+
+    tracefield = verbs.add_parser("tracefield", help="Source-of-truth tracer for a public input field.")
+    tracefield.add_argument("workflow")
+    tracefield.add_argument("field", help="Public input field name to trace")
+    tracefield.add_argument("--json", action="store_true")
+    tracefield.set_defaults(func=_cmd_tracefield)

@@ -12,9 +12,16 @@ from vibecomfy.porting.convert import (
     port_convert_and_write,
     port_convert_workflow,
 )
+from vibecomfy.porting.lint import lint_ready_template
 from vibecomfy.porting.manual_repair import repair_manual_template
 from vibecomfy.porting.readability_inventory import build_readability_inventory
 from vibecomfy.porting.report import PortIssue, PortReport
+from vibecomfy.porting.rules_registry import rules_by_category, to_json as rules_to_json
+from vibecomfy.analysis.corpus import build_corpus_snapshot
+
+READY_ROOT = Path(__file__).resolve().parents[2] / "ready_templates"
+
+from vibecomfy.porting.simulate import simulate_rule
 from vibecomfy.porting.strict_ready import (
     STRICT_READY_LOAD_FAILED,
     STRICT_READY_MISSING_OUTPUT_CONTRACT,
@@ -25,6 +32,7 @@ from vibecomfy.porting.strict_ready import (
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.porting.workbench import analyze_source, load_port_source
+from vibecomfy.registry.ready import repo_ready_template_paths
 from vibecomfy.schema import ConversionSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import latest_object_info_cache_path
 
@@ -71,6 +79,26 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_port_convert(args: argparse.Namespace) -> int:
+    dry_run = getattr(args, "dry_run", False)
+    diff_mode = getattr(args, "diff", False)
+    all_mode = getattr(args, "all", False)
+
+    # --all mode: refuse any mode that would write files
+    if all_mode:
+        if not dry_run and not diff_mode:
+            print("--all requires --dry-run (or --diff). Refusing to write files in bulk.", file=sys.stderr)
+            return 1
+        if args.out:
+            print("--all with --out is not supported. Use --dry-run --diff for corpus-wide preview.", file=sys.stderr)
+            return 1
+        _run_convert_all(args)
+        return 0
+
+    # --out is required for write mode
+    if not args.out and not dry_run and not diff_mode:
+        print("--out is required for write mode. Use --dry-run for read-only preview.", file=sys.stderr)
+        return 1
+
     schema_provider = _build_conversion_provider(args)
     port_mode: str = (
         "strict_ready"
@@ -116,9 +144,16 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             strict_enabled=bool(getattr(args, "strict_ready_template", False) or args.ready_id),
         )
 
-    out = Path(args.out)
-    dry_run = getattr(args, "dry_run", False)
-    diff_mode = getattr(args, "diff", False)
+    # Derive target path for dry-run diff mode
+    if args.out:
+        out = Path(args.out)
+    elif dry_run or diff_mode:
+        # Derive target from ready-template argument
+        loaded = load_port_source(args.workflow, schema_provider=schema_provider)
+        out = Path(loaded.source_path) if loaded.source_path else Path(args.workflow)
+    else:
+        print("--out is required for write mode.", file=sys.stderr)
+        return 1
 
     try:
         write_result = port_convert_and_write(
@@ -128,6 +163,23 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             diff=diff_mode,
         )
     except ManualTemplateRefusal as exc:
+        # In dry-run mode, skip manual refusal and show the diff anyway
+        if dry_run:
+            print(f"port convert note: {exc} (showing dry-run diff anyway)")
+            # Compute diff directly
+            original = out.read_text(encoding="utf-8") if out.exists() else ""
+            import difflib
+            diff_lines = difflib.unified_diff(
+                original.splitlines(keepends=True) if original else [],
+                result.text.splitlines(keepends=True),
+                fromfile=str(out),
+                tofile=f"{out} (emitted)",
+            )
+            print(f"parity: {'ok' if result.validation and result.validation.parity_ok else 'unknown'}")
+            print(f"LOC: {len(original.splitlines()) if original else 0} → {len(result.text.splitlines())} ({'+' if not original or len(result.text.splitlines()) >= len(original.splitlines()) else ''}{len(result.text.splitlines()) - (len(original.splitlines()) if original else 0)})")
+            print("".join(diff_lines))
+            return 0
+
         print(f"port convert refused: {exc}", file=sys.stderr)
         payload = {
             "status": "refused",
@@ -166,6 +218,54 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
     _attach_report_strict_ready(payload["report"])
     _emit_convert_payload(payload, json_output=args.json)
     return 0
+
+
+def _run_convert_all(args: argparse.Namespace) -> None:
+    """Run dry-run diff across all ready templates."""
+    from vibecomfy.analysis.corpus import build_corpus_snapshot
+
+    snapshot = build_corpus_snapshot()
+    diff_mode = getattr(args, "diff", False)
+
+    for tpl in snapshot.templates_list:
+        tpl_path = Path(tpl["path"])
+        if not tpl_path.is_file():
+            continue
+        try:
+            original = tpl_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        schema_provider = _build_conversion_provider(args)
+        try:
+            loaded = load_port_source(str(tpl_path), schema_provider=schema_provider)
+            result = port_convert_workflow(
+                loaded.workflow,
+                source_path=str(tpl_path),
+                schema_provider=schema_provider,
+            )
+        except Exception as exc:
+            print(f"{tpl['id']}: error: {type(exc).__name__}: {exc}")
+            continue
+
+        parity = "ok" if result.validation and result.validation.parity_ok else ("unknown" if result.validation else "no-validation")
+        original_loc = len([l for l in original.splitlines() if l.strip()])
+        emitted_loc = len([l for l in result.text.splitlines() if l.strip()])
+        delta = emitted_loc - original_loc
+
+        print(f"{tpl['id']}: parity={parity} LOC {original_loc}→{emitted_loc} ({'+' if delta >= 0 else ''}{delta})")
+
+        if diff_mode and result.text != original:
+            import difflib
+            diff_lines = difflib.unified_diff(
+                original.splitlines(keepends=True),
+                result.text.splitlines(keepends=True),
+                fromfile=str(tpl_path),
+                tofile=f"{tpl_path} (emitted)",
+            )
+            diff_text = "".join(diff_lines)
+            if diff_text:
+                print(diff_text[:2000])  # Truncate per-template diff
 
 
 def _attach_contract_fields(payload: dict[str, Any]) -> None:
@@ -562,6 +662,155 @@ def _render_widgets(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _cmd_port_rules(args: argparse.Namespace) -> int:
+    """Codemod rule introspection."""
+    explain = getattr(args, "explain", False)
+    if args.json:
+        print(json.dumps(rules_to_json(), indent=2, sort_keys=True))
+        return 0
+
+    cat_map = rules_by_category()
+    lines = ["The codemod (vibecomfy/porting/emitter.py) applies these rules:"]
+    for cat, rules in sorted(cat_map.items()):
+        lines.append("")
+        lines.append(cat)
+        for rule in rules:
+            partial = " (partial coverage)" if rule.partial_coverage else ""
+            lines.append(f"  {rule.id}: {rule.description}{partial}")
+            if explain:
+                lines.append(f"    {rule.behavior}")
+                if rule.note:
+                    lines.append(f"    Note: {rule.note}")
+
+    lines.append("")
+    lines.append("(Read vibecomfy/porting/emitter.py for exact implementation.)")
+    lines.append("(This registry has partial coverage; some rules may be undocumented.)")
+    print("\n".join(lines))
+    return 0
+
+
+def _cmd_port_lint(args: argparse.Namespace) -> int:
+    """Convention enforcer over generated templates."""
+    all_mode = getattr(args, "all", False)
+    json_mode = getattr(args, "json", False)
+
+    if all_mode:
+        ready_root = Path(__file__).resolve().parents[2] / "ready_templates"
+        paths = list(ready_root.rglob("*.py"))
+    else:
+        wf_path = Path(args.workflow)
+        if wf_path.is_file():
+            paths = [wf_path]
+        else:
+            # Try as ready template ID
+            ready_root = Path(__file__).resolve().parents[2] / "ready_templates"
+            candidate = ready_root / f"{args.workflow}.py"
+            if candidate.is_file():
+                paths = [candidate]
+            else:
+                print(f"Workflow not found: {args.workflow}", file=sys.stderr)
+                return 1
+
+    all_diags: list[Any] = []
+    has_errors = False
+
+    for path in sorted(paths):
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        diags = lint_ready_template(source, str(path))
+        if json_mode:
+            all_diags.extend(
+                {
+                    "severity": d.severity,
+                    "path": d.path,
+                    "line": d.line,
+                    "code": d.code,
+                    "message": d.message,
+                    "detail": d.detail,
+                }
+                for d in diags
+            )
+        else:
+            if diags:
+                print(f"{path}:")
+                for d in diags:
+                    marker = {"error": "error", "warning": "warning", "info": "info"}.get(d.severity, d.severity)
+                    print(f"  L{d.line}: {marker}: {d.message}")
+                sev_counts = {"error": 0, "warning": 0, "info": 0}
+                for d in diags:
+                    sev_counts[d.severity] = sev_counts.get(d.severity, 0) + 1
+                print(f"  {sev_counts['warning']} warnings, {sev_counts['info']} info, {sev_counts['error']} errors")
+                print()
+            if any(d.severity == "error" for d in diags):
+                has_errors = True
+
+    if json_mode:
+        payload = {
+            "diagnostics": all_diags,
+            "total": len(all_diags),
+            "has_errors": has_errors,
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 1 if has_errors else 0
+
+    return 1 if has_errors else 0
+
+
+def _cmd_port_simulate(args: argparse.Namespace) -> int:
+    """Sandbox simulation of an experimental emitter rule."""
+    rule_spec: str = args.rule
+    all_mode = getattr(args, "all", False)
+    json_mode = getattr(args, "json", False)
+
+    schema_provider = get_schema_provider("auto")
+
+    # Resolve template IDs: without --all, use None (regeneratable in simulate_rule);
+    # with --all, explicitly gather all template IDs from the corpus.
+    template_ids = None
+    if all_mode:
+        snapshot = build_corpus_snapshot(READY_ROOT)
+        template_ids = [t["id"] for t in snapshot.templates_list]
+
+    result = simulate_rule(
+        rule_spec,
+        template_ids=template_ids,
+        schema_provider=schema_provider,
+    )
+
+    if result.error:
+        print(f"Simulation error: {result.error}", file=sys.stderr)
+        return 1
+
+    if json_mode:
+        print(json.dumps(result.to_json(), indent=2, sort_keys=True))
+        return 0
+
+    print(f"\nCorpus simulation: {rule_spec}")
+    print(f"  templates affected: {result.templates_affected}")
+    if result.templates_total > 0:
+        pct = abs(result.loc_delta_total) / max(1, sum(
+            pt.get("original_loc", 0) for pt in result.per_template
+        )) * 100
+        print(f"  LOC delta: {result.loc_delta_total:+d} lines total ({pct:+.1f}% corpus)")
+    print(f"  canonical parity: {result.parity_preserved}/{result.parity_preserved + result.parity_broken} preserved {'✅' if result.parity_broken == 0 else '❌'}")
+    print(f"  no broken outputs" if result.parity_broken == 0 else f"  {result.parity_broken} broken outputs")
+
+    # Per-template top 5
+    affected = [pt for pt in result.per_template if pt.get("changed")]
+    if affected:
+        print("\nPer-template (top 5):")
+        for pt in sorted(affected, key=lambda x: x["loc_delta"])[:5]:
+            print(f"  {pt['template_id']}: {pt['original_loc']} → {pt['emitted_loc']} ({pt['loc_delta']:+d})")
+
+    if result.sample_diff:
+        print(f"\nSample diff ({affected[0]['template_id'] if affected else 'N/A'}):")
+        print(result.sample_diff[:2000])
+
+    return 0
+
+
 def register(subparsers) -> None:
     port = subparsers.add_parser(
         "port",
@@ -612,7 +861,8 @@ def register(subparsers) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     convert.add_argument("workflow")
-    convert.add_argument("--out", required=True)
+    convert.add_argument("--out", required=False, help="Destination file path (required for writes; optional with --dry-run)")
+    convert.add_argument("--all", action="store_true", help="Run across all ready templates (dry-run diff mode only)")
     convert.add_argument("--ready-id", help="Emit ready-template candidate mode; must have kind/name shape.")
     convert.add_argument("--json", action="store_true")
     convert.add_argument("--dry-run", action="store_true", help="Emit conversion payload and evidence without writing target file.")
@@ -682,6 +932,32 @@ def register(subparsers) -> None:
     repair.add_argument("--write", action="store_true")
     repair.set_defaults(func=_cmd_port_repair)
 
+    rules = port_subparsers.add_parser(
+        "rules",
+        help="Codemod rule introspection.",
+    )
+    rules.add_argument("--explain", action="store_true", help="Show detailed rule behavior descriptions")
+    rules.add_argument("--json", action="store_true")
+    rules.set_defaults(func=_cmd_port_rules)
+
+    lint = port_subparsers.add_parser(
+        "lint",
+        help="Convention enforcer over generated templates.",
+    )
+    lint.add_argument("workflow", nargs="?", help="Ready template file path or ID")
+    lint.add_argument("--all", action="store_true", help="Lint all ready_templates/**/*.py")
+    lint.add_argument("--json", action="store_true")
+    lint.set_defaults(func=_cmd_port_lint)
+
+    simulate = port_subparsers.add_parser(
+        "simulate",
+        help="Sandbox simulation of an experimental emitter rule.",
+    )
+    simulate.add_argument("--rule", required=True, help="Rule spec (e.g. drop_set_id_map=true)")
+    simulate.add_argument("--all", action="store_true", help="Simulate corpus-wide")
+    simulate.add_argument("--json", action="store_true")
+    simulate.set_defaults(func=_cmd_port_simulate)
+
 
 __all__ = [
     "register",
@@ -690,4 +966,7 @@ __all__ = [
     "_cmd_port_inventory",
     "_cmd_port_repair",
     "_cmd_port_widgets",
+    "_cmd_port_lint",
+    "_cmd_port_rules",
+    "_cmd_port_simulate",
 ]

@@ -290,4 +290,34 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
 }
 
 
-__all__ = ["WIDGET_SCHEMA"]
+def effective_widget_names_for_class(
+    class_type: str,
+    *,
+    allow_object_info_fallback: bool = False,
+) -> list[str | None]:
+    """Return the ordered widget names for *class_type*.
+
+    Curated ``WIDGET_SCHEMA`` always wins when present.  When no curated
+    static entry exists and *allow_object_info_fallback* is ``True``, the
+    raw object_info widget order is returned as a fallback.
+
+    … note::
+        This helper is narrowly scoped for the v2.1 ``narrate_template.py``
+        codemod.  It does **not** replace the direct ``WIDGET_SCHEMA.get(…)``
+        lookups used by ``widget_aliases.py``, ``emitter.py``, or ``parity.py``
+        — global conversion / emission / parity behaviour is unchanged.
+    """
+    curated = WIDGET_SCHEMA.get(class_type)
+    if curated is not None:
+        return list(curated)
+
+    if allow_object_info_fallback:
+        # Lazy import to avoid circular dependency at module level
+        from vibecomfy.porting.object_info.consume import object_info_widget_order  # noqa: PLC0415
+
+        return list(object_info_widget_order(class_type))
+
+    return []
+
+
+__all__ = ["WIDGET_SCHEMA", "effective_widget_names_for_class"]

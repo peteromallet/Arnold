@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-import difflib
 import hashlib
 import json
 import re
@@ -10,22 +8,17 @@ from dataclasses import asdict
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any
 
+from vibecomfy.analysis.corpus import build_corpus_snapshot
+from vibecomfy.analysis.node_coverage import build_workflow_coverage
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._index_files import IndexReadError, print_index_error, read_index_json
-from vibecomfy.custom_node_refs import lock_entry_to_ref
+from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.registry import load_workflow_reference
-from vibecomfy.registry.pack_resolver import AmbiguousPackError, PackNotFoundError, lookup_class_candidates, resolve_pack
 from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import object_info_cache_candidates
 import vibecomfy.node_packs_install as node_packs_install
-from vibecomfy.node_packs_lockfile import LockEntry, compute_schema_hash, read_lockfile, write_lockfile
-
-
-UUID_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
+from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
 
 
 def _cmd_nodes_list(args: argparse.Namespace) -> int:
@@ -42,8 +35,6 @@ def _cmd_nodes_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_nodes_spec(args: argparse.Namespace) -> int:
-    if UUID_RE.match(args.class_type):
-        return _cmd_nodes_subgraph_spec(args)
     provider = ObjectInfoSchemaProvider(args.object_info_cache) if args.object_info_cache else get_schema_provider("auto")
     try:
         schema = provider.get_schema(args.class_type)
@@ -68,111 +59,6 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(asdict(schema), indent=2, sort_keys=True))
     return 0
-
-
-def _cmd_nodes_subgraph_spec(args: argparse.Namespace) -> int:
-    try:
-        path, subgraph = _find_subgraph_definition(args.class_type, getattr(args, "source", None))
-    except (FileNotFoundError, ValueError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    payload = _summarize_subgraph(args.class_type, path, subgraph, verbose=getattr(args, "verbose", False))
-    if getattr(args, "json", False):
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        print(_render_subgraph_spec(payload, verbose=getattr(args, "verbose", False)))
-    return 0
-
-
-def _find_subgraph_definition(uuid: str, source: str | None) -> tuple[Path, dict[str, Any]]:
-    paths = [Path(source)] if source else sorted(Path("workflow_corpus").glob("**/*.json"))
-    for path in paths:
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            raise FileNotFoundError(f"workflow JSON not found: {path}") from None
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(raw, dict):
-            continue
-        subgraph = _subgraph_by_uuid(raw, uuid)
-        if subgraph is not None:
-            return path, subgraph
-    scope = f" in {source}" if source else " under workflow_corpus/**/*.json"
-    raise ValueError(f"subgraph UUID not found{scope}: {uuid}")
-
-
-def _subgraph_by_uuid(raw: dict[str, Any], uuid: str) -> dict[str, Any] | None:
-    definitions = raw.get("definitions", {})
-    if not isinstance(definitions, dict):
-        return None
-    subgraphs = definitions.get("subgraphs", [])
-    if isinstance(subgraphs, dict):
-        iterable = subgraphs.values()
-    elif isinstance(subgraphs, list):
-        iterable = subgraphs
-    else:
-        return None
-    for subgraph in iterable:
-        if isinstance(subgraph, dict) and subgraph.get("id") == uuid:
-            return subgraph
-    return None
-
-
-def _summarize_subgraph(uuid: str, path: Path, subgraph: dict[str, Any], *, verbose: bool) -> dict[str, Any]:
-    nodes = [node for node in subgraph.get("nodes", []) if isinstance(node, dict)]
-    class_counts: Counter[str] = Counter()
-    for node in nodes:
-        class_type = node.get("type") or node.get("class_type")
-        if class_type:
-            class_counts[str(class_type)] += 1
-    payload: dict[str, Any] = {
-        "uuid": uuid,
-        "source": str(path),
-        "name": subgraph.get("name"),
-        "inputs": [_port_item(item) for item in subgraph.get("inputs", []) if isinstance(item, dict)],
-        "outputs": [_port_item(item) for item in subgraph.get("outputs", []) if isinstance(item, dict)],
-        "inner_node_count": len(nodes),
-        "inner_node_class_types": dict(sorted(class_counts.items())),
-    }
-    if verbose:
-        payload["inner_graph"] = {
-            "nodes": nodes,
-            "edges": subgraph.get("links", []) if isinstance(subgraph.get("links", []), list) else [],
-        }
-    return payload
-
-
-def _port_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {"name": item.get("name"), "type": item.get("type")}
-
-
-def _render_subgraph_spec(payload: dict[str, Any], *, verbose: bool) -> str:
-    lines = [
-        f"Subgraph {payload['uuid']}",
-        f"source: {payload['source']}",
-        f"name: {payload.get('name') or '<unnamed>'}",
-        f"inputs: {_render_ports(payload.get('inputs', []))}",
-        f"outputs: {_render_ports(payload.get('outputs', []))}",
-        f"inner nodes: {payload['inner_node_count']}",
-        "inner node class types:",
-    ]
-    class_types = payload.get("inner_node_class_types") or {}
-    if isinstance(class_types, dict) and class_types:
-        lines.extend(f"- {name}: {count}" for name, count in class_types.items())
-    else:
-        lines.append("- <none>")
-    if verbose:
-        inner_graph = payload.get("inner_graph") if isinstance(payload.get("inner_graph"), dict) else {}
-        lines.append("inner graph:")
-        lines.append(json.dumps(inner_graph, indent=2, sort_keys=True))
-    return "\n".join(lines)
-
-
-def _render_ports(items: object) -> str:
-    if not isinstance(items, list) or not items:
-        return "<none>"
-    return ", ".join(f"{item.get('name')}:{item.get('type')}" for item in items if isinstance(item, dict))
 
 
 def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
@@ -240,60 +126,6 @@ def _cmd_nodes_install(args: argparse.Namespace) -> int:
     return 0 if result.status in {"installed", "refreshed"} else 1
 
 
-def _cmd_nodes_lookup(args: argparse.Namespace) -> int:
-    query = args.query
-    try:
-        resolution = resolve_pack(query)
-        candidates = list(resolution.candidates) or [resolution.ref]
-        payload = {
-            "query": query,
-            "status": "resolved",
-            "pack": resolution.ref.to_dict(),
-            "candidates": [candidate.to_dict() for candidate in candidates],
-        }
-        return emit(payload, json=args.json, text_renderer=_render_lookup_result)
-    except AmbiguousPackError as exc:
-        payload = {
-            "query": query,
-            "status": "ambiguous",
-            "candidates": [candidate.to_dict() for candidate in exc.candidates],
-        }
-        emit(payload, json=args.json, text_renderer=_render_lookup_result)
-        return 2
-    except PackNotFoundError:
-        candidates = lookup_class_candidates(query)
-        payload = {
-            "query": query,
-            "status": "unresolved" if not candidates else "candidates",
-            "candidates": [candidate.to_dict() for candidate in candidates],
-        }
-        emit(payload, json=args.json, text_renderer=_render_lookup_result)
-        return 1 if not candidates else 0
-
-
-def _render_lookup_result(payload: dict[str, object]) -> str:
-    status = payload.get("status")
-    candidates = payload.get("candidates") or []
-    if status == "resolved":
-        pack = payload.get("pack")
-        slug = pack.get("slug") if isinstance(pack, dict) else "<unknown>"
-        source = pack.get("source") if isinstance(pack, dict) else "<unknown>"
-        return f"{payload['query']}: {slug} ({source})"
-    if status == "ambiguous":
-        lines = [f"ambiguous lookup for {payload['query']}:"]
-    elif status == "candidates":
-        lines = [f"candidate packs for {payload['query']}:"]
-    else:
-        return (
-            f"unknown class: {payload['query']}. "
-            f"Run 'nodes lookup {payload['query']}' to find the providing pack, then 'nodes install <slug>'."
-        )
-    for candidate in candidates:
-        if isinstance(candidate, dict):
-            lines.append(f"- {candidate.get('slug')} ({candidate.get('source')})")
-    return "\n".join(lines)
-
-
 def _cmd_nodes_ensure(args: argparse.Namespace) -> int:
     path = args.template or args.workflow
     schema_provider = get_schema_provider("auto")
@@ -341,24 +173,13 @@ def _cmd_nodes_lock(args: argparse.Namespace) -> int:
         source_sha256 = dict(entry.source_sha256)
         if getattr(args, "with_source_sha256", False) and pack_dir is not None:
             source_sha256 = _source_sha256(pack_dir)
-        class_schema_sha256 = _compute_class_schema_sha256(entry.name)
         locked.append(
             LockEntry(
                 name=entry.name,
                 git_commit_sha=git_commit_sha,
                 url=entry.url,
-                slug=entry.slug,
-                source=entry.source,
-                version=entry.version,
-                commit=git_commit_sha,
-                path=entry.path,
-                schema_hash=class_schema_sha256 or entry.schema_hash,
-                class_set=entry.class_set,
-                last_seen_at=entry.last_seen_at,
-                pip_packages=entry.pip_packages,
                 semantic_label=entry.semantic_label,
                 source_sha256=source_sha256,
-                class_schema_sha256=class_schema_sha256,
             )
         )
     write_lockfile(locked, lockfile_path)
@@ -377,131 +198,6 @@ def _cmd_nodes_restore(args: argparse.Namespace) -> int:
             print(result.error, file=sys.stderr)
         ok = ok and result.status in {"installed", "refreshed"}
     return 0 if ok else 1
-
-
-def _cmd_nodes_refresh_template(args: argparse.Namespace) -> int:
-    result = _refresh_template(Path(args.file), dry_run=args.dry_run, show_diff=args.diff)
-    if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
-    else:
-        _print_refresh_result(result)
-    return 0 if result["status"] in {"updated", "unchanged", "dry-run"} else 1
-
-
-def _cmd_nodes_refresh_corpus(args: argparse.Namespace) -> int:
-    paths = sorted(Path("ready_templates").glob("**/*.py"))
-    results = [_refresh_template(path, dry_run=True if args.dry_run else False, show_diff=args.diff) for path in paths]
-    payload = {"templates": results, "updated": sum(1 for item in results if item["status"] == "updated")}
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        for item in results:
-            _print_refresh_result(item)
-    return 1 if any(item["status"] == "error" for item in results) else 0
-
-
-def _refresh_template(path: Path, *, dry_run: bool, show_diff: bool) -> dict[str, object]:
-    entries = read_lockfile()
-    try:
-        workflow = load_workflow_reference(str(path), schema_provider=get_schema_provider("auto"), allow_scratchpad=True)
-    except Exception as exc:
-        return {"path": str(path), "status": "error", "error": f"{type(exc).__name__}: {exc}"}
-    validation = workflow.validate(schema_provider=get_schema_provider("auto"))
-    if not validation.ok:
-        return {"path": str(path), "status": "error", "error": "local validation failed"}
-    refs, unresolved = _pack_refs_for_workflow(workflow.runtime_class_types(), entries)
-    if unresolved:
-        return {"path": str(path), "status": "error", "error": "unresolved custom node classes", "unresolved": unresolved}
-    original = path.read_text(encoding="utf-8")
-    updated = _replace_requirements_block(original, refs)
-    diff = "".join(difflib.unified_diff(original.splitlines(True), updated.splitlines(True), fromfile=str(path), tofile=str(path)))
-    status = "unchanged" if original == updated else ("dry-run" if dry_run else "updated")
-    if status == "updated":
-        path.write_text(updated, encoding="utf-8")
-    result: dict[str, object] = {
-        "path": str(path),
-        "status": status,
-        "custom_nodes": sorted(ref["slug"] for ref in refs if isinstance(ref.get("slug"), str)),
-        "custom_node_refs": refs,
-    }
-    if show_diff and diff:
-        result["diff"] = diff
-    return result
-
-
-def _pack_refs_for_workflow(class_types: set[str], entries: list[LockEntry]) -> tuple[list[dict[str, object]], list[str]]:
-    refs_by_slug: dict[str, dict[str, object]] = {}
-    unresolved: list[str] = []
-    for class_type in sorted(class_types):
-        matched = [entry for entry in entries if class_type in set(entry.class_set)]
-        if not matched:
-            continue
-        if len(matched) > 1:
-            unresolved.append(class_type)
-            continue
-        ref = lock_entry_to_ref(matched[0])
-        refs_by_slug[str(ref["slug"])] = ref
-    return [refs_by_slug[key] for key in sorted(refs_by_slug)], unresolved
-
-
-def _replace_requirements_block(source: str, refs: list[dict[str, object]]) -> str:
-    custom_nodes = sorted(ref["slug"] for ref in refs if isinstance(ref.get("slug"), str))
-    block = json.dumps({"custom_nodes": custom_nodes, "custom_node_refs": refs}, indent=8, sort_keys=True)
-    indented = "\n".join((" " * 8 + line if index else line) for index, line in enumerate(block.splitlines()))
-    replacement = f"requirements={indented},"
-    if "requirements=" not in source:
-        marker = "READY_METADATA = ReadyMetadata.build("
-        start = source.find(marker)
-        if start == -1:
-            return source
-        insert_at = source.find("\n)", start)
-        if insert_at == -1:
-            return source
-        return source[:insert_at] + f"\n    {replacement}" + source[insert_at:]
-    start = source.find("requirements=")
-    value_start = start + len("requirements=")
-    end = _find_requirement_value_end(source, value_start)
-    if end is None:
-        return source
-    return source[:start] + replacement + source[end:]
-
-
-def _find_requirement_value_end(source: str, value_start: int) -> int | None:
-    depth = 0
-    in_string: str | None = None
-    escape = False
-    for index in range(value_start, len(source)):
-        char = source[index]
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == in_string:
-                in_string = None
-            continue
-        if char in {'"', "'"}:
-            in_string = char
-            continue
-        if char in "([{":
-            depth += 1
-            continue
-        if char in ")]}":
-            if depth == 0:
-                return index
-            depth -= 1
-            continue
-        if char == "," and depth == 0:
-            return index + 1
-    return None
-
-
-def _print_refresh_result(result: dict[str, object]) -> None:
-    print(f"{result['path']}: {result['status']}")
-    if result.get("error"):
-        print(f"  {result['error']}")
-    if result.get("diff"):
-        print(result["diff"])
 
 
 def _installed_nodepack_dir(name: str) -> Path | None:
@@ -532,31 +228,219 @@ def _source_sha256(pack_dir: Path) -> dict[str, str]:
     return hashes
 
 
-def _compute_class_schema_sha256(pack_name: str) -> str | None:
-    """Compute a deterministic SHA256 of the pack's class schema.
+def _cmd_nodes_coverage(args: argparse.Namespace) -> int:
+    """Schema completeness report for a workflow's class types."""
+    schema_provider = get_schema_provider("auto")
+    try:
+        loaded = load_port_source(args.workflow, schema_provider=schema_provider)
+    except Exception as exc:
+        print(f"Failed to load workflow: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    lock_path = Path(args.lockfile) if getattr(args, "lockfile", None) else Path("custom_nodes.lock")
+    coverage = build_workflow_coverage(
+        loaded.workflow,
+        schema_provider=schema_provider,
+        lock_path=lock_path,
+    )
+    if args.json:
+        print(json.dumps(coverage.to_json(), indent=2, sort_keys=True))
+    else:
+        print(_format_coverage(coverage))
+    return 0
 
-    Canonical projection: sorted class names + sorted input keys from object_info.
-    Returns None when object_info is unavailable for any class in the pack.
-    """
+
+def _format_coverage(coverage) -> str:
+    lines = []
+    for entry in coverage.per_class:
+        icon = {"typed_wrapper": "✅ typed wrapper", "raw_call": "⚡ raw_call", "missing_lock": "❌ missing_lock"}.get(
+            entry["coverage"], f"? {entry['coverage']}"
+        )
+        lines.append(f"{entry['class_type']:40s} {entry['pack']:30s} {icon}")
+    lines.append("")
+    lines.append(f"Coverage: {coverage.typed_wrapper}/{coverage.total} ({coverage.to_json()['coverage_pct']}%)")
+    lines.append(f"Falls through to raw_call: {coverage.raw_call}")
+    lines.append(f"Missing from custom_nodes.lock: {coverage.missing_lock}")
+    return "\n".join(lines)
+
+
+def _cmd_nodes_drift(args: argparse.Namespace) -> int:
+    """Schema-drift detector for a custom-node pack."""
+    pack_name: str = args.pack
+    from_ref: str | None = getattr(args, "from_ref", None)
+    to_ref: str | None = getattr(args, "to_ref", None)
+
+    # Resolve pack dir
+    pack_dir = node_packs_install.DEFAULT_INSTALL_ROOT / pack_name
+    if not pack_dir.is_dir():
+        payload = {
+            "status": "unavailable",
+            "pack": pack_name,
+            "message": f"Pack directory not found: {pack_dir}. Install the pack first with `vibecomfy nodes install {pack_name}`.",
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"Pack unavailable: {pack_name}")
+            print(f"  Directory not found: {pack_dir}")
+            print(f"  Install with: vibecomfy nodes install {pack_name}")
+        return 0
+
+    # Check git
+    if not (pack_dir / ".git").is_dir():
+        payload = {
+            "status": "unavailable",
+            "pack": pack_name,
+            "message": f"Pack directory {pack_dir} is not a git repository.",
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"Pack unavailable: {pack_name}")
+            print(f"  {pack_dir} is not a git repository")
+        return 0
+
+    # Resolve refs
+    if from_ref is None:
+        from_ref = "HEAD~1"
+    if to_ref is None:
+        to_ref = "HEAD"
+
+    # Get schema snapshots
+    from_python = _extract_pack_python_api(pack_dir, from_ref)
+    to_python = _extract_pack_python_api(pack_dir, to_ref)
+
+    if from_python is None or to_python is None:
+        payload = {
+            "status": "unavailable",
+            "pack": pack_name,
+            "from_ref": from_ref,
+            "to_ref": to_ref,
+            "message": "Could not extract Python API from one or both refs.",
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"Schema diff unavailable for {pack_name}: {from_ref}..{to_ref}")
+        return 0
+
+    # Diff classes
+    from_classes = _parse_class_defs(from_python)
+    to_classes = _parse_class_defs(to_python)
+
+    added = set(to_classes) - set(from_classes)
+    removed = set(from_classes) - set(to_classes)
+    modified: list[dict[str, Any]] = []
+
+    for cls_name in set(from_classes) & set(to_classes):
+        if from_classes[cls_name] != to_classes[cls_name]:
+            modified.append({
+                "class": cls_name,
+                "from_inputs": from_classes[cls_name],
+                "to_inputs": to_classes[cls_name],
+            })
+
+    # Find affected templates
+    affected_templates: list[str] = []
+    all_modified_classes = {m["class"] for m in modified} | added | removed
+    if all_modified_classes:
+        try:
+            snapshot = build_corpus_snapshot()
+            for tpl in snapshot.templates_list:
+                tpl_path = Path(tpl["path"])
+                if tpl_path.is_file():
+                    source = tpl_path.read_text(encoding="utf-8")
+                    for ct in all_modified_classes:
+                        if f"'{ct}'" in source or f'"{ct}"' in source:
+                            affected_templates.append(tpl["id"])
+                            break
+        except Exception:
+            pass
+
+    payload = {
+        "pack": pack_name,
+        "from_ref": from_ref,
+        "to_ref": to_ref,
+        "added_classes": sorted(added),
+        "removed_classes": sorted(removed),
+        "modified_classes": modified,
+        "affected_templates": sorted(set(affected_templates)),
+    }
+
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"Schema diff: {pack_name} {from_ref}..{to_ref}")
+        print(f"Added classes: {sorted(added) if added else '(none)'}")
+        print(f"Removed classes: {sorted(removed) if removed else '(none)'}")
+        if modified:
+            print("Modified classes:")
+            for m in modified:
+                print(f"  {m['class']}: inputs changed")
+        else:
+            print("Modified classes: (none)")
+        if affected_templates:
+            print(f"\nAffected templates (use modified classes):")
+            for tid in sorted(set(affected_templates)):
+                print(f"  {tid}")
+        else:
+            print("\nAffected templates: (none)")
+    return 0
+
+
+def _extract_pack_python_api(pack_dir: Path, ref: str) -> str | None:
+    """Extract combined Python source from all .py files at a git ref."""
     try:
-        from vibecomfy.node_packs import KNOWN_NODE_PACKS
-    except ImportError:
+        result = subprocess.run(
+            ["git", "-C", str(pack_dir), "ls-tree", "-r", "--name-only", ref],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
         return None
-    pack = next((p for p in KNOWN_NODE_PACKS if p.name == pack_name), None)
-    if pack is None or not pack.classes:
+
+    py_files = [f for f in result.stdout.strip().split("\n") if f.endswith(".py")]
+    if not py_files:
         return None
-    try:
-        from vibecomfy.porting.object_info.consume import get_class
-    except ImportError:
-        return None
-    class_schemas: dict[str, dict] = {}
-    for class_type in sorted(pack.classes):
-        entry = get_class(class_type)
-        if entry is None:
-            # Missing schema — cannot compute a stable hash
-            return None
-        class_schemas[class_type] = entry
-    return compute_schema_hash(class_schemas)
+
+    combined: list[str] = []
+    for py_file in py_files[:50]:  # limit to prevent huge output
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(pack_dir), "show", f"{ref}:{py_file}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            combined.append(r.stdout)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+
+    return "\n".join(combined) if combined else None
+
+
+def _parse_class_defs(source: str) -> dict[str, dict[str, Any]]:
+    """Parse INPUT_TYPES-like class definitions from Python source."""
+    classes: dict[str, dict[str, Any]] = {}
+    # Find class definitions and their INPUT_TYPES
+    class_pattern = re.compile(r"class\s+(\w+)\s*[:\(]")
+    inputs_pattern = re.compile(r"INPUT_TYPES\s*\(\s*\)\s*:\s*\n?\s*return\s*\{[^}]*\}")
+
+    for cls_match in class_pattern.finditer(source):
+        cls_name = cls_match.group(1)
+        # Try to find INPUT_TYPES after the class
+        rest = source[cls_match.end():]
+        next_class = class_pattern.search(rest)
+        section = rest[:next_class.start()] if next_class else rest
+
+        # Extract required inputs
+        required = re.findall(r'"required"\s*:\s*\{([^}]*)\}', section, re.DOTALL)
+        if required:
+            classes[cls_name] = {"has_required_inputs": True}
+        else:
+            classes[cls_name] = {"has_required_inputs": False}
+
+    return classes
 
 
 def register(subparsers) -> None:
@@ -572,22 +456,7 @@ def register(subparsers) -> None:
         "--object-info-cache",
         help="Use a captured ComfyUI /object_info JSON file, for example one fetched from a RunPod runtime.",
     )
-    nodes_spec.add_argument(
-        "--in",
-        dest="source",
-        help="Source workflow JSON to inspect when class_type is a subgraph UUID.",
-    )
-    nodes_spec.add_argument(
-        "--verbose",
-        action="store_true",
-        help="For subgraph UUIDs, include full inner nodes and edges.",
-    )
-    nodes_spec.add_argument("--json", action="store_true", help="Emit JSON output.")
     nodes_spec.set_defaults(func=_cmd_nodes_spec)
-    nodes_lookup = nodes_sub.add_parser("lookup")
-    nodes_lookup.add_argument("query")
-    nodes_lookup.add_argument("--json", action="store_true")
-    nodes_lookup.set_defaults(func=_cmd_nodes_lookup)
     nodes_install = nodes_sub.add_parser("install-plan")
     nodes_install.add_argument("path")
     nodes_install.add_argument("--json", action="store_true")
@@ -610,14 +479,16 @@ def register(subparsers) -> None:
     nodes_restore = nodes_sub.add_parser("restore")
     nodes_restore.add_argument("--lockfile", default="custom_nodes.lock")
     nodes_restore.set_defaults(func=_cmd_nodes_restore)
-    nodes_refresh_template = nodes_sub.add_parser("refresh-template")
-    nodes_refresh_template.add_argument("file")
-    nodes_refresh_template.add_argument("--dry-run", action="store_true")
-    nodes_refresh_template.add_argument("--diff", action="store_true")
-    nodes_refresh_template.add_argument("--json", action="store_true")
-    nodes_refresh_template.set_defaults(func=_cmd_nodes_refresh_template)
-    nodes_refresh_corpus = nodes_sub.add_parser("refresh-corpus")
-    nodes_refresh_corpus.add_argument("--dry-run", action="store_true")
-    nodes_refresh_corpus.add_argument("--diff", action="store_true")
-    nodes_refresh_corpus.add_argument("--json", action="store_true")
-    nodes_refresh_corpus.set_defaults(func=_cmd_nodes_refresh_corpus)
+
+    nodes_coverage = nodes_sub.add_parser("coverage", help="Schema completeness report for a workflow's class types.")
+    nodes_coverage.add_argument("workflow")
+    nodes_coverage.add_argument("--json", action="store_true")
+    nodes_coverage.add_argument("--lockfile", default="custom_nodes.lock", help="Path to custom_nodes.lock")
+    nodes_coverage.set_defaults(func=_cmd_nodes_coverage)
+
+    nodes_drift = nodes_sub.add_parser("drift", help="Schema-drift detector for a custom-node pack.")
+    nodes_drift.add_argument("pack", help="Custom node pack name (e.g. ComfyUI-KJNodes)")
+    nodes_drift.add_argument("--from", dest="from_ref", help="Source git ref (default: HEAD~1)")
+    nodes_drift.add_argument("--to", dest="to_ref", help="Target git ref (default: HEAD)")
+    nodes_drift.add_argument("--json", action="store_true")
+    nodes_drift.set_defaults(func=_cmd_nodes_drift)

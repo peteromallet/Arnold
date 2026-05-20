@@ -8,6 +8,8 @@ import pytest
 
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.commands.nodes import (
+    _cmd_nodes_coverage,
+    _cmd_nodes_drift,
     _cmd_nodes_ensure,
     _cmd_nodes_install,
     _cmd_nodes_install_plan,
@@ -576,3 +578,51 @@ def test_workflows_lens_human_readable(capsys: pytest.CaptureFixture[str]) -> No
     assert code == 0
     assert "video/ltx2_3_lightricks_first_last_parity" in captured
     assert "LTXVAddGuide" in captured
+
+
+# ── nodes coverage ──────────────────────────────────────────────────────
+
+
+def test_nodes_coverage_json_returns_coverage_stats(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_nodes_coverage(
+        argparse.Namespace(workflow="video/wan_i2v", json=True, lockfile=None)
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert "per_class" in payload
+    assert "total" in payload
+    assert "typed_wrapper" in payload
+    assert "raw_call" in payload
+    assert "missing_lock" in payload
+    assert "coverage_pct" in payload
+
+    # Verify each per_class entry has required fields
+    for entry in payload["per_class"]:
+        assert "class_type" in entry
+        assert "pack" in entry
+        assert "coverage" in entry
+
+
+def test_nodes_coverage_text_renders_table(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_nodes_coverage(
+        argparse.Namespace(workflow="video/wan_i2v", json=False, lockfile=None)
+    )
+    text = capsys.readouterr().out
+    assert code == 0
+    assert "Coverage:" in text
+    # Table contains class names and coverage status
+    assert "CLIPLoader" in text or "UNETLoader" in text
+    assert "raw_call" in text or "typed wrapper" in text or "missing_lock" in text
+
+
+# ── nodes drift ─────────────────────────────────────────────────────────
+
+
+def test_nodes_drift_unavailable_pack_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_nodes_drift(
+        argparse.Namespace(pack="NonexistentPackXYZ123", json=True, from_ref=None, to_ref=None)
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["status"] == "unavailable"
+    assert payload["pack"] == "NonexistentPackXYZ123"

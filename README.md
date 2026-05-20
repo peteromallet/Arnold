@@ -25,6 +25,15 @@ That's the whole install. The bundled skill at [`.claude/skills/vibecomfy/SKILL.
 
 ## Porting ComfyUI workflows
 
+If you just want to **run a raw Comfy workflow as-is**, point the embedded runtime at the JSON — no porting required:
+
+```bash
+python -m vibecomfy.cli port check path/to/workflow.json --json   # cheap preflight
+python -m vibecomfy.cli run path/to/workflow.json --runtime embedded
+```
+
+`load_workflow_any("path/to/workflow.json")` does the same from Python. Reach for the porting workbench below when you want editable Python, a checked-in ready template, or RunPod time.
+
 Before manually editing a raw Comfy workflow, converting it into a template, or spending RunPod time, run the porting preflight:
 
 ```bash
@@ -70,11 +79,12 @@ python -m tools.refresh_template_index --check
 python -m vibecomfy.cli validate ready_templates/<kind>/<id>.py
 python -m vibecomfy.cli port check ready_templates/<kind>/<id>.py --strict-ready-template --json
 python -m vibecomfy.cli doctor ready_templates/<kind>/<id>.py --json
+python -m tools.check_strict_ready_templates --json
 ```
 
-The manifest/index tests catch missing ready-template rows, stale `template_index.json`, and manifest entries that point at Python templates that do not exist.
+The manifest/index tests catch missing ready-template rows, stale `template_index.json`, and manifest entries that point at Python templates that do not exist. `tools/check_strict_ready_templates.py` is the repo-wide gate: it walks every protected (`app_active: true` or `coverage_tier: required`) template, runs the strict checks, and reconciles surviving violations against the exception registry.
 
-Required or app-active ready templates must stay on the clean path: public inputs are named and target real built nodes/fields, public outputs are semantically named, hidden model filenames are exposed through public inputs or model metadata, schema-backed `widget_N` aliases are resolved, and opaque UUID subgraphs are either replaced with transparent graph code or covered by an explicit strict-ready exception. Document any remaining non-compliant template as `reference`, `supplemental`, `blocked`, or `scratchpad-only` with an owner and follow-up ticket.
+Required or app-active ready templates must stay on the clean path: public inputs are named and target real built nodes/fields, public outputs are semantically named, hidden model filenames are exposed through public inputs or model metadata, schema-backed `widget_N` aliases are resolved, and opaque UUID subgraphs are either replaced with transparent graph code or covered by an explicit strict-ready exception. Document any remaining non-compliant template as `reference`, `supplemental`, `blocked`, or `scratchpad-only` with an owner and follow-up ticket. Exceptions live in [`docs/strict_ready_exceptions.md`](docs/strict_ready_exceptions.md) and [`docs/strict_ready_exceptions.json`](docs/strict_ready_exceptions.json) — each entry pins a `ready_id` + `violation_code` + `target` and must carry an owner, ticket, expiry, and removal condition.
 
 `doctor` is the local readiness pass for a built workflow. It reports missing
 model assets, node-pack drift, suggested patches, and runtime warnings that
