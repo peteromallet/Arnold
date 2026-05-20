@@ -1,0 +1,57 @@
+{
+  "task_updates": [
+    {
+      "id": "T7",
+      "status": "done",
+      "executor_notes": "Wrote `docs/slot-first-audits/03-stale-callers.md` from fresh inspections of the named debug clients and RLS checker. The audit distinguishes live Supabase service-role clients from static migration parsing, catalogs the required `context.py`, `client.py`, and `check-supabase-rls.mjs` legacy surfaces with line evidence, and assigns concrete M4 actions. Marker verification passed. Full `npm test` was run with this docs-only change and failed in the same broad profile as T6: 9 failed files, 37 failed tests, 929 passed files, 4868 passed tests.",
+      "files_changed": [
+        "docs/slot-first-audits/03-stale-callers.md"
+      ],
+      "commands_run": [
+        "date -u +%Y-%m-%dT%H:%M:%SZ",
+        "nl -ba scripts/debug/commands/context.py | sed -n '1,380p'",
+        "nl -ba scripts/debug/client.py | sed -n '1,470p'",
+        "nl -ba scripts/quality/check-supabase-rls.mjs | sed -n '1,260p'",
+        "rg -n legacy/live-client/static-parser search over scripts/debug and scripts/quality/check-supabase-rls.mjs",
+        "find scripts/debug -maxdepth 3 -type f | sort",
+        "git status --short",
+        "git add -N -f docs/slot-first-audits/03-stale-callers.md",
+        "rg marker verification for live DB clients, static parser, named files, and concrete M4 actions",
+        "git diff -- docs/slot-first-audits/03-stale-callers.md",
+        "npm test",
+        "node JSON validation for execution_batch_8.json"
+      ],
+      "auto_attributed_files": null,
+      "evidence_files": [],
+      "reviewer_verdict": "",
+      "stance": null,
+      "stop_signal": null,
+      "task_id": "T7"
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "executor_note": "Yes. `03-stale-callers.md` explicitly defines live DB clients versus static parsers, marks `context.py` and `client.py` as live Supabase service-role surfaces, marks `check-supabase-rls.mjs` as static migration parsing, and assigns every catalogued row a concrete M4 action.",
+      "verdict": "passed",
+      "sense_check_id": "SC7"
+    }
+  ],
+  "checkpoint": {
+    "path": ".megaplan/plans/slot-first-redesign-milestone-20260519-2026/execution_batch_8.json",
+    "written": true,
+    "validated": true
+  },
+  "deviations": [
+    "Advisory observation mismatch: git status/content hash delta found unclaimed files: .megaplan/plans/slot-first-redesign-milestone-20260519-2026/execution_batch_8.json, docs/slot-first-audits/03-stale-callers.md",
+    "Advisory audit finding: Executor claimed changed files not present in git status: .megaplan/plans/slot-first-redesign-milestone-20260519-2026/execution_batch_1.json",
+    "Advisory audit finding: Git status shows changed files not claimed by any task: .megaplan/plans/slot-first-redesign-milestone-20260519-2026/execution_batch_8.json, .megaplan/schemas/feedback.json, .megaplan/schemas/finalize.json, chain.yaml, chain_state.json",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T8, T9, T10, T11, T14"
+  ]
+}

@@ -9,7 +9,10 @@ import { useState, useCallback } from 'react';
 import { toast } from '@/shared/components/ui/runtime/sonner';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError';
 import { getSupabaseClient as supabase } from '@/integrations/supabase/client';
-import { usePromoteVariantToGeneration } from '@/shared/hooks/variants/usePromoteVariantToGeneration';
+import {
+  isVariantPromotionUnsupportedError,
+  usePromoteVariantToGeneration,
+} from '@/shared/hooks/variants/usePromoteVariantToGeneration';
 import { useAddImageToShot } from '@/shared/hooks/shots';
 
 interface UseVariantPromotionProps {
@@ -52,6 +55,11 @@ export function useVariantPromotion({
       setPromoteSuccess(true);
       setTimeout(() => setPromoteSuccess(false), 2000);
     } catch (error) {
+      if (isVariantPromotionUnsupportedError(error)) {
+        toast.error(error.message);
+        return;
+      }
+
       normalizeAndPresentError(error, { context: 'useVariantPromotion', showToast: true });
     }
   }, [promoteVariantMutation, selectedProjectId]);
@@ -127,6 +135,11 @@ export function useVariantPromotion({
       });
       return true;
     } catch (error) {
+      if (isVariantPromotionUnsupportedError(error)) {
+        toast.error(error.message);
+        return false;
+      }
+
       normalizeAndPresentError(error, { context: 'useVariantPromotion', showToast: true });
       return false;
     }

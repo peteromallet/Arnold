@@ -1,0 +1,30 @@
+name: Slot-first Quality
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/slot-first-quality.yml"
+      - "Makefile"
+      - "package.json"
+      - "package-lock.json"
+      - "playwright.config.ts"
+      - "docs/slot-first-audits/**"
+      - "docs/slot-first-id-glossary.md"
+      - "scripts/quality/**"
+      - "src/**"
+      - "supabase/**"
+      - "tests/e2e/**"
+
+jobs:
+  slot-first-audit:
+    name: Slot-first audit-mode checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.0"
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npx playwright install chromium
+      - run: make slot-first-audit

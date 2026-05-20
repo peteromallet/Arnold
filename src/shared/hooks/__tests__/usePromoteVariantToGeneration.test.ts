@@ -45,54 +45,16 @@ describe('usePromoteVariantToGeneration', () => {
     expect(result.current.isPending).toBe(false);
   });
 
-  it('promotes an image variant', async () => {
-    mockVariantSingle.mockResolvedValue({
-      data: {
-        id: 'v-1',
-        generation_id: 'gen-1',
-        location: 'image.jpg',
-        thumbnail_url: 'thumb.jpg',
-        params: { tool_type: 'edit-images' },
-      },
-      error: null,
-    });
-
-    mockInsertSingle.mockResolvedValue({
-      data: {
-        id: 'new-gen-1',
-        location: 'image.jpg',
-        thumbnail_url: 'thumb.jpg',
-        type: 'image',
-        project_id: 'proj-1',
-        based_on: 'gen-1',
-        params: {},
-      },
-      error: null,
-    });
-
+  it('fails closed before fetching variants or inserting generations', async () => {
     const { result } = renderHookWithProviders(() => usePromoteVariantToGeneration());
 
-    let promoted: unknown;
     await act(async () => {
-      promoted = await result.current.mutateAsync({
-        variantId: 'v-1',
-        projectId: 'proj-1',
-      });
+      await expect(
+        result.current.mutateAsync({ variantId: 'v-1', projectId: 'proj-1' })
+      ).rejects.toThrow('Creating a standalone generation from a variant is disabled');
     });
 
-    expect((promoted as { id: string }).id).toBe('new-gen-1');
-  });
-
-  it('throws when variant not found', async () => {
-    mockVariantSingle.mockResolvedValue({
-      data: null,
-      error: { message: 'Not found' },
-    });
-
-    const { result } = renderHookWithProviders(() => usePromoteVariantToGeneration());
-
-    await expect(
-      result.current.mutateAsync({ variantId: 'bad-id', projectId: 'proj-1' })
-    ).rejects.toThrow('Failed to fetch variant');
+    expect(mockVariantSingle).not.toHaveBeenCalled();
+    expect(mockInsertSingle).not.toHaveBeenCalled();
   });
 });

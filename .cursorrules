@@ -18,6 +18,13 @@
 - Migrations: `npx supabase db push --linked` (**never** `db reset --linked`)
 - SQL for editor: wrap results in `SELECT json_agg(results) FROM (...) results;`
 
+## Engineering policies (read once, apply always)
+- **Constraints over comments.** Invariants belong in the database (CHECK, partial UNIQUE, trigger), not in code comments. If you find yourself writing "should be unique but isn't" or "duplicates are expected", make the constraint instead.
+- **Burn down on the same PR.** Adding a replacement requires deleting its predecessor in the same PR. Disabling a trigger without removing its callers, or adding a new column without dropping the column it replaces, is not done.
+- **Migrations live where prod runs.** Any DDL applied to prod must have a tracked migration in git. The schema-drift CI gate enforces this; the policy says it out loud.
+- **Typed contracts at service boundaries.** Cross-service / cross-repo payloads (worker↔edge, edge↔agent) require a shared schema (Zod). String-keyed JSON payloads silently drift.
+- **Allowlists shrink, never grow.** `eslint.shared-layer-allowlist.js`, `eslint.strict-debt.js`, `.megaplan/debt.json` entries are known violations. Net additions require an exception note in the PR.
+
 ## UI conventions
 - Toasts: **errors only** (no “success” toasts for task creation).
 - Don’t create new `*.md` unless explicitly requested.

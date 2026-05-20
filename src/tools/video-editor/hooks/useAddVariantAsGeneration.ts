@@ -1,7 +1,10 @@
 import { useCallback, useState } from 'react';
 import { normalizeAndPresentError } from '@/shared/lib/errorHandling/runtimeError.ts';
 import { hasVideoExtension } from '@/shared/lib/typeGuards.ts';
-import { usePromoteVariantToGeneration } from '@/shared/hooks/variants/usePromoteVariantToGeneration.ts';
+import {
+  isVariantPromotionUnsupportedError,
+  usePromoteVariantToGeneration,
+} from '@/shared/hooks/variants/usePromoteVariantToGeneration.ts';
 import { loadPrimaryVariantForGeneration } from '@/tools/video-editor/adapters/reigh/variantPromotionLookup.ts';
 import type { GenerationVariant } from '@/shared/hooks/variants/useVariants.ts';
 import { useVideoEditorRuntime } from '@/tools/video-editor/contexts/DataProviderContext.tsx';
@@ -63,14 +66,14 @@ export function useAddVariantAsGeneration(): UseAddVariantAsGenerationResult {
         projectId: selectedProjectId,
       });
 
-      // The DB trigger trg_auto_create_variant_after_generation creates the new
-      // generation's primary variant synchronously — fetch it so we can bind the
-      // asset to a real variant id (not the source's).
       const primaryRow = await loadPrimaryVariantForGeneration(promoted.id);
+      if (!primaryRow) {
+        throw new Error('Promoted generation is missing a primary variant.');
+      }
 
-      const newVariantId = primaryRow?.id ?? variant.id;
-      const newLocation = primaryRow?.location ?? promoted.location ?? variant.location;
-      const newThumb = primaryRow?.thumbnail_url ?? promoted.thumbnail_url ?? variant.thumbnail_url ?? null;
+      const newVariantId = primaryRow.id;
+      const newLocation = primaryRow.location ?? promoted.location ?? variant.location;
+      const newThumb = primaryRow.thumbnail_url ?? promoted.thumbnail_url ?? variant.thumbnail_url ?? null;
 
       const isVideo = hasVideoExtension(newLocation);
       const variantType: 'image' | 'video' = isVideo ? 'video' : 'image';
@@ -106,6 +109,11 @@ export function useAddVariantAsGeneration(): UseAddVariantAsGenerationResult {
         runtime.toast.error('Failed to save asset');
       });
     } catch (error) {
+      if (isVariantPromotionUnsupportedError(error)) {
+        runtime.toast.error(error.message);
+        return;
+      }
+
       normalizeAndPresentError(error, {
         context: 'video-editor:add-variant-as-generation',
         toastTitle: 'Failed to add variant as generation',
