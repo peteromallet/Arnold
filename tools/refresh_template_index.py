@@ -152,6 +152,14 @@ def _ready_template_metadata(path: Path) -> tuple[dict[str, Any], dict[str, Any]
             assignments[target.id] = _literal_value(node.value, assignments)
     metadata = assignments.get("READY_METADATA")
     requirements = assignments.get("READY_REQUIREMENTS")
+    if isinstance(metadata, dict):
+        from vibecomfy.registry.static_contract import _metadata_with_static_derivations
+
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError:
+            source = ""
+        metadata = _metadata_with_static_derivations(metadata, path, source)
 
     # If READY_METADATA was built via ReadyMetadata.build(...), extract
     # requirements from within it.

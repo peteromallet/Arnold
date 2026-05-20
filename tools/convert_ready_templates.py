@@ -102,11 +102,12 @@ def _classify_shape(path: Path) -> tuple[str, str]:
     if "vibecomfy: manual" in first_line:
         return ("manual", "manual marker on first line")
     if "vibecomfy: generated" in first_line:
-        return ("converted", "previously generated")
+        return ("authored", "previously generated; eligible for v2.5 re-port")
     if has_nodes:
         return ("authored", "")
-    # Neither symbol — treat as already-converted (no overwrite).
-    return ("converted", "no API_WORKFLOW or NODES; treating as already-converted")
+    # Neither symbol: v2.4/v2.5 ready templates are normal Python modules and
+    # remain eligible for re-porting through the build/compile path.
+    return ("authored", "no API_WORKFLOW or NODES; using build/compile re-port path")
 
 
 def _load_override(path: Path) -> dict | None:
@@ -168,9 +169,24 @@ def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
         from tools.format_as_python import _build_workflow_for, format_as_python
         wf, metadata, requirements, tid, reg_inputs = _build_workflow_for(path)
     except Exception as exc:
-        row.build = "fail"
-        row.note = f"parse_for_emit_failed: {type(exc).__name__}: {exc}"
-        return (row, None, original_api)
+        if shape != "authored":
+            row.build = "fail"
+            row.note = f"parse_for_emit_failed: {type(exc).__name__}: {exc}"
+            return (row, None, original_api)
+        wf = original_workflow
+        metadata = dict(getattr(original_workflow, "metadata", {}) or {})
+        metadata.setdefault("ready_template", template_id)
+        metadata.setdefault("capability", metadata.get("task") or "unknown")
+        req_obj = getattr(original_workflow, "requirements", None)
+        requirements = {
+            "models": list(getattr(req_obj, "models", []) or []),
+            "custom_nodes": list(getattr(req_obj, "custom_nodes", []) or []),
+        }
+        tid = template_id
+        reg_inputs = {
+            name: (str(descriptor.node_id), descriptor.field)
+            for name, descriptor in getattr(original_workflow, "inputs", {}).items()
+        }
 
     # Apply override if present.
     override = _load_override(path)

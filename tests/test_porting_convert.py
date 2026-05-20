@@ -16,6 +16,7 @@ from vibecomfy.porting.convert import (
     port_convert_workflow,
 )
 from vibecomfy.porting.strict_ready import STRICT_READY_MISSING_OUTPUT_CONTRACT
+from vibecomfy.porting.emitter import emit_ready_template_python
 from vibecomfy.node_packs_lockfile import LockEntry
 # parity helpers exercised indirectly through port_convert_workflow
 from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
@@ -44,6 +45,59 @@ def _sample_workflow(*, include_required_input: bool = True) -> VibeWorkflow:
     ]
     workflow.requirements.custom_nodes.append("ComfyUI-TestPack")
     return workflow
+
+
+def test_ready_template_emitter_uses_typed_wrappers_and_strips_schema_defaults() -> None:
+    workflow = VibeWorkflow(
+        "typed",
+        WorkflowSource("source/typed", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "UNETLoader",
+        inputs={"unet_name": "model.safetensors", "weight_dtype": "default"},
+    )
+    workflow.nodes["1"].metadata["output_names"] = ["MODEL"]
+    workflow.nodes["2"] = VibeNode(
+        "2",
+        "SaveImage",
+        inputs={"filename_prefix": "out/typed"},
+    )
+
+    source = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/typed", "capability": "text_to_image"},
+        ready_requirements={},
+        template_id="image/typed",
+    )
+
+    assert "from vibecomfy.nodes.core import SaveImage, UNETLoader" in source
+    assert "UNETLoader(wf," in source
+    assert "source_id='1'" not in source
+    assert "weight_dtype='default'" not in source
+    assert "bind_output(wf, saveimage.node.id" in source
+
+
+def test_ready_template_emitter_preserves_kept_schema_default() -> None:
+    workflow = VibeWorkflow(
+        "typed",
+        WorkflowSource("source/typed", path="workflow_corpus/source.json", source_type="raw_json"),
+    )
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "UNETLoader",
+        inputs={"unet_name": "model.safetensors", "weight_dtype": "default"},
+    )
+    workflow.nodes["1"].metadata["keep_defaults"] = ["weight_dtype"]
+
+    source = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/typed", "capability": "text_to_image"},
+        ready_requirements={},
+        template_id="image/typed",
+    )
+
+    assert "weight_dtype='default'" in source
 
 
 def _provider() -> FakeSchemaProvider:

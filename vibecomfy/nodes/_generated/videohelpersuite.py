@@ -888,10 +888,10 @@ def VHS_VideoCombine(
     wf: VibeWorkflow,
     *,
     images: Any,
-    format: Any,
     frame_rate: Any = 8,
     loop_count: Any = 0,
     filename_prefix: Any = 'AnimateDiff',
+    format: Any = 'auto',
     pingpong: Any = False,
     save_output: Any = True,
     audio: Any = _UNSET,
@@ -908,10 +908,10 @@ def VHS_VideoCombine(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs['images'] = images
-    _kwargs['format'] = format
     _kwargs['frame_rate'] = frame_rate
     _kwargs['loop_count'] = loop_count
     _kwargs['filename_prefix'] = filename_prefix
+    _kwargs['format'] = format
     _kwargs['pingpong'] = pingpong
     _kwargs['save_output'] = save_output
     if audio is not _UNSET:

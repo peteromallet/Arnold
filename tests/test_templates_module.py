@@ -684,6 +684,30 @@ def test_node_coerces_inputspec_and_modelasset_values() -> None:
     assert text.node.inputs["text"] == "a clean prompt"
 
 
+def test_inputspec_type_and_modelasset_filename_are_derivable() -> None:
+    wf = _workflow()
+    loader = node(wf, "UNETLoader", "1", unet_name="model.safetensors", weight_dtype="default")
+    spec = InputSpec("1", "unet_name", "model.safetensors")
+    model = ModelAsset(url="https://example.test/path/model.safetensors?download=1", subdir="diffusion_models")
+
+    spec.register(wf, "model")
+
+    assert wf.inputs["model"].node_id == loader.node.id
+    assert wf.inputs["model"].type == "ENUM"
+    assert model.filename == "model.safetensors"
+
+
+def test_ready_metadata_build_minimal_derives_traceability_fields() -> None:
+    metadata = ReadyMetadata.build(capability="image_to_video")
+
+    assert metadata["capability"] == "image_to_video"
+    assert metadata["ready_template"] == "test_templates_module"
+    assert metadata["workflow_template"] == "test_templates_module"
+    assert metadata["output_prefix"] == "test_templates_module"
+    assert metadata["vibecomfy_version"]
+    assert isinstance(metadata["comfy_core"], dict)
+
+
 def test_node_rejects_inputspec_for_filename_kwargs_unless_pass_raw() -> None:
     wf = _workflow()
     spec = InputSpec("model_node", "unet_name", "model.safetensors", "STRING")

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import ast
+import importlib
+import json
 import keyword
 import pprint
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from vibecomfy.porting.widget_aliases import resolve_widget_name
+from vibecomfy.porting.object_info import class_defaults
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 
 # -- readability warning codes ------------------------------------------------
@@ -74,12 +77,89 @@ GENERATED_HEADER = (
 )
 
 UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset({"Note", "MarkdownNote"})
+FALLBACK_CLASS_TYPES: frozenset[str] = frozenset({
+    "SetNode",
+    "GetNode",
+    "Note",
+    "MarkdownNote",
+    "Reroute",
+    "PrimitiveNode",
+})
+RESERVED_WRAPPER_INPUT_NAMES: frozenset[str] = frozenset({"class", "from", "type"})
+
+_WRAPPER_MODULES: tuple[str, ...] = (
+    "core",
+    "kjnodes",
+    "ltxvideo",
+    "videohelpersuite",
+    "controlnet_aux",
+    "depthanythingv2",
+    "wanvideowrapper",
+    "qwentts",
+    "qwen3tts",
+    "gguf",
+    "rgthree",
+    "sam2",
+    "wananimatepreprocess",
+)
+
+_CURATED_SCHEMA_DEFAULTS: dict[str, dict[str, Any]] = {
+    "UNETLoader": {"weight_dtype": "default"},
+    "CLIPLoader": {"device": "default"},
+    "VAELoader": {},
+    "KSampler": {"scheduler": "simple", "denoise": 1},
+    "KSamplerAdvanced": {"scheduler": "simple"},
+    "EmptyLatentImage": {"batch_size": 1},
+    "EmptySD3LatentImage": {"batch_size": 1},
+    "EmptyFlux2LatentImage": {"batch_size": 1},
+    "ImageScale": {"crop": "none"},
+    "ImageResizeKJv2": {"crop": "none"},
+    "VHS_VideoCombine": {"format": "auto", "codec": "auto"},
+    "WanVideoSampler": {"shift": 8},
+}
 
 LTX2_3_TAIL_PATCHES: tuple[str, ...] = (
     "from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram",
     "from vibecomfy.patches.requirements import ensure_custom_nodes",
     "from vibecomfy.patches.resolution import resolution",
 )
+
+
+_WRAPPER_CLASS_TO_MODULE: dict[str, str] | None = None
+
+
+def _wrapper_class_to_module() -> dict[str, str]:
+    global _WRAPPER_CLASS_TO_MODULE
+    if _WRAPPER_CLASS_TO_MODULE is not None:
+        return _WRAPPER_CLASS_TO_MODULE
+    mapping: dict[str, str] = {}
+    for module_name in _WRAPPER_MODULES:
+        try:
+            module = importlib.import_module(f"vibecomfy.nodes._generated.{module_name}")
+        except ImportError:
+            continue
+        exported = getattr(module, "__all__", ())
+        for name in exported:
+            if isinstance(name, str):
+                mapping.setdefault(name, module_name)
+    _WRAPPER_CLASS_TO_MODULE = mapping
+    return mapping
+
+
+def _wrapper_module_for_class(class_type: str) -> str | None:
+    if class_type in FALLBACK_CLASS_TYPES or class_type in UI_ONLY_CLASS_TYPES:
+        return None
+    return _wrapper_class_to_module().get(class_type)
+
+
+def _wrapper_imports_for_nodes(workflow_nodes: dict[str, Any]) -> dict[str, list[str]]:
+    imports: dict[str, set[str]] = {}
+    for node in workflow_nodes.values():
+        class_type = str(getattr(node, "class_type", ""))
+        module_name = _wrapper_module_for_class(class_type)
+        if module_name is not None:
+            imports.setdefault(module_name, set()).add(class_type)
+    return {module: sorted(names) for module, names in imports.items()}
 
 # -- node role classification for section comments ---------------------------
 
@@ -459,6 +539,7 @@ def emit_ready_template_python(
     # Hoist constants and build section groups
     constant_lines, constant_map = _hoist_constants(workflow_nodes, edges_in, var_names)
     section_groups = _build_section_groups(workflow_nodes, edges_in)
+    wrapper_imports = _wrapper_imports_for_nodes(workflow_nodes)
 
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
@@ -472,6 +553,8 @@ def emit_ready_template_python(
     out_lines.append("    bind_input,")
     out_lines.append("    bind_output,")
     out_lines.append(")")
+    for module_name, names in sorted(wrapper_imports.items()):
+        out_lines.append(f"from vibecomfy.nodes.{module_name} import {', '.join(names)}")
     if has_ltx_tail:
         out_lines.extend(LTX2_3_TAIL_PATCHES)
     out_lines.append("")
@@ -815,15 +898,19 @@ def _emit_build_function(
             out_lines.append(f"    # {section}")
             last_section = section
 
+        wrapper_module = _wrapper_module_for_class(str(node.class_type)) if use_shared_helpers else None
         kwargs = _node_kwargs(
             node, edges_in, var_names,
             workflow_nodes=workflow_nodes,
             diagnostics=diagnostics,
             constant_map=constant_map,
             use_ui_widget_aliases=use_shared_helpers,
+            strip_schema_defaults=use_shared_helpers,
+            emit_reserved_keyword_args=wrapper_module is not None,
         )
 
         if use_shared_helpers:
+            use_wrapper = wrapper_module is not None
             # Map _outputs -> outputs=, _extras -> extras= for ready_node
             ready_kwargs: list[tuple[str, str]] = []
             outputs_expr: str | None = None
@@ -836,17 +923,29 @@ def _emit_build_function(
                 else:
                     ready_kwargs.append((key, expr))
 
-            # Build the ready_node call
-            all_args: list[tuple[str, str]] = [("source_id", repr(nid))]
-            if outputs_expr is not None:
-                all_args.append(("outputs", outputs_expr))
-            all_args.extend(ready_kwargs)
-            if extras_expr is not None:
-                all_args.append(("extras", extras_expr))
+            if use_wrapper:
+                all_args = [(_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs]
+                if extras_expr is not None:
+                    all_args.append(("**", extras_expr))
+                call_name = str(node.class_type)
+            else:
+                # Build the ready_node call
+                all_args = [("source_id", repr(nid))]
+                if outputs_expr is not None:
+                    all_args.append(("outputs", outputs_expr))
+                all_args.extend(ready_kwargs)
+                if extras_expr is not None:
+                    all_args.append(("extras", extras_expr))
+                call_name = "ready_node"
 
             # Multi-line formatting: use multi-line when >3 kwargs or any line would exceed ~88 chars
-            kwarg_lines = [f"{key}={expr}" for key, expr in all_args]
-            single_line = f"    {var} = ready_node(wf, {node.class_type!r}, {', '.join(kwarg_lines)})"
+            kwarg_lines = [f"**{expr}" if key == "**" else f"{key}={expr}" for key, expr in all_args]
+            if use_wrapper:
+                call_args = ", ".join(["wf", *kwarg_lines])
+                single_line = f"    {var} = {call_name}({call_args})"
+            else:
+                call_args = ", ".join([repr(node.class_type), *kwarg_lines])
+                single_line = f"    {var} = ready_node(wf, {call_args})"
 
             # -- readability diagnostic: long one-line node call ----------
             if diagnostics is not None and len(single_line) > 120:
@@ -865,9 +964,16 @@ def _emit_build_function(
                 )
 
             if len(all_args) > 3 or len(single_line) > 88:
-                lines: list[str] = [f"    {var} = ready_node(wf, {node.class_type!r},"]
+                if use_wrapper:
+                    lines = [f"    {var} = {call_name}("]
+                    lines.append("        wf,")
+                else:
+                    lines = [f"    {var} = ready_node(wf, {node.class_type!r},"]
                 for key, expr in all_args:
-                    lines.append(f"        {key}={expr},")
+                    if key == "**":
+                        lines.append(f"        **{expr},")
+                    else:
+                        lines.append(f"        {key}={expr},")
                 lines.append("    )")
                 out_lines.extend(lines)
             else:
@@ -886,8 +992,9 @@ def _emit_build_function(
     out_lines.extend(tail_lines)
     if use_shared_helpers:
         for binding in _infer_public_input_bindings(workflow_nodes, edges_in):
+            node_expr = _node_binding_expr(binding.node_id, var_names)
             parts = [
-                f"    bind_input(wf, {binding.name!r}, {binding.node_id!r}, {binding.field!r}",
+                f"    bind_input(wf, {binding.name!r}, {node_expr}, {binding.field!r}",
             ]
             if binding.type is not None:
                 parts.append(f"type={binding.type!r}")
@@ -917,7 +1024,7 @@ def _emit_build_function(
                     descriptor_kwargs.append(f"default={_format_value(node.widgets[resolved_field])}")
             if use_shared_helpers:
                 suffix = ", " + ", ".join(descriptor_kwargs) if descriptor_kwargs else ""
-                out_lines.append(f"    bind_input(wf, {input_name!r}, {old_id!r}, {resolved_field!r}{suffix})")
+                out_lines.append(f"    bind_input(wf, {input_name!r}, {_node_binding_expr(old_id, var_names)}, {resolved_field!r}{suffix})")
             else:
                 suffix = ", " + ", ".join(descriptor_kwargs) if descriptor_kwargs else ""
                 out_lines.append(
@@ -951,7 +1058,7 @@ def _emit_build_function(
             if isinstance(output_names, (list, tuple)) and len(output_names) > 0 and output_names[0]:
                 out_name = output_names[0]
 
-            parts: list[str] = [f"    bind_output(wf, {nid!r}"]
+            parts: list[str] = [f"    bind_output(wf, {_node_binding_expr(nid, var_names)}"]
             parts.append(f"output_type={node.class_type!r}")
             parts.append(f"name={out_name!r}")
             parts.append(f"artifact_kind={artifact_kind!r}")
@@ -976,6 +1083,19 @@ def _ready_template_tail_lines(has_ltx_tail: bool) -> list[str]:
     return [
         "    finalize_ready_template(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
     ]
+
+
+def _node_binding_expr(node_id: str, var_names: dict[str, str]) -> str:
+    var = var_names.get(str(node_id))
+    if var is not None and _wrapper_module_for_class(var.split("_", 1)[0]) is not None:
+        return f"{var}.node.id"
+    if var is not None:
+        return f"{var}.node.id"
+    return repr(str(node_id))
+
+
+def _wrapper_kwarg_name(name: str) -> str:
+    return f"{name}_" if name in RESERVED_WRAPPER_INPUT_NAMES or keyword.iskeyword(name) else name
 
 
 def _check_template_formatting(
@@ -1135,6 +1255,18 @@ def _format_value(value: Any) -> str:
     return repr(value)
 
 
+def _is_schema_default(class_type: str, key: str, value: Any, node_metadata: Mapping[str, Any] | dict[str, Any]) -> bool:
+    keep = node_metadata.get("keep_defaults") or node_metadata.get("keep_kwargs") or ()
+    if key in set(str(item) for item in keep):
+        return False
+    defaults = dict(_CURATED_SCHEMA_DEFAULTS.get(class_type, {}))
+    try:
+        defaults.update(class_defaults(class_type))
+    except Exception:
+        pass
+    return key in defaults and value == defaults[key]
+
+
 def _compute_variable_names(workflow_nodes: dict[str, Any], edges: list[Any]) -> dict[str, str]:
     edges_out: dict[str, list[tuple[str, str]]] = {}
     for edge in edges:
@@ -1163,6 +1295,8 @@ def _node_kwargs(
     diagnostics: list[EmissionDiagnostic] | None = None,
     constant_map: dict[tuple[str, str], str] | None = None,
     use_ui_widget_aliases: bool = False,
+    strip_schema_defaults: bool = False,
+    emit_reserved_keyword_args: bool = False,
 ) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
@@ -1252,7 +1386,9 @@ def _node_kwargs(
     for key in ordered_static_keys:
         if key in incoming:
             continue
-        if not _is_python_ident(key):
+        if strip_schema_defaults and _is_schema_default(cls, key, static_inputs[key], node_metadata):
+            continue
+        if not _is_python_ident(key) and not (emit_reserved_keyword_args and key in RESERVED_WRAPPER_INPUT_NAMES):
             extras.append((key, _format_static_value(key, static_inputs[key])))
             continue
         out.append((key, _format_static_value(key, static_inputs[key])))
@@ -1279,7 +1415,7 @@ def _node_kwargs(
                     )
         else:
             expr = f"[{from_node_str!r}, {from_slot}]"
-        if not _is_python_ident(to_input):
+        if not _is_python_ident(to_input) and not (emit_reserved_keyword_args and to_input in RESERVED_WRAPPER_INPUT_NAMES):
             extras.append((to_input, expr))
             continue
         out.append((to_input, expr))

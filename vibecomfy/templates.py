@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import warnings
+import json
+import re
+import tomllib
 from dataclasses import dataclass
 import inspect
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from vibecomfy.handles import Handle
 from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output, ready_node, ready_workflow
@@ -235,7 +239,7 @@ class InputSpec:
     node: str | SymbolicNodeRef | Any
     field: str
     default: Any
-    type: str
+    type: str | None = None
     required: bool = False
     aliases: tuple[str, ...] = ()
     description: str | None = None
@@ -258,12 +262,13 @@ class InputSpec:
                 f"InputSpec.register({name!r}): field {self.field!r} not found in "
                 f"node {node_id!r} ({node.class_type}) inputs or widgets"
             )
+        input_type = self.type or _derive_input_type(node.class_type, self.field)
         wf.register_input(
             name,
             node_id,
             self.field,
             value,
-            type=self.type,
+            type=input_type,
             default=self.default,
             required=self.required,
             aliases=self.aliases,
@@ -277,7 +282,7 @@ class InputSpec:
                 node_id=node_id,
                 field=self.field,
                 value=value,
-                type=self.type,
+                type=input_type,
                 default=self.default,
                 required=self.required,
                 aliases=(),
@@ -293,7 +298,15 @@ class InputSpec:
         return node_id
 
 
-@dataclass(frozen=True)
+def _derive_input_type(class_type: str, field: str) -> str | None:
+    try:
+        from vibecomfy.porting.object_info import class_input_types
+    except ImportError:
+        return None
+    return class_input_types(class_type).get(field)
+
+
+@dataclass(frozen=True, init=False)
 class ModelAsset:
     filename: str
     url: str
@@ -303,29 +316,60 @@ class ModelAsset:
     hf_revision: str | None = None
     size_bytes: int | None = None
 
+    def __init__(
+        self,
+        filename: str | None = None,
+        url: str | None = None,
+        subdir: str | None = None,
+        *,
+        target_path: str | None = None,
+        sha256: str | None = None,
+        hf_revision: str | None = None,
+        size_bytes: int | None = None,
+    ) -> None:
+        if url is None or subdir is None:
+            raise TypeError("ModelAsset requires url=... and subdir=...")
+        derived_filename = filename or Path(urlsplit(url).path).name
+        if not derived_filename:
+            raise ValueError("ModelAsset filename could not be derived from url")
+        object.__setattr__(self, "filename", derived_filename)
+        object.__setattr__(self, "url", url)
+        object.__setattr__(self, "subdir", subdir)
+        object.__setattr__(self, "target_path", target_path)
+        object.__setattr__(self, "sha256", sha256)
+        object.__setattr__(self, "hf_revision", hf_revision)
+        object.__setattr__(self, "size_bytes", size_bytes)
+
 
 class ReadyMetadata:
     @classmethod
     def build(
         cls,
         *,
-        template_id: str,
         capability: str,
-        inputs: dict[str, InputSpec],
-        models: dict[str, ModelAsset],
-        output_prefix: str,
+        template_id: str | None = None,
+        inputs: dict[str, InputSpec] | None = None,
+        models: dict[str, ModelAsset] | None = None,
+        output_prefix: str | None = None,
         edit_guide_extra: str | None = None,
         requirements: Mapping[str, Any] | None = None,
         **extras: Any,
     ) -> dict[str, Any]:
+        source_path = _caller_source_path()
+        template_id = _derive_template_id(template_id, source_path)
+        qualified_template_id = _category_qualified_template_id(template_id, str(source_path) if source_path else None)
+        inputs = dict(inputs or {})
+        models = dict(models or {})
+        output_prefix = output_prefix or qualified_template_id
+        coverage_row = _coverage_manifest_row(qualified_template_id)
         model_assets = [
             _model_asset_metadata(model)
             for model in models.values()
         ]
         derived_requirements = _requirements_with_models(requirements, model_assets)
         metadata: dict[str, Any] = {
-            "ready_template": template_id,
-            "workflow_template": template_id.rsplit("/", 1)[-1],
+            "ready_template": qualified_template_id,
+            "workflow_template": qualified_template_id.rsplit("/", 1)[-1],
             "capability": capability,
             "output_prefix": output_prefix,
             "unbound_inputs": {
@@ -336,7 +380,20 @@ class ReadyMetadata:
             "edit_guide": _derive_edit_guide(inputs, edit_guide_extra),
             "requirements": derived_requirements,
         }
+        if "coverage_tier" not in extras and isinstance(coverage_row.get("coverage_tier"), str):
+            metadata["coverage_tier"] = coverage_row["coverage_tier"]
+        source_workflow = _derive_source_workflow(extras, coverage_row, source_path)
+        if source_workflow:
+            metadata["source_workflow"] = source_workflow
+        metadata["vibecomfy_version"] = extras.pop("vibecomfy_version", None) or _project_version()
+        metadata["comfy_core"] = extras.pop("comfy_core", None) or _comfy_core_metadata()
         provenance = extras.get("provenance")
+        if not isinstance(provenance, Mapping) and source_workflow:
+            provenance = {"source_workflow": source_workflow}
+            extras["provenance"] = provenance
+        elif isinstance(provenance, Mapping) and source_workflow and "source_workflow" not in provenance:
+            provenance = {**dict(provenance), "source_workflow": source_workflow}
+            extras["provenance"] = provenance
         if isinstance(provenance, Mapping):
             metadata.update({
                 key: value
@@ -596,6 +653,119 @@ def _model_asset_metadata(model: ModelAsset) -> dict[str, str]:
     if model.size_bytes is not None:
         data["size_bytes"] = model.size_bytes
     return data
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _caller_source_path() -> Path | None:
+    this_file = Path(__file__).resolve()
+    frame = inspect.currentframe()
+    try:
+        cursor = frame.f_back if frame is not None else None
+        while cursor is not None:
+            filename = cursor.f_code.co_filename
+            if filename and filename not in {"<string>", "<stdin>"}:
+                path = Path(filename).resolve()
+                if path != this_file:
+                    return path
+            cursor = cursor.f_back
+        return None
+    finally:
+        del frame
+
+
+def _derive_template_id(template_id: str | None, source_path: Path | None) -> str:
+    if template_id:
+        return template_id
+    if source_path is not None:
+        try:
+            return source_path.resolve().relative_to(_repo_root() / "ready_templates").with_suffix("").as_posix()
+        except ValueError:
+            return source_path.stem
+    return "ready_template"
+
+
+def _coverage_manifest_row(template_id: str) -> dict[str, Any]:
+    path = _repo_root() / "workflow_corpus" / "manifests" / "coverage.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    rows = data.get("workflows") if isinstance(data, Mapping) else None
+    if not isinstance(rows, list):
+        rows = data if isinstance(data, list) else []
+    short_id = template_id.rsplit("/", 1)[-1]
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        candidates = {
+            str(row.get("ready_template") or ""),
+            str(row.get("template_id") or ""),
+            str(row.get("id") or ""),
+        }
+        media = row.get("media")
+        row_id = row.get("id")
+        if isinstance(media, str) and isinstance(row_id, str):
+            candidates.add(f"{media}/{row_id}")
+        if template_id in candidates or short_id in candidates:
+            return dict(row)
+    return {}
+
+
+def _derive_source_workflow(
+    extras: Mapping[str, Any],
+    coverage_row: Mapping[str, Any],
+    source_path: Path | None,
+) -> str | None:
+    provenance = extras.get("provenance")
+    if isinstance(provenance, Mapping) and isinstance(provenance.get("source_workflow"), str):
+        return provenance["source_workflow"]
+    explicit = extras.get("source_workflow")
+    if isinstance(explicit, str):
+        return explicit
+    for key in ("path", "source_workflow", "workflow_path"):
+        value = coverage_row.get(key)
+        if isinstance(value, str) and value:
+            return value
+    if source_path is not None:
+        try:
+            text = source_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        match = re.search(r"^\s*#\s*ported from\s+(.+?)\s*$", text, flags=re.MULTILINE)
+        if match:
+            return match.group(1).split(" (", 1)[0].strip()
+        match = re.search(r"^\s*Source:\s*(.+?)\s*$", text, flags=re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _project_version() -> str:
+    try:
+        data = tomllib.loads((_repo_root() / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return "0"
+    project = data.get("project") if isinstance(data, Mapping) else None
+    version = project.get("version") if isinstance(project, Mapping) else None
+    return str(version) if version else "0"
+
+
+def _comfy_core_metadata() -> dict[str, Any]:
+    try:
+        data = json.loads((_repo_root() / "vibecomfy" / "comfy_metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, Mapping):
+        return {}
+    core = data.get("core") if isinstance(data.get("core"), Mapping) else data
+    return {
+        key: value
+        for key, value in core.items()
+        if key in {"version", "commit", "tested_at", "status"}
+    }
 
 
 def _assert_public_input_invariant(

@@ -23,6 +23,20 @@ HELPER_CLASSES = {
     "SetNode",
 }
 RESERVED_INPUT_NAMES = {"class", "from", "type"}
+CURATED_DEFAULTS: dict[str, dict[str, Any]] = {
+    "UNETLoader": {"weight_dtype": "default"},
+    "CLIPLoader": {"device": "default"},
+    "KSampler": {"scheduler": "simple", "denoise": 1},
+    "KSamplerAdvanced": {"scheduler": "simple"},
+    "EmptyLatentImage": {"batch_size": 1},
+    "EmptySD3LatentImage": {"batch_size": 1},
+    "EmptyFlux2LatentImage": {"batch_size": 1},
+    "ImageScale": {"crop": "none"},
+    "ImageResizeKJv2": {"crop": "none"},
+    "VHS_VideoCombine": {"format": "auto", "codec": "auto"},
+    "SaveVideo": {"format": "auto", "codec": "auto"},
+    "WanVideoSampler": {"shift": 8},
+}
 
 PACK_MODULES = {
     "AILab_QwenTTS": "qwentts",
@@ -164,7 +178,7 @@ def _write_module(module: str, class_types: list[str]) -> list[str]:
 
 
 def _render_wrapper(function_name: str, class_type: str, entry: dict[str, Any]) -> list[str]:
-    inputs = _input_specs(entry)
+    inputs = _input_specs(class_type, entry)
     params = _ordered_params(inputs)
     pack = str(entry.get("pack") or "core")
     returns = ", ".join(_output_names(entry)) or "None"
@@ -211,7 +225,7 @@ def _ordered_params(inputs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return required + defaulted
 
 
-def _input_specs(entry: dict[str, Any]) -> list[dict[str, Any]]:
+def _input_specs(class_type: str, entry: dict[str, Any]) -> list[dict[str, Any]]:
     inputs = entry.get("inputs")
     if not isinstance(inputs, dict):
         return []
@@ -242,6 +256,8 @@ def _input_specs(entry: dict[str, Any]) -> list[dict[str, Any]]:
         metadata = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
         if "default" in metadata:
             default: Any = metadata["default"]
+        elif original in CURATED_DEFAULTS.get(class_type, {}):
+            default = CURATED_DEFAULTS[class_type][original]
         elif original in optional_names:
             default = _UNSET_DEFAULT
         else:

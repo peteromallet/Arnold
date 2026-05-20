@@ -81,7 +81,7 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "ready_node" in text
     assert "finalize_ready_template" in text
     assert "def _node" not in text
-    assert "bind_input(wf, 'prefix', '20', 'filename_prefix', default='out/sample')" in text
+    assert "bind_input(wf, 'prefix', saveimage.node.id, 'filename_prefix', default='out/sample')" in text
     assert "artifact_kind='image'" in text
 
     namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
@@ -91,9 +91,9 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert isinstance(workflow, VibeWorkflow)
     assert workflow.id == "image/sample"
     assert workflow.source.source_type == "ready_template"
-    assert sorted(workflow.nodes) == ["10", "20"]
+    assert sorted(workflow.nodes) == ["1", "2"]
     assert workflow.metadata["ready_template"] == "image/sample"
-    assert workflow.inputs["prefix"].node_id == "20"
+    assert workflow.inputs["prefix"].node_id == "2"
     assert workflow.inputs["prefix"].default == "out/sample"
     assert workflow.outputs[0].artifact_kind == "image"
 

@@ -134,7 +134,7 @@ def CLIPLoader(
     *,
     clip_name: Any,
     type_: Any,
-    device: Any = _UNSET,
+    device: Any = 'default',
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -158,8 +158,7 @@ def CLIPLoader(
     _kwargs: dict[str, Any] = {}
     _kwargs['clip_name'] = clip_name
     _kwargs['type'] = type_
-    if device is not _UNSET:
-        _kwargs['device'] = device
+    _kwargs['device'] = device
     _kwargs.update(_extras)
     return node(wf, 'CLIPLoader', pass_raw=pass_raw, **_kwargs)
 
@@ -685,9 +684,9 @@ def ImageScale(
     *,
     image: Any,
     upscale_method: Any,
-    crop: Any,
     width: Any = 512,
     height: Any = 512,
+    crop: Any = 'none',
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -700,9 +699,9 @@ def ImageScale(
     _kwargs: dict[str, Any] = {}
     _kwargs['image'] = image
     _kwargs['upscale_method'] = upscale_method
-    _kwargs['crop'] = crop
     _kwargs['width'] = width
     _kwargs['height'] = height
+    _kwargs['crop'] = crop
     _kwargs.update(_extras)
     return node(wf, 'ImageScale', pass_raw=pass_raw, **_kwargs)
 
@@ -755,13 +754,13 @@ def KSampler(
     *,
     model: Any,
     sampler_name: Any,
-    scheduler: Any,
     positive: Any,
     negative: Any,
     latent_image: Any,
     seed: Any = 0,
     steps: Any = 20,
     cfg: Any = 8.0,
+    scheduler: Any = 'simple',
     denoise: Any = 1.0,
     pass_raw: bool = False,
     **_extras: Any,
@@ -775,13 +774,13 @@ def KSampler(
     _kwargs: dict[str, Any] = {}
     _kwargs['model'] = model
     _kwargs['sampler_name'] = sampler_name
-    _kwargs['scheduler'] = scheduler
     _kwargs['positive'] = positive
     _kwargs['negative'] = negative
     _kwargs['latent_image'] = latent_image
     _kwargs['seed'] = seed
     _kwargs['steps'] = steps
     _kwargs['cfg'] = cfg
+    _kwargs['scheduler'] = scheduler
     _kwargs['denoise'] = denoise
     _kwargs.update(_extras)
     return node(wf, 'KSampler', pass_raw=pass_raw, **_kwargs)
@@ -1841,7 +1840,7 @@ def UNETLoader(
     wf: VibeWorkflow,
     *,
     unet_name: Any,
-    weight_dtype: Any,
+    weight_dtype: Any = 'default',
     pass_raw: bool = False,
     **_extras: Any,
 ):

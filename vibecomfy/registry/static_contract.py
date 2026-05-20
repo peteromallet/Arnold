@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import ast
+import json
+import re
+import tomllib
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 
 from vibecomfy.metadata import (
@@ -54,6 +58,7 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
 
     assignments = _module_assignments(tree, diagnostics)
     metadata = _dict_or_empty(assignments.get("READY_METADATA"))
+    metadata = _metadata_with_static_derivations(metadata, source_path, source)
     requirements = _dict_or_empty(assignments.get("READY_REQUIREMENTS"))
     public_inputs: list[dict[str, Any]] = []
     public_outputs: list[dict[str, Any]] = []
@@ -636,8 +641,9 @@ def _eval_ready_metadata_build(node: ast.Call, assignments: dict[str, Any]) -> d
         result[kw.arg] = value
     template_id = result.get("template_id")
     if isinstance(template_id, str):
-        result.setdefault("ready_template", template_id)
-        result.setdefault("workflow_template", template_id.rsplit("/", 1)[-1])
+        ready_template = _category_qualified_template_id(template_id)
+        result.setdefault("ready_template", ready_template)
+        result.setdefault("workflow_template", ready_template.rsplit("/", 1)[-1])
     models = result.get("models")
     if isinstance(models, dict):
         result.setdefault("model_assets", [item for item in models.values() if isinstance(item, dict)])
@@ -685,6 +691,8 @@ def _eval_model_asset_call(node: ast.Call, assignments: dict[str, Any]) -> dict[
             result[kw.arg] = value
     # Map to canonical model asset shape
     filename_val = result.get("filename", result.get("name", ""))
+    if not filename_val and isinstance(result.get("url"), str):
+        filename_val = Path(urlsplit(result["url"]).path).name
     return {
         "name": filename_val,
         "filename": filename_val,
@@ -723,6 +731,112 @@ def _input_key_to_dict(key: tuple[str, str, str]) -> dict[str, str]:
 def _output_key_to_dict(key: tuple[str, str, str]) -> dict[str, str]:
     name, node_id, output_type = key
     return {"name": name, "node_id": node_id, "output_type": output_type}
+
+
+def _metadata_with_static_derivations(metadata: dict[str, Any], path: Path, source: str) -> dict[str, Any]:
+    if not metadata:
+        return metadata
+    out = dict(metadata)
+    ready_template = out.get("ready_template")
+    if not isinstance(ready_template, str) or not ready_template:
+        template_id = out.get("template_id")
+        if isinstance(template_id, str) and template_id:
+            ready_template = _category_qualified_template_id(template_id, path)
+        else:
+            ready_template = _template_id_from_path(path)
+        out["ready_template"] = ready_template
+    out.setdefault("workflow_template", str(ready_template).rsplit("/", 1)[-1])
+    row = _coverage_manifest_row(str(ready_template))
+    if "coverage_tier" not in out and isinstance(row.get("coverage_tier"), str):
+        out["coverage_tier"] = row["coverage_tier"]
+    if "source_workflow" not in out:
+        source_workflow = _source_workflow_from_static(out, row, source)
+        if source_workflow:
+            out["source_workflow"] = source_workflow
+    out.setdefault("vibecomfy_version", _project_version())
+    out.setdefault("comfy_core", _comfy_core_metadata())
+    return out
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _template_id_from_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(_repo_root() / "ready_templates").with_suffix("").as_posix()
+    except ValueError:
+        return path.stem
+
+
+def _category_qualified_template_id(template_id: str, path: Path | None = None) -> str:
+    if "/" in template_id:
+        return template_id
+    if path is not None:
+        try:
+            rel = path.resolve().relative_to(_repo_root() / "ready_templates")
+            if len(rel.parts) > 1:
+                return f"{rel.parts[0]}/{template_id}"
+        except ValueError:
+            pass
+    return template_id
+
+
+def _coverage_manifest_row(template_id: str) -> dict[str, Any]:
+    path = _repo_root() / "workflow_corpus" / "manifests" / "coverage.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    rows = data.get("workflows") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return {}
+    short_id = template_id.rsplit("/", 1)[-1]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        candidates = {str(row.get("ready_template") or ""), str(row.get("template_id") or ""), str(row.get("id") or "")}
+        if isinstance(row.get("media"), str) and isinstance(row.get("id"), str):
+            candidates.add(f"{row['media']}/{row['id']}")
+        if template_id in candidates or short_id in candidates:
+            return dict(row)
+    return {}
+
+
+def _source_workflow_from_static(metadata: dict[str, Any], row: dict[str, Any], source: str) -> str | None:
+    provenance = metadata.get("provenance")
+    if isinstance(provenance, dict) and isinstance(provenance.get("source_workflow"), str):
+        return provenance["source_workflow"]
+    for key in ("path", "source_workflow", "workflow_path"):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            return value
+    match = re.search(r"^\s*#\s*ported from\s+(.+?)\s*$", source, flags=re.MULTILINE)
+    if match:
+        return match.group(1).split(" (", 1)[0].strip()
+    match = re.search(r"^\s*Source:\s*(.+?)\s*$", source, flags=re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def _project_version() -> str:
+    try:
+        data = tomllib.loads((_repo_root() / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return "0"
+    project = data.get("project") if isinstance(data, dict) else None
+    version = project.get("version") if isinstance(project, dict) else None
+    return str(version) if version else "0"
+
+
+def _comfy_core_metadata() -> dict[str, Any]:
+    try:
+        data = json.loads((_repo_root() / "vibecomfy" / "comfy_metadata.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    core = data.get("core") if isinstance(data, dict) and isinstance(data.get("core"), dict) else data
+    if not isinstance(core, dict):
+        return {}
+    return {key: value for key, value in core.items() if key in {"version", "commit", "tested_at", "status"}}
 
 
 def _call_name(func: ast.AST) -> str:
