@@ -49,6 +49,39 @@ def _fake_outcome(plan: str, status: str = "done") -> DriverOutcome:
     )
 
 
+def _write_execute_plan_state(root: Path, plan: str, state: str) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": state,
+                "iteration": 1,
+                "config": {"project_dir": str(root)},
+                "meta": {},
+                "history": [{"step": "execute", "result": "blocked"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return plan_dir
+
+
+def _write_blocked_execute_batch(
+    root: Path,
+    plan: str,
+    task_updates: list[dict[str, object]],
+) -> Path:
+    plan_dir = _write_execute_plan_state(root, plan, "blocked")
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps({"task_updates": task_updates}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return plan_dir
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -880,6 +913,89 @@ def test_run_chain_stops_on_failure(tmp_path: Path) -> None:
     assert len(drive_calls) == 1  # did not proceed to second milestone
     saved = load_chain_state(spec_path)
     assert saved.last_state == "failed"
+
+
+def test_run_chain_recovers_blocked_execute_when_latest_batch_tasks_done(
+    tmp_path: Path,
+) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+    messages: list[str] = []
+    drive_calls: list[str] = []
+    attempts: dict[str, int] = {}
+
+    def fake_drive(plan, **_kwargs):
+        drive_calls.append(plan)
+        attempts[plan] = attempts.get(plan, 0) + 1
+        if plan == "plan-for-m1" and attempts[plan] == 1:
+            _write_blocked_execute_batch(
+                tmp_path,
+                plan,
+                [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "executor_notes": "finished",
+                    }
+                ],
+            )
+            return _fake_outcome(plan, "worker_blocked")
+        _write_execute_plan_state(tmp_path, plan, "done")
+        return _fake_outcome(plan, "done")
+
+    with patch(
+        "megaplan.chain._init_plan",
+        side_effect=lambda root, idea_path, **_k: f"plan-for-{Path(idea_path).stem}",
+    ), patch("megaplan.chain.auto_drive", side_effect=fake_drive), patch(
+        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    assert result["status"] == "done"
+    assert drive_calls == ["plan-for-m1", "plan-for-m1", "plan-for-m1a"]
+    assert any("continuing from executed state" in message for message in messages)
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 2
+    assert [completed["label"] for completed in saved.completed] == ["m1", "m1a"]
+
+
+def test_run_chain_treats_blocked_execute_with_pending_tasks_as_failure(
+    tmp_path: Path,
+) -> None:
+    spec_path = _setup_two_milestones(tmp_path)
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+    messages: list[str] = []
+    drive_calls: list[str] = []
+
+    def fake_drive(plan, **_kwargs):
+        drive_calls.append(plan)
+        _write_blocked_execute_batch(
+            tmp_path,
+            plan,
+            [
+                {
+                    "task_id": "T1",
+                    "status": "pending",
+                    "executor_notes": "still blocked",
+                }
+            ],
+        )
+        return _fake_outcome(plan, "blocked")
+
+    with patch(
+        "megaplan.chain._init_plan",
+        side_effect=lambda root, idea_path, **_k: f"plan-for-{Path(idea_path).stem}",
+    ), patch("megaplan.chain.auto_drive", side_effect=fake_drive), patch(
+        "megaplan.chain._refresh_base_branch", lambda *a, **k: None
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append)
+
+    assert result["status"] == "stopped"
+    assert drive_calls == ["plan-for-m1"]
+    assert any("treating as real block" in message for message in messages)
+    saved = load_chain_state(spec_path)
+    assert saved.last_state == "blocked"
+    assert saved.completed == []
 
 
 def test_run_chain_resumes_from_chain_state(tmp_path: Path) -> None:

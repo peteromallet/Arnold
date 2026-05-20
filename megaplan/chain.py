@@ -78,7 +78,7 @@ from megaplan.profiles import (
     VALID_DEEPSEEK_PROVIDER_CHOICES,
     VALID_DEPTH_CHOICES,
 )
-from megaplan.types import CliError, STATE_AWAITING_PR_MERGE
+from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED
 
 
 VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
@@ -107,6 +107,7 @@ GH_TRANSIENT_ERROR_PATTERNS = (
     "try again",
 )
 GH_PR_STATE_ATTEMPTS = 3
+BLOCKED_EXECUTE_OUTCOME_STATUSES = {"blocked", "worker_blocked"}
 
 
 def _optional_choice(
@@ -1052,6 +1053,147 @@ def _drive_plan(
     )
 
 
+def _execution_batch_sort_key(path: Path) -> tuple[int, str]:
+    match = re.fullmatch(r"execution_batch_(\d+)\.json", path.name)
+    if match:
+        return (int(match.group(1)), path.name)
+    return (-1, path.name)
+
+
+def _latest_execute_result(plan_dir: Path) -> str | None:
+    try:
+        state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    history = state.get("history")
+    if not isinstance(history, list):
+        return None
+    for entry in reversed(history):
+        if isinstance(entry, dict) and entry.get("step") == "execute":
+            result = entry.get("result")
+            return result if isinstance(result, str) else None
+    return None
+
+
+def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
+    batches = sorted(
+        plan_dir.glob("execution_batch_*.json"),
+        key=_execution_batch_sort_key,
+    )
+    if not batches:
+        return False, "no execution_batch_*.json artifact found"
+    latest = batches[-1]
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return False, f"{latest.name} could not be read: {error}"
+    if not isinstance(payload, dict):
+        return False, f"{latest.name} payload is not an object"
+
+    task_records: list[dict[str, Any]] = []
+    for key in ("task_updates", "tasks"):
+        raw_records = payload.get(key)
+        if isinstance(raw_records, list):
+            task_records.extend(item for item in raw_records if isinstance(item, dict))
+    if not task_records:
+        return False, f"{latest.name} has no task records"
+
+    incomplete: list[str] = []
+    for task in task_records:
+        if task.get("status") == "done":
+            continue
+        task_id = task.get("task_id") or task.get("id") or "?"
+        incomplete.append(f"{task_id}={task.get('status')!r}")
+    if incomplete:
+        return False, f"{latest.name} has non-done tasks: {', '.join(incomplete)}"
+    finalize_path = plan_dir / "finalize.json"
+    if finalize_path.exists():
+        try:
+            finalize_payload = json.loads(finalize_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return False, f"finalize.json could not be read: {error}"
+        finalize_tasks = (
+            finalize_payload.get("tasks") if isinstance(finalize_payload, dict) else None
+        )
+        if isinstance(finalize_tasks, list) and finalize_tasks:
+            pending = [
+                f"{(task.get('id') or '?')}={task.get('status')!r}"
+                for task in finalize_tasks
+                if isinstance(task, dict) and task.get("status") not in {"done", "skipped"}
+            ]
+            if pending:
+                return False, f"finalize.json has incomplete tasks: {', '.join(pending)}"
+    return True, latest.name
+
+
+def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
+    state_path = plan_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(state, dict):
+        return
+    state["current_state"] = STATE_EXECUTED
+    state.pop("active_step", None)
+    state.pop("latest_failure", None)
+    state.pop("resume_cursor", None)
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+
+def _recover_blocked_execute_if_tasks_done(
+    root: Path,
+    outcome: DriverOutcome,
+    *,
+    writer,
+) -> bool:
+    if outcome.status not in BLOCKED_EXECUTE_OUTCOME_STATUSES:
+        return False
+    try:
+        plan_dir = resolve_plan_dir(root, outcome.plan)
+    except CliError:
+        return False
+    if _latest_execute_result(plan_dir) != "blocked":
+        return False
+
+    all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    if not all_done:
+        writer(
+            f"[chain] execute result=blocked for {outcome.plan}; treating as real block: {reason}\n"
+        )
+        return False
+
+    _mark_blocked_execute_as_executed(plan_dir)
+    writer(
+        f"[chain] execute result=blocked for {outcome.plan}, but {reason} has all tasks done; "
+        "continuing from executed state\n"
+    )
+    return True
+
+
+def _drive_plan_with_blocked_execute_recovery(
+    root: Path,
+    plan: str,
+    spec: ChainSpec,
+    *,
+    on_phase_complete: Callable[[str, int, str, str], None] | None = None,
+    writer,
+) -> DriverOutcome:
+    outcome = _drive_plan(
+        root,
+        plan,
+        spec,
+        on_phase_complete=on_phase_complete,
+        writer=writer,
+    )
+    if not _recover_blocked_execute_if_tasks_done(root, outcome, writer=writer):
+        return outcome
+    return _drive_plan(
+        root,
+        plan,
+        spec,
+        on_phase_complete=on_phase_complete,
+        writer=writer,
+    )
+
+
 def _handle_outcome(
     outcome: DriverOutcome,
     *,
@@ -1116,7 +1258,12 @@ def run_chain(
         if seed_state not in TERMINAL_SKIP_STATES:
             state.current_plan_name = spec.seed_plan
             save_chain_state(spec_path, state)
-            outcome = _drive_plan(root, spec.seed_plan, spec, writer=writer)
+            outcome = _drive_plan_with_blocked_execute_recovery(
+                root,
+                spec.seed_plan,
+                spec,
+                writer=writer,
+            )
             state.last_state = outcome.status
             save_chain_state(spec_path, state)
             decision = _handle_outcome(outcome, spec=spec, writer=writer)
@@ -1124,7 +1271,12 @@ def run_chain(
                 return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
-                outcome = _drive_plan(root, spec.seed_plan, spec, writer=writer)
+                outcome = _drive_plan_with_blocked_execute_recovery(
+                    root,
+                    spec.seed_plan,
+                    spec,
+                    writer=writer,
+                )
                 state.last_state = outcome.status
                 save_chain_state(spec_path, state)
                 if outcome.status != "done":
@@ -1270,7 +1422,7 @@ def run_chain(
                     preexisting_dirty_paths=preexisting_dirty_paths,
                 )
 
-        outcome = _drive_plan(
+        outcome = _drive_plan_with_blocked_execute_recovery(
             root,
             plan_name,
             spec,
