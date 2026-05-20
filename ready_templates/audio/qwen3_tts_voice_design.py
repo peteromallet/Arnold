@@ -37,20 +37,18 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         ailab_qwen3ttsvoicedesign = AILab_Qwen3TTSVoiceDesign(
-            _id='1',
             instruct='A warm narrator voice with crisp diction and a neutral studio tone.',
             language='English',
             seed=DEFAULT_SEED,
             text=DEFAULT_PROMPT,
         )
-        wf.metadata.setdefault('id_map', {})['ailab_qwen3ttsvoicedesign'] = ailab_qwen3ttsvoicedesign.node.id
 
         saveaudiomp3 = SaveAudioMP3(
-            _id='2',
             filename_prefix='audio/qwen3_tts_voice_design',
             audio=ailab_qwen3ttsvoicedesign,
         )
-        wf.metadata.setdefault('id_map', {})['saveaudiomp3'] = saveaudiomp3.node.id
+
+        wf._set_id_map({name: node.node.id for name, node in (('ailab_qwen3ttsvoicedesign', ailab_qwen3ttsvoicedesign), ('saveaudiomp3', saveaudiomp3))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

@@ -73,7 +73,9 @@ def test_ready_template_emitter_uses_typed_wrappers_and_strips_schema_defaults()
 
     assert "from vibecomfy.nodes.core import SaveImage, UNETLoader" in source
     assert "UNETLoader(" in source
-    assert "_id='1'" in source
+    assert "_id='1'" not in source
+    assert "wf.metadata.setdefault('id_map'" not in source
+    assert "wf._set_id_map(" in source
     assert "source_id='1'" not in source
     assert "weight_dtype='default'" not in source
     assert "bind_output(" not in source

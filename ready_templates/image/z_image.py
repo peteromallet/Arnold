@@ -44,30 +44,20 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Loaders
-        unetloader = UNETLoader(_id='1', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        cliploader = CLIPLoader(_id='2', clip_name=MODEL_NAME_2, type_='lumina2')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='3', vae_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
+        unetloader = UNETLoader(unet_name=MODEL_NAME)
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='lumina2')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
+
         # Sampling
-        emptysd3latentimage = EmptySD3LatentImage(_id='7', width=1024, height=1024)
-        wf.metadata.setdefault('id_map', {})['emptysd3latentimage'] = emptysd3latentimage.node.id
-        modelsamplingauraflow = ModelSamplingAuraFlow(
-            _id='4',
-            shift=3,
-            model=unetloader,
-        )
-        wf.metadata.setdefault('id_map', {})['modelsamplingauraflow'] = modelsamplingauraflow.node.id
+        emptysd3latentimage = EmptySD3LatentImage(width=1024, height=1024)
+        modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
 
         # Conditioning
-        positive = CLIPTextEncode(_id='5', text=DEFAULT_PROMPT, clip=cliploader)
-        wf.metadata.setdefault('id_map', {})['positive'] = positive.node.id
-        negative = CLIPTextEncode(_id='6', text='', clip=cliploader)
-        wf.metadata.setdefault('id_map', {})['negative'] = negative.node.id
+        positive = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+        negative = CLIPTextEncode(text='', clip=cliploader)
+
         # Sampling
         ksampler = KSampler(
-            _id='8',
             seed=DEFAULT_SEED,
             steps=25,
             cfg=GUIDE_STRENGTH,
@@ -77,14 +67,14 @@ def build() -> VibeWorkflow:
             negative=negative,
             positive=positive,
         )
-        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
 
         # Decode
-        vaedecode = VAEDecode(_id='9', samples=ksampler, vae=vaeloader)
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
+        vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+
         # Outputs
-        saveimage = SaveImage(_id='10', filename_prefix='z-image', images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+        saveimage = SaveImage(filename_prefix='z-image', images=vaedecode)
+
+        wf._set_id_map({name: node.node.id for name, node in (('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('emptysd3latentimage', emptysd3latentimage), ('modelsamplingauraflow', modelsamplingauraflow), ('positive', positive), ('negative', negative), ('ksampler', ksampler), ('vaedecode', vaedecode), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image')
 

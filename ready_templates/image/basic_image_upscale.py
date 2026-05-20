@@ -29,26 +29,19 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         loadimage = LoadImage(
-            _id='1',
             image='image_upscale_input.png',
             _outputs=('IMAGE', 'MASK'),
         )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
         imagescaleby = ImageScaleBy(
-            _id='2',
             upscale_method='lanczos',
             scale_by=2.0,
             image=loadimage.out('IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['imagescaleby'] = imagescaleby.node.id
 
-        saveimage = SaveImage(
-            _id='3',
-            filename_prefix='image-upscale',
-            images=imagescaleby,
-        )
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+        saveimage = SaveImage(filename_prefix='image-upscale', images=imagescaleby)
+
+        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('imagescaleby', imagescaleby), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='image-upscale')
 

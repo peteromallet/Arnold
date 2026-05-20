@@ -58,90 +58,64 @@ def build() -> VibeWorkflow:
 
         # Inputs
         loadimage = LoadImage(
-            _id='2004',
             image=IMAGE,
             widget_0='example.png',
             _outputs=('IMAGE', 'MASK'),
         )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
         lowvramcheckpointloader = LowVRAMCheckpointLoader(
-            _id='3940',
             ckpt_name=MODEL_NAME,
             _outputs=('MODEL', 'CLIP', 'VAE'),
         )
-        wf.metadata.setdefault('id_map', {})['lowvramcheckpointloader'] = lowvramcheckpointloader.node.id
 
-        lowvramaudiovaeloader = LowVRAMAudioVAELoader(_id='4010', ckpt_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['lowvramaudiovaeloader'] = lowvramaudiovaeloader.node.id
+        lowvramaudiovaeloader = LowVRAMAudioVAELoader(ckpt_name=MODEL_NAME)
+
         # Sampling
-        ksamplerselect = KSamplerSelect(
-            _id='4831',
-            sampler_name='euler_ancestral_cfg_pp',
-        )
-        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
-
+        ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
         randomnoise = RandomNoise(
-            _id='4832',
             noise_seed=DEFAULT_SEED,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
-        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
 
         randomnoise_2 = RandomNoise(
-            _id='4967',
             noise_seed=DEFAULT_SEED_2,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
-        wf.metadata.setdefault('id_map', {})['randomnoise_2'] = randomnoise_2.node.id
 
-        ksamplerselect_2 = KSamplerSelect(_id='4976', sampler_name='euler_cfg_pp')
-        wf.metadata.setdefault('id_map', {})['ksamplerselect_2'] = ksamplerselect_2.node.id
+        ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
+
         # Inputs
         primitivestring = raw_call(wf, 'PrimitiveString', '4979', value='')
-        wf.metadata.setdefault('id_map', {})['primitivestring'] = primitivestring.node.id
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
-            _id='4982',
             text_encoder=MODEL_NAME_2,
             ckpt_name=MODEL_NAME,
             device='default',
             widget_0='gemma_3_12B_it_fp4_mixed.safetensors',
             widget_1='ltx-2.3-22b-dev-fp8.safetensors',
         )
-        wf.metadata.setdefault('id_map', {})['ltxavtextencoderloader'] = ltxavtextencoderloader.node.id
 
         manualsigmas = ManualSigmas(
-            _id='4984',
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
-        wf.metadata.setdefault('id_map', {})['manualsigmas'] = manualsigmas.node.id
 
-        manualsigmas_2 = ManualSigmas(_id='4985', sigmas='0.85, 0.7250, 0.4219, 0.0')
-        wf.metadata.setdefault('id_map', {})['manualsigmas_2'] = manualsigmas_2.node.id
+        manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
         primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '4987', value=True)
-        wf.metadata.setdefault('id_map', {})['primitiveboolean'] = primitiveboolean.node.id
         primitiveint = raw_call(wf, 'PrimitiveInt', '4988', value=5, widget_1='fixed')
-        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
         primitivefloat = raw_call(wf, 'PrimitiveFloat', '4989', value=8)
-        wf.metadata.setdefault('id_map', {})['primitivefloat'] = primitivefloat.node.id
+
         # Conditioning
         cliptextencode = CLIPTextEncode(
-            _id='2483',
             text=DEFAULT_PROMPT,
             clip=ltxavtextencoderloader,
         )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
 
         cliptextencode_2 = CLIPTextEncode(
-            _id='2612',
             text=DEFAULT_PROMPT_2,
             clip=ltxavtextencoderloader,
         )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
 
         # Sampling
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-            _id='3059',
             width=256,
             height=256,
             widget_0=256,
@@ -149,75 +123,54 @@ def build() -> VibeWorkflow:
             widget_2=5,
             length=primitiveint,
         )
-        wf.metadata.setdefault('id_map', {})['emptyltxvlatentvideo'] = emptyltxvlatentvideo.node.id
 
         loraloadermodelonly = LoraLoaderModelOnly(
-            _id='4922',
             lora_name=MODEL_NAME_3,
             strength_model=GUIDE_STRENGTH,
             model=lowvramcheckpointloader.out('MODEL'),
         )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
 
         gemmaapitextencode = GemmaAPITextEncode(
-            _id='4980',
             widget_0=WIDGET_0,
             widget_1='',
             widget_2=MODEL_NAME,
             widget_3=MODEL_NAME,
             api_key=primitivestring,
         )
-        wf.metadata.setdefault('id_map', {})['gemmaapitextencode'] = gemmaapitextencode.node.id
 
         gemmaapitextencode_2 = GemmaAPITextEncode(
-            _id='4981',
             widget_0=WIDGET_0,
             widget_1=384,
             widget_2=False,
             widget_3=MODEL_NAME,
             api_key=primitivestring,
         )
-        wf.metadata.setdefault('id_map', {})['gemmaapitextencode_2'] = gemmaapitextencode_2.node.id
 
         resizeimagemasknode = ResizeImageMaskNode(
-            _id='4990',
             resize_type='scale longer dimension',
             scale_method='lanczos',
             input=loadimage.out('IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['resizeimagemasknode'] = resizeimagemasknode.node.id
 
-        ltxfloattoint = LTXFloatToInt(_id='5000', rounding=0, a=primitivefloat)
-        wf.metadata.setdefault('id_map', {})['ltxfloattoint'] = ltxfloattoint.node.id
+        ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
         ltxvconditioning = LTXVConditioning(
-            _id='1241',
             widget_0=8,
             frame_rate=primitivefloat,
             negative=cliptextencode_2,
             positive=cliptextencode,
             _outputs=('POSITIVE', 'NEGATIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvconditioning'] = ltxvconditioning.node.id
 
-        ltxvpreprocess = LTXVPreprocess(
-            _id='3336',
-            img_compression=18,
-            image=resizeimagemasknode,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvpreprocess'] = ltxvpreprocess.node.id
-
+        ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagemasknode)
         ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-            _id='3980',
             widget_0=5,
             widget_1=8,
             frames_number=primitiveint,
             frame_rate=ltxfloattoint,
             audio_vae=lowvramaudiovaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['ltxvemptylatentaudio'] = ltxvemptylatentaudio.node.id
 
         ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
-            _id='3159',
             strength=0.7,
             widget_1=False,
             bypass=primitiveboolean,
@@ -225,37 +178,29 @@ def build() -> VibeWorkflow:
             latent=emptyltxvlatentvideo,
             vae=lowvramcheckpointloader.out('VAE'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvimgtovideoconditiononly'] = ltxvimgtovideoconditiononly.node.id
 
         # Conditioning
         cfgguider = CFGGuider(
-            _id='4828',
             cfg=GUIDE_STRENGTH_2,
             model=loraloadermodelonly,
             negative=ltxvconditioning.out('NEGATIVE'),
             positive=ltxvconditioning.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
 
         cfgguider_2 = CFGGuider(
-            _id='4964',
             cfg=GUIDE_STRENGTH_2,
             model=loraloadermodelonly,
             negative=ltxvconditioning.out('NEGATIVE'),
             positive=ltxvconditioning.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['cfgguider_2'] = cfgguider_2.node.id
 
         ltxvconcatavlatent = LTXVConcatAVLatent(
-            _id='4528',
             audio_latent=ltxvemptylatentaudio,
             video_latent=ltxvimgtovideoconditiononly,
         )
-        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent'] = ltxvconcatavlatent.node.id
 
         # Sampling
         samplercustomadvanced = SamplerCustomAdvanced(
-            _id='4829',
             guider=cfgguider,
             latent_image=ltxvconcatavlatent,
             noise=randomnoise,
@@ -263,34 +208,26 @@ def build() -> VibeWorkflow:
             sigmas=manualsigmas,
             _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
 
         ltxvseparateavlatent = LTXVSeparateAVLatent(
-            _id='4845',
             av_latent=samplercustomadvanced.out('OUTPUT'),
             _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent'] = ltxvseparateavlatent.node.id
 
         ltxvimgtovideoconditiononly_2 = LTXVImgToVideoConditionOnly(
-            _id='4970',
             widget_1=False,
             bypass=primitiveboolean,
             image=resizeimagemasknode,
             latent=ltxvseparateavlatent.out('VIDEO_LATENT'),
             vae=lowvramcheckpointloader.out('VAE'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvimgtovideoconditiononly_2'] = ltxvimgtovideoconditiononly_2.node.id
 
         ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-            _id='4969',
             audio_latent=ltxvseparateavlatent.out('AUDIO_LATENT'),
             video_latent=ltxvimgtovideoconditiononly_2,
         )
-        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent_2'] = ltxvconcatavlatent_2.node.id
 
         samplercustomadvanced_2 = SamplerCustomAdvanced(
-            _id='4971',
             guider=cfgguider_2,
             latent_image=ltxvconcatavlatent_2,
             noise=randomnoise_2,
@@ -298,44 +235,36 @@ def build() -> VibeWorkflow:
             sigmas=manualsigmas_2,
             _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced_2'] = samplercustomadvanced_2.node.id
 
         ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
-            _id='4973',
             av_latent=samplercustomadvanced_2.out('OUTPUT'),
             _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent_2'] = ltxvseparateavlatent_2.node.id
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(
-            _id='4848',
             audio_vae=lowvramaudiovaeloader,
             samples=ltxvseparateavlatent_2.out('AUDIO_LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvaudiovaedecode'] = ltxvaudiovaedecode.node.id
 
         ltxvtiledvaedecode = LTXVTiledVAEDecode(
-            _id='4995',
             horizontal_tiles=2,
             vertical_tiles=2,
             overlap=6,
             latents=ltxvseparateavlatent_2.out('VIDEO_LATENT'),
             vae=lowvramcheckpointloader.out('VAE'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvtiledvaedecode'] = ltxvtiledvaedecode.node.id
 
         createvideo = CreateVideo(
-            _id='4849',
             widget_0=8,
             fps=primitivefloat,
             audio=ltxvaudiovaedecode,
             images=ltxvtiledvaedecode,
         )
-        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
 
         # Outputs
-        savevideo = SaveVideo(_id='4852', filename_prefix='output', video=createvideo)
-        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+        savevideo = SaveVideo(filename_prefix='output', video=createvideo)
+
+        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('lowvramcheckpointloader', lowvramcheckpointloader), ('lowvramaudiovaeloader', lowvramaudiovaeloader), ('ksamplerselect', ksamplerselect), ('randomnoise', randomnoise), ('randomnoise_2', randomnoise_2), ('ksamplerselect_2', ksamplerselect_2), ('primitivestring', primitivestring), ('ltxavtextencoderloader', ltxavtextencoderloader), ('manualsigmas', manualsigmas), ('manualsigmas_2', manualsigmas_2), ('primitiveboolean', primitiveboolean), ('primitiveint', primitiveint), ('primitivefloat', primitivefloat), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('emptyltxvlatentvideo', emptyltxvlatentvideo), ('loraloadermodelonly', loraloadermodelonly), ('gemmaapitextencode', gemmaapitextencode), ('gemmaapitextencode_2', gemmaapitextencode_2), ('resizeimagemasknode', resizeimagemasknode), ('ltxfloattoint', ltxfloattoint), ('ltxvconditioning', ltxvconditioning), ('ltxvpreprocess', ltxvpreprocess), ('ltxvemptylatentaudio', ltxvemptylatentaudio), ('ltxvimgtovideoconditiononly', ltxvimgtovideoconditiononly), ('cfgguider', cfgguider), ('cfgguider_2', cfgguider_2), ('ltxvconcatavlatent', ltxvconcatavlatent), ('samplercustomadvanced', samplercustomadvanced), ('ltxvseparateavlatent', ltxvseparateavlatent), ('ltxvimgtovideoconditiononly_2', ltxvimgtovideoconditiononly_2), ('ltxvconcatavlatent_2', ltxvconcatavlatent_2), ('samplercustomadvanced_2', samplercustomadvanced_2), ('ltxvseparateavlatent_2', ltxvseparateavlatent_2), ('ltxvaudiovaedecode', ltxvaudiovaedecode), ('ltxvtiledvaedecode', ltxvtiledvaedecode), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

@@ -61,57 +61,35 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         wanvideotextencodecached = WanVideoTextEncodeCached(
-            _id='16',
             model_name=MODEL_NAME,
             positive_prompt=DEFAULT_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE,
             _outputs=('TEXT_EMBEDS', 'NEGATIVE_TEXT_EMBEDS', 'POSITIVE_PROMPT'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideotextencodecached'] = wanvideotextencodecached.node.id
 
-        wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=MODEL_NAME_2)
-        wf.metadata.setdefault('id_map', {})['wanvideovaeloader'] = wanvideovaeloader.node.id
+        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
         wanvideoblockswap = WanVideoBlockSwap(
-            _id='39',
             blocks_to_swap=30,
             offload_img_emb=True,
             offload_txt_emb=True,
             use_non_blocking=True,
             vace_blocks_to_swap=8,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoblockswap'] = wanvideoblockswap.node.id
 
         # Inputs
-        loadimage = LoadImage(
-            _id='64',
-            image='vace_start.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
-
+        loadimage = LoadImage(image='vace_start.png', _outputs=('IMAGE', 'MASK'))
         wanvideoloraselectmulti = WanVideoLoraSelectMulti(
-            _id='93',
             lora_0=MODEL_NAME_3,
             merge_loras=False,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoloraselectmulti'] = wanvideoloraselectmulti.node.id
 
         wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
-            _id='98',
             lora_0=MODEL_NAME_3,
             merge_loras=False,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoloraselectmulti_2'] = wanvideoloraselectmulti_2.node.id
 
-        loadimage_2 = LoadImage(
-            _id='112',
-            image='vace_end.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage_2'] = loadimage_2.node.id
-
+        loadimage_2 = LoadImage(image='vace_end.png', _outputs=('IMAGE', 'MASK'))
         vhs_loadvideo = VHS_LoadVideo(
-            _id='199',
             custom_height=480,
             custom_width=832,
             force_rate=16,
@@ -120,43 +98,30 @@ def build() -> VibeWorkflow:
             _outputs=('IMAGE', 'FRAME_COUNT', 'AUDIO', 'VIDEO_INFO'),
             **{'choose video to upload': 'image'},
         )
-        wf.metadata.setdefault('id_map', {})['vhs_loadvideo'] = vhs_loadvideo.node.id
 
-        wanvideovacemodelselect = WanVideoVACEModelSelect(
-            _id='224',
-            vace_model=MODEL_NAME_4,
-        )
-        wf.metadata.setdefault('id_map', {})['wanvideovacemodelselect'] = wanvideovacemodelselect.node.id
-
+        wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=MODEL_NAME_4)
         wanvideomodelloader = WanVideoModelLoader(
-            _id='22',
             model=MODEL_NAME_5,
             base_precision=BASE_PRECISION,
             quantization=QUANTIZATION,
             extra_model=wanvideovacemodelselect,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideomodelloader'] = wanvideomodelloader.node.id
 
         wanvideomodelloader_2 = WanVideoModelLoader(
-            _id='92',
             model=MODEL_NAME_6,
             base_precision=BASE_PRECISION,
             quantization=QUANTIZATION,
             extra_model=wanvideovacemodelselect,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideomodelloader_2'] = wanvideomodelloader_2.node.id
 
         wanvideovacestarttoendframe = WanVideoVACEStartToEndFrame(
-            _id='111',
             control_images=vhs_loadvideo.out('IMAGE'),
             end_image=loadimage_2.out('IMAGE'),
             start_image=loadimage.out('IMAGE'),
             _outputs=('IMAGES', 'MASKS'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideovacestarttoendframe'] = wanvideovacestarttoendframe.node.id
 
         wanvideovaceencode = WanVideoVACEEncode(
-            _id='56',
             height=480,
             width=832,
             input_frames=wanvideovacestarttoendframe.out('IMAGES'),
@@ -164,38 +129,28 @@ def build() -> VibeWorkflow:
             ref_images=loadimage.out('IMAGE'),
             vae=wanvideovaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideovaceencode'] = wanvideovaceencode.node.id
 
         wanvideosetloras = WanVideoSetLoRAs(
-            _id='79',
             lora=wanvideoloraselectmulti_2,
             model=wanvideomodelloader,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosetloras'] = wanvideosetloras.node.id
 
         wanvideosetloras_2 = WanVideoSetLoRAs(
-            _id='80',
             lora=wanvideoloraselectmulti,
             model=wanvideomodelloader_2,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosetloras_2'] = wanvideosetloras_2.node.id
 
         wanvideosetblockswap = WanVideoSetBlockSwap(
-            _id='86',
             block_swap_args=wanvideoblockswap,
             model=wanvideosetloras,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosetblockswap'] = wanvideosetblockswap.node.id
 
         wanvideosetblockswap_2 = WanVideoSetBlockSwap(
-            _id='91',
             block_swap_args=wanvideoblockswap,
             model=wanvideosetloras_2,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosetblockswap_2'] = wanvideosetblockswap_2.node.id
 
         wanvideosampler = WanVideoSampler(
-            _id='27',
             steps=6,
             cfg=GUIDE_STRENGTH,
             seed=DEFAULT_SEED,
@@ -206,10 +161,8 @@ def build() -> VibeWorkflow:
             text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
             _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosampler'] = wanvideosampler.node.id
 
         wanvideosampler_2 = WanVideoSampler(
-            _id='87',
             steps=6,
             cfg=GUIDE_STRENGTH_2,
             seed=DEFAULT_SEED,
@@ -222,10 +175,8 @@ def build() -> VibeWorkflow:
             text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
             _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosampler_2'] = wanvideosampler_2.node.id
 
         wanvideosampler_3 = WanVideoSampler(
-            _id='197',
             steps=6,
             cfg=GUIDE_STRENGTH_2,
             seed=DEFAULT_SEED,
@@ -237,19 +188,15 @@ def build() -> VibeWorkflow:
             text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
             _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosampler_3'] = wanvideosampler_3.node.id
 
         wanvideodecode = WanVideoDecode(
-            _id='28',
             normalization='default',
             samples=wanvideosampler_3.out('SAMPLES'),
             vae=wanvideovaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideodecode'] = wanvideodecode.node.id
 
         # Outputs
         vhs_videocombine = VHS_VideoCombine(
-            _id='139',
             frame_rate=16,
             filename_prefix='Wan-2-2-VACE',
             format='video/h264-mp4',
@@ -259,7 +206,8 @@ def build() -> VibeWorkflow:
             trim_to_audio=False,
             images=wanvideodecode,
         )
-        wf.metadata.setdefault('id_map', {})['vhs_videocombine'] = vhs_videocombine.node.id
+
+        wf._set_id_map({name: node.node.id for name, node in (('wanvideotextencodecached', wanvideotextencodecached), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoblockswap', wanvideoblockswap), ('loadimage', loadimage), ('wanvideoloraselectmulti', wanvideoloraselectmulti), ('wanvideoloraselectmulti_2', wanvideoloraselectmulti_2), ('loadimage_2', loadimage_2), ('vhs_loadvideo', vhs_loadvideo), ('wanvideovacemodelselect', wanvideovacemodelselect), ('wanvideomodelloader', wanvideomodelloader), ('wanvideomodelloader_2', wanvideomodelloader_2), ('wanvideovacestarttoendframe', wanvideovacestarttoendframe), ('wanvideovaceencode', wanvideovaceencode), ('wanvideosetloras', wanvideosetloras), ('wanvideosetloras_2', wanvideosetloras_2), ('wanvideosetblockswap', wanvideosetblockswap), ('wanvideosetblockswap_2', wanvideosetblockswap_2), ('wanvideosampler', wanvideosampler), ('wanvideosampler_2', wanvideosampler_2), ('wanvideosampler_3', wanvideosampler_3), ('wanvideodecode', wanvideodecode), ('vhs_videocombine', vhs_videocombine))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='Wan-2-2-VACE')
 

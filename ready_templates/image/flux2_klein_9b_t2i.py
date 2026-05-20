@@ -30,14 +30,13 @@ def build() -> VibeWorkflow:
 
         n_7b34ab90_36f9_45ba_a665_71d418f0df18 = raw_call(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
         )
-        wf.metadata.setdefault('id_map', {})['n_7b34ab90_36f9_45ba_a665_71d418f0df18'] = n_7b34ab90_36f9_45ba_a665_71d418f0df18.node.id
 
         saveimage = SaveImage(
-            _id='9',
             filename_prefix='Flux2-Klein',
             images=n_7b34ab90_36f9_45ba_a665_71d418f0df18.out(0),
         )
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        wf._set_id_map({name: node.node.id for name, node in (('n_7b34ab90_36f9_45ba_a665_71d418f0df18', n_7b34ab90_36f9_45ba_a665_71d418f0df18), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

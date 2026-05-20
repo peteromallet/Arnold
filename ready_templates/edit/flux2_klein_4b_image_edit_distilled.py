@@ -44,110 +44,69 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Sampling
-        ksamplerselect = KSamplerSelect(_id='75:61', sampler_name='euler')
-        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
-        # Loaders
-        unetloader = UNETLoader(_id='75:70', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        cliploader = CLIPLoader(_id='75:71', clip_name=MODEL_NAME_2, type_='flux2')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='75:72', vae_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
-        randomnoise = RandomNoise(_id='75:73', noise_seed=DEFAULT_SEED)
-        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
-        # Inputs
-        loadimage = LoadImage(
-            _id='76',
-            image='handbag_white.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
+        ksamplerselect = KSamplerSelect(sampler_name='euler')
 
-        loadimage_2 = LoadImage(
-            _id='81',
-            image='comfy_logo_blue.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage_2'] = loadimage_2.node.id
+        # Loaders
+        unetloader = UNETLoader(unet_name=MODEL_NAME)
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='flux2')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
+        randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
+
+        # Inputs
+        loadimage = LoadImage(image='handbag_white.png', _outputs=('IMAGE', 'MASK'))
+        loadimage_2 = LoadImage(image='comfy_logo_blue.png', _outputs=('IMAGE', 'MASK'))
 
         # Conditioning
         cliptextencode = CLIPTextEncode(
-            _id='75:74',
             text='Change the bag color to blue.',
             clip=cliploader,
         )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
 
         imagescaletototalpixels = ImageScaleToTotalPixels(
-            _id='75:80',
             upscale_method='nearest-exact',
             image=loadimage.out('IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['imagescaletototalpixels'] = imagescaletototalpixels.node.id
 
-        conditioningzeroout = ConditioningZeroOut(
-            _id='75:82',
-            conditioning=cliptextencode,
-        )
-        wf.metadata.setdefault('id_map', {})['conditioningzeroout'] = conditioningzeroout.node.id
-
+        conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
         getimagesize = GetImageSize(
-            _id='75:99',
             image=imagescaletototalpixels,
             _outputs=('WIDTH', 'HEIGHT', 'BATCH_SIZE'),
         )
-        wf.metadata.setdefault('id_map', {})['getimagesize'] = getimagesize.node.id
 
-        vaeencode = VAEEncode(
-            _id='75:122',
-            pixels=imagescaletototalpixels,
-            vae=vaeloader,
-        )
-        wf.metadata.setdefault('id_map', {})['vaeencode'] = vaeencode.node.id
+        vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
 
         # Sampling
         flux2scheduler = Flux2Scheduler(
-            _id='75:62',
             steps=4,
             height=getimagesize.out('HEIGHT'),
             width=getimagesize.out('WIDTH'),
         )
-        wf.metadata.setdefault('id_map', {})['flux2scheduler'] = flux2scheduler.node.id
 
         emptyflux2latentimage = EmptyFlux2LatentImage(
-            _id='75:66',
             width=getimagesize.out('WIDTH'),
             height=getimagesize.out('HEIGHT'),
         )
-        wf.metadata.setdefault('id_map', {})['emptyflux2latentimage'] = emptyflux2latentimage.node.id
 
         referencelatent = ReferenceLatent(
-            _id='75:121',
             conditioning=conditioningzeroout,
             latent=vaeencode,
         )
-        wf.metadata.setdefault('id_map', {})['referencelatent'] = referencelatent.node.id
 
         referencelatent_2 = ReferenceLatent(
-            _id='75:123',
             conditioning=cliptextencode,
             latent=vaeencode,
         )
-        wf.metadata.setdefault('id_map', {})['referencelatent_2'] = referencelatent_2.node.id
 
         # Conditioning
         cfgguider = CFGGuider(
-            _id='75:63',
             cfg=GUIDE_STRENGTH,
             model=unetloader,
             negative=referencelatent,
             positive=referencelatent_2,
         )
-        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
 
         # Sampling
         samplercustomadvanced = SamplerCustomAdvanced(
-            _id='75:64',
             guider=cfgguider,
             latent_image=emptyflux2latentimage,
             noise=randomnoise,
@@ -155,19 +114,17 @@ def build() -> VibeWorkflow:
             sigmas=flux2scheduler,
             _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
 
         # Decode
         vaedecode = VAEDecode(
-            _id='75:65',
             samples=samplercustomadvanced.out('OUTPUT'),
             vae=vaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
 
         # Outputs
-        saveimage = SaveImage(_id='9', filename_prefix='Flux2-Klein', images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+        saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
+
+        wf._set_id_map({name: node.node.id for name, node in (('ksamplerselect', ksamplerselect), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('randomnoise', randomnoise), ('loadimage', loadimage), ('loadimage_2', loadimage_2), ('cliptextencode', cliptextencode), ('imagescaletototalpixels', imagescaletototalpixels), ('conditioningzeroout', conditioningzeroout), ('getimagesize', getimagesize), ('vaeencode', vaeencode), ('flux2scheduler', flux2scheduler), ('emptyflux2latentimage', emptyflux2latentimage), ('referencelatent', referencelatent), ('referencelatent_2', referencelatent_2), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('vaedecode', vaedecode), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

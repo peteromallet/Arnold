@@ -60,44 +60,28 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Loaders
-        unetloader = UNETLoader(_id='37', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        cliploader = CLIPLoader(_id='38', clip_name=MODEL_NAME_2, type_='wan')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='39', vae_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
-        clipvisionloader = CLIPVisionLoader(_id='49', clip_name=MODEL_NAME_4)
-        wf.metadata.setdefault('id_map', {})['clipvisionloader'] = clipvisionloader.node.id
+        unetloader = UNETLoader(unet_name=MODEL_NAME)
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='wan')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
+        clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_4)
+
         # Inputs
         loadimage = LoadImage(
-            _id='52',
             image='image_to_video_wan_start_image.png',
             _outputs=('IMAGE', 'MASK'),
         )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
         # Conditioning
-        cliptextencode = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT, clip=cliploader)
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
-        cliptextencode_2 = CLIPTextEncode(
-            _id='7',
-            text=DEFAULT_PROMPT_2,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
-
+        cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
         clipvisionencode = CLIPVisionEncode(
-            _id='51',
             crop='none',
             clip_vision=clipvisionloader,
             image=loadimage.out('IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['clipvisionencode'] = clipvisionencode.node.id
 
-        modelsamplingsd3 = ModelSamplingSD3(_id='54', shift=8, model=unetloader)
-        wf.metadata.setdefault('id_map', {})['modelsamplingsd3'] = modelsamplingsd3.node.id
+        modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
         wanimagetovideo = WanImageToVideo(
-            _id='50',
             height=512,
             length=DEFAULT_FRAMES,
             width=512,
@@ -108,11 +92,9 @@ def build() -> VibeWorkflow:
             vae=vaeloader,
             _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['wanimagetovideo'] = wanimagetovideo.node.id
 
         # Sampling
         ksampler = KSampler(
-            _id='3',
             seed=DEFAULT_SEED,
             steps=20,
             cfg=GUIDE_STRENGTH,
@@ -122,16 +104,15 @@ def build() -> VibeWorkflow:
             negative=wanimagetovideo.out('NEGATIVE'),
             positive=wanimagetovideo.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
 
         # Decode
-        vaedecode = VAEDecode(_id='8', samples=ksampler, vae=vaeloader)
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
-        createvideo = CreateVideo(_id='55', fps=DEFAULT_FPS, images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
+        vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+        createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
+
         # Outputs
-        savevideo = SaveVideo(_id='56', video=createvideo)
-        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+        savevideo = SaveVideo(video=createvideo)
+
+        wf._set_id_map({name: node.node.id for name, node in (('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('clipvisionloader', clipvisionloader), ('loadimage', loadimage), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('clipvisionencode', clipvisionencode), ('modelsamplingsd3', modelsamplingsd3), ('wanimagetovideo', wanimagetovideo), ('ksampler', ksampler), ('vaedecode', vaedecode), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

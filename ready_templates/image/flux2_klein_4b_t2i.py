@@ -45,65 +45,40 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Sampling
-        ksamplerselect = KSamplerSelect(_id='75:61', sampler_name='euler')
-        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
-        # Inputs
-        primitiveint = raw_call(wf, 'PrimitiveInt', '75:68', value=1024)
-        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
-        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '75:69', value=1024)
-        wf.metadata.setdefault('id_map', {})['primitiveint_2'] = primitiveint_2.node.id
+        ksamplerselect = KSamplerSelect(sampler_name='euler')
+
         # Loaders
-        unetloader = UNETLoader(_id='75:70', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        cliploader = CLIPLoader(_id='75:71', clip_name=MODEL_NAME_2, type_='flux2')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='75:72', vae_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
-        randomnoise = RandomNoise(_id='75:73', noise_seed=DEFAULT_SEED)
-        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
+        unetloader = UNETLoader(unet_name=MODEL_NAME)
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='flux2')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
+        randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
         primitivestringmultiline = PrimitiveStringMultiline(
-            _id='76',
             value='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
         )
-        wf.metadata.setdefault('id_map', {})['primitivestringmultiline'] = primitivestringmultiline.node.id
+
+        # Inputs
+        primitiveint = raw_call(wf, 'PrimitiveInt', '75:68', value=1024)
+        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '75:69', value=1024)
 
         # Sampling
-        flux2scheduler = Flux2Scheduler(
-            _id='75:62',
-            height=primitiveint_2,
-            width=primitiveint,
-        )
-        wf.metadata.setdefault('id_map', {})['flux2scheduler'] = flux2scheduler.node.id
-
+        flux2scheduler = Flux2Scheduler(height=primitiveint_2, width=primitiveint)
         emptyflux2latentimage = EmptyFlux2LatentImage(
-            _id='75:66',
             width=primitiveint,
             height=primitiveint_2,
         )
-        wf.metadata.setdefault('id_map', {})['emptyflux2latentimage'] = emptyflux2latentimage.node.id
 
         # Conditioning
-        negative = CLIPTextEncode(_id='75:67', text='', clip=cliploader)
-        wf.metadata.setdefault('id_map', {})['negative'] = negative.node.id
-        positive = CLIPTextEncode(
-            _id='75:74',
-            text=primitivestringmultiline,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['positive'] = positive.node.id
-
+        negative = CLIPTextEncode(text='', clip=cliploader)
+        positive = CLIPTextEncode(text=primitivestringmultiline, clip=cliploader)
         cfgguider = CFGGuider(
-            _id='75:63',
             cfg=GUIDE_STRENGTH,
             model=unetloader,
             negative=negative,
             positive=positive,
         )
-        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
 
         # Sampling
         samplercustomadvanced = SamplerCustomAdvanced(
-            _id='75:64',
             guider=cfgguider,
             latent_image=emptyflux2latentimage,
             noise=randomnoise,
@@ -111,19 +86,17 @@ def build() -> VibeWorkflow:
             sigmas=flux2scheduler,
             _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
 
         # Decode
         vaedecode = VAEDecode(
-            _id='75:65',
             samples=samplercustomadvanced.out('OUTPUT'),
             vae=vaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
 
         # Outputs
-        saveimage = SaveImage(_id='9', filename_prefix='Flux2-Klein', images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+        saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
+
+        wf._set_id_map({name: node.node.id for name, node in (('ksamplerselect', ksamplerselect), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('randomnoise', randomnoise), ('primitivestringmultiline', primitivestringmultiline), ('flux2scheduler', flux2scheduler), ('emptyflux2latentimage', emptyflux2latentimage), ('negative', negative), ('positive', positive), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('vaedecode', vaedecode), ('saveimage', saveimage), ('primitiveint', primitiveint), ('primitiveint_2', primitiveint_2))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

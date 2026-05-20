@@ -52,30 +52,15 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
-            _id='11',
-            model_name=MODEL_NAME,
-        )
-        wf.metadata.setdefault('id_map', {})['loadwanvideot5textencoder'] = loadwanvideot5textencoder.node.id
-
-        wanvideomodelloader = WanVideoModelLoader(_id='22', model=MODEL_NAME_2)
-        wf.metadata.setdefault('id_map', {})['wanvideomodelloader'] = wanvideomodelloader.node.id
-        wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='35')
-        wf.metadata.setdefault('id_map', {})['wanvideotorchcompilesettings'] = wanvideotorchcompilesettings.node.id
-        wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['wanvideovaeloader'] = wanvideovaeloader.node.id
-        wanvideoblockswap = WanVideoBlockSwap(
-            _id='39',
-            blocks_to_swap=15,
-            use_non_blocking=True,
-        )
-        wf.metadata.setdefault('id_map', {})['wanvideoblockswap'] = wanvideoblockswap.node.id
+        loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+        wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME_2)
+        wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+        wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=15, use_non_blocking=True)
 
         # Loaders
-        cliploader = CLIPLoader(_id='48', clip_name=MODEL_NAME_4, type_='wan')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_4, type_='wan')
         wanvideoteacache = WanVideoTeaCache(
-            _id='52',
             widget_0=0.08,
             widget_1=6,
             widget_2=-1,
@@ -83,26 +68,14 @@ def build() -> VibeWorkflow:
             widget_4='true',
             widget_5='e0',
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoteacache'] = wanvideoteacache.node.id
 
         # Inputs
-        loadimage = LoadImage(
-            _id='58',
-            image='oldman_upscaled.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
-
+        loadimage = LoadImage(image='oldman_upscaled.png', _outputs=('IMAGE', 'MASK'))
         reroute = raw_call(wf, 'Reroute', '80')
-        wf.metadata.setdefault('id_map', {})['reroute'] = reroute.node.id
         getnode = raw_call(wf, 'GetNode', '85', widget_0=WIDGET_0)
-        wf.metadata.setdefault('id_map', {})['getnode'] = getnode.node.id
         getnode_2 = raw_call(wf, 'GetNode', '86', widget_0=WIDGET_0)
-        wf.metadata.setdefault('id_map', {})['getnode_2'] = getnode_2.node.id
         getnode_3 = raw_call(wf, 'GetNode', '89', widget_0=WIDGET_0_2)
-        wf.metadata.setdefault('id_map', {})['getnode_3'] = getnode_3.node.id
         wanvideoexperimentalargs = WanVideoExperimentalArgs(
-            _id='90',
             widget_0=WIDGET_0_3,
             widget_1=True,
             widget_2=False,
@@ -112,42 +85,24 @@ def build() -> VibeWorkflow:
             widget_6=1.25,
             widget_7=20,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoexperimentalargs'] = wanvideoexperimentalargs.node.id
 
-        intconstant = INTConstant(_id='105', value=81)
-        wf.metadata.setdefault('id_map', {})['intconstant'] = intconstant.node.id
+        intconstant = INTConstant(value=81)
+        setnode = raw_call(wf, 'SetNode', '83',
+            widget_0=WIDGET_0,
+            WANVAE=wanvideovaeloader,
+        )
+
         wanvideotextencode = WanVideoTextEncode(
-            _id='16',
             positive_prompt=DEFAULT_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE,
             model_to_offload=wanvideomodelloader,
             t5=loadwanvideot5textencoder,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideotextencode'] = wanvideotextencode.node.id
 
         # Conditioning
-        cliptextencode = CLIPTextEncode(
-            _id='49',
-            text=DEFAULT_PROMPT_2,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
-
-        cliptextencode_2 = CLIPTextEncode(
-            _id='50',
-            text=DEFAULT_PROMPT_3,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
-
-        setnode = raw_call(wf, 'SetNode', '83',
-            widget_0=WIDGET_0,
-            WANVAE=wanvideovaeloader,
-        )
-        wf.metadata.setdefault('id_map', {})['setnode'] = setnode.node.id
-
+        cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
         imageresizekjv2 = ImageResizeKJv2(
-            _id='97',
             width=256,
             height=256,
             upscale_method='lanczos',
@@ -156,7 +111,6 @@ def build() -> VibeWorkflow:
             image=loadimage.out('IMAGE'),
             _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
-        wf.metadata.setdefault('id_map', {})['imageresizekjv2'] = imageresizekjv2.node.id
 
         ade_cameraposebasic = raw_call(wf, 'ADE_CameraPoseBasic', '99',
             widget_0='Zoom Out',
@@ -164,10 +118,13 @@ def build() -> VibeWorkflow:
             widget_2=40,
             frame_length=intconstant,
         )
-        wf.metadata.setdefault('id_map', {})['ade_cameraposebasic'] = ade_cameraposebasic.node.id
+
+        setnode_2 = raw_call(wf, 'SetNode', '98',
+            widget_0=WIDGET_0_2,
+            IMAGE=imageresizekjv2.out('IMAGE'),
+        )
 
         wanvideosampler = WanVideoSampler(
-            _id='27',
             steps=1,
             seed=DEFAULT_SEED,
             batched_cfg='',
@@ -179,23 +136,13 @@ def build() -> VibeWorkflow:
             text_embeds=wanvideotextencode,
             _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosampler'] = wanvideosampler.node.id
 
         wanvideotextembedbridge = WanVideoTextEmbedBridge(
-            _id='46',
             negative=cliptextencode_2,
             positive=cliptextencode,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideotextembedbridge'] = wanvideotextembedbridge.node.id
-
-        setnode_2 = raw_call(wf, 'SetNode', '98',
-            widget_0=WIDGET_0_2,
-            IMAGE=imageresizekjv2.out('IMAGE'),
-        )
-        wf.metadata.setdefault('id_map', {})['setnode_2'] = setnode_2.node.id
 
         cameraposevisualizer = CameraPoseVisualizer(
-            _id='102',
             widget_0=WIDGET_0_3,
             widget_1=0.2,
             widget_2=0.3,
@@ -205,10 +152,8 @@ def build() -> VibeWorkflow:
             widget_6=False,
             cameractrl_poses=ade_cameraposebasic.out(0),
         )
-        wf.metadata.setdefault('id_map', {})['cameraposevisualizer'] = cameraposevisualizer.node.id
 
         wanvideofuncameraembeds = WanVideoFunCameraEmbeds(
-            _id='104',
             widget_0=832,
             widget_1=480,
             widget_2=1,
@@ -218,17 +163,13 @@ def build() -> VibeWorkflow:
             poses=ade_cameraposebasic.out(0),
             width=imageresizekjv2.out('WIDTH'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideofuncameraembeds'] = wanvideofuncameraembeds.node.id
 
         wanvideodecode = WanVideoDecode(
-            _id='28',
             samples=wanvideosampler.out('SAMPLES'),
             vae=getnode_2.out(0),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideodecode'] = wanvideodecode.node.id
 
         wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
-            _id='63',
             noise_aug_strength=0.03,
             tiled_vae=True,
             width=imageresizekjv2.out('WIDTH'),
@@ -238,13 +179,10 @@ def build() -> VibeWorkflow:
             start_image=setnode_2.out(0),
             vae=getnode.out(0),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoimagetovideoencode'] = wanvideoimagetovideoencode.node.id
 
         # Outputs
-        previewimage = PreviewImage(_id='103', images=cameraposevisualizer)
-        wf.metadata.setdefault('id_map', {})['previewimage'] = previewimage.node.id
+        previewimage = PreviewImage(images=cameraposevisualizer)
         imageconcatmulti = ImageConcatMulti(
-            _id='87',
             inputcount=3,
             direction='left',
             match_image_size=True,
@@ -253,10 +191,10 @@ def build() -> VibeWorkflow:
             image_2=getnode_3.out(0),
             image_3=cameraposevisualizer,
         )
-        wf.metadata.setdefault('id_map', {})['imageconcatmulti'] = imageconcatmulti.node.id
 
-        vhs_videocombine = VHS_VideoCombine(_id='30', images=imageconcatmulti)
-        wf.metadata.setdefault('id_map', {})['vhs_videocombine'] = vhs_videocombine.node.id
+        vhs_videocombine = VHS_VideoCombine(images=imageconcatmulti)
 
-        return wf.finalize(PUBLIC_INPUTS, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+        wf._set_id_map({name: node.node.id for name, node in (('loadwanvideot5textencoder', loadwanvideot5textencoder), ('wanvideomodelloader', wanvideomodelloader), ('wanvideotorchcompilesettings', wanvideotorchcompilesettings), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoblockswap', wanvideoblockswap), ('cliploader', cliploader), ('wanvideoteacache', wanvideoteacache), ('loadimage', loadimage), ('reroute', reroute), ('setnode', setnode), ('getnode', getnode), ('getnode_2', getnode_2), ('getnode_3', getnode_3), ('wanvideoexperimentalargs', wanvideoexperimentalargs), ('intconstant', intconstant), ('wanvideotextencode', wanvideotextencode), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('imageresizekjv2', imageresizekjv2), ('setnode_2', setnode_2), ('ade_cameraposebasic', ade_cameraposebasic), ('wanvideosampler', wanvideosampler), ('wanvideotextembedbridge', wanvideotextembedbridge), ('cameraposevisualizer', cameraposevisualizer), ('wanvideofuncameraembeds', wanvideofuncameraembeds), ('wanvideodecode', wanvideodecode), ('wanvideoimagetovideoencode', wanvideoimagetovideoencode), ('previewimage', previewimage), ('imageconcatmulti', imageconcatmulti), ('vhs_videocombine', vhs_videocombine))})
+
+        return wf.finalize(PUBLIC_INPUTS, output_node=previewimage, output_type='PreviewImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

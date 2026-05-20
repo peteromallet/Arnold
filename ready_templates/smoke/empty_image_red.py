@@ -27,20 +27,13 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        emptyimage = EmptyImage(
-            _id='1',
-            color=16711680,
-            height=64,
-            width=64,
-        )
-        wf.metadata.setdefault('id_map', {})['emptyimage'] = emptyimage.node.id
-
+        emptyimage = EmptyImage(color=16711680, height=64, width=64)
         saveimage = SaveImage(
-            _id='2',
             filename_prefix='vibecomfy_ready_smoke_red',
             images=emptyimage,
         )
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+
+        wf._set_id_map({name: node.node.id for name, node in (('emptyimage', emptyimage), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='vibecomfy_ready_smoke_red')
 

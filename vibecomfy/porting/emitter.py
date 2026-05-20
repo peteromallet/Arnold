@@ -1243,6 +1243,8 @@ def _emit_build_function(
         # Emit section comment if entering a new section group
         section = section_order_map.get(nid)
         if section is not None and section != last_section:
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
             out_lines.append(f"{body_indent}# {section}")
             last_section = section
 
@@ -1280,7 +1282,7 @@ def _emit_build_function(
                     ready_kwargs.append((key, expr))
 
             if use_wrapper:
-                all_args = [("_id", repr(nid))]
+                all_args = []
                 all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
                 if outputs_expr is not None:
                     all_args.append(("_outputs", outputs_expr))
@@ -1333,11 +1335,9 @@ def _emit_build_function(
                         lines.append(f"{continuation_indent}{key}={expr},")
                 lines.append(f"{body_indent})")
                 out_lines.extend(lines)
-                out_lines.append(f"{body_indent}wf.metadata.setdefault('id_map', {{}})[{var!r}] = {var}.node.id")
                 out_lines.append("")
             else:
                 out_lines.append(single_line)
-                out_lines.append(f"{body_indent}wf.metadata.setdefault('id_map', {{}})[{var!r}] = {var}.node.id")
         else:
             head = f"    {var} = _node(wf, {node.class_type!r}, {nid!r}"
             if not kwargs:
@@ -1351,6 +1351,7 @@ def _emit_build_function(
     if use_shared_helpers:
         if out_lines and out_lines[-1] != "":
             out_lines.append("")
+        tail_lines = _with_id_map_tail_line(tail_lines, var_names)
         out_lines.extend("    " + line if line else line for line in tail_lines)
         return out_lines
     out_lines.append("")
@@ -1384,6 +1385,21 @@ def _emit_build_function(
 
     out_lines.append("    return wf")
     return out_lines
+
+
+def _with_id_map_tail_line(tail_lines: list[str], var_names: dict[str, str]) -> list[str]:
+    if not var_names:
+        return tail_lines
+    ordered_vars = [var_names[nid] for nid in sorted(var_names, key=_id_sort_key)]
+    items_expr = "(" + ", ".join(f"({var!r}, {var})" for var in ordered_vars)
+    if len(ordered_vars) == 1:
+        items_expr += ","
+    items_expr += ")"
+    line = f"    wf._set_id_map({{name: node.node.id for name, node in {items_expr}}})"
+    for index, tail_line in enumerate(tail_lines):
+        if "return wf.finalize(" in tail_line:
+            return [*tail_lines[:index], line, "", *tail_lines[index:]]
+    return [line, "", *tail_lines]
 
 
 _OUTPUT_CLASSES: dict[str, tuple[str, str]] = {

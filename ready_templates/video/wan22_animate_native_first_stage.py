@@ -72,106 +72,68 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Loaders
-        cliploader = CLIPLoader(_id='2', clip_name=MODEL_NAME, type_='wan')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='3', vae_name=MODEL_NAME_2)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
-        clipvisionloader = CLIPVisionLoader(_id='4', clip_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['clipvisionloader'] = clipvisionloader.node.id
+        cliploader = CLIPLoader(clip_name=MODEL_NAME, type_='wan')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_2)
+        clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_3)
+
         # Inputs
-        loadimage = LoadImage(
-            _id='10',
-            image='reference_image.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
+        loadimage = LoadImage(image='reference_image.png', _outputs=('IMAGE', 'MASK'))
 
         # Loaders
-        unetloader = UNETLoader(_id='20', unet_name=MODEL_NAME_4)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
+        unetloader = UNETLoader(unet_name=MODEL_NAME_4)
         downloadandloadsam2model = DownloadAndLoadSAM2Model(
-            _id='108',
             model=MODEL_NAME_5,
             segmentor='video',
             device='cuda',
         )
-        wf.metadata.setdefault('id_map', {})['downloadandloadsam2model'] = downloadandloadsam2model.node.id
 
-        loadvideo = LoadVideo(_id='145', file='motion_video.mp4')
-        wf.metadata.setdefault('id_map', {})['loadvideo'] = loadvideo.node.id
+        loadvideo = LoadVideo(file='motion_video.mp4')
+
         # Inputs
         primitiveint = raw_call(wf, 'PrimitiveInt', '159', value=832)
-        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
         primitiveint_2 = raw_call(wf, 'PrimitiveInt', '160', value=480)
-        wf.metadata.setdefault('id_map', {})['primitiveint_2'] = primitiveint_2.node.id
+
         # Conditioning
         cliptextencode = CLIPTextEncode(
-            _id='1',
             text='low quality, blurry, distorted',
             clip=cliploader,
         )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
 
         clipvisionencode = CLIPVisionEncode(
-            _id='9',
             crop='none',
             clip_vision=clipvisionloader,
             image=loadimage.out('IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['clipvisionencode'] = clipvisionencode.node.id
 
         loraloadermodelonly = LoraLoaderModelOnly(
-            _id='18',
             lora_name=MODEL_NAME_6,
             model=unetloader,
         )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
 
-        cliptextencode_2 = CLIPTextEncode(
-            _id='21',
-            text=DEFAULT_PROMPT,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
-
+        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
         getvideocomponents = GetVideoComponents(
-            _id='23',
             video=loadvideo,
             _outputs=('IMAGES', 'AUDIO', 'FPS'),
         )
-        wf.metadata.setdefault('id_map', {})['getvideocomponents'] = getvideocomponents.node.id
 
         loraloadermodelonly_2 = LoraLoaderModelOnly(
-            _id='99',
             lora_name=MODEL_NAME_7,
             model=loraloadermodelonly,
         )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly_2'] = loraloadermodelonly_2.node.id
 
         pixelperfectresolution = PixelPerfectResolution(
-            _id='158',
             image_gen_height=primitiveint_2,
             image_gen_width=primitiveint,
             original_image=getvideocomponents.out('IMAGES'),
         )
-        wf.metadata.setdefault('id_map', {})['pixelperfectresolution'] = pixelperfectresolution.node.id
 
         imagescale = ImageScale(
-            _id='212',
             upscale_method='lanczos',
             crop='center',
             width=primitiveint,
             height=primitiveint_2,
             image=getvideocomponents.out('IMAGES'),
         )
-        wf.metadata.setdefault('id_map', {})['imagescale'] = imagescale.node.id
-
-        modelsamplingsd3 = ModelSamplingSD3(
-            _id='60',
-            shift=8,
-            model=loraloadermodelonly_2,
-        )
-        wf.metadata.setdefault('id_map', {})['modelsamplingsd3'] = modelsamplingsd3.node.id
 
         dwpreprocessor = raw_call(wf, 'DWPreprocessor', '100',
             detect_hand='disable',
@@ -183,7 +145,6 @@ def build() -> VibeWorkflow:
             resolution=pixelperfectresolution,
             image=imagescale,
         )
-        wf.metadata.setdefault('id_map', {})['dwpreprocessor'] = dwpreprocessor.node.id
 
         dwpreprocessor_2 = raw_call(wf, 'DWPreprocessor', '101',
             detect_hand='enable',
@@ -195,10 +156,9 @@ def build() -> VibeWorkflow:
             resolution=pixelperfectresolution,
             image=imagescale,
         )
-        wf.metadata.setdefault('id_map', {})['dwpreprocessor_2'] = dwpreprocessor_2.node.id
 
+        modelsamplingsd3 = ModelSamplingSD3(shift=8, model=loraloadermodelonly_2)
         pointseditor = PointsEditor(
-            _id='229',
             points_store='[{}]',
             coordinates='[{"x":320,"y":320}]',
             neg_coordinates='[]',
@@ -210,30 +170,18 @@ def build() -> VibeWorkflow:
             bg_image=imagescale,
             _outputs=('POSITIVE_COORDS', 'NEGATIVE_COORDS', 'BBOX', 'BBOX_MASK', 'CROPPED_IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['pointseditor'] = pointseditor.node.id
 
         sam2segmentation = Sam2Segmentation(
-            _id='107',
             keep_model_loaded=True,
             coordinates_positive=pointseditor.out('POSITIVE_COORDS'),
             image=imagescale,
             sam2_model=downloadandloadsam2model,
         )
-        wf.metadata.setdefault('id_map', {})['sam2segmentation'] = sam2segmentation.node.id
 
-        growmask = GrowMask(_id='274', expand=10, mask=sam2segmentation)
-        wf.metadata.setdefault('id_map', {})['growmask'] = growmask.node.id
-        blockifymask = BlockifyMask(_id='276', masks=growmask)
-        wf.metadata.setdefault('id_map', {})['blockifymask'] = blockifymask.node.id
-        drawmaskonimage = DrawMaskOnImage(
-            _id='275',
-            image=imagescale,
-            mask=blockifymask,
-        )
-        wf.metadata.setdefault('id_map', {})['drawmaskonimage'] = drawmaskonimage.node.id
-
+        growmask = GrowMask(expand=10, mask=sam2segmentation)
+        blockifymask = BlockifyMask(masks=growmask)
+        drawmaskonimage = DrawMaskOnImage(image=imagescale, mask=blockifymask)
         wananimatetovideo = WanAnimateToVideo(
-            _id='232:62',
             length=DEFAULT_FRAMES,
             background_video=drawmaskonimage,
             character_mask=blockifymask,
@@ -248,11 +196,9 @@ def build() -> VibeWorkflow:
             width=primitiveint,
             _outputs=('POSITIVE', 'NEGATIVE', 'LATENT', 'TRIM_LATENT', 'TRIM_IMAGE', 'VIDEO_FRAME_OFFSET'),
         )
-        wf.metadata.setdefault('id_map', {})['wananimatetovideo'] = wananimatetovideo.node.id
 
         # Sampling
         ksampler = KSampler(
-            _id='232:63',
             seed=DEFAULT_SEED,
             steps=20,
             cfg=GUIDE_STRENGTH,
@@ -262,37 +208,30 @@ def build() -> VibeWorkflow:
             negative=wananimatetovideo.out('NEGATIVE'),
             positive=wananimatetovideo.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
 
         trimvideolatent = TrimVideoLatent(
-            _id='232:57',
             samples=ksampler,
             trim_amount=wananimatetovideo.out('TRIM_LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['trimvideolatent'] = trimvideolatent.node.id
 
         # Decode
-        vaedecode = VAEDecode(_id='232:58', samples=trimvideolatent, vae=vaeloader)
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
+        vaedecode = VAEDecode(samples=trimvideolatent, vae=vaeloader)
         imagefrombatch = ImageFromBatch(
-            _id='232:230',
             length=DEFAULT_FRAMES_2,
             batch_index=wananimatetovideo.out('TRIM_IMAGE'),
             image=vaedecode,
         )
-        wf.metadata.setdefault('id_map', {})['imagefrombatch'] = imagefrombatch.node.id
 
         createvideo = CreateVideo(
-            _id='232:15',
             fps=DEFAULT_FPS,
             audio=getvideocomponents.out('AUDIO'),
             images=imagefrombatch,
         )
-        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
 
         # Outputs
-        savevideo = SaveVideo(_id='19', video=createvideo)
-        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+        savevideo = SaveVideo(video=createvideo)
+
+        wf._set_id_map({name: node.node.id for name, node in (('cliploader', cliploader), ('vaeloader', vaeloader), ('clipvisionloader', clipvisionloader), ('loadimage', loadimage), ('unetloader', unetloader), ('downloadandloadsam2model', downloadandloadsam2model), ('loadvideo', loadvideo), ('dwpreprocessor', dwpreprocessor), ('dwpreprocessor_2', dwpreprocessor_2), ('primitiveint', primitiveint), ('primitiveint_2', primitiveint_2), ('cliptextencode', cliptextencode), ('clipvisionencode', clipvisionencode), ('loraloadermodelonly', loraloadermodelonly), ('cliptextencode_2', cliptextencode_2), ('getvideocomponents', getvideocomponents), ('loraloadermodelonly_2', loraloadermodelonly_2), ('pixelperfectresolution', pixelperfectresolution), ('imagescale', imagescale), ('modelsamplingsd3', modelsamplingsd3), ('pointseditor', pointseditor), ('sam2segmentation', sam2segmentation), ('growmask', growmask), ('blockifymask', blockifymask), ('drawmaskonimage', drawmaskonimage), ('wananimatetovideo', wananimatetovideo), ('ksampler', ksampler), ('trimvideolatent', trimvideolatent), ('vaedecode', vaedecode), ('imagefrombatch', imagefrombatch), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

@@ -110,6 +110,7 @@ class VibeWorkflow:
     outputs: list[VibeOutput] = field(default_factory=list)
     requirements: WorkflowRequirements = field(default_factory=WorkflowRequirements)
     metadata: dict[str, Any] = field(default_factory=dict)
+    _id_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __enter__(self) -> "VibeWorkflow":
         from vibecomfy.workflow_context import bind_workflow
@@ -283,18 +284,21 @@ class VibeWorkflow:
                 f"node {node_key!r} ({node.class_type}) inputs or widgets"
             )
 
-    def add_node(self, class_type: str, **inputs: Any) -> VibeNode:
-        node_id = self._next_node_id()
+    def add_node(self, class_type: str, _id: str | None = None, **inputs: Any) -> VibeNode:
+        node_id = str(_id) if _id is not None else self._next_node_id()
+        if node_id in self.nodes:
+            raise ValueError(f"Node id {node_id!r} already exists in workflow {self.id!r}")
         node = VibeNode(id=node_id, class_type=class_type, inputs=dict(inputs))
         self.nodes[node_id] = node
         return node
 
     def node(self, class_type: str, **kwargs: Any) -> "_NodeBuilder":
         pass_raw = bool(kwargs.pop("pass_raw", False))
+        explicit_id = kwargs.pop("_id", None)
         from vibecomfy.templates import coerce_node_kwargs
 
         kwargs = coerce_node_kwargs(self, class_type, kwargs, pass_raw=pass_raw)
-        node = self.add_node(class_type)
+        node = self.add_node(class_type, _id=explicit_id)
         for key, value in kwargs.items():
             if isinstance(value, Handle):
                 self.connect(value, f"{node.id}.{key}")
@@ -446,16 +450,24 @@ class VibeWorkflow:
         return api
 
     def id_map(self) -> dict[str, str]:
-        """Return debug mappings from source/symbolic ids to current node ids."""
-        mapping: dict[str, str] = {}
-        raw = self.metadata.get("id_map")
-        if isinstance(raw, dict):
-            mapping.update({str(key): str(value) for key, value in raw.items()})
-        for node_id, node in self.nodes.items():
-            source_id = node.metadata.get("source_id")
-            if source_id is not None:
-                mapping[str(source_id)] = str(node_id)
-        return dict(sorted(mapping.items()))
+        """Map variable name (as used in build()) to assigned node id."""
+        return dict(self._id_map)
+
+    def _set_id_map(self, mapping: dict[str, Any]) -> "VibeWorkflow":
+        """Store codemod-emitted variable-name mappings and return ``self``."""
+        resolved: dict[str, str] = {}
+        metadata_id_map = self.metadata.get("id_map")
+        metadata_id_map = metadata_id_map if isinstance(metadata_id_map, dict) else {}
+        for name, node_id in mapping.items():
+            key = str(name)
+            value = str(node_id)
+            if value in self.nodes:
+                resolved[key] = value
+                continue
+            metadata_value = metadata_id_map.get(value)
+            resolved[key] = str(metadata_value) if metadata_value is not None else value
+        self._id_map = resolved
+        return self
 
     def _compile_graphbuilder(self) -> dict[str, Any]:
         try:

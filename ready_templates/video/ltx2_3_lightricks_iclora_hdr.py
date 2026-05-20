@@ -50,148 +50,105 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         lowvramcheckpointloader = LowVRAMCheckpointLoader(
-            _id='3940',
             ckpt_name=MODEL_NAME,
             _outputs=('MODEL', 'CLIP', 'VAE'),
         )
-        wf.metadata.setdefault('id_map', {})['lowvramcheckpointloader'] = lowvramcheckpointloader.node.id
 
         # Sampling
-        ksamplerselect = KSamplerSelect(_id='4831', sampler_name='euler_ancestral')
-        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
+        ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral')
         randomnoise = RandomNoise(
-            _id='4832',
             noise_seed=DEFAULT_SEED,
             control_after_generate='fixed',
         )
-        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
 
         # Inputs
         primitivestring = raw_call(wf, 'PrimitiveString', '5022', value='')
-        wf.metadata.setdefault('id_map', {})['primitivestring'] = primitivestring.node.id
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
-            _id='5023',
             text_encoder=MODEL_NAME_2,
             ckpt_name=MODEL_NAME,
             device='default',
         )
-        wf.metadata.setdefault('id_map', {})['ltxavtextencoderloader'] = ltxavtextencoderloader.node.id
 
         manualsigmas = ManualSigmas(
-            _id='5025',
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
-        wf.metadata.setdefault('id_map', {})['manualsigmas'] = manualsigmas.node.id
 
-        loadvideo = LoadVideo(
-            _id='5106',
-            file='ltx_smoke_guide.mp4',
-            video='ltx_smoke_guide.mp4',
-        )
-        wf.metadata.setdefault('id_map', {})['loadvideo'] = loadvideo.node.id
+        loadvideo = LoadVideo(file='ltx_smoke_guide.mp4', video='ltx_smoke_guide.mp4')
 
         # Conditioning
-        cliptextencode = CLIPTextEncode(
-            _id='2483',
-            text='HDR footage',
-            clip=ltxavtextencoderloader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
-
+        cliptextencode = CLIPTextEncode(text='HDR footage', clip=ltxavtextencoderloader)
         cliptextencode_2 = CLIPTextEncode(
-            _id='2612',
             text=DEFAULT_PROMPT,
             clip=ltxavtextencoderloader,
         )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
 
         gemmaapitextencode = GemmaAPITextEncode(
-            _id='5020',
             widget_0=WIDGET_0,
             widget_1='pc game, console game, video game, cartoon, childish, ugly',
             widget_2=False,
             widget_3=MODEL_NAME,
             api_key=primitivestring,
         )
-        wf.metadata.setdefault('id_map', {})['gemmaapitextencode'] = gemmaapitextencode.node.id
 
         gemmaapitextencode_2 = GemmaAPITextEncode(
-            _id='5021',
             widget_0=WIDGET_0,
             widget_1='',
             widget_2=MODEL_NAME,
             widget_3=MODEL_NAME,
             api_key=primitivestring,
         )
-        wf.metadata.setdefault('id_map', {})['gemmaapitextencode_2'] = gemmaapitextencode_2.node.id
 
         getvideocomponents = GetVideoComponents(
-            _id='5105',
             video=loadvideo,
             _outputs=('IMAGES', 'AUDIO', 'FPS'),
         )
-        wf.metadata.setdefault('id_map', {})['getvideocomponents'] = getvideocomponents.node.id
 
-        ltxicloraloadermodelonly_2 = LTXICLoRALoaderModelOnly(
-            _id='5125',
+        ltxicloraloadermodelonly = LTXICLoRALoaderModelOnly(
             lora_name=MODEL_NAME_3,
             strength_model=GUIDE_STRENGTH,
             model=lowvramcheckpointloader.out('MODEL'),
             _outputs=('MODEL', 'LATENT_DOWNSCALE_FACTOR'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxicloraloadermodelonly_2'] = ltxicloraloadermodelonly_2.node.id
 
         ltxvconditioning = LTXVConditioning(
-            _id='1241',
             frame_rate=getvideocomponents.out('FPS'),
             negative=cliptextencode_2,
             positive=cliptextencode,
             _outputs=('POSITIVE', 'NEGATIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvconditioning'] = ltxvconditioning.node.id
 
-        ltxicloraloadermodelonly = LTXICLoRALoaderModelOnly(
-            _id='5011',
+        ltxicloraloadermodelonly_2 = LTXICLoRALoaderModelOnly(
             lora_name=MODEL_NAME_4,
-            model=ltxicloraloadermodelonly_2.out('MODEL'),
+            model=ltxicloraloadermodelonly.out('MODEL'),
             _outputs=('MODEL', 'LATENT_DOWNSCALE_FACTOR'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxicloraloadermodelonly'] = ltxicloraloadermodelonly.node.id
 
         simplemath_ = raw_call(wf, 'SimpleMath+', '5111',
             _outputs=('INT', 'FLOAT'),
             widget_0='a*32',
-            a=ltxicloraloadermodelonly.out('LATENT_DOWNSCALE_FACTOR'),
+            a=ltxicloraloadermodelonly_2.out('LATENT_DOWNSCALE_FACTOR'),
         )
-        wf.metadata.setdefault('id_map', {})['simplemath_'] = simplemath_.node.id
 
         resizeimagemasknode = ResizeImageMaskNode(
-            _id='5112',
             resize_type='scale to multiple',
             scale_method='lanczos',
             input=getvideocomponents.out('IMAGES'),
             **{'resize_type.multiple': simplemath_.out('INT')},
         )
-        wf.metadata.setdefault('id_map', {})['resizeimagemasknode'] = resizeimagemasknode.node.id
 
         getimagesize = GetImageSize(
-            _id='5029',
             image=resizeimagemasknode,
             _outputs=('WIDTH', 'HEIGHT', 'BATCH_SIZE'),
         )
-        wf.metadata.setdefault('id_map', {})['getimagesize'] = getimagesize.node.id
 
         # Sampling
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-            _id='3059',
             width=getimagesize.out('WIDTH'),
             height=getimagesize.out('HEIGHT'),
             length=getimagesize.out('BATCH_SIZE'),
         )
-        wf.metadata.setdefault('id_map', {})['emptyltxvlatentvideo'] = emptyltxvlatentvideo.node.id
 
         ltxaddvideoicloraguide = LTXAddVideoICLoRAGuide(
-            _id='5012',
             crop=1,
             use_tiled_encode='disabled',
             tile_size=128,
@@ -203,21 +160,17 @@ def build() -> VibeWorkflow:
             vae=lowvramcheckpointloader.out('VAE'),
             _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxaddvideoicloraguide'] = ltxaddvideoicloraguide.node.id
 
         # Conditioning
         cfgguider = CFGGuider(
-            _id='4828',
             cfg=GUIDE_STRENGTH_2,
-            model=ltxicloraloadermodelonly.out('MODEL'),
+            model=ltxicloraloadermodelonly_2.out('MODEL'),
             negative=ltxaddvideoicloraguide.out('NEGATIVE'),
             positive=ltxaddvideoicloraguide.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
 
         # Sampling
         samplercustomadvanced = SamplerCustomAdvanced(
-            _id='4829',
             guider=cfgguider,
             latent_image=ltxaddvideoicloraguide.out('LATENT'),
             noise=randomnoise,
@@ -225,20 +178,16 @@ def build() -> VibeWorkflow:
             sigmas=manualsigmas,
             _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
 
         ltxvcropguides = LTXVCropGuides(
-            _id='5013',
             latent=samplercustomadvanced.out('OUTPUT'),
             negative=ltxaddvideoicloraguide.out('NEGATIVE'),
             positive=ltxaddvideoicloraguide.out('POSITIVE'),
             _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvcropguides'] = ltxvcropguides.node.id
 
         # Decode
         vaedecodetiled = VAEDecodeTiled(
-            _id='4851',
             tile_size=768,
             overlap=256,
             temporal_size=8,
@@ -246,10 +195,8 @@ def build() -> VibeWorkflow:
             samples=ltxvcropguides.out('LATENT'),
             vae=lowvramcheckpointloader.out('VAE'),
         )
-        wf.metadata.setdefault('id_map', {})['vaedecodetiled'] = vaedecodetiled.node.id
 
         ltxvhdrdecodepostprocess = LTXVHDRDecodePostprocess(
-            _id='5114',
             widget_0=7.1,
             widget_1=True,
             widget_2='output/hdr_exr3',
@@ -258,20 +205,18 @@ def build() -> VibeWorkflow:
             image=vaedecodetiled,
             _outputs=('TONEMAPPED', 'HDR_LINEAR'),
         )
-        wf.metadata.setdefault('id_map', {})['ltxvhdrdecodepostprocess'] = ltxvhdrdecodepostprocess.node.id
 
         createvideo = CreateVideo(
-            _id='5108',
             fps=DEFAULT_FPS,
             widget_0=8,
             audio=getvideocomponents.out('AUDIO'),
             images=ltxvhdrdecodepostprocess.out('HDR_LINEAR'),
         )
-        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
 
         # Outputs
-        savevideo = SaveVideo(_id='5109', filename_prefix='output', video=createvideo)
-        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+        savevideo = SaveVideo(filename_prefix='output', video=createvideo)
+
+        wf._set_id_map({name: node.node.id for name, node in (('lowvramcheckpointloader', lowvramcheckpointloader), ('ksamplerselect', ksamplerselect), ('randomnoise', randomnoise), ('primitivestring', primitivestring), ('ltxavtextencoderloader', ltxavtextencoderloader), ('manualsigmas', manualsigmas), ('loadvideo', loadvideo), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('gemmaapitextencode', gemmaapitextencode), ('gemmaapitextencode_2', gemmaapitextencode_2), ('getvideocomponents', getvideocomponents), ('ltxicloraloadermodelonly', ltxicloraloadermodelonly), ('ltxvconditioning', ltxvconditioning), ('ltxicloraloadermodelonly_2', ltxicloraloadermodelonly_2), ('simplemath_', simplemath_), ('resizeimagemasknode', resizeimagemasknode), ('getimagesize', getimagesize), ('emptyltxvlatentvideo', emptyltxvlatentvideo), ('ltxaddvideoicloraguide', ltxaddvideoicloraguide), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('ltxvcropguides', ltxvcropguides), ('vaedecodetiled', vaedecodetiled), ('ltxvhdrdecodepostprocess', ltxvhdrdecodepostprocess), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

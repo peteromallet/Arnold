@@ -55,17 +55,19 @@ def test_node_allows_id_free_creation_and_legacy_source_ids() -> None:
 
     assert first.node.id == "1"
     assert second.node.id == "legacy"
-    assert wf.id_map()["legacy"] == "legacy"
+    assert wf.metadata["id_map"]["legacy"] == "legacy"
+    assert wf.id_map() == {}
 
 
-def test_id_map_merges_semantic_names_and_source_ids_without_hiding_source_ids() -> None:
+def test_id_map_returns_defensive_copy_from_set_id_map() -> None:
     wf = _workflow()
     builder = node(wf, "PrimitiveString", "7", value="hello")
-    wf.metadata.setdefault("id_map", {})["prompt"] = builder.node.id
-    wf.metadata.setdefault("id_map", {})["7"] = "not-the-source-id"
 
-    assert wf.id_map()["prompt"] == "7"
-    assert wf.id_map()["7"] == "7"
+    assert wf._set_id_map({"prompt": builder.node.id}) is wf
+    mapping = wf.id_map()
+    assert mapping == {"prompt": "7"}
+    mapping["prompt"] = "mutated"
+    assert wf.id_map() == {"prompt": "7"}
 
 
 def test_finalize_resolves_symbolic_inputspec_from_build_locals() -> None:
@@ -81,6 +83,7 @@ def test_finalize_resolves_symbolic_inputspec_from_build_locals() -> None:
             models={},
             output_prefix="out",
         )
+        wf._set_id_map({"prompt_node": prompt_node.node.id, "saved": saved.node.id})
         return finalize(wf, inputs, metadata, output_node=saved.node.id, output_kind="image", output_type="SaveImage")
 
     wf = build()

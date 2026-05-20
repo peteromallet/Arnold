@@ -41,63 +41,38 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
-            _id='11',
-            model_name=MODEL_NAME,
-        )
-        wf.metadata.setdefault('id_map', {})['loadwanvideot5textencoder'] = loadwanvideot5textencoder.node.id
-
-        wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='35')
-        wf.metadata.setdefault('id_map', {})['wanvideotorchcompilesettings'] = wanvideotorchcompilesettings.node.id
-        wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=MODEL_NAME_2)
-        wf.metadata.setdefault('id_map', {})['wanvideovaeloader'] = wanvideovaeloader.node.id
+        loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+        wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
         wanvideoteacache = WanVideoTeaCache(
-            _id='52',
             widget_0=0.1,
             widget_1=1,
             widget_2=-1,
             widget_3='offload_device',
             widget_4='true',
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoteacache'] = wanvideoteacache.node.id
 
-        wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings(_id='64')
-        wf.metadata.setdefault('id_map', {})['wanvideotorchcompilesettings_2'] = wanvideotorchcompilesettings_2.node.id
+        wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
         vhs_loadvideo = VHS_LoadVideo(
-            _id='97',
             video='wolf_interpolated.mp4',
             _outputs=('IMAGE', 'FRAME_COUNT', 'AUDIO', 'VIDEO_INFO'),
         )
-        wf.metadata.setdefault('id_map', {})['vhs_loadvideo'] = vhs_loadvideo.node.id
 
-        wanvideoloraselect = WanVideoLoraSelect(_id='98', lora=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['wanvideoloraselect'] = wanvideoloraselect.node.id
+        wanvideoloraselect = WanVideoLoraSelect(lora=MODEL_NAME_3)
         wanvideotextencode = WanVideoTextEncode(
-            _id='16',
             positive_prompt='video of a wolf',
             negative_prompt=DEFAULT_NEGATIVE,
             t5=loadwanvideot5textencoder,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideotextencode'] = wanvideotextencode.node.id
 
         wanvideomodelloader = WanVideoModelLoader(
-            _id='22',
             model=MODEL_NAME_4,
             base_precision='fp16',
             lora=wanvideoloraselect,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideomodelloader'] = wanvideomodelloader.node.id
 
-        imageblur = ImageBlur(
-            _id='104',
-            widget_0=4,
-            widget_1=1,
-            image=vhs_loadvideo.out('IMAGE'),
-        )
-        wf.metadata.setdefault('id_map', {})['imageblur'] = imageblur.node.id
-
+        imageblur = ImageBlur(widget_0=4, widget_1=1, image=vhs_loadvideo.out('IMAGE'))
         wanvideoencode = WanVideoEncode(
-            _id='95',
             widget_0=False,
             widget_1=272,
             widget_2=272,
@@ -108,18 +83,14 @@ def build() -> VibeWorkflow:
             image=imageblur,
             vae=wanvideovaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideoencode'] = wanvideoencode.node.id
 
         wanvideocontrolembeds = WanVideoControlEmbeds(
-            _id='96',
             widget_0=0,
             widget_1=0.7,
             latents=wanvideoencode,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideocontrolembeds'] = wanvideocontrolembeds.node.id
 
         wanvideosampler = WanVideoSampler(
-            _id='27',
             steps=1,
             seed=DEFAULT_SEED,
             batched_cfg='',
@@ -129,26 +100,22 @@ def build() -> VibeWorkflow:
             text_embeds=wanvideotextencode,
             _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
-        wf.metadata.setdefault('id_map', {})['wanvideosampler'] = wanvideosampler.node.id
 
         wanvideodecode = WanVideoDecode(
-            _id='28',
             samples=wanvideosampler.out('SAMPLES'),
             vae=wanvideovaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['wanvideodecode'] = wanvideodecode.node.id
 
         imageconcatmulti = ImageConcatMulti(
-            _id='103',
             unused_3=None,
             image_1=imageblur,
             image_2=wanvideodecode,
         )
-        wf.metadata.setdefault('id_map', {})['imageconcatmulti'] = imageconcatmulti.node.id
 
         # Outputs
-        vhs_videocombine = VHS_VideoCombine(_id='30', images=imageconcatmulti)
-        wf.metadata.setdefault('id_map', {})['vhs_videocombine'] = vhs_videocombine.node.id
+        vhs_videocombine = VHS_VideoCombine(images=imageconcatmulti)
+
+        wf._set_id_map({name: node.node.id for name, node in (('loadwanvideot5textencoder', loadwanvideot5textencoder), ('wanvideotorchcompilesettings', wanvideotorchcompilesettings), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoteacache', wanvideoteacache), ('wanvideotorchcompilesettings_2', wanvideotorchcompilesettings_2), ('vhs_loadvideo', vhs_loadvideo), ('wanvideoloraselect', wanvideoloraselect), ('wanvideotextencode', wanvideotextencode), ('wanvideomodelloader', wanvideomodelloader), ('imageblur', imageblur), ('wanvideoencode', wanvideoencode), ('wanvideocontrolembeds', wanvideocontrolembeds), ('wanvideosampler', wanvideosampler), ('wanvideodecode', wanvideodecode), ('imageconcatmulti', imageconcatmulti), ('vhs_videocombine', vhs_videocombine))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

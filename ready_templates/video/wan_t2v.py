@@ -55,31 +55,24 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Loaders
-        unetloader = UNETLoader(_id='37', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        cliploader = CLIPLoader(_id='38', clip_name=MODEL_NAME_2, type_='wan')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='39', vae_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
+        unetloader = UNETLoader(unet_name=MODEL_NAME)
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='wan')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
+
         # Sampling
         emptyhunyuanlatentvideo = EmptyHunyuanLatentVideo(
-            _id='40',
             width=832,
             height=480,
             length=DEFAULT_FRAMES,
         )
-        wf.metadata.setdefault('id_map', {})['emptyhunyuanlatentvideo'] = emptyhunyuanlatentvideo.node.id
 
         # Conditioning
-        positive = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT, clip=cliploader)
-        wf.metadata.setdefault('id_map', {})['positive'] = positive.node.id
-        negative = CLIPTextEncode(_id='7', text=DEFAULT_PROMPT_2, clip=cliploader)
-        wf.metadata.setdefault('id_map', {})['negative'] = negative.node.id
-        modelsamplingsd3 = ModelSamplingSD3(_id='48', shift=8, model=unetloader)
-        wf.metadata.setdefault('id_map', {})['modelsamplingsd3'] = modelsamplingsd3.node.id
+        positive = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+        negative = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+        modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
+
         # Sampling
         ksampler = KSampler(
-            _id='3',
             seed=DEFAULT_SEED,
             steps=30,
             cfg=GUIDE_STRENGTH,
@@ -89,16 +82,15 @@ def build() -> VibeWorkflow:
             negative=negative,
             positive=positive,
         )
-        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
 
         # Decode
-        vaedecode = VAEDecode(_id='8', samples=ksampler, vae=vaeloader)
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
-        createvideo = CreateVideo(_id='49', fps=DEFAULT_FPS, images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
+        vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+        createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
+
         # Outputs
-        savevideo = SaveVideo(_id='50', video=createvideo)
-        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+        savevideo = SaveVideo(video=createvideo)
+
+        wf._set_id_map({name: node.node.id for name, node in (('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('emptyhunyuanlatentvideo', emptyhunyuanlatentvideo), ('positive', positive), ('negative', negative), ('modelsamplingsd3', modelsamplingsd3), ('ksampler', ksampler), ('vaedecode', vaedecode), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

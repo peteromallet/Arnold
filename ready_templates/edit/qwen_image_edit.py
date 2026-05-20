@@ -47,128 +47,87 @@ def build() -> VibeWorkflow:
 
         # Inputs
         loadimage = LoadImage(
-            _id='78',
             image='image_qwen_image_edit_input_image.png',
             _outputs=('IMAGE', 'MASK'),
         )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
         # Loaders
-        unetloader = UNETLoader(_id='102:37', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        cliploader = CLIPLoader(
-            _id='102:38',
-            clip_name=MODEL_NAME_2,
-            type_='qwen_image',
-        )
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
+        unetloader = UNETLoader(unet_name=MODEL_NAME)
+        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='qwen_image')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
 
-        vaeloader = VAELoader(_id='102:39', vae_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
         # Inputs
         primitiveint = raw_call(wf, 'PrimitiveInt', '102:103', value=4)
-        wf.metadata.setdefault('id_map', {})['primitiveint'] = primitiveint.node.id
         primitivefloat = raw_call(wf, 'PrimitiveFloat', '102:105', value=1)
-        wf.metadata.setdefault('id_map', {})['primitivefloat'] = primitivefloat.node.id
         primitiveint_2 = raw_call(wf, 'PrimitiveInt', '102:106', value=20)
-        wf.metadata.setdefault('id_map', {})['primitiveint_2'] = primitiveint_2.node.id
         primitivefloat_2 = raw_call(wf, 'PrimitiveFloat', '102:107', value=2.5)
-        wf.metadata.setdefault('id_map', {})['primitivefloat_2'] = primitivefloat_2.node.id
         primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '102:111', value=False)
-        wf.metadata.setdefault('id_map', {})['primitiveboolean'] = primitiveboolean.node.id
         imagescaletototalpixels = ImageScaleToTotalPixels(
-            _id='93',
             upscale_method='lanczos',
             megapixels=1.5,
             image=loadimage.out('IMAGE'),
         )
-        wf.metadata.setdefault('id_map', {})['imagescaletototalpixels'] = imagescaletototalpixels.node.id
 
         textencodeqwenimageedit = TextEncodeQwenImageEdit(
-            _id='102:76',
             prompt=DEFAULT_PROMPT,
             clip=cliploader,
             image=loadimage.out('IMAGE'),
             vae=vaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['textencodeqwenimageedit'] = textencodeqwenimageedit.node.id
 
         textencodeqwenimageedit_2 = TextEncodeQwenImageEdit(
-            _id='102:77',
             prompt='',
             clip=cliploader,
             image=loadimage.out('IMAGE'),
             vae=vaeloader,
         )
-        wf.metadata.setdefault('id_map', {})['textencodeqwenimageedit_2'] = textencodeqwenimageedit_2.node.id
 
-        vaeencode = VAEEncode(
-            _id='102:88',
-            pixels=loadimage.out('IMAGE'),
-            vae=vaeloader,
-        )
-        wf.metadata.setdefault('id_map', {})['vaeencode'] = vaeencode.node.id
-
+        vaeencode = VAEEncode(pixels=loadimage.out('IMAGE'), vae=vaeloader)
         loraloadermodelonly = LoraLoaderModelOnly(
-            _id='102:89',
             lora_name=MODEL_NAME_4,
             model=unetloader,
         )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
 
-        comfyswitchnode_2 = ComfySwitchNode(
-            _id='102:109',
+        comfyswitchnode = ComfySwitchNode(
             on_false=primitivefloat_2,
             on_true=primitivefloat,
             switch=primitiveboolean,
         )
-        wf.metadata.setdefault('id_map', {})['comfyswitchnode_2'] = comfyswitchnode_2.node.id
 
-        comfyswitchnode_3 = ComfySwitchNode(
-            _id='102:110',
+        comfyswitchnode_2 = ComfySwitchNode(
             on_false=primitiveint_2,
             on_true=primitiveint,
             switch=primitiveboolean,
         )
-        wf.metadata.setdefault('id_map', {})['comfyswitchnode_3'] = comfyswitchnode_3.node.id
 
-        comfyswitchnode = ComfySwitchNode(
-            _id='102:108',
+        comfyswitchnode_3 = ComfySwitchNode(
             on_false=unetloader,
             on_true=loraloadermodelonly,
             switch=primitiveboolean,
         )
-        wf.metadata.setdefault('id_map', {})['comfyswitchnode'] = comfyswitchnode.node.id
 
-        modelsamplingauraflow = ModelSamplingAuraFlow(
-            _id='102:66',
-            shift=3,
-            model=comfyswitchnode,
-        )
-        wf.metadata.setdefault('id_map', {})['modelsamplingauraflow'] = modelsamplingauraflow.node.id
+        modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=comfyswitchnode_3)
+        cfgnorm = CFGNorm(model=modelsamplingauraflow)
 
-        cfgnorm = CFGNorm(_id='102:75', model=modelsamplingauraflow)
-        wf.metadata.setdefault('id_map', {})['cfgnorm'] = cfgnorm.node.id
         # Sampling
         ksampler = KSampler(
-            _id='102:3',
             seed=DEFAULT_SEED,
             sampler_name='euler',
-            steps=comfyswitchnode_3,
-            cfg=comfyswitchnode_2,
+            steps=comfyswitchnode_2,
+            cfg=comfyswitchnode,
             latent_image=vaeencode,
             model=cfgnorm,
             negative=textencodeqwenimageedit_2,
             positive=textencodeqwenimageedit,
         )
-        wf.metadata.setdefault('id_map', {})['ksampler'] = ksampler.node.id
 
         # Decode
-        vaedecode = VAEDecode(_id='102:8', samples=ksampler, vae=vaeloader)
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
+        vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+
         # Outputs
-        saveimage = SaveImage(_id='60', images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['saveimage'] = saveimage.node.id
+        saveimage = SaveImage(images=vaedecode)
+
+        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('imagescaletototalpixels', imagescaletototalpixels), ('textencodeqwenimageedit', textencodeqwenimageedit), ('textencodeqwenimageedit_2', textencodeqwenimageedit_2), ('vaeencode', vaeencode), ('loraloadermodelonly', loraloadermodelonly), ('comfyswitchnode', comfyswitchnode), ('comfyswitchnode_2', comfyswitchnode_2), ('comfyswitchnode_3', comfyswitchnode_3), ('modelsamplingauraflow', modelsamplingauraflow), ('cfgnorm', cfgnorm), ('ksampler', ksampler), ('vaedecode', vaedecode), ('saveimage', saveimage), ('primitiveint', primitiveint), ('primitivefloat', primitivefloat), ('primitiveint_2', primitiveint_2), ('primitivefloat_2', primitivefloat_2), ('primitiveboolean', primitiveboolean))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

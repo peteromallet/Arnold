@@ -36,10 +36,8 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        loadaudio = LoadAudio(_id='1', audio=AUDIO, widget_0='speech_smoke.wav')
-        wf.metadata.setdefault('id_map', {})['loadaudio'] = loadaudio.node.id
+        loadaudio = LoadAudio(audio=AUDIO, widget_0='speech_smoke.wav')
         ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
-            _id='2',
             language='English',
             model_size='0.6B',
             reference_text='This is a short reference audio sample for workflow smoke testing.',
@@ -47,14 +45,13 @@ def build() -> VibeWorkflow:
             target_text='This Qwen voice clone template uses a tiny bundled reference clip and runs as a reusable audio smoke test.',
             reference_audio=loadaudio,
         )
-        wf.metadata.setdefault('id_map', {})['ailab_qwen3ttsvoiceclone'] = ailab_qwen3ttsvoiceclone.node.id
 
         saveaudiomp3 = SaveAudioMP3(
-            _id='3',
             filename_prefix='audio/qwen3_tts_voice_clone',
             audio=ailab_qwen3ttsvoiceclone,
         )
-        wf.metadata.setdefault('id_map', {})['saveaudiomp3'] = saveaudiomp3.node.id
+
+        wf._set_id_map({name: node.node.id for name, node in (('loadaudio', loadaudio), ('ailab_qwen3ttsvoiceclone', ailab_qwen3ttsvoiceclone), ('saveaudiomp3', saveaudiomp3))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

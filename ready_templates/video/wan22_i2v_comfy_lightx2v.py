@@ -75,68 +75,42 @@ def build() -> VibeWorkflow:
 
         # Inputs
         loadimage = LoadImage(
-            _id='97',
             image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png',
             _outputs=('IMAGE', 'MASK'),
         )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
 
         # Loaders
-        cliploader = CLIPLoader(_id='130:105', clip_name=MODEL_NAME, type_='wan')
-        wf.metadata.setdefault('id_map', {})['cliploader'] = cliploader.node.id
-        vaeloader = VAELoader(_id='130:106', vae_name=MODEL_NAME_2)
-        wf.metadata.setdefault('id_map', {})['vaeloader'] = vaeloader.node.id
-        unetloader = UNETLoader(_id='130:122', unet_name=MODEL_NAME_3)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        unetloader_2 = UNETLoader(_id='130:123', unet_name=MODEL_NAME_4)
-        wf.metadata.setdefault('id_map', {})['unetloader_2'] = unetloader_2.node.id
+        cliploader = CLIPLoader(clip_name=MODEL_NAME, type_='wan')
+        vaeloader = VAELoader(vae_name=MODEL_NAME_2)
+        unetloader = UNETLoader(unet_name=MODEL_NAME_3)
+        unetloader_2 = UNETLoader(unet_name=MODEL_NAME_4)
+
         # Conditioning
-        cliptextencode = CLIPTextEncode(
-            _id='130:107',
-            text=DEFAULT_PROMPT,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
-
-        cliptextencode_2 = CLIPTextEncode(
-            _id='130:125',
-            text=DEFAULT_PROMPT_2,
-            clip=cliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
-
+        cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
         loraloadermodelonly = LoraLoaderModelOnly(
-            _id='130:126',
             lora_name=MODEL_NAME_5,
             strength_model=GUIDE_STRENGTH,
             model=unetloader,
         )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
 
         loraloadermodelonly_2 = LoraLoaderModelOnly(
-            _id='130:127',
             lora_name=MODEL_NAME_6,
             strength_model=GUIDE_STRENGTH,
             model=unetloader_2,
         )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly_2'] = loraloadermodelonly_2.node.id
 
         modelsamplingsd3 = ModelSamplingSD3(
-            _id='130:109',
             shift=5.000000000000001,
             model=loraloadermodelonly,
         )
-        wf.metadata.setdefault('id_map', {})['modelsamplingsd3'] = modelsamplingsd3.node.id
 
         modelsamplingsd3_2 = ModelSamplingSD3(
-            _id='130:124',
             shift=5.000000000000001,
             model=loraloadermodelonly_2,
         )
-        wf.metadata.setdefault('id_map', {})['modelsamplingsd3_2'] = modelsamplingsd3_2.node.id
 
         wanimagetovideo = WanImageToVideo(
-            _id='130:128',
             height=720,
             length=DEFAULT_FRAMES,
             width=720,
@@ -146,7 +120,6 @@ def build() -> VibeWorkflow:
             vae=vaeloader,
             _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
-        wf.metadata.setdefault('id_map', {})['wanimagetovideo'] = wanimagetovideo.node.id
 
         # Sampling
         ksampleradvanced = raw_call(wf, 'KSamplerAdvanced', '130:110',
@@ -162,7 +135,6 @@ def build() -> VibeWorkflow:
             negative=wanimagetovideo.out('NEGATIVE'),
             positive=wanimagetovideo.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['ksampleradvanced'] = ksampleradvanced.node.id
 
         ksampleradvanced_2 = raw_call(wf, 'KSamplerAdvanced', '130:111',
             add_noise='disable',
@@ -177,20 +149,18 @@ def build() -> VibeWorkflow:
             negative=wanimagetovideo.out('NEGATIVE'),
             positive=wanimagetovideo.out('POSITIVE'),
         )
-        wf.metadata.setdefault('id_map', {})['ksampleradvanced_2'] = ksampleradvanced_2.node.id
 
         # Decode
-        vaedecode = VAEDecode(_id='130:129', samples=ksampleradvanced_2, vae=vaeloader)
-        wf.metadata.setdefault('id_map', {})['vaedecode'] = vaedecode.node.id
-        createvideo = CreateVideo(_id='130:117', fps=DEFAULT_FPS, images=vaedecode)
-        wf.metadata.setdefault('id_map', {})['createvideo'] = createvideo.node.id
+        vaedecode = VAEDecode(samples=ksampleradvanced_2, vae=vaeloader)
+        createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
+
         # Outputs
         savevideo = SaveVideo(
-            _id='108',
             filename_prefix='video/Wan2.2_image_to_video',
             video=createvideo,
         )
-        wf.metadata.setdefault('id_map', {})['savevideo'] = savevideo.node.id
+
+        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('cliploader', cliploader), ('vaeloader', vaeloader), ('unetloader', unetloader), ('unetloader_2', unetloader_2), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('loraloadermodelonly', loraloadermodelonly), ('loraloadermodelonly_2', loraloadermodelonly_2), ('modelsamplingsd3', modelsamplingsd3), ('modelsamplingsd3_2', modelsamplingsd3_2), ('wanimagetovideo', wanimagetovideo), ('vaedecode', vaedecode), ('createvideo', createvideo), ('savevideo', savevideo), ('ksampleradvanced', ksampleradvanced), ('ksampleradvanced_2', ksampleradvanced_2))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
 
