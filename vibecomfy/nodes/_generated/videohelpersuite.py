@@ -14,7 +14,8 @@ _UNSET = object()
 def VHS_AudioToVHSAudio(
     wf: VibeWorkflow,
     *,
-    audio: Any,
+    _id: str | None = None,
+    audio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -25,14 +26,16 @@ def VHS_AudioToVHSAudio(
     Returns: vhs_audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
     _kwargs.update(_extras)
-    return node(wf, 'VHS_AudioToVHSAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_AudioToVHSAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_BatchManager(
     wf: VibeWorkflow,
     *,
-    frames_per_batch: Any = 16,
+    _id: str | None = None,
+    frames_per_batch: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -43,15 +46,17 @@ def VHS_BatchManager(
     Returns: meta_batch
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['frames_per_batch'] = frames_per_batch
+    if frames_per_batch is not _UNSET:
+        _kwargs['frames_per_batch'] = frames_per_batch
     _kwargs.update(_extras)
-    return node(wf, 'VHS_BatchManager', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_BatchManager', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_DuplicateImages(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    multiply_by: Any = 1,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    multiply_by: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -62,16 +67,19 @@ def VHS_DuplicateImages(
     Returns: IMAGE, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['multiply_by'] = multiply_by
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if multiply_by is not _UNSET:
+        _kwargs['multiply_by'] = multiply_by
     _kwargs.update(_extras)
-    return node(wf, 'VHS_DuplicateImages', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_DuplicateImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_DuplicateLatents(
     wf: VibeWorkflow,
     *,
-    latents: Any,
-    multiply_by: Any = 1,
+    _id: str | None = None,
+    latents: Any = _UNSET,
+    multiply_by: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -82,16 +90,19 @@ def VHS_DuplicateLatents(
     Returns: LATENT, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents'] = latents
-    _kwargs['multiply_by'] = multiply_by
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
+    if multiply_by is not _UNSET:
+        _kwargs['multiply_by'] = multiply_by
     _kwargs.update(_extras)
-    return node(wf, 'VHS_DuplicateLatents', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_DuplicateLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_DuplicateMasks(
     wf: VibeWorkflow,
     *,
-    mask: Any,
-    multiply_by: Any = 1,
+    _id: str | None = None,
+    mask: Any = _UNSET,
+    multiply_by: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -102,15 +113,18 @@ def VHS_DuplicateMasks(
     Returns: MASK, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
-    _kwargs['multiply_by'] = multiply_by
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
+    if multiply_by is not _UNSET:
+        _kwargs['multiply_by'] = multiply_by
     _kwargs.update(_extras)
-    return node(wf, 'VHS_DuplicateMasks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_DuplicateMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_GetImageCount(
     wf: VibeWorkflow,
     *,
-    images: Any,
+    _id: str | None = None,
+    images: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -121,14 +135,16 @@ def VHS_GetImageCount(
     Returns: count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
+    if images is not _UNSET:
+        _kwargs['images'] = images
     _kwargs.update(_extras)
-    return node(wf, 'VHS_GetImageCount', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_GetImageCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_GetLatentCount(
     wf: VibeWorkflow,
     *,
-    latents: Any,
+    _id: str | None = None,
+    latents: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -139,14 +155,16 @@ def VHS_GetLatentCount(
     Returns: count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents'] = latents
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
     _kwargs.update(_extras)
-    return node(wf, 'VHS_GetLatentCount', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_GetLatentCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_GetMaskCount(
     wf: VibeWorkflow,
     *,
-    mask: Any,
+    _id: str | None = None,
+    mask: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -157,16 +175,18 @@ def VHS_GetMaskCount(
     Returns: count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
     _kwargs.update(_extras)
-    return node(wf, 'VHS_GetMaskCount', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_GetMaskCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadAudio(
     wf: VibeWorkflow,
     *,
-    audio_file: Any = 'input/',
-    seek_seconds: Any = 0,
-    duration: Any = 0,
+    _id: str | None = None,
+    audio_file: Any = _UNSET,
+    seek_seconds: Any = _UNSET,
+    duration: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -177,18 +197,22 @@ def VHS_LoadAudio(
     Returns: audio, duration
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio_file'] = audio_file
-    _kwargs['seek_seconds'] = seek_seconds
-    _kwargs['duration'] = duration
+    if audio_file is not _UNSET:
+        _kwargs['audio_file'] = audio_file
+    if seek_seconds is not _UNSET:
+        _kwargs['seek_seconds'] = seek_seconds
+    if duration is not _UNSET:
+        _kwargs['duration'] = duration
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadAudioUpload(
     wf: VibeWorkflow,
     *,
-    audio: Any,
-    start_time: Any = 0,
-    duration: Any = 0,
+    _id: str | None = None,
+    audio: Any = _UNSET,
+    start_time: Any = _UNSET,
+    duration: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -199,18 +223,22 @@ def VHS_LoadAudioUpload(
     Returns: audio, duration
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
-    _kwargs['start_time'] = start_time
-    _kwargs['duration'] = duration
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
+    if start_time is not _UNSET:
+        _kwargs['start_time'] = start_time
+    if duration is not _UNSET:
+        _kwargs['duration'] = duration
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadAudioUpload', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadAudioUpload', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadImagePath(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    custom_width: Any = 0,
-    custom_height: Any = 0,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    custom_width: Any = _UNSET,
+    custom_height: Any = _UNSET,
     vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -222,21 +250,25 @@ def VHS_LoadImagePath(
     Returns: IMAGE, mask
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['custom_width'] = custom_width
-    _kwargs['custom_height'] = custom_height
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if custom_width is not _UNSET:
+        _kwargs['custom_width'] = custom_width
+    if custom_height is not _UNSET:
+        _kwargs['custom_height'] = custom_height
     if vae is not _UNSET:
         _kwargs['vae'] = vae
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadImagePath', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadImagePath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadImages(
     wf: VibeWorkflow,
     *,
-    directory: Any,
-    image_load_cap: Any = 0,
-    skip_first_images: Any = 0,
-    select_every_nth: Any = 1,
+    _id: str | None = None,
+    directory: Any = _UNSET,
+    image_load_cap: Any = _UNSET,
+    skip_first_images: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
     meta_batch: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -248,22 +280,27 @@ def VHS_LoadImages(
     Returns: IMAGE, MASK, frame_count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['directory'] = directory
-    _kwargs['image_load_cap'] = image_load_cap
-    _kwargs['skip_first_images'] = skip_first_images
-    _kwargs['select_every_nth'] = select_every_nth
+    if directory is not _UNSET:
+        _kwargs['directory'] = directory
+    if image_load_cap is not _UNSET:
+        _kwargs['image_load_cap'] = image_load_cap
+    if skip_first_images is not _UNSET:
+        _kwargs['skip_first_images'] = skip_first_images
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
     if meta_batch is not _UNSET:
         _kwargs['meta_batch'] = meta_batch
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadImages', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadImagesPath(
     wf: VibeWorkflow,
     *,
-    directory: Any,
-    image_load_cap: Any = 0,
-    skip_first_images: Any = 0,
-    select_every_nth: Any = 1,
+    _id: str | None = None,
+    directory: Any = _UNSET,
+    image_load_cap: Any = _UNSET,
+    skip_first_images: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
     meta_batch: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -275,28 +312,33 @@ def VHS_LoadImagesPath(
     Returns: IMAGE, MASK, frame_count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['directory'] = directory
-    _kwargs['image_load_cap'] = image_load_cap
-    _kwargs['skip_first_images'] = skip_first_images
-    _kwargs['select_every_nth'] = select_every_nth
+    if directory is not _UNSET:
+        _kwargs['directory'] = directory
+    if image_load_cap is not _UNSET:
+        _kwargs['image_load_cap'] = image_load_cap
+    if skip_first_images is not _UNSET:
+        _kwargs['skip_first_images'] = skip_first_images
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
     if meta_batch is not _UNSET:
         _kwargs['meta_batch'] = meta_batch
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadImagesPath', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadImagesPath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideo(
     wf: VibeWorkflow,
     *,
-    video: Any,
-    force_rate: Any = 0,
-    custom_width: Any = 0,
-    custom_height: Any = 0,
-    frame_load_cap: Any = 0,
-    skip_first_frames: Any = 0,
-    select_every_nth: Any = 1,
+    _id: str | None = None,
+    video: Any = _UNSET,
+    force_rate: Any = _UNSET,
+    custom_width: Any = _UNSET,
+    custom_height: Any = _UNSET,
+    frame_load_cap: Any = _UNSET,
+    skip_first_frames: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
     meta_batch: Any = _UNSET,
     vae: Any = _UNSET,
-    format: Any = 'AnimateDiff',
+    format: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -307,33 +349,42 @@ def VHS_LoadVideo(
     Returns: IMAGE, frame_count, audio, video_info
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
-    _kwargs['force_rate'] = force_rate
-    _kwargs['custom_width'] = custom_width
-    _kwargs['custom_height'] = custom_height
-    _kwargs['frame_load_cap'] = frame_load_cap
-    _kwargs['skip_first_frames'] = skip_first_frames
-    _kwargs['select_every_nth'] = select_every_nth
+    if video is not _UNSET:
+        _kwargs['video'] = video
+    if force_rate is not _UNSET:
+        _kwargs['force_rate'] = force_rate
+    if custom_width is not _UNSET:
+        _kwargs['custom_width'] = custom_width
+    if custom_height is not _UNSET:
+        _kwargs['custom_height'] = custom_height
+    if frame_load_cap is not _UNSET:
+        _kwargs['frame_load_cap'] = frame_load_cap
+    if skip_first_frames is not _UNSET:
+        _kwargs['skip_first_frames'] = skip_first_frames
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
     if meta_batch is not _UNSET:
         _kwargs['meta_batch'] = meta_batch
     if vae is not _UNSET:
         _kwargs['vae'] = vae
-    _kwargs['format'] = format
+    if format is not _UNSET:
+        _kwargs['format'] = format
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideoFFmpeg(
     wf: VibeWorkflow,
     *,
-    video: Any,
-    force_rate: Any = 0,
-    custom_width: Any = 0,
-    custom_height: Any = 0,
-    frame_load_cap: Any = 0,
-    start_time: Any = 0,
+    _id: str | None = None,
+    video: Any = _UNSET,
+    force_rate: Any = _UNSET,
+    custom_width: Any = _UNSET,
+    custom_height: Any = _UNSET,
+    frame_load_cap: Any = _UNSET,
+    start_time: Any = _UNSET,
     meta_batch: Any = _UNSET,
     vae: Any = _UNSET,
-    format: Any = 'AnimateDiff',
+    format: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -344,32 +395,40 @@ def VHS_LoadVideoFFmpeg(
     Returns: IMAGE, mask, audio, video_info
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
-    _kwargs['force_rate'] = force_rate
-    _kwargs['custom_width'] = custom_width
-    _kwargs['custom_height'] = custom_height
-    _kwargs['frame_load_cap'] = frame_load_cap
-    _kwargs['start_time'] = start_time
+    if video is not _UNSET:
+        _kwargs['video'] = video
+    if force_rate is not _UNSET:
+        _kwargs['force_rate'] = force_rate
+    if custom_width is not _UNSET:
+        _kwargs['custom_width'] = custom_width
+    if custom_height is not _UNSET:
+        _kwargs['custom_height'] = custom_height
+    if frame_load_cap is not _UNSET:
+        _kwargs['frame_load_cap'] = frame_load_cap
+    if start_time is not _UNSET:
+        _kwargs['start_time'] = start_time
     if meta_batch is not _UNSET:
         _kwargs['meta_batch'] = meta_batch
     if vae is not _UNSET:
         _kwargs['vae'] = vae
-    _kwargs['format'] = format
+    if format is not _UNSET:
+        _kwargs['format'] = format
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadVideoFFmpeg', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadVideoFFmpeg', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideoFFmpegPath(
     wf: VibeWorkflow,
     *,
-    video: Any,
-    force_rate: Any = 0,
-    custom_width: Any = 0,
-    custom_height: Any = 0,
-    frame_load_cap: Any = 0,
-    start_time: Any = 0,
+    _id: str | None = None,
+    video: Any = _UNSET,
+    force_rate: Any = _UNSET,
+    custom_width: Any = _UNSET,
+    custom_height: Any = _UNSET,
+    frame_load_cap: Any = _UNSET,
+    start_time: Any = _UNSET,
     meta_batch: Any = _UNSET,
     vae: Any = _UNSET,
-    format: Any = 'AnimateDiff',
+    format: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -380,33 +439,41 @@ def VHS_LoadVideoFFmpegPath(
     Returns: IMAGE, mask, audio, video_info
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
-    _kwargs['force_rate'] = force_rate
-    _kwargs['custom_width'] = custom_width
-    _kwargs['custom_height'] = custom_height
-    _kwargs['frame_load_cap'] = frame_load_cap
-    _kwargs['start_time'] = start_time
+    if video is not _UNSET:
+        _kwargs['video'] = video
+    if force_rate is not _UNSET:
+        _kwargs['force_rate'] = force_rate
+    if custom_width is not _UNSET:
+        _kwargs['custom_width'] = custom_width
+    if custom_height is not _UNSET:
+        _kwargs['custom_height'] = custom_height
+    if frame_load_cap is not _UNSET:
+        _kwargs['frame_load_cap'] = frame_load_cap
+    if start_time is not _UNSET:
+        _kwargs['start_time'] = start_time
     if meta_batch is not _UNSET:
         _kwargs['meta_batch'] = meta_batch
     if vae is not _UNSET:
         _kwargs['vae'] = vae
-    _kwargs['format'] = format
+    if format is not _UNSET:
+        _kwargs['format'] = format
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadVideoFFmpegPath', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadVideoFFmpegPath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_LoadVideoPath(
     wf: VibeWorkflow,
     *,
-    video: Any,
-    force_rate: Any = 0,
-    custom_width: Any = 0,
-    custom_height: Any = 0,
-    frame_load_cap: Any = 0,
-    skip_first_frames: Any = 0,
-    select_every_nth: Any = 1,
+    _id: str | None = None,
+    video: Any = _UNSET,
+    force_rate: Any = _UNSET,
+    custom_width: Any = _UNSET,
+    custom_height: Any = _UNSET,
+    frame_load_cap: Any = _UNSET,
+    skip_first_frames: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
     meta_batch: Any = _UNSET,
     vae: Any = _UNSET,
-    format: Any = 'AnimateDiff',
+    format: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -417,29 +484,38 @@ def VHS_LoadVideoPath(
     Returns: IMAGE, frame_count, audio, video_info
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
-    _kwargs['force_rate'] = force_rate
-    _kwargs['custom_width'] = custom_width
-    _kwargs['custom_height'] = custom_height
-    _kwargs['frame_load_cap'] = frame_load_cap
-    _kwargs['skip_first_frames'] = skip_first_frames
-    _kwargs['select_every_nth'] = select_every_nth
+    if video is not _UNSET:
+        _kwargs['video'] = video
+    if force_rate is not _UNSET:
+        _kwargs['force_rate'] = force_rate
+    if custom_width is not _UNSET:
+        _kwargs['custom_width'] = custom_width
+    if custom_height is not _UNSET:
+        _kwargs['custom_height'] = custom_height
+    if frame_load_cap is not _UNSET:
+        _kwargs['frame_load_cap'] = frame_load_cap
+    if skip_first_frames is not _UNSET:
+        _kwargs['skip_first_frames'] = skip_first_frames
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
     if meta_batch is not _UNSET:
         _kwargs['meta_batch'] = meta_batch
     if vae is not _UNSET:
         _kwargs['vae'] = vae
-    _kwargs['format'] = format
+    if format is not _UNSET:
+        _kwargs['format'] = format
     _kwargs.update(_extras)
-    return node(wf, 'VHS_LoadVideoPath', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_LoadVideoPath', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_MergeImages(
     wf: VibeWorkflow,
     *,
-    images_A: Any,
-    images_B: Any,
-    merge_strategy: Any,
-    scale_method: Any,
-    crop: Any,
+    _id: str | None = None,
+    images_A: Any = _UNSET,
+    images_B: Any = _UNSET,
+    merge_strategy: Any = _UNSET,
+    scale_method: Any = _UNSET,
+    crop: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -450,22 +526,28 @@ def VHS_MergeImages(
     Returns: IMAGE, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images_A'] = images_A
-    _kwargs['images_B'] = images_B
-    _kwargs['merge_strategy'] = merge_strategy
-    _kwargs['scale_method'] = scale_method
-    _kwargs['crop'] = crop
+    if images_A is not _UNSET:
+        _kwargs['images_A'] = images_A
+    if images_B is not _UNSET:
+        _kwargs['images_B'] = images_B
+    if merge_strategy is not _UNSET:
+        _kwargs['merge_strategy'] = merge_strategy
+    if scale_method is not _UNSET:
+        _kwargs['scale_method'] = scale_method
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
     _kwargs.update(_extras)
-    return node(wf, 'VHS_MergeImages', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_MergeImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_MergeLatents(
     wf: VibeWorkflow,
     *,
-    latents_A: Any,
-    latents_B: Any,
-    merge_strategy: Any,
-    scale_method: Any,
-    crop: Any,
+    _id: str | None = None,
+    latents_A: Any = _UNSET,
+    latents_B: Any = _UNSET,
+    merge_strategy: Any = _UNSET,
+    scale_method: Any = _UNSET,
+    crop: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -476,22 +558,28 @@ def VHS_MergeLatents(
     Returns: LATENT, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents_A'] = latents_A
-    _kwargs['latents_B'] = latents_B
-    _kwargs['merge_strategy'] = merge_strategy
-    _kwargs['scale_method'] = scale_method
-    _kwargs['crop'] = crop
+    if latents_A is not _UNSET:
+        _kwargs['latents_A'] = latents_A
+    if latents_B is not _UNSET:
+        _kwargs['latents_B'] = latents_B
+    if merge_strategy is not _UNSET:
+        _kwargs['merge_strategy'] = merge_strategy
+    if scale_method is not _UNSET:
+        _kwargs['scale_method'] = scale_method
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
     _kwargs.update(_extras)
-    return node(wf, 'VHS_MergeLatents', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_MergeLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_MergeMasks(
     wf: VibeWorkflow,
     *,
-    mask_A: Any,
-    mask_B: Any,
-    merge_strategy: Any,
-    scale_method: Any,
-    crop: Any,
+    _id: str | None = None,
+    mask_A: Any = _UNSET,
+    mask_B: Any = _UNSET,
+    merge_strategy: Any = _UNSET,
+    scale_method: Any = _UNSET,
+    crop: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -502,19 +590,25 @@ def VHS_MergeMasks(
     Returns: MASK, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask_A'] = mask_A
-    _kwargs['mask_B'] = mask_B
-    _kwargs['merge_strategy'] = merge_strategy
-    _kwargs['scale_method'] = scale_method
-    _kwargs['crop'] = crop
+    if mask_A is not _UNSET:
+        _kwargs['mask_A'] = mask_A
+    if mask_B is not _UNSET:
+        _kwargs['mask_B'] = mask_B
+    if merge_strategy is not _UNSET:
+        _kwargs['merge_strategy'] = merge_strategy
+    if scale_method is not _UNSET:
+        _kwargs['scale_method'] = scale_method
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
     _kwargs.update(_extras)
-    return node(wf, 'VHS_MergeMasks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_MergeMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_PruneOutputs(
     wf: VibeWorkflow,
     *,
-    filenames: Any,
-    options: Any,
+    _id: str | None = None,
+    filenames: Any = _UNSET,
+    options: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -525,17 +619,20 @@ def VHS_PruneOutputs(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['filenames'] = filenames
-    _kwargs['options'] = options
+    if filenames is not _UNSET:
+        _kwargs['filenames'] = filenames
+    if options is not _UNSET:
+        _kwargs['options'] = options
     _kwargs.update(_extras)
-    return node(wf, 'VHS_PruneOutputs', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_PruneOutputs', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectEveryNthImage(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    select_every_nth: Any = 1,
-    skip_first_images: Any = 0,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
+    skip_first_images: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -546,18 +643,22 @@ def VHS_SelectEveryNthImage(
     Returns: IMAGE, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['select_every_nth'] = select_every_nth
-    _kwargs['skip_first_images'] = skip_first_images
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
+    if skip_first_images is not _UNSET:
+        _kwargs['skip_first_images'] = skip_first_images
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectEveryNthImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectEveryNthImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectEveryNthLatent(
     wf: VibeWorkflow,
     *,
-    latents: Any,
-    select_every_nth: Any = 1,
-    skip_first_latents: Any = 0,
+    _id: str | None = None,
+    latents: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
+    skip_first_latents: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -568,18 +669,22 @@ def VHS_SelectEveryNthLatent(
     Returns: LATENT, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents'] = latents
-    _kwargs['select_every_nth'] = select_every_nth
-    _kwargs['skip_first_latents'] = skip_first_latents
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
+    if skip_first_latents is not _UNSET:
+        _kwargs['skip_first_latents'] = skip_first_latents
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectEveryNthLatent', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectEveryNthLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectEveryNthMask(
     wf: VibeWorkflow,
     *,
-    mask: Any,
-    select_every_nth: Any = 1,
-    skip_first_masks: Any = 0,
+    _id: str | None = None,
+    mask: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
+    skip_first_masks: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -590,17 +695,21 @@ def VHS_SelectEveryNthMask(
     Returns: MASK, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
-    _kwargs['select_every_nth'] = select_every_nth
-    _kwargs['skip_first_masks'] = skip_first_masks
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
+    if skip_first_masks is not _UNSET:
+        _kwargs['skip_first_masks'] = skip_first_masks
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectEveryNthMask', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectEveryNthMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectFilename(
     wf: VibeWorkflow,
     *,
-    filenames: Any,
-    index: Any = -1,
+    _id: str | None = None,
+    filenames: Any = _UNSET,
+    index: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -611,18 +720,21 @@ def VHS_SelectFilename(
     Returns: Filename
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['filenames'] = filenames
-    _kwargs['index'] = index
+    if filenames is not _UNSET:
+        _kwargs['filenames'] = filenames
+    if index is not _UNSET:
+        _kwargs['index'] = index
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectFilename', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectFilename', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectImages(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    indexes: Any = '0',
-    err_if_missing: Any = True,
-    err_if_empty: Any = True,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    indexes: Any = _UNSET,
+    err_if_missing: Any = _UNSET,
+    err_if_empty: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -645,20 +757,25 @@ def VHS_SelectImages(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['indexes'] = indexes
-    _kwargs['err_if_missing'] = err_if_missing
-    _kwargs['err_if_empty'] = err_if_empty
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if indexes is not _UNSET:
+        _kwargs['indexes'] = indexes
+    if err_if_missing is not _UNSET:
+        _kwargs['err_if_missing'] = err_if_missing
+    if err_if_empty is not _UNSET:
+        _kwargs['err_if_empty'] = err_if_empty
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectImages', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectLatents(
     wf: VibeWorkflow,
     *,
-    latent: Any,
-    indexes: Any = '0',
-    err_if_missing: Any = True,
-    err_if_empty: Any = True,
+    _id: str | None = None,
+    latent: Any = _UNSET,
+    indexes: Any = _UNSET,
+    err_if_missing: Any = _UNSET,
+    err_if_empty: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -681,18 +798,23 @@ def VHS_SelectLatents(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latent'] = latent
-    _kwargs['indexes'] = indexes
-    _kwargs['err_if_missing'] = err_if_missing
-    _kwargs['err_if_empty'] = err_if_empty
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if indexes is not _UNSET:
+        _kwargs['indexes'] = indexes
+    if err_if_missing is not _UNSET:
+        _kwargs['err_if_missing'] = err_if_missing
+    if err_if_empty is not _UNSET:
+        _kwargs['err_if_empty'] = err_if_empty
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectLatents', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectLatest(
     wf: VibeWorkflow,
     *,
-    filename_postfix: Any,
-    filename_prefix: Any = 'output/AnimateDiff',
+    _id: str | None = None,
+    filename_prefix: Any = _UNSET,
+    filename_postfix: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -703,18 +825,21 @@ def VHS_SelectLatest(
     Returns: Filename
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['filename_postfix'] = filename_postfix
-    _kwargs['filename_prefix'] = filename_prefix
+    if filename_prefix is not _UNSET:
+        _kwargs['filename_prefix'] = filename_prefix
+    if filename_postfix is not _UNSET:
+        _kwargs['filename_postfix'] = filename_postfix
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectLatest', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectLatest', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SelectMasks(
     wf: VibeWorkflow,
     *,
-    mask: Any,
-    indexes: Any = '0',
-    err_if_missing: Any = True,
-    err_if_empty: Any = True,
+    _id: str | None = None,
+    mask: Any = _UNSET,
+    indexes: Any = _UNSET,
+    err_if_missing: Any = _UNSET,
+    err_if_empty: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -737,18 +862,23 @@ def VHS_SelectMasks(
     Returns: MASK
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
-    _kwargs['indexes'] = indexes
-    _kwargs['err_if_missing'] = err_if_missing
-    _kwargs['err_if_empty'] = err_if_empty
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
+    if indexes is not _UNSET:
+        _kwargs['indexes'] = indexes
+    if err_if_missing is not _UNSET:
+        _kwargs['err_if_missing'] = err_if_missing
+    if err_if_empty is not _UNSET:
+        _kwargs['err_if_empty'] = err_if_empty
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SelectMasks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SelectMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SplitImages(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    split_index: Any = 0,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    split_index: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -759,16 +889,19 @@ def VHS_SplitImages(
     Returns: IMAGE_A, A_count, IMAGE_B, B_count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['split_index'] = split_index
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if split_index is not _UNSET:
+        _kwargs['split_index'] = split_index
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SplitImages', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SplitImages', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SplitLatents(
     wf: VibeWorkflow,
     *,
-    latents: Any,
-    split_index: Any = 0,
+    _id: str | None = None,
+    latents: Any = _UNSET,
+    split_index: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -779,16 +912,19 @@ def VHS_SplitLatents(
     Returns: LATENT_A, A_count, LATENT_B, B_count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents'] = latents
-    _kwargs['split_index'] = split_index
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
+    if split_index is not _UNSET:
+        _kwargs['split_index'] = split_index
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SplitLatents', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SplitLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_SplitMasks(
     wf: VibeWorkflow,
     *,
-    mask: Any,
-    split_index: Any = 0,
+    _id: str | None = None,
+    mask: Any = _UNSET,
+    split_index: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -799,15 +935,18 @@ def VHS_SplitMasks(
     Returns: MASK_A, A_count, MASK_B, B_count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
-    _kwargs['split_index'] = split_index
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
+    if split_index is not _UNSET:
+        _kwargs['split_index'] = split_index
     _kwargs.update(_extras)
-    return node(wf, 'VHS_SplitMasks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_SplitMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_Unbatch(
     wf: VibeWorkflow,
     *,
-    batched: Any,
+    _id: str | None = None,
+    batched: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -818,16 +957,18 @@ def VHS_Unbatch(
     Returns: unbatched
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['batched'] = batched
+    if batched is not _UNSET:
+        _kwargs['batched'] = batched
     _kwargs.update(_extras)
-    return node(wf, 'VHS_Unbatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_Unbatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VAEDecodeBatched(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    vae: Any,
-    per_batch: Any = 16,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    vae: Any = _UNSET,
+    per_batch: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -838,18 +979,22 @@ def VHS_VAEDecodeBatched(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['vae'] = vae
-    _kwargs['per_batch'] = per_batch
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if per_batch is not _UNSET:
+        _kwargs['per_batch'] = per_batch
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VAEDecodeBatched', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VAEDecodeBatched', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VAEEncodeBatched(
     wf: VibeWorkflow,
     *,
-    pixels: Any,
-    vae: Any,
-    per_batch: Any = 16,
+    _id: str | None = None,
+    pixels: Any = _UNSET,
+    vae: Any = _UNSET,
+    per_batch: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -860,16 +1005,20 @@ def VHS_VAEEncodeBatched(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['pixels'] = pixels
-    _kwargs['vae'] = vae
-    _kwargs['per_batch'] = per_batch
+    if pixels is not _UNSET:
+        _kwargs['pixels'] = pixels
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if per_batch is not _UNSET:
+        _kwargs['per_batch'] = per_batch
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VAEEncodeBatched', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VAEEncodeBatched', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VHSAudioToAudio(
     wf: VibeWorkflow,
     *,
-    vhs_audio: Any,
+    _id: str | None = None,
+    vhs_audio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -880,20 +1029,22 @@ def VHS_VHSAudioToAudio(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vhs_audio'] = vhs_audio
+    if vhs_audio is not _UNSET:
+        _kwargs['vhs_audio'] = vhs_audio
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VHSAudioToAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VHSAudioToAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoCombine(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    frame_rate: Any = 8,
-    loop_count: Any = 0,
-    filename_prefix: Any = 'AnimateDiff',
-    format: Any = 'auto',
-    pingpong: Any = False,
-    save_output: Any = True,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    frame_rate: Any = _UNSET,
+    loop_count: Any = _UNSET,
+    filename_prefix: Any = _UNSET,
+    format: Any = _UNSET,
+    pingpong: Any = _UNSET,
+    save_output: Any = _UNSET,
     audio: Any = _UNSET,
     meta_batch: Any = _UNSET,
     vae: Any = _UNSET,
@@ -907,13 +1058,20 @@ def VHS_VideoCombine(
     Returns: Filenames
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['frame_rate'] = frame_rate
-    _kwargs['loop_count'] = loop_count
-    _kwargs['filename_prefix'] = filename_prefix
-    _kwargs['format'] = format
-    _kwargs['pingpong'] = pingpong
-    _kwargs['save_output'] = save_output
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if frame_rate is not _UNSET:
+        _kwargs['frame_rate'] = frame_rate
+    if loop_count is not _UNSET:
+        _kwargs['loop_count'] = loop_count
+    if filename_prefix is not _UNSET:
+        _kwargs['filename_prefix'] = filename_prefix
+    if format is not _UNSET:
+        _kwargs['format'] = format
+    if pingpong is not _UNSET:
+        _kwargs['pingpong'] = pingpong
+    if save_output is not _UNSET:
+        _kwargs['save_output'] = save_output
     if audio is not _UNSET:
         _kwargs['audio'] = audio
     if meta_batch is not _UNSET:
@@ -921,12 +1079,13 @@ def VHS_VideoCombine(
     if vae is not _UNSET:
         _kwargs['vae'] = vae
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VideoCombine', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VideoCombine', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoInfo(
     wf: VibeWorkflow,
     *,
-    video_info: Any,
+    _id: str | None = None,
+    video_info: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -937,14 +1096,16 @@ def VHS_VideoInfo(
     Returns: source_fps🟨, source_frame_count🟨, source_duration🟨, source_width🟨, source_height🟨, loaded_fps🟦, loaded_frame_count🟦, loaded_duration🟦, loaded_width🟦, loaded_height🟦
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video_info'] = video_info
+    if video_info is not _UNSET:
+        _kwargs['video_info'] = video_info
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VideoInfo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VideoInfo', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoInfoLoaded(
     wf: VibeWorkflow,
     *,
-    video_info: Any,
+    _id: str | None = None,
+    video_info: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -955,14 +1116,16 @@ def VHS_VideoInfoLoaded(
     Returns: fps🟦, frame_count🟦, duration🟦, width🟦, height🟦
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video_info'] = video_info
+    if video_info is not _UNSET:
+        _kwargs['video_info'] = video_info
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VideoInfoLoaded', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VideoInfoLoaded', _id, pass_raw=pass_raw, **_kwargs)
 
 def VHS_VideoInfoSource(
     wf: VibeWorkflow,
     *,
-    video_info: Any,
+    _id: str | None = None,
+    video_info: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -973,8 +1136,9 @@ def VHS_VideoInfoSource(
     Returns: fps🟨, frame_count🟨, duration🟨, width🟨, height🟨
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video_info'] = video_info
+    if video_info is not _UNSET:
+        _kwargs['video_info'] = video_info
     _kwargs.update(_extras)
-    return node(wf, 'VHS_VideoInfoSource', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VHS_VideoInfoSource', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['VHS_AudioToVHSAudio', 'VHS_BatchManager', 'VHS_DuplicateImages', 'VHS_DuplicateLatents', 'VHS_DuplicateMasks', 'VHS_GetImageCount', 'VHS_GetLatentCount', 'VHS_GetMaskCount', 'VHS_LoadAudio', 'VHS_LoadAudioUpload', 'VHS_LoadImagePath', 'VHS_LoadImages', 'VHS_LoadImagesPath', 'VHS_LoadVideo', 'VHS_LoadVideoFFmpeg', 'VHS_LoadVideoFFmpegPath', 'VHS_LoadVideoPath', 'VHS_MergeImages', 'VHS_MergeLatents', 'VHS_MergeMasks', 'VHS_PruneOutputs', 'VHS_SelectEveryNthImage', 'VHS_SelectEveryNthLatent', 'VHS_SelectEveryNthMask', 'VHS_SelectFilename', 'VHS_SelectImages', 'VHS_SelectLatents', 'VHS_SelectLatest', 'VHS_SelectMasks', 'VHS_SplitImages', 'VHS_SplitLatents', 'VHS_SplitMasks', 'VHS_Unbatch', 'VHS_VAEDecodeBatched', 'VHS_VAEEncodeBatched', 'VHS_VHSAudioToAudio', 'VHS_VideoCombine', 'VHS_VideoInfo', 'VHS_VideoInfoLoaded', 'VHS_VideoInfoSource']

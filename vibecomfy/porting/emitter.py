@@ -70,6 +70,18 @@ class _PublicInputBinding:
     media_semantics: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _PublicInputSpec:
+    name: str
+    node_ref: str
+    field: str
+    default_expr: str
+    type: str | None = None
+    required: bool = False
+    aliases: tuple[str, ...] = ()
+    media_semantics: str | None = None
+
+
 GENERATED_HEADER = (
     "# vibecomfy: generated - converted by tools/convert_ready_templates.py\n"
     "# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`\n"
@@ -513,6 +525,226 @@ def _translate_widget_for_key(
     return resolve_widget_name(class_type, idx)
 
 
+def _drop_output_prefix_constants(
+    constant_lines: list[str],
+    constant_map: dict[tuple[str, str], str],
+) -> tuple[list[str], dict[tuple[str, str], str]]:
+    """Keep filename prefixes inline; READY_METADATA owns the public output prefix."""
+    output_prefix_names = {
+        line.split("=", 1)[0].strip()
+        for line in constant_lines
+        if line.split("=", 1)[0].strip().startswith("OUTPUT_PREFIX")
+    }
+    if not output_prefix_names:
+        return constant_lines, constant_map
+    return (
+        [
+            line
+            for line in constant_lines
+            if line.split("=", 1)[0].strip() not in output_prefix_names
+        ],
+        {
+            key: value
+            for key, value in constant_map.items()
+            if value not in output_prefix_names
+        },
+    )
+
+
+def _public_input_specs(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+    *,
+    registered_inputs: dict[str, tuple[str, str]] | None,
+    constant_map: dict[tuple[str, str], str],
+) -> list[_PublicInputSpec]:
+    specs: list[_PublicInputSpec] = []
+    used_names: set[str] = set()
+
+    def add(binding: _PublicInputBinding) -> None:
+        if binding.name in used_names:
+            return
+        node = workflow_nodes.get(str(binding.node_id))
+        if node is None:
+            return
+        field_values = _resolved_field_values(node)
+        if binding.field not in field_values:
+            return
+        default_expr = constant_map.get((str(binding.node_id), binding.field))
+        if default_expr is None:
+            default_expr = _format_value(field_values[binding.field])
+        node_var = var_names.get(str(binding.node_id))
+        node_ref = f"ref({node_var!r})" if node_var is not None else repr(str(binding.node_id))
+        specs.append(
+            _PublicInputSpec(
+                name=binding.name,
+                node_ref=node_ref,
+                field=binding.field,
+                default_expr=default_expr,
+                type=binding.type,
+                required=binding.required,
+                aliases=binding.aliases,
+                media_semantics=binding.media_semantics,
+            )
+        )
+        used_names.add(binding.name)
+        used_names.update(binding.aliases)
+
+    for input_name, (old_id, field) in dict(registered_inputs or {}).items():
+        resolved_field = field
+        if field.startswith("widget_") and old_id in workflow_nodes:
+            cls = workflow_nodes[old_id].class_type
+            try:
+                idx = int(field.split("_", 1)[1])
+                resolved_field = resolve_widget_name(cls, idx)
+            except (ValueError, IndexError):
+                pass
+        add(_PublicInputBinding(name=input_name, node_id=str(old_id), field=resolved_field))
+
+    inferred = _infer_public_input_bindings(workflow_nodes, edges_in, reserved_names=used_names)
+    for binding in inferred:
+        add(binding)
+    return specs
+
+
+def _format_public_inputs_block(specs: list[_PublicInputSpec]) -> list[str]:
+    if not specs:
+        return ["PUBLIC_INPUTS = {}"]
+    lines = ["PUBLIC_INPUTS = {"]
+    for spec in specs:
+        args = [
+            f"node={spec.node_ref}",
+            f"field={spec.field!r}",
+            f"default={spec.default_expr}",
+        ]
+        if spec.type is not None:
+            args.append(f"type={spec.type!r}")
+        if spec.required:
+            args.append("required=True")
+        if spec.aliases:
+            args.append(f"aliases={spec.aliases!r}")
+        if spec.media_semantics is not None:
+            args.append(f"media_semantics={spec.media_semantics!r}")
+        lines.append(f"    {spec.name!r}: InputSpec({', '.join(args)}),")
+    lines.append("}")
+    return lines
+
+
+def _model_assets_for_emit(
+    metadata: Mapping[str, Any],
+    requirements: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    def usable(asset: Mapping[str, Any]) -> bool:
+        return bool(asset.get("url"))
+
+    raw_assets = metadata.get("model_assets")
+    if isinstance(raw_assets, list):
+        return [dict(asset) for asset in raw_assets if isinstance(asset, Mapping) and usable(asset)]
+    raw_requirement_models = requirements.get("models") if isinstance(requirements, Mapping) else None
+    if isinstance(raw_requirement_models, list):
+        return [dict(asset) for asset in raw_requirement_models if isinstance(asset, Mapping) and usable(asset)]
+    return []
+
+
+def _model_key(asset: Mapping[str, Any], used: set[str]) -> str:
+    raw_name = str(asset.get("name") or asset.get("filename") or "model")
+    base = re.sub(r"[^0-9a-zA-Z_]+", "_", raw_name.rsplit(".", 1)[0]).strip("_").lower() or "model"
+    if base[0].isdigit():
+        base = f"model_{base}"
+    if keyword.iskeyword(base):
+        base = f"{base}_model"
+    candidate = base
+    index = 2
+    while candidate in used:
+        candidate = f"{base}_{index}"
+        index += 1
+    used.add(candidate)
+    return candidate
+
+
+def _format_models_block(model_assets: list[Mapping[str, Any]]) -> list[str]:
+    if not model_assets:
+        return ["MODELS = {}"]
+    lines = ["MODELS = {"]
+    used: set[str] = set()
+    for asset in model_assets:
+        key = _model_key(asset, used)
+        filename = asset.get("filename", asset.get("name"))
+        subdir = asset.get("subdir") or asset.get("directory") or "checkpoints"
+        args: list[str] = []
+        if filename is not None:
+            args.append(f"filename={_format_value(filename)}")
+        for field_name in ("url", "target_path", "sha256", "hf_revision", "size_bytes"):
+            value = asset.get(field_name)
+            if value is not None:
+                args.append(f"{field_name}={_format_value(value)}")
+        if subdir is not None:
+            args.append(f"subdir={_format_value(subdir)}")
+        lines.append(f"    {key!r}: ModelAsset({', '.join(args)}),")
+    lines.append("}")
+    return lines
+
+
+def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    derived_keys = {
+        "ready_template",
+        "workflow_template",
+        "capability",
+        "output_prefix",
+        "unbound_inputs",
+        "model_assets",
+        "edit_guide",
+        "requirements",
+        "id_map",
+        "ready_template_path",
+        "python_policy_applied",
+    }
+    return {
+        str(key): value
+        for key, value in metadata.items()
+        if key not in derived_keys and value is not None
+    }
+
+
+def _requirements_expr_for_emit(requirements: Mapping[str, Any], *, has_models: bool) -> str | None:
+    retained: dict[str, Any] = {}
+    for key, value in dict(requirements).items():
+        if key == "models" and has_models:
+            continue
+        if value:
+            retained[str(key)] = value
+    if not retained:
+        return None
+    return _format_value(retained)
+
+
+def _format_ready_metadata_build(
+    metadata: Mapping[str, Any],
+    requirements: Mapping[str, Any],
+    *,
+    has_models: bool,
+) -> list[str]:
+    template_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
+    capability = str(metadata.get("capability") or "unknown")
+    output_prefix = str(metadata.get("output_prefix") or template_id)
+    lines = [
+        "READY_METADATA = ReadyMetadata.build(",
+        f"    template_id={template_id!r},",
+        f"    capability={capability!r},",
+        "    inputs=PUBLIC_INPUTS,",
+        "    models=MODELS,",
+        f"    output_prefix={output_prefix!r},",
+    ]
+    requirements_expr = _requirements_expr_for_emit(requirements, has_models=has_models)
+    if requirements_expr is not None:
+        lines.append(f"    requirements={requirements_expr},")
+    for key, value in _metadata_extras_for_emit(metadata).items():
+        lines.append(f"    {key}={_format_value(value)},")
+    lines.append(")")
+    return lines
+
+
 def emit_ready_template_python(
     workflow,
     *,
@@ -538,21 +770,26 @@ def emit_ready_template_python(
 
     # Hoist constants and build section groups
     constant_lines, constant_map = _hoist_constants(workflow_nodes, edges_in, var_names)
+    constant_lines, constant_map = _drop_output_prefix_constants(constant_lines, constant_map)
     section_groups = _build_section_groups(workflow_nodes, edges_in)
     wrapper_imports = _wrapper_imports_for_nodes(workflow_nodes)
+    public_inputs = _public_input_specs(
+        workflow_nodes,
+        edges_in,
+        var_names,
+        registered_inputs=registered_inputs,
+        constant_map=constant_map,
+    )
+    model_assets = _model_assets_for_emit(metadata, requirements)
 
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
     out_lines.append('"""Auto-generated ready_template - see tools/convert_ready_templates.py."""')
     out_lines.append("from __future__ import annotations")
     out_lines.append("")
-    out_lines.append("from vibecomfy.registry.ready_template import (")
-    out_lines.append("    ready_workflow,")
-    out_lines.append("    ready_node,")
-    out_lines.append("    finalize_ready_template,")
-    out_lines.append("    bind_input,")
-    out_lines.append("    bind_output,")
-    out_lines.append(")")
+    out_lines.append(
+        "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node, ref"
+    )
     for module_name, names in sorted(wrapper_imports.items()):
         out_lines.append(f"from vibecomfy.nodes.{module_name} import {', '.join(names)}")
     if has_ltx_tail:
@@ -564,20 +801,21 @@ def emit_ready_template_python(
         out_lines.extend(constant_lines)
         out_lines.append("")
     out_lines.append("")
-    out_lines.append(_format_metadata_dict("READY_METADATA", metadata))
+    out_lines.extend(_format_models_block(model_assets))
     out_lines.append("")
-    out_lines.append(_format_metadata_dict("READY_REQUIREMENTS", requirements))
+    out_lines.extend(_format_public_inputs_block(public_inputs))
     out_lines.append("")
+    out_lines.extend(_format_ready_metadata_build(metadata, requirements, has_models=bool(model_assets)))
     out_lines.append("")
     out_lines.extend(
         _emit_build_function(
             prepared,
-            workflow_id_expr='READY_METADATA["ready_template"]',
+            workflow_id_expr="READY_METADATA",
             source_path_expr="__file__",
             source_type="ready_template",
-            source_provenance=metadata.get("provenance") if isinstance(metadata.get("provenance"), dict) else None,
+            source_provenance=None,
             registered_inputs=registered_inputs,
-            tail_lines=_ready_template_tail_lines(has_ltx_tail),
+            tail_lines=_ready_template_tail_lines(has_ltx_tail, workflow_nodes, edges_in, var_names, metadata),
             diagnostics=diagnostics,
             use_shared_helpers=True,
             constant_map=constant_map,
@@ -672,9 +910,11 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
 def _infer_public_input_bindings(
     workflow_nodes: dict[str, Any],
     edges_in: dict[str, list[Any]],
+    *,
+    reserved_names: set[str] | None = None,
 ) -> list[_PublicInputBinding]:
     bindings: list[_PublicInputBinding] = []
-    used_names: set[str] = set()
+    used_names: set[str] = set(reserved_names or set())
 
     def add(
         name: str,
@@ -686,7 +926,8 @@ def _infer_public_input_bindings(
         aliases: tuple[str, ...] = (),
         media_semantics: str | None = None,
     ) -> None:
-        if name in used_names:
+        candidate_names = {name, *aliases}
+        if candidate_names & used_names:
             return
         node = workflow_nodes.get(node_id)
         if node is None:
@@ -696,7 +937,7 @@ def _infer_public_input_bindings(
         incoming = {str(getattr(edge, "to_input", "")) for edge in edges_in.get(node_id, [])}
         if field not in available or field in incoming:
             return
-        used_names.add(name)
+        used_names.update(candidate_names)
         bindings.append(
             _PublicInputBinding(
                 name=name,
@@ -842,21 +1083,7 @@ def _emit_build_function(
         provenance_part = f",\n            provenance={_format_value(source_provenance)}"
 
     if use_shared_helpers:
-        if source_provenance is not None:
-            out_lines.append(
-                "    wf = ready_workflow(\n"
-                f"        {workflow_id_expr},\n"
-                f"        source_path={source_path_expr},\n"
-                f"        provenance={_format_value(source_provenance)},\n"
-                "    )"
-            )
-        else:
-            out_lines.append(
-                "    wf = ready_workflow(\n"
-                f"        {workflow_id_expr},\n"
-                f"        source_path={source_path_expr},\n"
-                "    )"
-            )
+        out_lines.append(f"    wf = new_workflow({workflow_id_expr}, source_path={source_path_expr})")
     else:
         out_lines.append(
             "    wf = VibeWorkflow(\n"
@@ -899,19 +1126,24 @@ def _emit_build_function(
             last_section = section
 
         wrapper_module = _wrapper_module_for_class(str(node.class_type)) if use_shared_helpers else None
+        preserve_fields = {
+            field
+            for old_id, field in (registered_inputs or {}).values()
+            if old_id == nid
+        }
         kwargs = _node_kwargs(
             node, edges_in, var_names,
             workflow_nodes=workflow_nodes,
             diagnostics=diagnostics,
             constant_map=constant_map,
             use_ui_widget_aliases=use_shared_helpers,
-            strip_schema_defaults=use_shared_helpers,
+            strip_schema_defaults=False,
             emit_reserved_keyword_args=wrapper_module is not None,
+            preserve_fields=preserve_fields,
         )
 
         if use_shared_helpers:
             use_wrapper = wrapper_module is not None
-            # Map _outputs -> outputs=, _extras -> extras= for ready_node
             ready_kwargs: list[tuple[str, str]] = []
             outputs_expr: str | None = None
             extras_expr: str | None = None
@@ -924,19 +1156,21 @@ def _emit_build_function(
                     ready_kwargs.append((key, expr))
 
             if use_wrapper:
-                all_args = [(_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs]
+                all_args = [("_id", repr(nid))]
+                all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
+                if outputs_expr is not None:
+                    all_args.append(("_outputs", outputs_expr))
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))
                 call_name = str(node.class_type)
             else:
-                # Build the ready_node call
-                all_args = [("source_id", repr(nid))]
+                all_args = []
                 if outputs_expr is not None:
-                    all_args.append(("outputs", outputs_expr))
+                    all_args.append(("_outputs", outputs_expr))
                 all_args.extend(ready_kwargs)
                 if extras_expr is not None:
-                    all_args.append(("extras", extras_expr))
-                call_name = "ready_node"
+                    all_args.append(("_extras", extras_expr))
+                call_name = "node"
 
             # Multi-line formatting: use multi-line when >3 kwargs or any line would exceed ~88 chars
             kwarg_lines = [f"**{expr}" if key == "**" else f"{key}={expr}" for key, expr in all_args]
@@ -944,8 +1178,8 @@ def _emit_build_function(
                 call_args = ", ".join(["wf", *kwarg_lines])
                 single_line = f"    {var} = {call_name}({call_args})"
             else:
-                call_args = ", ".join([repr(node.class_type), *kwarg_lines])
-                single_line = f"    {var} = ready_node(wf, {call_args})"
+                call_args = ", ".join([repr(node.class_type), repr(nid), *kwarg_lines])
+                single_line = f"    {var} = node(wf, {call_args})"
 
             # -- readability diagnostic: long one-line node call ----------
             if diagnostics is not None and len(single_line) > 120:
@@ -953,7 +1187,7 @@ def _emit_build_function(
                     EmissionDiagnostic(
                         code=READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
                         message=(
-                            f"ready_node call for {node.class_type!r} (node {nid}) would be a single "
+                            f"node call for {node.class_type!r} (node {nid}) would be a single "
                             f"line of {len(single_line)} chars (>120); multi-line formatting preferred."
                         ),
                         severity="warning",
@@ -968,7 +1202,7 @@ def _emit_build_function(
                     lines = [f"    {var} = {call_name}("]
                     lines.append("        wf,")
                 else:
-                    lines = [f"    {var} = ready_node(wf, {node.class_type!r},"]
+                    lines = [f"    {var} = node(wf, {node.class_type!r}, {nid!r},"]
                 for key, expr in all_args:
                     if key == "**":
                         lines.append(f"        **{expr},")
@@ -991,20 +1225,7 @@ def _emit_build_function(
     out_lines.append("")
     out_lines.extend(tail_lines)
     if use_shared_helpers:
-        for binding in _infer_public_input_bindings(workflow_nodes, edges_in):
-            node_expr = _node_binding_expr(binding.node_id, var_names)
-            parts = [
-                f"    bind_input(wf, {binding.name!r}, {node_expr}, {binding.field!r}",
-            ]
-            if binding.type is not None:
-                parts.append(f"type={binding.type!r}")
-            if binding.required:
-                parts.append("required=True")
-            if binding.aliases:
-                parts.append(f"aliases={list(binding.aliases)!r}")
-            if binding.media_semantics is not None:
-                parts.append(f"media_semantics={binding.media_semantics!r}")
-            out_lines.append(", ".join(parts) + ")")
+        return out_lines
     if registered_inputs:
         for input_name, (old_id, field) in registered_inputs.items():
             resolved_field = field
@@ -1032,57 +1253,90 @@ def _emit_build_function(
                     f"wf.nodes[{old_id!r}].inputs.get({resolved_field!r}, wf.nodes[{old_id!r}].widgets.get({resolved_field!r})){suffix})"
                 )
 
-    # -- bind_output for known output contracts (shared-helper mode only) -----
-    if use_shared_helpers:
-        _OUTPUT_CLASSES: dict[str, tuple[str, str]] = {
-            "SaveImage": ("image", "image/png"),
-            "PreviewImage": ("image", "image/png"),
-            "SaveVideo": ("video", "video/mp4"),
-            "VHS_VideoCombine": ("video", "video/mp4"),
-            "SaveAudio": ("audio", "audio/wav"),
-            "SaveAudioMP3": ("audio", "audio/mpeg"),
-        }
-        output_counts: Counter[str] = Counter()
-        for nid in _topological_node_order(workflow_nodes, edges_in):
-            node = workflow_nodes[nid]
-            output_contract = _OUTPUT_CLASSES.get(node.class_type)
-            if output_contract is None:
-                continue
-            artifact_kind, mime_type = output_contract
-            output_counts[artifact_kind] += 1
-            # Gather output metadata
-            prefix_raw = node.inputs.get("filename_prefix", node.widgets.get("filename_prefix"))
-            prefix_str = _format_value(prefix_raw) if prefix_raw is not None else None
-            out_name = artifact_kind if output_counts[artifact_kind] == 1 else f"{artifact_kind}_{output_counts[artifact_kind]}"
-            output_names = getattr(node, "metadata", {}).get("output_names")
-            if isinstance(output_names, (list, tuple)) and len(output_names) > 0 and output_names[0]:
-                out_name = output_names[0]
-
-            parts: list[str] = [f"    bind_output(wf, {_node_binding_expr(nid, var_names)}"]
-            parts.append(f"output_type={node.class_type!r}")
-            parts.append(f"name={out_name!r}")
-            parts.append(f"artifact_kind={artifact_kind!r}")
-            parts.append(f"mime_type={mime_type!r}")
-            if prefix_str is not None:
-                parts.append(f"filename_prefix={prefix_str}")
-            parts.append("expected_cardinality='one'")
-            out_lines.append(", ".join(parts) + ")")
-
     out_lines.append("    return wf")
     return out_lines
 
 
-def _ready_template_tail_lines(has_ltx_tail: bool) -> list[str]:
+_OUTPUT_CLASSES: dict[str, tuple[str, str]] = {
+    "SaveImage": ("image", "image/png"),
+    "PreviewImage": ("image", "image/png"),
+    "SaveVideo": ("video", "video/mp4"),
+    "VHS_VideoCombine": ("video", "video/mp4"),
+    "SaveAudio": ("audio", "audio/wav"),
+    "SaveAudioMP3": ("audio", "audio/mpeg"),
+}
+
+
+def _ready_template_tail_lines(
+    has_ltx_tail: bool,
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+    metadata: Mapping[str, Any],
+) -> list[str]:
+    finalize_args = _finalize_args(workflow_nodes, edges_in, var_names, metadata)
+    call = f"    return wf.finalize(PUBLIC_INPUTS{finalize_args})"
     if has_ltx_tail:
         return [
             "    apply_ltx_lowvram(wf)",
             "    resolution(384, 256, 9).apply(wf)",
-            "    ensure_custom_nodes(wf, READY_REQUIREMENTS[\"custom_nodes\"])",
-            "    finalize_ready_template(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
+            "    ensure_custom_nodes(wf, READY_METADATA.get(\"requirements\", {}).get(\"custom_nodes\", []))",
+            call,
         ]
-    return [
-        "    finalize_ready_template(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)",
+    return [call]
+
+
+def _finalize_args(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+    metadata: Mapping[str, Any],
+) -> str:
+    output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
+    args: list[str] = []
+    selected_id: str | None = output_node_ids[0] if output_node_ids else None
+    if len(output_node_ids) > 1 and selected_id is not None:
+        args.append(f"output_node={var_names.get(selected_id, repr(selected_id))}")
+    if selected_id is not None:
+        node = workflow_nodes[selected_id]
+        output_contract = _OUTPUT_CLASSES.get(str(node.class_type))
+        if output_contract is not None:
+            artifact_kind, mime_type = output_contract
+            args.append(f"output_type={node.class_type!r}")
+            args.append(f"name={artifact_kind!r}")
+            args.append(f"artifact_kind={artifact_kind!r}")
+            args.append(f"mime_type={mime_type!r}")
+            args.append("expected_cardinality='one'")
+        prefix_raw = node.inputs.get("filename_prefix", node.widgets.get("filename_prefix"))
+        if prefix_raw is not None and prefix_raw != metadata.get("output_prefix"):
+            args.append(f"filename_prefix={_format_value(prefix_raw)}")
+    if not args:
+        return ""
+    return ", " + ", ".join(args)
+
+
+def _terminal_output_node_ids(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+) -> list[str]:
+    outgoing = {
+        str(edge.from_node)
+        for edges in edges_in.values()
+        for edge in edges
+    }
+    candidates = [
+        nid
+        for nid, node in workflow_nodes.items()
+        if nid not in outgoing and _is_output_class(str(node.class_type))
     ]
+    return sorted(candidates, key=_id_sort_key)
+
+
+def _is_output_class(class_type: str) -> bool:
+    if class_type in _OUTPUT_CLASSES:
+        return True
+    lowered = class_type.lower()
+    return lowered.startswith(("save", "preview", "create")) or "save" in lowered or "preview" in lowered
 
 
 def _node_binding_expr(node_id: str, var_names: dict[str, str]) -> str:
@@ -1151,7 +1405,7 @@ def _check_template_formatting(
         if stripped == "def build() -> VibeWorkflow:":
             in_build = True
             continue
-        if in_build and stripped == "return wf":
+        if in_build and stripped.startswith("return wf"):
             past_return = True
             continue
         if past_return:
@@ -1297,6 +1551,7 @@ def _node_kwargs(
     use_ui_widget_aliases: bool = False,
     strip_schema_defaults: bool = False,
     emit_reserved_keyword_args: bool = False,
+    preserve_fields: set[str] | None = None,
 ) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
@@ -1312,6 +1567,8 @@ def _node_kwargs(
 
     if constant_map is None:
         constant_map = {}
+    if preserve_fields is None:
+        preserve_fields = set()
 
     incoming: dict[str, tuple[str, int]] = {}
     for edge in edges_in.get(node.id, []):
@@ -1386,7 +1643,7 @@ def _node_kwargs(
     for key in ordered_static_keys:
         if key in incoming:
             continue
-        if strip_schema_defaults and _is_schema_default(cls, key, static_inputs[key], node_metadata):
+        if key not in preserve_fields and strip_schema_defaults and _is_schema_default(cls, key, static_inputs[key], node_metadata):
             continue
         if not _is_python_ident(key) and not (emit_reserved_keyword_args and key in RESERVED_WRAPPER_INPUT_NAMES):
             extras.append((key, _format_static_value(key, static_inputs[key])))

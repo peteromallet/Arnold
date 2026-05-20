@@ -14,13 +14,14 @@ _UNSET = object()
 def DrawViTPose(
     wf: VibeWorkflow,
     *,
-    pose_data: Any,
-    width: Any = 832,
-    height: Any = 480,
-    retarget_padding: Any = 16,
-    body_stick_width: Any = -1,
-    hand_stick_width: Any = -1,
-    draw_head: Any = 'True',
+    _id: str | None = None,
+    pose_data: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    retarget_padding: Any = _UNSET,
+    body_stick_width: Any = _UNSET,
+    hand_stick_width: Any = _UNSET,
+    draw_head: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -31,22 +32,30 @@ def DrawViTPose(
     Returns: pose_images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['pose_data'] = pose_data
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['retarget_padding'] = retarget_padding
-    _kwargs['body_stick_width'] = body_stick_width
-    _kwargs['hand_stick_width'] = hand_stick_width
-    _kwargs['draw_head'] = draw_head
+    if pose_data is not _UNSET:
+        _kwargs['pose_data'] = pose_data
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if retarget_padding is not _UNSET:
+        _kwargs['retarget_padding'] = retarget_padding
+    if body_stick_width is not _UNSET:
+        _kwargs['body_stick_width'] = body_stick_width
+    if hand_stick_width is not _UNSET:
+        _kwargs['hand_stick_width'] = hand_stick_width
+    if draw_head is not _UNSET:
+        _kwargs['draw_head'] = draw_head
     _kwargs.update(_extras)
-    return node(wf, 'DrawViTPose', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DrawViTPose', _id, pass_raw=pass_raw, **_kwargs)
 
 def OnnxDetectionModelLoader(
     wf: VibeWorkflow,
     *,
-    vitpose_model: Any,
-    yolo_model: Any,
-    onnx_device: Any = 'CUDAExecutionProvider',
+    _id: str | None = None,
+    vitpose_model: Any = _UNSET,
+    yolo_model: Any = _UNSET,
+    onnx_device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -57,21 +66,25 @@ def OnnxDetectionModelLoader(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vitpose_model'] = vitpose_model
-    _kwargs['yolo_model'] = yolo_model
-    _kwargs['onnx_device'] = onnx_device
+    if vitpose_model is not _UNSET:
+        _kwargs['vitpose_model'] = vitpose_model
+    if yolo_model is not _UNSET:
+        _kwargs['yolo_model'] = yolo_model
+    if onnx_device is not _UNSET:
+        _kwargs['onnx_device'] = onnx_device
     _kwargs.update(_extras)
-    return node(wf, 'OnnxDetectionModelLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'OnnxDetectionModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def PoseAndFaceDetection(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    images: Any,
-    width: Any = 832,
-    height: Any = 480,
-    retarget_image: Any = None,
-    face_padding: Any = 0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    images: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    retarget_image: Any = _UNSET,
+    face_padding: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -82,26 +95,33 @@ def PoseAndFaceDetection(
     Returns: pose_data, face_images, key_frame_body_points, bboxes, face_bboxes
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['images'] = images
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['retarget_image'] = retarget_image
-    _kwargs['face_padding'] = face_padding
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if retarget_image is not _UNSET:
+        _kwargs['retarget_image'] = retarget_image
+    if face_padding is not _UNSET:
+        _kwargs['face_padding'] = face_padding
     _kwargs.update(_extras)
-    return node(wf, 'PoseAndFaceDetection', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PoseAndFaceDetection', _id, pass_raw=pass_raw, **_kwargs)
 
 def PoseDetectionOneToAllAnimation(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    images: Any,
-    width: Any = 832,
-    height: Any = 480,
-    align_to: Any = 'ref',
-    draw_face_points: Any = 'full',
-    draw_head: Any = 'full',
-    ref_image: Any = None,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    images: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    align_to: Any = _UNSET,
+    draw_face_points: Any = _UNSET,
+    draw_head: Any = _UNSET,
+    ref_image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -112,21 +132,30 @@ def PoseDetectionOneToAllAnimation(
     Returns: pose_images, ref_pose_image, ref_image, ref_mask
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['images'] = images
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['align_to'] = align_to
-    _kwargs['draw_face_points'] = draw_face_points
-    _kwargs['draw_head'] = draw_head
-    _kwargs['ref_image'] = ref_image
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if align_to is not _UNSET:
+        _kwargs['align_to'] = align_to
+    if draw_face_points is not _UNSET:
+        _kwargs['draw_face_points'] = draw_face_points
+    if draw_head is not _UNSET:
+        _kwargs['draw_head'] = draw_head
+    if ref_image is not _UNSET:
+        _kwargs['ref_image'] = ref_image
     _kwargs.update(_extras)
-    return node(wf, 'PoseDetectionOneToAllAnimation', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PoseDetectionOneToAllAnimation', _id, pass_raw=pass_raw, **_kwargs)
 
 def PoseRetargetPromptHelper(
     wf: VibeWorkflow,
     *,
-    pose_data: Any,
+    _id: str | None = None,
+    pose_data: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -137,8 +166,9 @@ def PoseRetargetPromptHelper(
     Returns: prompt, retarget_prompt
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['pose_data'] = pose_data
+    if pose_data is not _UNSET:
+        _kwargs['pose_data'] = pose_data
     _kwargs.update(_extras)
-    return node(wf, 'PoseRetargetPromptHelper', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PoseRetargetPromptHelper', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['DrawViTPose', 'OnnxDetectionModelLoader', 'PoseAndFaceDetection', 'PoseDetectionOneToAllAnimation', 'PoseRetargetPromptHelper']

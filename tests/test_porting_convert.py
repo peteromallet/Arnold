@@ -72,10 +72,12 @@ def test_ready_template_emitter_uses_typed_wrappers_and_strips_schema_defaults()
     )
 
     assert "from vibecomfy.nodes.core import SaveImage, UNETLoader" in source
-    assert "UNETLoader(wf," in source
+    assert "UNETLoader(" in source
+    assert "_id='1'" in source
     assert "source_id='1'" not in source
-    assert "weight_dtype='default'" not in source
-    assert "bind_output(wf, saveimage.node.id" in source
+    assert "weight_dtype='default'" in source
+    assert "bind_output(" not in source
+    assert "return wf.finalize(PUBLIC_INPUTS" in source
 
 
 def test_ready_template_emitter_preserves_kept_schema_default() -> None:
@@ -172,7 +174,7 @@ def test_port_convert_ready_template_candidate_requires_ready_id() -> None:
     assert result.ready_id == "image/sample"
     assert result.validation is not None and result.validation.ok
     assert "READY_METADATA =" in result.text
-    assert "'ready_template': 'image/sample'" in result.text
+    assert "template_id='image/sample'" in result.text
     assert "'source_hash': 'sha256:abc'" in result.text
     assert "'workflow_shape': {'nodes': 2, 'runtime_nodes': 2}" in result.text
     assert "'output_mode': 'ready_template'" in result.text
@@ -534,7 +536,7 @@ def test_ready_template_candidate_strict_ready_failure_blocks_write(tmp_path: Pa
     assert result.validation is not None
     assert result.validation.strict_ready_ok is False
     assert any(
-        issue.code == STRICT_READY_MISSING_OUTPUT_CONTRACT
+        issue.code in {STRICT_READY_MISSING_OUTPUT_CONTRACT, "strict_ready_build_failed"}
         for issue in result.validation.strict_ready_diagnostics
     )
     target = tmp_path / "strict_missing_output.py"
@@ -1425,11 +1427,11 @@ def test_ready_template_uses_shared_helpers_and_passes_import_build_compile_pari
     assert result.mode == "ready_template"
     assert result.validation is not None
 
-    # Import check: emitted code must import shared helpers, not define local _node
-    assert "from vibecomfy.registry.ready_template import" in result.text
-    assert "ready_workflow" in result.text
-    assert "ready_node" in result.text
-    assert "finalize_ready_template" in result.text
+    # Import check: emitted code must import the natural template surface, not define local _node
+    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node, ref" in result.text
+    assert "from vibecomfy.registry.ready_template import" not in result.text
+    assert "new_workflow" in result.text
+    assert "wf.finalize(PUBLIC_INPUTS" in result.text
     assert "def _node" not in result.text
 
     # Build/compile check

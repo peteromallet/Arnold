@@ -14,9 +14,10 @@ _UNSET = object()
 def DualCLIPLoaderGGUF(
     wf: VibeWorkflow,
     *,
-    clip_name1: Any,
-    clip_name2: Any,
-    type_: Any,
+    _id: str | None = None,
+    clip_name1: Any = _UNSET,
+    clip_name2: Any = _UNSET,
+    type_: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -27,16 +28,20 @@ def DualCLIPLoaderGGUF(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip_name1'] = clip_name1
-    _kwargs['clip_name2'] = clip_name2
-    _kwargs['type'] = type_
+    if clip_name1 is not _UNSET:
+        _kwargs['clip_name1'] = clip_name1
+    if clip_name2 is not _UNSET:
+        _kwargs['clip_name2'] = clip_name2
+    if type_ is not _UNSET:
+        _kwargs['type'] = type_
     _kwargs.update(_extras)
-    return node(wf, 'DualCLIPLoaderGGUF', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DualCLIPLoaderGGUF', _id, pass_raw=pass_raw, **_kwargs)
 
 def UnetLoaderGGUF(
     wf: VibeWorkflow,
     *,
-    unet_name: Any,
+    _id: str | None = None,
+    unet_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -47,8 +52,9 @@ def UnetLoaderGGUF(
     Returns: MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['unet_name'] = unet_name
+    if unet_name is not _UNSET:
+        _kwargs['unet_name'] = unet_name
     _kwargs.update(_extras)
-    return node(wf, 'UnetLoaderGGUF', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'UnetLoaderGGUF', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['DualCLIPLoaderGGUF', 'UnetLoaderGGUF']

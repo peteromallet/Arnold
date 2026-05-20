@@ -14,12 +14,13 @@ _UNSET = object()
 def CreateCFGScheduleFloatList(
     wf: VibeWorkflow,
     *,
-    steps: Any = 30,
-    cfg_scale_start: Any = 5.0,
-    cfg_scale_end: Any = 5.0,
-    interpolation: Any = 'linear',
-    start_percent: Any = 0.0,
-    end_percent: Any = 1.0,
+    _id: str | None = None,
+    steps: Any = _UNSET,
+    cfg_scale_start: Any = _UNSET,
+    cfg_scale_end: Any = _UNSET,
+    interpolation: Any = _UNSET,
+    start_percent: Any = _UNSET,
+    end_percent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -30,21 +31,28 @@ def CreateCFGScheduleFloatList(
     Returns: float_list
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['steps'] = steps
-    _kwargs['cfg_scale_start'] = cfg_scale_start
-    _kwargs['cfg_scale_end'] = cfg_scale_end
-    _kwargs['interpolation'] = interpolation
-    _kwargs['start_percent'] = start_percent
-    _kwargs['end_percent'] = end_percent
+    if steps is not _UNSET:
+        _kwargs['steps'] = steps
+    if cfg_scale_start is not _UNSET:
+        _kwargs['cfg_scale_start'] = cfg_scale_start
+    if cfg_scale_end is not _UNSET:
+        _kwargs['cfg_scale_end'] = cfg_scale_end
+    if interpolation is not _UNSET:
+        _kwargs['interpolation'] = interpolation
+    if start_percent is not _UNSET:
+        _kwargs['start_percent'] = start_percent
+    if end_percent is not _UNSET:
+        _kwargs['end_percent'] = end_percent
     _kwargs.update(_extras)
-    return node(wf, 'CreateCFGScheduleFloatList', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CreateCFGScheduleFloatList', _id, pass_raw=pass_raw, **_kwargs)
 
 def DownloadAndLoadWav2VecModel(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    base_precision: Any = 'fp16',
-    load_device: Any = 'main_device',
+    _id: str | None = None,
+    model: Any = _UNSET,
+    base_precision: Any = _UNSET,
+    load_device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -55,18 +63,22 @@ def DownloadAndLoadWav2VecModel(
     Returns: wav2vec_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['base_precision'] = base_precision
-    _kwargs['load_device'] = load_device
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if base_precision is not _UNSET:
+        _kwargs['base_precision'] = base_precision
+    if load_device is not _UNSET:
+        _kwargs['load_device'] = load_device
     _kwargs.update(_extras)
-    return node(wf, 'DownloadAndLoadWav2VecModel', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DownloadAndLoadWav2VecModel', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadWanVideoClipTextEncoder(
     wf: VibeWorkflow,
     *,
-    model_name: Any,
-    precision: Any = 'fp16',
-    load_device: Any = 'offload_device',
+    _id: str | None = None,
+    model_name: Any = _UNSET,
+    precision: Any = _UNSET,
+    load_device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -77,19 +89,23 @@ def LoadWanVideoClipTextEncoder(
     Returns: wan_clip_vision
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model_name'] = model_name
-    _kwargs['precision'] = precision
-    _kwargs['load_device'] = load_device
+    if model_name is not _UNSET:
+        _kwargs['model_name'] = model_name
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if load_device is not _UNSET:
+        _kwargs['load_device'] = load_device
     _kwargs.update(_extras)
-    return node(wf, 'LoadWanVideoClipTextEncoder', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoadWanVideoClipTextEncoder', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadWanVideoT5TextEncoder(
     wf: VibeWorkflow,
     *,
-    model_name: Any,
-    precision: Any = 'bf16',
-    load_device: Any = 'offload_device',
-    quantization: Any = 'disabled',
+    _id: str | None = None,
+    model_name: Any = _UNSET,
+    precision: Any = _UNSET,
+    load_device: Any = _UNSET,
+    quantization: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -100,17 +116,22 @@ def LoadWanVideoT5TextEncoder(
     Returns: wan_t5_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model_name'] = model_name
-    _kwargs['precision'] = precision
-    _kwargs['load_device'] = load_device
-    _kwargs['quantization'] = quantization
+    if model_name is not _UNSET:
+        _kwargs['model_name'] = model_name
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if load_device is not _UNSET:
+        _kwargs['load_device'] = load_device
+    if quantization is not _UNSET:
+        _kwargs['quantization'] = quantization
     _kwargs.update(_extras)
-    return node(wf, 'LoadWanVideoT5TextEncoder', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoadWanVideoT5TextEncoder', _id, pass_raw=pass_raw, **_kwargs)
 
 def MultiTalkModelLoader(
     wf: VibeWorkflow,
     *,
-    model: Any,
+    _id: str | None = None,
+    model: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -121,27 +142,29 @@ def MultiTalkModelLoader(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
+    if model is not _UNSET:
+        _kwargs['model'] = model
     _kwargs.update(_extras)
-    return node(wf, 'MultiTalkModelLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'MultiTalkModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def MultiTalkWav2VecEmbeds(
     wf: VibeWorkflow,
     *,
-    wav2vec_model: Any,
-    audio_1: Any,
-    normalize_loudness: Any = True,
-    num_frames: Any = 81,
-    fps: Any = 25.0,
-    audio_scale: Any = 1.0,
-    audio_cfg_scale: Any = 1.0,
-    multi_audio_type: Any = 'para',
+    _id: str | None = None,
+    wav2vec_model: Any = _UNSET,
+    audio_1: Any = _UNSET,
+    normalize_loudness: Any = _UNSET,
+    num_frames: Any = _UNSET,
+    fps: Any = _UNSET,
+    audio_scale: Any = _UNSET,
+    audio_cfg_scale: Any = _UNSET,
+    multi_audio_type: Any = _UNSET,
     audio_2: Any = _UNSET,
     audio_3: Any = _UNSET,
     audio_4: Any = _UNSET,
     ref_target_masks: Any = _UNSET,
-    add_noise_floor: Any = False,
-    smooth_transients: Any = False,
+    add_noise_floor: Any = _UNSET,
+    smooth_transients: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -152,14 +175,22 @@ def MultiTalkWav2VecEmbeds(
     Returns: multitalk_embeds, audio, num_frames
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['wav2vec_model'] = wav2vec_model
-    _kwargs['audio_1'] = audio_1
-    _kwargs['normalize_loudness'] = normalize_loudness
-    _kwargs['num_frames'] = num_frames
-    _kwargs['fps'] = fps
-    _kwargs['audio_scale'] = audio_scale
-    _kwargs['audio_cfg_scale'] = audio_cfg_scale
-    _kwargs['multi_audio_type'] = multi_audio_type
+    if wav2vec_model is not _UNSET:
+        _kwargs['wav2vec_model'] = wav2vec_model
+    if audio_1 is not _UNSET:
+        _kwargs['audio_1'] = audio_1
+    if normalize_loudness is not _UNSET:
+        _kwargs['normalize_loudness'] = normalize_loudness
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
+    if fps is not _UNSET:
+        _kwargs['fps'] = fps
+    if audio_scale is not _UNSET:
+        _kwargs['audio_scale'] = audio_scale
+    if audio_cfg_scale is not _UNSET:
+        _kwargs['audio_cfg_scale'] = audio_cfg_scale
+    if multi_audio_type is not _UNSET:
+        _kwargs['multi_audio_type'] = multi_audio_type
     if audio_2 is not _UNSET:
         _kwargs['audio_2'] = audio_2
     if audio_3 is not _UNSET:
@@ -168,16 +199,19 @@ def MultiTalkWav2VecEmbeds(
         _kwargs['audio_4'] = audio_4
     if ref_target_masks is not _UNSET:
         _kwargs['ref_target_masks'] = ref_target_masks
-    _kwargs['add_noise_floor'] = add_noise_floor
-    _kwargs['smooth_transients'] = smooth_transients
+    if add_noise_floor is not _UNSET:
+        _kwargs['add_noise_floor'] = add_noise_floor
+    if smooth_transients is not _UNSET:
+        _kwargs['smooth_transients'] = smooth_transients
     _kwargs.update(_extras)
-    return node(wf, 'MultiTalkWav2VecEmbeds', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'MultiTalkWav2VecEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def NormalizeAudioLoudness(
     wf: VibeWorkflow,
     *,
-    audio: Any,
-    lufs: Any = -23.0,
+    _id: str | None = None,
+    audio: Any = _UNSET,
+    lufs: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -188,17 +222,20 @@ def NormalizeAudioLoudness(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
-    _kwargs['lufs'] = lufs
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
+    if lufs is not _UNSET:
+        _kwargs['lufs'] = lufs
     _kwargs.update(_extras)
-    return node(wf, 'NormalizeAudioLoudness', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'NormalizeAudioLoudness', _id, pass_raw=pass_raw, **_kwargs)
 
 def OviMMAudioVAELoader(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    vocoder: Any,
-    precision: Any = 'bf16',
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    vocoder: Any = _UNSET,
+    precision: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -209,20 +246,24 @@ def OviMMAudioVAELoader(
     Returns: mmaudio_vae
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['vocoder'] = vocoder
-    _kwargs['precision'] = precision
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if vocoder is not _UNSET:
+        _kwargs['vocoder'] = vocoder
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
     _kwargs.update(_extras)
-    return node(wf, 'OviMMAudioVAELoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'OviMMAudioVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def ReCamMasterPoseVisualizer(
     wf: VibeWorkflow,
     *,
-    camera_poses: Any,
-    base_xval: Any = 0.2,
-    zval: Any = 0.3,
-    scale: Any = 1.0,
-    arrow_length: Any = 1,
+    _id: str | None = None,
+    camera_poses: Any = _UNSET,
+    base_xval: Any = _UNSET,
+    zval: Any = _UNSET,
+    scale: Any = _UNSET,
+    arrow_length: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -234,27 +275,33 @@ def ReCamMasterPoseVisualizer(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['camera_poses'] = camera_poses
-    _kwargs['base_xval'] = base_xval
-    _kwargs['zval'] = zval
-    _kwargs['scale'] = scale
-    _kwargs['arrow_length'] = arrow_length
+    if camera_poses is not _UNSET:
+        _kwargs['camera_poses'] = camera_poses
+    if base_xval is not _UNSET:
+        _kwargs['base_xval'] = base_xval
+    if zval is not _UNSET:
+        _kwargs['zval'] = zval
+    if scale is not _UNSET:
+        _kwargs['scale'] = scale
+    if arrow_length is not _UNSET:
+        _kwargs['arrow_length'] = arrow_length
     _kwargs.update(_extras)
-    return node(wf, 'ReCamMasterPoseVisualizer', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ReCamMasterPoseVisualizer', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoAddS2VEmbeds(
     wf: VibeWorkflow,
     *,
-    embeds: Any,
-    frame_window_size: Any = 80,
-    audio_scale: Any = 1.0,
-    pose_start_percent: Any = 0.0,
-    pose_end_percent: Any = 1.0,
+    _id: str | None = None,
+    embeds: Any = _UNSET,
+    frame_window_size: Any = _UNSET,
+    audio_scale: Any = _UNSET,
+    pose_start_percent: Any = _UNSET,
+    pose_end_percent: Any = _UNSET,
     audio_encoder_output: Any = _UNSET,
     ref_latent: Any = _UNSET,
     pose_latent: Any = _UNSET,
     vae: Any = _UNSET,
-    enable_framepack: Any = False,
+    enable_framepack: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -265,11 +312,16 @@ def WanVideoAddS2VEmbeds(
     Returns: image_embeds, audio_frame_count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['embeds'] = embeds
-    _kwargs['frame_window_size'] = frame_window_size
-    _kwargs['audio_scale'] = audio_scale
-    _kwargs['pose_start_percent'] = pose_start_percent
-    _kwargs['pose_end_percent'] = pose_end_percent
+    if embeds is not _UNSET:
+        _kwargs['embeds'] = embeds
+    if frame_window_size is not _UNSET:
+        _kwargs['frame_window_size'] = frame_window_size
+    if audio_scale is not _UNSET:
+        _kwargs['audio_scale'] = audio_scale
+    if pose_start_percent is not _UNSET:
+        _kwargs['pose_start_percent'] = pose_start_percent
+    if pose_end_percent is not _UNSET:
+        _kwargs['pose_end_percent'] = pose_end_percent
     if audio_encoder_output is not _UNSET:
         _kwargs['audio_encoder_output'] = audio_encoder_output
     if ref_latent is not _UNSET:
@@ -278,15 +330,17 @@ def WanVideoAddS2VEmbeds(
         _kwargs['pose_latent'] = pose_latent
     if vae is not _UNSET:
         _kwargs['vae'] = vae
-    _kwargs['enable_framepack'] = enable_framepack
+    if enable_framepack is not _UNSET:
+        _kwargs['enable_framepack'] = enable_framepack
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoAddS2VEmbeds', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoAddS2VEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoAddWanMoveTracks(
     wf: VibeWorkflow,
     *,
-    image_embeds: Any,
-    strength: Any = 1.0,
+    _id: str | None = None,
+    image_embeds: Any = _UNSET,
+    strength: Any = _UNSET,
     track_mask: Any = _UNSET,
     track_coords: Any = _UNSET,
     tracks: Any = _UNSET,
@@ -300,8 +354,10 @@ def WanVideoAddWanMoveTracks(
     Returns: image_embeds, tracks
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image_embeds'] = image_embeds
-    _kwargs['strength'] = strength
+    if image_embeds is not _UNSET:
+        _kwargs['image_embeds'] = image_embeds
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
     if track_mask is not _UNSET:
         _kwargs['track_mask'] = track_mask
     if track_coords is not _UNSET:
@@ -309,18 +365,19 @@ def WanVideoAddWanMoveTracks(
     if tracks is not _UNSET:
         _kwargs['tracks'] = tracks
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoAddWanMoveTracks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoAddWanMoveTracks', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoBlockSwap(
     wf: VibeWorkflow,
     *,
-    blocks_to_swap: Any = 20,
-    offload_img_emb: Any = False,
-    offload_txt_emb: Any = False,
-    use_non_blocking: Any = False,
-    vace_blocks_to_swap: Any = 0,
-    prefetch_blocks: Any = 0,
-    block_swap_debug: Any = False,
+    _id: str | None = None,
+    blocks_to_swap: Any = _UNSET,
+    offload_img_emb: Any = _UNSET,
+    offload_txt_emb: Any = _UNSET,
+    use_non_blocking: Any = _UNSET,
+    vace_blocks_to_swap: Any = _UNSET,
+    prefetch_blocks: Any = _UNSET,
+    block_swap_debug: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -331,30 +388,38 @@ def WanVideoBlockSwap(
     Returns: block_swap_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['blocks_to_swap'] = blocks_to_swap
-    _kwargs['offload_img_emb'] = offload_img_emb
-    _kwargs['offload_txt_emb'] = offload_txt_emb
-    _kwargs['use_non_blocking'] = use_non_blocking
-    _kwargs['vace_blocks_to_swap'] = vace_blocks_to_swap
-    _kwargs['prefetch_blocks'] = prefetch_blocks
-    _kwargs['block_swap_debug'] = block_swap_debug
+    if blocks_to_swap is not _UNSET:
+        _kwargs['blocks_to_swap'] = blocks_to_swap
+    if offload_img_emb is not _UNSET:
+        _kwargs['offload_img_emb'] = offload_img_emb
+    if offload_txt_emb is not _UNSET:
+        _kwargs['offload_txt_emb'] = offload_txt_emb
+    if use_non_blocking is not _UNSET:
+        _kwargs['use_non_blocking'] = use_non_blocking
+    if vace_blocks_to_swap is not _UNSET:
+        _kwargs['vace_blocks_to_swap'] = vace_blocks_to_swap
+    if prefetch_blocks is not _UNSET:
+        _kwargs['prefetch_blocks'] = prefetch_blocks
+    if block_swap_debug is not _UNSET:
+        _kwargs['block_swap_debug'] = block_swap_debug
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoBlockSwap', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoBlockSwap', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoClipVisionEncode(
     wf: VibeWorkflow,
     *,
-    clip_vision: Any,
-    image_1: Any,
-    strength_1: Any = 1.0,
-    strength_2: Any = 1.0,
-    crop: Any = 'center',
-    combine_embeds: Any = 'average',
-    force_offload: Any = True,
+    _id: str | None = None,
+    clip_vision: Any = _UNSET,
+    image_1: Any = _UNSET,
+    strength_1: Any = _UNSET,
+    strength_2: Any = _UNSET,
+    crop: Any = _UNSET,
+    combine_embeds: Any = _UNSET,
+    force_offload: Any = _UNSET,
     image_2: Any = _UNSET,
     negative_image: Any = _UNSET,
-    tiles: Any = 0,
-    ratio: Any = 0.5,
+    tiles: Any = _UNSET,
+    ratio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -365,32 +430,42 @@ def WanVideoClipVisionEncode(
     Returns: image_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip_vision'] = clip_vision
-    _kwargs['image_1'] = image_1
-    _kwargs['strength_1'] = strength_1
-    _kwargs['strength_2'] = strength_2
-    _kwargs['crop'] = crop
-    _kwargs['combine_embeds'] = combine_embeds
-    _kwargs['force_offload'] = force_offload
+    if clip_vision is not _UNSET:
+        _kwargs['clip_vision'] = clip_vision
+    if image_1 is not _UNSET:
+        _kwargs['image_1'] = image_1
+    if strength_1 is not _UNSET:
+        _kwargs['strength_1'] = strength_1
+    if strength_2 is not _UNSET:
+        _kwargs['strength_2'] = strength_2
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
+    if combine_embeds is not _UNSET:
+        _kwargs['combine_embeds'] = combine_embeds
+    if force_offload is not _UNSET:
+        _kwargs['force_offload'] = force_offload
     if image_2 is not _UNSET:
         _kwargs['image_2'] = image_2
     if negative_image is not _UNSET:
         _kwargs['negative_image'] = negative_image
-    _kwargs['tiles'] = tiles
-    _kwargs['ratio'] = ratio
+    if tiles is not _UNSET:
+        _kwargs['tiles'] = tiles
+    if ratio is not _UNSET:
+        _kwargs['ratio'] = ratio
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoClipVisionEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoClipVisionEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoContextOptions(
     wf: VibeWorkflow,
     *,
-    context_schedule: Any,
-    context_frames: Any = 81,
-    context_stride: Any = 4,
-    context_overlap: Any = 16,
-    freenoise: Any = True,
-    verbose: Any = False,
-    fuse_method: Any = 'linear',
+    _id: str | None = None,
+    context_schedule: Any = _UNSET,
+    context_frames: Any = _UNSET,
+    context_stride: Any = _UNSET,
+    context_overlap: Any = _UNSET,
+    freenoise: Any = _UNSET,
+    verbose: Any = _UNSET,
+    fuse_method: Any = _UNSET,
     reference_latent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -402,24 +477,32 @@ def WanVideoContextOptions(
     Returns: context_options
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['context_schedule'] = context_schedule
-    _kwargs['context_frames'] = context_frames
-    _kwargs['context_stride'] = context_stride
-    _kwargs['context_overlap'] = context_overlap
-    _kwargs['freenoise'] = freenoise
-    _kwargs['verbose'] = verbose
-    _kwargs['fuse_method'] = fuse_method
+    if context_schedule is not _UNSET:
+        _kwargs['context_schedule'] = context_schedule
+    if context_frames is not _UNSET:
+        _kwargs['context_frames'] = context_frames
+    if context_stride is not _UNSET:
+        _kwargs['context_stride'] = context_stride
+    if context_overlap is not _UNSET:
+        _kwargs['context_overlap'] = context_overlap
+    if freenoise is not _UNSET:
+        _kwargs['freenoise'] = freenoise
+    if verbose is not _UNSET:
+        _kwargs['verbose'] = verbose
+    if fuse_method is not _UNSET:
+        _kwargs['fuse_method'] = fuse_method
     if reference_latent is not _UNSET:
         _kwargs['reference_latent'] = reference_latent
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoContextOptions', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoContextOptions', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoControlEmbeds(
     wf: VibeWorkflow,
     *,
-    latents: Any,
-    start_percent: Any = 0.0,
-    end_percent: Any = 1.0,
+    _id: str | None = None,
+    start_percent: Any = _UNSET,
+    end_percent: Any = _UNSET,
+    latents: Any = _UNSET,
     fun_ref_image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -431,24 +514,28 @@ def WanVideoControlEmbeds(
     Returns: image_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents'] = latents
-    _kwargs['start_percent'] = start_percent
-    _kwargs['end_percent'] = end_percent
+    if start_percent is not _UNSET:
+        _kwargs['start_percent'] = start_percent
+    if end_percent is not _UNSET:
+        _kwargs['end_percent'] = end_percent
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
     if fun_ref_image is not _UNSET:
         _kwargs['fun_ref_image'] = fun_ref_image
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoControlEmbeds', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoControlEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoControlnet(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    controlnet: Any,
-    control_images: Any,
-    strength: Any = 1.0,
-    control_stride: Any = 3,
-    control_start_percent: Any = 0.0,
-    control_end_percent: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    controlnet: Any = _UNSET,
+    control_images: Any = _UNSET,
+    strength: Any = _UNSET,
+    control_stride: Any = _UNSET,
+    control_start_percent: Any = _UNSET,
+    control_end_percent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -459,23 +546,31 @@ def WanVideoControlnet(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['controlnet'] = controlnet
-    _kwargs['control_images'] = control_images
-    _kwargs['strength'] = strength
-    _kwargs['control_stride'] = control_stride
-    _kwargs['control_start_percent'] = control_start_percent
-    _kwargs['control_end_percent'] = control_end_percent
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if controlnet is not _UNSET:
+        _kwargs['controlnet'] = controlnet
+    if control_images is not _UNSET:
+        _kwargs['control_images'] = control_images
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if control_stride is not _UNSET:
+        _kwargs['control_stride'] = control_stride
+    if control_start_percent is not _UNSET:
+        _kwargs['control_start_percent'] = control_start_percent
+    if control_end_percent is not _UNSET:
+        _kwargs['control_end_percent'] = control_end_percent
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoControlnet', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoControlnet', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoControlnetLoader(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    base_precision: Any = 'bf16',
-    quantization: Any = 'disabled',
-    load_device: Any = 'main_device',
+    _id: str | None = None,
+    model: Any = _UNSET,
+    base_precision: Any = _UNSET,
+    quantization: Any = _UNSET,
+    load_device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -486,23 +581,28 @@ def WanVideoControlnetLoader(
     Returns: controlnet
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['base_precision'] = base_precision
-    _kwargs['quantization'] = quantization
-    _kwargs['load_device'] = load_device
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if base_precision is not _UNSET:
+        _kwargs['base_precision'] = base_precision
+    if quantization is not _UNSET:
+        _kwargs['quantization'] = quantization
+    if load_device is not _UNSET:
+        _kwargs['load_device'] = load_device
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoControlnetLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoControlnetLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoDecode(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    samples: Any,
-    enable_vae_tiling: Any = False,
-    tile_x: Any = 272,
-    tile_y: Any = 272,
-    tile_stride_x: Any = 144,
-    tile_stride_y: Any = 128,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    samples: Any = _UNSET,
+    enable_vae_tiling: Any = _UNSET,
+    tile_x: Any = _UNSET,
+    tile_y: Any = _UNSET,
+    tile_stride_x: Any = _UNSET,
+    tile_stride_y: Any = _UNSET,
     normalization: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -514,23 +614,31 @@ def WanVideoDecode(
     Returns: images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['samples'] = samples
-    _kwargs['enable_vae_tiling'] = enable_vae_tiling
-    _kwargs['tile_x'] = tile_x
-    _kwargs['tile_y'] = tile_y
-    _kwargs['tile_stride_x'] = tile_stride_x
-    _kwargs['tile_stride_y'] = tile_stride_y
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if enable_vae_tiling is not _UNSET:
+        _kwargs['enable_vae_tiling'] = enable_vae_tiling
+    if tile_x is not _UNSET:
+        _kwargs['tile_x'] = tile_x
+    if tile_y is not _UNSET:
+        _kwargs['tile_y'] = tile_y
+    if tile_stride_x is not _UNSET:
+        _kwargs['tile_stride_x'] = tile_stride_x
+    if tile_stride_y is not _UNSET:
+        _kwargs['tile_stride_y'] = tile_stride_y
     if normalization is not _UNSET:
         _kwargs['normalization'] = normalization
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoDecode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoDecodeOviAudio(
     wf: VibeWorkflow,
     *,
-    mmaudio_vae: Any,
-    samples: Any,
+    _id: str | None = None,
+    mmaudio_vae: Any = _UNSET,
+    samples: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -541,18 +649,21 @@ def WanVideoDecodeOviAudio(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mmaudio_vae'] = mmaudio_vae
-    _kwargs['samples'] = samples
+    if mmaudio_vae is not _UNSET:
+        _kwargs['mmaudio_vae'] = mmaudio_vae
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoDecodeOviAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoDecodeOviAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEasyCache(
     wf: VibeWorkflow,
     *,
-    easycache_thresh: Any = 0.015,
-    start_step: Any = 10,
-    end_step: Any = -1,
-    cache_device: Any = 'offload_device',
+    _id: str | None = None,
+    easycache_thresh: Any = _UNSET,
+    start_step: Any = _UNSET,
+    end_step: Any = _UNSET,
+    cache_device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -563,19 +674,24 @@ def WanVideoEasyCache(
     Returns: cache_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['easycache_thresh'] = easycache_thresh
-    _kwargs['start_step'] = start_step
-    _kwargs['end_step'] = end_step
-    _kwargs['cache_device'] = cache_device
+    if easycache_thresh is not _UNSET:
+        _kwargs['easycache_thresh'] = easycache_thresh
+    if start_step is not _UNSET:
+        _kwargs['start_step'] = start_step
+    if end_step is not _UNSET:
+        _kwargs['end_step'] = end_step
+    if cache_device is not _UNSET:
+        _kwargs['cache_device'] = cache_device
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoEasyCache', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoEasyCache', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEmptyEmbeds(
     wf: VibeWorkflow,
     *,
-    width: Any = 832,
-    height: Any = 480,
-    num_frames: Any = 81,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    num_frames: Any = _UNSET,
     control_embeds: Any = _UNSET,
     extra_latents: Any = _UNSET,
     pass_raw: bool = False,
@@ -588,20 +704,24 @@ def WanVideoEmptyEmbeds(
     Returns: image_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['num_frames'] = num_frames
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
     if control_embeds is not _UNSET:
         _kwargs['control_embeds'] = control_embeds
     if extra_latents is not _UNSET:
         _kwargs['extra_latents'] = extra_latents
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoEmptyEmbeds', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoEmptyEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEmptyMMAudioLatents(
     wf: VibeWorkflow,
     *,
-    length: Any = 157,
+    _id: str | None = None,
+    length: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -612,22 +732,24 @@ def WanVideoEmptyMMAudioLatents(
     Returns: samples
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['length'] = length
+    if length is not _UNSET:
+        _kwargs['length'] = length
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoEmptyMMAudioLatents', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoEmptyMMAudioLatents', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEncode(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    image: Any,
-    enable_vae_tiling: Any = False,
-    tile_x: Any = 272,
-    tile_y: Any = 272,
-    tile_stride_x: Any = 144,
-    tile_stride_y: Any = 128,
-    noise_aug_strength: Any = 0.0,
-    latent_strength: Any = 1.0,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    image: Any = _UNSET,
+    enable_vae_tiling: Any = _UNSET,
+    tile_x: Any = _UNSET,
+    tile_y: Any = _UNSET,
+    tile_stride_x: Any = _UNSET,
+    tile_stride_y: Any = _UNSET,
+    noise_aug_strength: Any = _UNSET,
+    latent_strength: Any = _UNSET,
     mask: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -639,26 +761,36 @@ def WanVideoEncode(
     Returns: samples
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['image'] = image
-    _kwargs['enable_vae_tiling'] = enable_vae_tiling
-    _kwargs['tile_x'] = tile_x
-    _kwargs['tile_y'] = tile_y
-    _kwargs['tile_stride_x'] = tile_stride_x
-    _kwargs['tile_stride_y'] = tile_stride_y
-    _kwargs['noise_aug_strength'] = noise_aug_strength
-    _kwargs['latent_strength'] = latent_strength
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if enable_vae_tiling is not _UNSET:
+        _kwargs['enable_vae_tiling'] = enable_vae_tiling
+    if tile_x is not _UNSET:
+        _kwargs['tile_x'] = tile_x
+    if tile_y is not _UNSET:
+        _kwargs['tile_y'] = tile_y
+    if tile_stride_x is not _UNSET:
+        _kwargs['tile_stride_x'] = tile_stride_x
+    if tile_stride_y is not _UNSET:
+        _kwargs['tile_stride_y'] = tile_stride_y
+    if noise_aug_strength is not _UNSET:
+        _kwargs['noise_aug_strength'] = noise_aug_strength
+    if latent_strength is not _UNSET:
+        _kwargs['latent_strength'] = latent_strength
     if mask is not _UNSET:
         _kwargs['mask'] = mask
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoEnhanceAVideo(
     wf: VibeWorkflow,
     *,
-    weight: Any = 2.0,
-    start_percent: Any = 0.0,
-    end_percent: Any = 1.0,
+    _id: str | None = None,
+    weight: Any = _UNSET,
+    start_percent: Any = _UNSET,
+    end_percent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -669,29 +801,33 @@ def WanVideoEnhanceAVideo(
     Returns: feta_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['weight'] = weight
-    _kwargs['start_percent'] = start_percent
-    _kwargs['end_percent'] = end_percent
+    if weight is not _UNSET:
+        _kwargs['weight'] = weight
+    if start_percent is not _UNSET:
+        _kwargs['start_percent'] = start_percent
+    if end_percent is not _UNSET:
+        _kwargs['end_percent'] = end_percent
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoEnhanceAVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoEnhanceAVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoExperimentalArgs(
     wf: VibeWorkflow,
     *,
-    video_attention_split_steps: Any = '',
-    cfg_zero_star: Any = False,
-    use_zero_init: Any = False,
-    zero_star_steps: Any = 0,
-    use_fresca: Any = False,
-    fresca_scale_low: Any = 1.0,
-    fresca_scale_high: Any = 1.25,
-    fresca_freq_cutoff: Any = 20,
-    use_tcfg: Any = False,
-    raag_alpha: Any = 0.0,
-    bidirectional_sampling: Any = False,
-    temporal_score_rescaling: Any = False,
-    tsr_k: Any = 0.95,
-    tsr_sigma: Any = 1.0,
+    _id: str | None = None,
+    video_attention_split_steps: Any = _UNSET,
+    cfg_zero_star: Any = _UNSET,
+    use_zero_init: Any = _UNSET,
+    zero_star_steps: Any = _UNSET,
+    use_fresca: Any = _UNSET,
+    fresca_scale_low: Any = _UNSET,
+    fresca_scale_high: Any = _UNSET,
+    fresca_freq_cutoff: Any = _UNSET,
+    use_tcfg: Any = _UNSET,
+    raag_alpha: Any = _UNSET,
+    bidirectional_sampling: Any = _UNSET,
+    temporal_score_rescaling: Any = _UNSET,
+    tsr_k: Any = _UNSET,
+    tsr_sigma: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -702,28 +838,43 @@ def WanVideoExperimentalArgs(
     Returns: exp_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video_attention_split_steps'] = video_attention_split_steps
-    _kwargs['cfg_zero_star'] = cfg_zero_star
-    _kwargs['use_zero_init'] = use_zero_init
-    _kwargs['zero_star_steps'] = zero_star_steps
-    _kwargs['use_fresca'] = use_fresca
-    _kwargs['fresca_scale_low'] = fresca_scale_low
-    _kwargs['fresca_scale_high'] = fresca_scale_high
-    _kwargs['fresca_freq_cutoff'] = fresca_freq_cutoff
-    _kwargs['use_tcfg'] = use_tcfg
-    _kwargs['raag_alpha'] = raag_alpha
-    _kwargs['bidirectional_sampling'] = bidirectional_sampling
-    _kwargs['temporal_score_rescaling'] = temporal_score_rescaling
-    _kwargs['tsr_k'] = tsr_k
-    _kwargs['tsr_sigma'] = tsr_sigma
+    if video_attention_split_steps is not _UNSET:
+        _kwargs['video_attention_split_steps'] = video_attention_split_steps
+    if cfg_zero_star is not _UNSET:
+        _kwargs['cfg_zero_star'] = cfg_zero_star
+    if use_zero_init is not _UNSET:
+        _kwargs['use_zero_init'] = use_zero_init
+    if zero_star_steps is not _UNSET:
+        _kwargs['zero_star_steps'] = zero_star_steps
+    if use_fresca is not _UNSET:
+        _kwargs['use_fresca'] = use_fresca
+    if fresca_scale_low is not _UNSET:
+        _kwargs['fresca_scale_low'] = fresca_scale_low
+    if fresca_scale_high is not _UNSET:
+        _kwargs['fresca_scale_high'] = fresca_scale_high
+    if fresca_freq_cutoff is not _UNSET:
+        _kwargs['fresca_freq_cutoff'] = fresca_freq_cutoff
+    if use_tcfg is not _UNSET:
+        _kwargs['use_tcfg'] = use_tcfg
+    if raag_alpha is not _UNSET:
+        _kwargs['raag_alpha'] = raag_alpha
+    if bidirectional_sampling is not _UNSET:
+        _kwargs['bidirectional_sampling'] = bidirectional_sampling
+    if temporal_score_rescaling is not _UNSET:
+        _kwargs['temporal_score_rescaling'] = temporal_score_rescaling
+    if tsr_k is not _UNSET:
+        _kwargs['tsr_k'] = tsr_k
+    if tsr_sigma is not _UNSET:
+        _kwargs['tsr_sigma'] = tsr_sigma
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoExperimentalArgs', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoExperimentalArgs', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoExtraModelSelect(
     wf: VibeWorkflow,
     *,
-    extra_model: Any,
-    prev_model: Any = None,
+    _id: str | None = None,
+    extra_model: Any = _UNSET,
+    prev_model: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -734,20 +885,23 @@ def WanVideoExtraModelSelect(
     Returns: extra_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['extra_model'] = extra_model
-    _kwargs['prev_model'] = prev_model
+    if extra_model is not _UNSET:
+        _kwargs['extra_model'] = extra_model
+    if prev_model is not _UNSET:
+        _kwargs['prev_model'] = prev_model
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoExtraModelSelect', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoExtraModelSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoFunCameraEmbeds(
     wf: VibeWorkflow,
     *,
-    poses: Any,
-    width: Any = 832,
-    height: Any = 480,
-    strength: Any = 1.0,
-    start_percent: Any = 0.0,
-    end_percent: Any = 1.0,
+    _id: str | None = None,
+    poses: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    strength: Any = _UNSET,
+    start_percent: Any = _UNSET,
+    end_percent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -758,36 +912,43 @@ def WanVideoFunCameraEmbeds(
     Returns: image_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['poses'] = poses
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['strength'] = strength
-    _kwargs['start_percent'] = start_percent
-    _kwargs['end_percent'] = end_percent
+    if poses is not _UNSET:
+        _kwargs['poses'] = poses
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if start_percent is not _UNSET:
+        _kwargs['start_percent'] = start_percent
+    if end_percent is not _UNSET:
+        _kwargs['end_percent'] = end_percent
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoFunCameraEmbeds', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoFunCameraEmbeds', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoImageToVideoEncode(
     wf: VibeWorkflow,
     *,
-    width: Any = 832,
-    height: Any = 480,
-    num_frames: Any = 81,
-    noise_aug_strength: Any = 0.0,
-    start_latent_strength: Any = 1.0,
-    end_latent_strength: Any = 1.0,
-    force_offload: Any = True,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    num_frames: Any = _UNSET,
+    noise_aug_strength: Any = _UNSET,
+    start_latent_strength: Any = _UNSET,
+    end_latent_strength: Any = _UNSET,
+    force_offload: Any = _UNSET,
     vae: Any = _UNSET,
     clip_embeds: Any = _UNSET,
     start_image: Any = _UNSET,
     end_image: Any = _UNSET,
     control_embeds: Any = _UNSET,
-    fun_or_fl2v_model: Any = True,
+    fun_or_fl2v_model: Any = _UNSET,
     temporal_mask: Any = _UNSET,
     extra_latents: Any = _UNSET,
-    tiled_vae: Any = False,
+    tiled_vae: Any = _UNSET,
     add_cond_latents: Any = _UNSET,
-    augment_empty_frames: Any = 0.0,
+    augment_empty_frames: Any = _UNSET,
     empty_frame_pad_image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -799,13 +960,20 @@ def WanVideoImageToVideoEncode(
     Returns: image_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['num_frames'] = num_frames
-    _kwargs['noise_aug_strength'] = noise_aug_strength
-    _kwargs['start_latent_strength'] = start_latent_strength
-    _kwargs['end_latent_strength'] = end_latent_strength
-    _kwargs['force_offload'] = force_offload
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
+    if noise_aug_strength is not _UNSET:
+        _kwargs['noise_aug_strength'] = noise_aug_strength
+    if start_latent_strength is not _UNSET:
+        _kwargs['start_latent_strength'] = start_latent_strength
+    if end_latent_strength is not _UNSET:
+        _kwargs['end_latent_strength'] = end_latent_strength
+    if force_offload is not _UNSET:
+        _kwargs['force_offload'] = force_offload
     if vae is not _UNSET:
         _kwargs['vae'] = vae
     if clip_embeds is not _UNSET:
@@ -816,35 +984,39 @@ def WanVideoImageToVideoEncode(
         _kwargs['end_image'] = end_image
     if control_embeds is not _UNSET:
         _kwargs['control_embeds'] = control_embeds
-    _kwargs['fun_or_fl2v_model'] = fun_or_fl2v_model
+    if fun_or_fl2v_model is not _UNSET:
+        _kwargs['fun_or_fl2v_model'] = fun_or_fl2v_model
     if temporal_mask is not _UNSET:
         _kwargs['temporal_mask'] = temporal_mask
     if extra_latents is not _UNSET:
         _kwargs['extra_latents'] = extra_latents
-    _kwargs['tiled_vae'] = tiled_vae
+    if tiled_vae is not _UNSET:
+        _kwargs['tiled_vae'] = tiled_vae
     if add_cond_latents is not _UNSET:
         _kwargs['add_cond_latents'] = add_cond_latents
-    _kwargs['augment_empty_frames'] = augment_empty_frames
+    if augment_empty_frames is not _UNSET:
+        _kwargs['augment_empty_frames'] = augment_empty_frames
     if empty_frame_pad_image is not _UNSET:
         _kwargs['empty_frame_pad_image'] = empty_frame_pad_image
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoImageToVideoEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoImageToVideoEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoImageToVideoMultiTalk(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    width: Any = 832,
-    height: Any = 480,
-    frame_window_size: Any = 81,
-    motion_frame: Any = 25,
-    force_offload: Any = False,
-    colormatch: Any = 'disabled',
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    frame_window_size: Any = _UNSET,
+    motion_frame: Any = _UNSET,
+    force_offload: Any = _UNSET,
+    colormatch: Any = _UNSET,
     start_image: Any = _UNSET,
-    tiled_vae: Any = False,
+    tiled_vae: Any = _UNSET,
     clip_embeds: Any = _UNSET,
-    mode: Any = 'auto',
-    output_path: Any = '',
+    mode: Any = _UNSET,
+    output_path: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -855,32 +1027,43 @@ def WanVideoImageToVideoMultiTalk(
     Returns: image_embeds, output_path
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['frame_window_size'] = frame_window_size
-    _kwargs['motion_frame'] = motion_frame
-    _kwargs['force_offload'] = force_offload
-    _kwargs['colormatch'] = colormatch
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if frame_window_size is not _UNSET:
+        _kwargs['frame_window_size'] = frame_window_size
+    if motion_frame is not _UNSET:
+        _kwargs['motion_frame'] = motion_frame
+    if force_offload is not _UNSET:
+        _kwargs['force_offload'] = force_offload
+    if colormatch is not _UNSET:
+        _kwargs['colormatch'] = colormatch
     if start_image is not _UNSET:
         _kwargs['start_image'] = start_image
-    _kwargs['tiled_vae'] = tiled_vae
+    if tiled_vae is not _UNSET:
+        _kwargs['tiled_vae'] = tiled_vae
     if clip_embeds is not _UNSET:
         _kwargs['clip_embeds'] = clip_embeds
-    _kwargs['mode'] = mode
-    _kwargs['output_path'] = output_path
+    if mode is not _UNSET:
+        _kwargs['mode'] = mode
+    if output_path is not _UNSET:
+        _kwargs['output_path'] = output_path
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoImageToVideoMultiTalk', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoImageToVideoMultiTalk', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoLoraSelect(
     wf: VibeWorkflow,
     *,
-    lora: Any,
-    strength: Any = 1.0,
-    prev_lora: Any = None,
+    _id: str | None = None,
+    lora: Any = _UNSET,
+    strength: Any = _UNSET,
+    prev_lora: Any = _UNSET,
     blocks: Any = _UNSET,
-    low_mem_load: Any = False,
-    merge_loras: Any = True,
+    low_mem_load: Any = _UNSET,
+    merge_loras: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -891,33 +1074,39 @@ def WanVideoLoraSelect(
     Returns: lora
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['lora'] = lora
-    _kwargs['strength'] = strength
-    _kwargs['prev_lora'] = prev_lora
+    if lora is not _UNSET:
+        _kwargs['lora'] = lora
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if prev_lora is not _UNSET:
+        _kwargs['prev_lora'] = prev_lora
     if blocks is not _UNSET:
         _kwargs['blocks'] = blocks
-    _kwargs['low_mem_load'] = low_mem_load
-    _kwargs['merge_loras'] = merge_loras
+    if low_mem_load is not _UNSET:
+        _kwargs['low_mem_load'] = low_mem_load
+    if merge_loras is not _UNSET:
+        _kwargs['merge_loras'] = merge_loras
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoLoraSelect', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoLoraSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoLoraSelectMulti(
     wf: VibeWorkflow,
     *,
-    lora_0: Any = 'none',
-    strength_0: Any = 1.0,
-    lora_1: Any = 'none',
-    strength_1: Any = 1.0,
-    lora_2: Any = 'none',
-    strength_2: Any = 1.0,
-    lora_3: Any = 'none',
-    strength_3: Any = 1.0,
-    lora_4: Any = 'none',
-    strength_4: Any = 1.0,
-    prev_lora: Any = None,
+    _id: str | None = None,
+    lora_0: Any = _UNSET,
+    strength_0: Any = _UNSET,
+    lora_1: Any = _UNSET,
+    strength_1: Any = _UNSET,
+    lora_2: Any = _UNSET,
+    strength_2: Any = _UNSET,
+    lora_3: Any = _UNSET,
+    strength_3: Any = _UNSET,
+    lora_4: Any = _UNSET,
+    strength_4: Any = _UNSET,
+    prev_lora: Any = _UNSET,
     blocks: Any = _UNSET,
-    low_mem_load: Any = False,
-    merge_loras: Any = True,
+    low_mem_load: Any = _UNSET,
+    merge_loras: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -928,41 +1117,55 @@ def WanVideoLoraSelectMulti(
     Returns: lora
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['lora_0'] = lora_0
-    _kwargs['strength_0'] = strength_0
-    _kwargs['lora_1'] = lora_1
-    _kwargs['strength_1'] = strength_1
-    _kwargs['lora_2'] = lora_2
-    _kwargs['strength_2'] = strength_2
-    _kwargs['lora_3'] = lora_3
-    _kwargs['strength_3'] = strength_3
-    _kwargs['lora_4'] = lora_4
-    _kwargs['strength_4'] = strength_4
-    _kwargs['prev_lora'] = prev_lora
+    if lora_0 is not _UNSET:
+        _kwargs['lora_0'] = lora_0
+    if strength_0 is not _UNSET:
+        _kwargs['strength_0'] = strength_0
+    if lora_1 is not _UNSET:
+        _kwargs['lora_1'] = lora_1
+    if strength_1 is not _UNSET:
+        _kwargs['strength_1'] = strength_1
+    if lora_2 is not _UNSET:
+        _kwargs['lora_2'] = lora_2
+    if strength_2 is not _UNSET:
+        _kwargs['strength_2'] = strength_2
+    if lora_3 is not _UNSET:
+        _kwargs['lora_3'] = lora_3
+    if strength_3 is not _UNSET:
+        _kwargs['strength_3'] = strength_3
+    if lora_4 is not _UNSET:
+        _kwargs['lora_4'] = lora_4
+    if strength_4 is not _UNSET:
+        _kwargs['strength_4'] = strength_4
+    if prev_lora is not _UNSET:
+        _kwargs['prev_lora'] = prev_lora
     if blocks is not _UNSET:
         _kwargs['blocks'] = blocks
-    _kwargs['low_mem_load'] = low_mem_load
-    _kwargs['merge_loras'] = merge_loras
+    if low_mem_load is not _UNSET:
+        _kwargs['low_mem_load'] = low_mem_load
+    if merge_loras is not _UNSET:
+        _kwargs['merge_loras'] = merge_loras
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoLoraSelectMulti', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoLoraSelectMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoModelLoader(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    base_precision: Any = 'bf16',
-    quantization: Any = 'disabled',
-    load_device: Any = 'offload_device',
-    attention_mode: Any = 'sdpa',
+    _id: str | None = None,
+    model: Any = _UNSET,
+    base_precision: Any = _UNSET,
+    quantization: Any = _UNSET,
+    load_device: Any = _UNSET,
+    attention_mode: Any = _UNSET,
     compile_args: Any = _UNSET,
     block_swap_args: Any = _UNSET,
-    lora: Any = None,
-    vram_management_args: Any = None,
-    extra_model: Any = None,
-    fantasytalking_model: Any = None,
-    multitalk_model: Any = None,
-    fantasyportrait_model: Any = None,
-    rms_norm_function: Any = 'default',
+    lora: Any = _UNSET,
+    vram_management_args: Any = _UNSET,
+    extra_model: Any = _UNSET,
+    fantasytalking_model: Any = _UNSET,
+    multitalk_model: Any = _UNSET,
+    fantasyportrait_model: Any = _UNSET,
+    rms_norm_function: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -973,30 +1176,43 @@ def WanVideoModelLoader(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['base_precision'] = base_precision
-    _kwargs['quantization'] = quantization
-    _kwargs['load_device'] = load_device
-    _kwargs['attention_mode'] = attention_mode
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if base_precision is not _UNSET:
+        _kwargs['base_precision'] = base_precision
+    if quantization is not _UNSET:
+        _kwargs['quantization'] = quantization
+    if load_device is not _UNSET:
+        _kwargs['load_device'] = load_device
+    if attention_mode is not _UNSET:
+        _kwargs['attention_mode'] = attention_mode
     if compile_args is not _UNSET:
         _kwargs['compile_args'] = compile_args
     if block_swap_args is not _UNSET:
         _kwargs['block_swap_args'] = block_swap_args
-    _kwargs['lora'] = lora
-    _kwargs['vram_management_args'] = vram_management_args
-    _kwargs['extra_model'] = extra_model
-    _kwargs['fantasytalking_model'] = fantasytalking_model
-    _kwargs['multitalk_model'] = multitalk_model
-    _kwargs['fantasyportrait_model'] = fantasyportrait_model
-    _kwargs['rms_norm_function'] = rms_norm_function
+    if lora is not _UNSET:
+        _kwargs['lora'] = lora
+    if vram_management_args is not _UNSET:
+        _kwargs['vram_management_args'] = vram_management_args
+    if extra_model is not _UNSET:
+        _kwargs['extra_model'] = extra_model
+    if fantasytalking_model is not _UNSET:
+        _kwargs['fantasytalking_model'] = fantasytalking_model
+    if multitalk_model is not _UNSET:
+        _kwargs['multitalk_model'] = multitalk_model
+    if fantasyportrait_model is not _UNSET:
+        _kwargs['fantasyportrait_model'] = fantasyportrait_model
+    if rms_norm_function is not _UNSET:
+        _kwargs['rms_norm_function'] = rms_norm_function
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoModelLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoOviCFG(
     wf: VibeWorkflow,
     *,
-    original_text_embeds: Any,
-    ovi_audio_cfg: Any = 3.0,
+    _id: str | None = None,
+    original_text_embeds: Any = _UNSET,
+    ovi_audio_cfg: Any = _UNSET,
     ovi_negative_text_embeds: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1008,18 +1224,21 @@ def WanVideoOviCFG(
     Returns: text_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['original_text_embeds'] = original_text_embeds
-    _kwargs['ovi_audio_cfg'] = ovi_audio_cfg
+    if original_text_embeds is not _UNSET:
+        _kwargs['original_text_embeds'] = original_text_embeds
+    if ovi_audio_cfg is not _UNSET:
+        _kwargs['ovi_audio_cfg'] = ovi_audio_cfg
     if ovi_negative_text_embeds is not _UNSET:
         _kwargs['ovi_negative_text_embeds'] = ovi_negative_text_embeds
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoOviCFG', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoOviCFG', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoReCamMasterCameraEmbed(
     wf: VibeWorkflow,
     *,
-    camera_poses: Any,
-    latents: Any,
+    _id: str | None = None,
+    camera_poses: Any = _UNSET,
+    latents: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1030,16 +1249,19 @@ def WanVideoReCamMasterCameraEmbed(
     Returns: camera_embeds, camera_poses
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['camera_poses'] = camera_poses
-    _kwargs['latents'] = latents
+    if camera_poses is not _UNSET:
+        _kwargs['camera_poses'] = camera_poses
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoReCamMasterCameraEmbed', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoReCamMasterCameraEmbed', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoReCamMasterDefaultCamera(
     wf: VibeWorkflow,
     *,
-    latents: Any,
-    camera_type: Any = 'pan_right',
+    _id: str | None = None,
+    camera_type: Any = _UNSET,
+    latents: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1050,16 +1272,19 @@ def WanVideoReCamMasterDefaultCamera(
     Returns: camera_poses
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['latents'] = latents
-    _kwargs['camera_type'] = camera_type
+    if camera_type is not _UNSET:
+        _kwargs['camera_type'] = camera_type
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoReCamMasterDefaultCamera', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoReCamMasterDefaultCamera', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoReCamMasterGenerateOrbitCamera(
     wf: VibeWorkflow,
     *,
-    num_frames: Any = 81,
-    degrees: Any = 90,
+    _id: str | None = None,
+    num_frames: Any = _UNSET,
+    degrees: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1070,17 +1295,20 @@ def WanVideoReCamMasterGenerateOrbitCamera(
     Returns: camera_poses
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['num_frames'] = num_frames
-    _kwargs['degrees'] = degrees
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
+    if degrees is not _UNSET:
+        _kwargs['degrees'] = degrees
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoReCamMasterGenerateOrbitCamera', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoReCamMasterGenerateOrbitCamera', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSLG(
     wf: VibeWorkflow,
     *,
-    blocks: Any = '10',
-    start_percent: Any = 0.1,
-    end_percent: Any = 1.0,
+    _id: str | None = None,
+    blocks: Any = _UNSET,
+    start_percent: Any = _UNSET,
+    end_percent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1091,34 +1319,38 @@ def WanVideoSLG(
     Returns: slg_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['blocks'] = blocks
-    _kwargs['start_percent'] = start_percent
-    _kwargs['end_percent'] = end_percent
+    if blocks is not _UNSET:
+        _kwargs['blocks'] = blocks
+    if start_percent is not _UNSET:
+        _kwargs['start_percent'] = start_percent
+    if end_percent is not _UNSET:
+        _kwargs['end_percent'] = end_percent
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoSLG', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoSLG', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSampler(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    image_embeds: Any,
-    steps: Any = 30,
-    cfg: Any = 6.0,
-    shift: Any = 5.0,
-    seed: Any = 0,
-    force_offload: Any = True,
-    scheduler: Any = 'unipc',
-    riflex_freq_index: Any = 0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    image_embeds: Any = _UNSET,
+    steps: Any = _UNSET,
+    cfg: Any = _UNSET,
+    shift: Any = _UNSET,
+    seed: Any = _UNSET,
+    force_offload: Any = _UNSET,
+    scheduler: Any = _UNSET,
+    riflex_freq_index: Any = _UNSET,
     text_embeds: Any = _UNSET,
     samples: Any = _UNSET,
-    denoise_strength: Any = 1.0,
+    denoise_strength: Any = _UNSET,
     feta_args: Any = _UNSET,
     context_options: Any = _UNSET,
     cache_args: Any = _UNSET,
     flowedit_args: Any = _UNSET,
-    batched_cfg: Any = False,
+    batched_cfg: Any = _UNSET,
     slg_args: Any = _UNSET,
-    rope_function: Any = 'comfy',
+    rope_function: Any = _UNSET,
     loop_args: Any = _UNSET,
     experimental_args: Any = _UNSET,
     sigmas: Any = _UNSET,
@@ -1127,9 +1359,9 @@ def WanVideoSampler(
     uni3c_embeds: Any = _UNSET,
     multitalk_embeds: Any = _UNSET,
     freeinit_args: Any = _UNSET,
-    start_step: Any = 0,
-    end_step: Any = -1,
-    add_noise_to_samples: Any = False,
+    start_step: Any = _UNSET,
+    end_step: Any = _UNSET,
+    add_noise_to_samples: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1140,20 +1372,30 @@ def WanVideoSampler(
     Returns: samples, denoised_samples
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['image_embeds'] = image_embeds
-    _kwargs['steps'] = steps
-    _kwargs['cfg'] = cfg
-    _kwargs['shift'] = shift
-    _kwargs['seed'] = seed
-    _kwargs['force_offload'] = force_offload
-    _kwargs['scheduler'] = scheduler
-    _kwargs['riflex_freq_index'] = riflex_freq_index
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if image_embeds is not _UNSET:
+        _kwargs['image_embeds'] = image_embeds
+    if steps is not _UNSET:
+        _kwargs['steps'] = steps
+    if cfg is not _UNSET:
+        _kwargs['cfg'] = cfg
+    if shift is not _UNSET:
+        _kwargs['shift'] = shift
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
+    if force_offload is not _UNSET:
+        _kwargs['force_offload'] = force_offload
+    if scheduler is not _UNSET:
+        _kwargs['scheduler'] = scheduler
+    if riflex_freq_index is not _UNSET:
+        _kwargs['riflex_freq_index'] = riflex_freq_index
     if text_embeds is not _UNSET:
         _kwargs['text_embeds'] = text_embeds
     if samples is not _UNSET:
         _kwargs['samples'] = samples
-    _kwargs['denoise_strength'] = denoise_strength
+    if denoise_strength is not _UNSET:
+        _kwargs['denoise_strength'] = denoise_strength
     if feta_args is not _UNSET:
         _kwargs['feta_args'] = feta_args
     if context_options is not _UNSET:
@@ -1162,10 +1404,12 @@ def WanVideoSampler(
         _kwargs['cache_args'] = cache_args
     if flowedit_args is not _UNSET:
         _kwargs['flowedit_args'] = flowedit_args
-    _kwargs['batched_cfg'] = batched_cfg
+    if batched_cfg is not _UNSET:
+        _kwargs['batched_cfg'] = batched_cfg
     if slg_args is not _UNSET:
         _kwargs['slg_args'] = slg_args
-    _kwargs['rope_function'] = rope_function
+    if rope_function is not _UNSET:
+        _kwargs['rope_function'] = rope_function
     if loop_args is not _UNSET:
         _kwargs['loop_args'] = loop_args
     if experimental_args is not _UNSET:
@@ -1182,16 +1426,20 @@ def WanVideoSampler(
         _kwargs['multitalk_embeds'] = multitalk_embeds
     if freeinit_args is not _UNSET:
         _kwargs['freeinit_args'] = freeinit_args
-    _kwargs['start_step'] = start_step
-    _kwargs['end_step'] = end_step
-    _kwargs['add_noise_to_samples'] = add_noise_to_samples
+    if start_step is not _UNSET:
+        _kwargs['start_step'] = start_step
+    if end_step is not _UNSET:
+        _kwargs['end_step'] = end_step
+    if add_noise_to_samples is not _UNSET:
+        _kwargs['add_noise_to_samples'] = add_noise_to_samples
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoSampler', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoSampler', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSetBlockSwap(
     wf: VibeWorkflow,
     *,
-    model: Any,
+    _id: str | None = None,
+    model: Any = _UNSET,
     block_swap_args: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1203,16 +1451,18 @@ def WanVideoSetBlockSwap(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
+    if model is not _UNSET:
+        _kwargs['model'] = model
     if block_swap_args is not _UNSET:
         _kwargs['block_swap_args'] = block_swap_args
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoSetBlockSwap', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoSetBlockSwap', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoSetLoRAs(
     wf: VibeWorkflow,
     *,
-    model: Any,
+    _id: str | None = None,
+    model: Any = _UNSET,
     lora: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1224,21 +1474,23 @@ def WanVideoSetLoRAs(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
+    if model is not _UNSET:
+        _kwargs['model'] = model
     if lora is not _UNSET:
         _kwargs['lora'] = lora
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoSetLoRAs', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoSetLoRAs', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTeaCache(
     wf: VibeWorkflow,
     *,
-    rel_l1_thresh: Any = 0.3,
-    start_step: Any = 1,
-    end_step: Any = -1,
-    cache_device: Any = 'offload_device',
-    use_coefficients: Any = True,
-    mode: Any = 'e',
+    _id: str | None = None,
+    rel_l1_thresh: Any = _UNSET,
+    start_step: Any = _UNSET,
+    end_step: Any = _UNSET,
+    cache_device: Any = _UNSET,
+    use_coefficients: Any = _UNSET,
+    mode: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1256,19 +1508,26 @@ def WanVideoTeaCache(
     Returns: cache_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['rel_l1_thresh'] = rel_l1_thresh
-    _kwargs['start_step'] = start_step
-    _kwargs['end_step'] = end_step
-    _kwargs['cache_device'] = cache_device
-    _kwargs['use_coefficients'] = use_coefficients
-    _kwargs['mode'] = mode
+    if rel_l1_thresh is not _UNSET:
+        _kwargs['rel_l1_thresh'] = rel_l1_thresh
+    if start_step is not _UNSET:
+        _kwargs['start_step'] = start_step
+    if end_step is not _UNSET:
+        _kwargs['end_step'] = end_step
+    if cache_device is not _UNSET:
+        _kwargs['cache_device'] = cache_device
+    if use_coefficients is not _UNSET:
+        _kwargs['use_coefficients'] = use_coefficients
+    if mode is not _UNSET:
+        _kwargs['mode'] = mode
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoTeaCache', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoTeaCache', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTextEmbedBridge(
     wf: VibeWorkflow,
     *,
-    positive: Any,
+    _id: str | None = None,
+    positive: Any = _UNSET,
     negative: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1280,22 +1539,24 @@ def WanVideoTextEmbedBridge(
     Returns: text_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
     if negative is not _UNSET:
         _kwargs['negative'] = negative
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoTextEmbedBridge', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoTextEmbedBridge', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTextEncode(
     wf: VibeWorkflow,
     *,
-    positive_prompt: Any = '',
-    negative_prompt: Any = '',
+    _id: str | None = None,
+    positive_prompt: Any = _UNSET,
+    negative_prompt: Any = _UNSET,
     t5: Any = _UNSET,
-    force_offload: Any = True,
+    force_offload: Any = _UNSET,
     model_to_offload: Any = _UNSET,
-    use_disk_cache: Any = False,
-    device: Any = 'gpu',
+    use_disk_cache: Any = _UNSET,
+    device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1306,28 +1567,34 @@ def WanVideoTextEncode(
     Returns: text_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive_prompt'] = positive_prompt
-    _kwargs['negative_prompt'] = negative_prompt
+    if positive_prompt is not _UNSET:
+        _kwargs['positive_prompt'] = positive_prompt
+    if negative_prompt is not _UNSET:
+        _kwargs['negative_prompt'] = negative_prompt
     if t5 is not _UNSET:
         _kwargs['t5'] = t5
-    _kwargs['force_offload'] = force_offload
+    if force_offload is not _UNSET:
+        _kwargs['force_offload'] = force_offload
     if model_to_offload is not _UNSET:
         _kwargs['model_to_offload'] = model_to_offload
-    _kwargs['use_disk_cache'] = use_disk_cache
-    _kwargs['device'] = device
+    if use_disk_cache is not _UNSET:
+        _kwargs['use_disk_cache'] = use_disk_cache
+    if device is not _UNSET:
+        _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoTextEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoTextEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTextEncodeCached(
     wf: VibeWorkflow,
     *,
-    model_name: Any,
-    precision: Any = 'bf16',
-    positive_prompt: Any = '',
-    negative_prompt: Any = '',
-    quantization: Any = 'disabled',
-    use_disk_cache: Any = True,
-    device: Any = 'gpu',
+    _id: str | None = None,
+    model_name: Any = _UNSET,
+    precision: Any = _UNSET,
+    positive_prompt: Any = _UNSET,
+    negative_prompt: Any = _UNSET,
+    quantization: Any = _UNSET,
+    use_disk_cache: Any = _UNSET,
+    device: Any = _UNSET,
     extender_args: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1344,30 +1611,38 @@ def WanVideoTextEncodeCached(
     Returns: text_embeds, negative_text_embeds, positive_prompt
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model_name'] = model_name
-    _kwargs['precision'] = precision
-    _kwargs['positive_prompt'] = positive_prompt
-    _kwargs['negative_prompt'] = negative_prompt
-    _kwargs['quantization'] = quantization
-    _kwargs['use_disk_cache'] = use_disk_cache
-    _kwargs['device'] = device
+    if model_name is not _UNSET:
+        _kwargs['model_name'] = model_name
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if positive_prompt is not _UNSET:
+        _kwargs['positive_prompt'] = positive_prompt
+    if negative_prompt is not _UNSET:
+        _kwargs['negative_prompt'] = negative_prompt
+    if quantization is not _UNSET:
+        _kwargs['quantization'] = quantization
+    if use_disk_cache is not _UNSET:
+        _kwargs['use_disk_cache'] = use_disk_cache
+    if device is not _UNSET:
+        _kwargs['device'] = device
     if extender_args is not _UNSET:
         _kwargs['extender_args'] = extender_args
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoTextEncodeCached', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoTextEncodeCached', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoTorchCompileSettings(
     wf: VibeWorkflow,
     *,
-    backend: Any = 'inductor',
-    fullgraph: Any = False,
-    mode: Any = 'default',
-    dynamic: Any = False,
-    dynamo_cache_size_limit: Any = 64,
-    compile_transformer_blocks_only: Any = True,
-    dynamo_recompile_limit: Any = 128,
-    force_parameter_static_shapes: Any = False,
-    allow_unmerged_lora_compile: Any = False,
+    _id: str | None = None,
+    backend: Any = _UNSET,
+    fullgraph: Any = _UNSET,
+    mode: Any = _UNSET,
+    dynamic: Any = _UNSET,
+    dynamo_cache_size_limit: Any = _UNSET,
+    compile_transformer_blocks_only: Any = _UNSET,
+    dynamo_recompile_limit: Any = _UNSET,
+    force_parameter_static_shapes: Any = _UNSET,
+    allow_unmerged_lora_compile: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1378,33 +1653,43 @@ def WanVideoTorchCompileSettings(
     Returns: torch_compile_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['backend'] = backend
-    _kwargs['fullgraph'] = fullgraph
-    _kwargs['mode'] = mode
-    _kwargs['dynamic'] = dynamic
-    _kwargs['dynamo_cache_size_limit'] = dynamo_cache_size_limit
-    _kwargs['compile_transformer_blocks_only'] = compile_transformer_blocks_only
-    _kwargs['dynamo_recompile_limit'] = dynamo_recompile_limit
-    _kwargs['force_parameter_static_shapes'] = force_parameter_static_shapes
-    _kwargs['allow_unmerged_lora_compile'] = allow_unmerged_lora_compile
+    if backend is not _UNSET:
+        _kwargs['backend'] = backend
+    if fullgraph is not _UNSET:
+        _kwargs['fullgraph'] = fullgraph
+    if mode is not _UNSET:
+        _kwargs['mode'] = mode
+    if dynamic is not _UNSET:
+        _kwargs['dynamic'] = dynamic
+    if dynamo_cache_size_limit is not _UNSET:
+        _kwargs['dynamo_cache_size_limit'] = dynamo_cache_size_limit
+    if compile_transformer_blocks_only is not _UNSET:
+        _kwargs['compile_transformer_blocks_only'] = compile_transformer_blocks_only
+    if dynamo_recompile_limit is not _UNSET:
+        _kwargs['dynamo_recompile_limit'] = dynamo_recompile_limit
+    if force_parameter_static_shapes is not _UNSET:
+        _kwargs['force_parameter_static_shapes'] = force_parameter_static_shapes
+    if allow_unmerged_lora_compile is not _UNSET:
+        _kwargs['allow_unmerged_lora_compile'] = allow_unmerged_lora_compile
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoTorchCompileSettings', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoTorchCompileSettings', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVACEEncode(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    width: Any = 832,
-    height: Any = 480,
-    num_frames: Any = 81,
-    strength: Any = 1.0,
-    vace_start_percent: Any = 0.0,
-    vace_end_percent: Any = 1.0,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    num_frames: Any = _UNSET,
+    strength: Any = _UNSET,
+    vace_start_percent: Any = _UNSET,
+    vace_end_percent: Any = _UNSET,
     input_frames: Any = _UNSET,
     ref_images: Any = _UNSET,
     input_masks: Any = _UNSET,
     prev_vace_embeds: Any = _UNSET,
-    tiled_vae: Any = False,
+    tiled_vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1415,13 +1700,20 @@ def WanVideoVACEEncode(
     Returns: vace_embeds
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['num_frames'] = num_frames
-    _kwargs['strength'] = strength
-    _kwargs['vace_start_percent'] = vace_start_percent
-    _kwargs['vace_end_percent'] = vace_end_percent
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if vace_start_percent is not _UNSET:
+        _kwargs['vace_start_percent'] = vace_start_percent
+    if vace_end_percent is not _UNSET:
+        _kwargs['vace_end_percent'] = vace_end_percent
     if input_frames is not _UNSET:
         _kwargs['input_frames'] = input_frames
     if ref_images is not _UNSET:
@@ -1430,14 +1722,16 @@ def WanVideoVACEEncode(
         _kwargs['input_masks'] = input_masks
     if prev_vace_embeds is not _UNSET:
         _kwargs['prev_vace_embeds'] = prev_vace_embeds
-    _kwargs['tiled_vae'] = tiled_vae
+    if tiled_vae is not _UNSET:
+        _kwargs['tiled_vae'] = tiled_vae
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoVACEEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoVACEEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVACEModelSelect(
     wf: VibeWorkflow,
     *,
-    vace_model: Any,
+    _id: str | None = None,
+    vace_model: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1448,21 +1742,23 @@ def WanVideoVACEModelSelect(
     Returns: extra_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vace_model'] = vace_model
+    if vace_model is not _UNSET:
+        _kwargs['vace_model'] = vace_model
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoVACEModelSelect', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoVACEModelSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVACEStartToEndFrame(
     wf: VibeWorkflow,
     *,
-    num_frames: Any = 81,
-    empty_frame_level: Any = 0.5,
+    _id: str | None = None,
+    num_frames: Any = _UNSET,
+    empty_frame_level: Any = _UNSET,
     start_image: Any = _UNSET,
     end_image: Any = _UNSET,
     control_images: Any = _UNSET,
     inpaint_mask: Any = _UNSET,
-    start_index: Any = 0,
-    end_index: Any = -1,
+    start_index: Any = _UNSET,
+    end_index: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1473,8 +1769,10 @@ def WanVideoVACEStartToEndFrame(
     Returns: images, masks
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['num_frames'] = num_frames
-    _kwargs['empty_frame_level'] = empty_frame_level
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
+    if empty_frame_level is not _UNSET:
+        _kwargs['empty_frame_level'] = empty_frame_level
     if start_image is not _UNSET:
         _kwargs['start_image'] = start_image
     if end_image is not _UNSET:
@@ -1483,19 +1781,22 @@ def WanVideoVACEStartToEndFrame(
         _kwargs['control_images'] = control_images
     if inpaint_mask is not _UNSET:
         _kwargs['inpaint_mask'] = inpaint_mask
-    _kwargs['start_index'] = start_index
-    _kwargs['end_index'] = end_index
+    if start_index is not _UNSET:
+        _kwargs['start_index'] = start_index
+    if end_index is not _UNSET:
+        _kwargs['end_index'] = end_index
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoVACEStartToEndFrame', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoVACEStartToEndFrame', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVAELoader(
     wf: VibeWorkflow,
     *,
-    model_name: Any,
-    precision: Any = 'bf16',
+    _id: str | None = None,
+    model_name: Any = _UNSET,
+    precision: Any = _UNSET,
     compile_args: Any = _UNSET,
-    use_cpu_cache: Any = False,
-    verbose: Any = False,
+    use_cpu_cache: Any = _UNSET,
+    verbose: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1506,19 +1807,24 @@ def WanVideoVAELoader(
     Returns: vae
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model_name'] = model_name
-    _kwargs['precision'] = precision
+    if model_name is not _UNSET:
+        _kwargs['model_name'] = model_name
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
     if compile_args is not _UNSET:
         _kwargs['compile_args'] = compile_args
-    _kwargs['use_cpu_cache'] = use_cpu_cache
-    _kwargs['verbose'] = verbose
+    if use_cpu_cache is not _UNSET:
+        _kwargs['use_cpu_cache'] = use_cpu_cache
+    if verbose is not _UNSET:
+        _kwargs['verbose'] = verbose
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoVAELoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoVRAMManagement(
     wf: VibeWorkflow,
     *,
-    offload_percent: Any = 1.0,
+    _id: str | None = None,
+    offload_percent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1529,19 +1835,21 @@ def WanVideoVRAMManagement(
     Returns: vram_management_args
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['offload_percent'] = offload_percent
+    if offload_percent is not _UNSET:
+        _kwargs['offload_percent'] = offload_percent
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoVRAMManagement', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoVRAMManagement', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanVideoWanDrawWanMoveTracks(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    tracks: Any,
-    line_resolution: Any = 24,
-    circle_size: Any = 10,
-    opacity: Any = 0.5,
-    line_width: Any = 14,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    tracks: Any = _UNSET,
+    line_resolution: Any = _UNSET,
+    circle_size: Any = _UNSET,
+    opacity: Any = _UNSET,
+    line_width: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1552,21 +1860,28 @@ def WanVideoWanDrawWanMoveTracks(
     Returns: image
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['tracks'] = tracks
-    _kwargs['line_resolution'] = line_resolution
-    _kwargs['circle_size'] = circle_size
-    _kwargs['opacity'] = opacity
-    _kwargs['line_width'] = line_width
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if tracks is not _UNSET:
+        _kwargs['tracks'] = tracks
+    if line_resolution is not _UNSET:
+        _kwargs['line_resolution'] = line_resolution
+    if circle_size is not _UNSET:
+        _kwargs['circle_size'] = circle_size
+    if opacity is not _UNSET:
+        _kwargs['opacity'] = opacity
+    if line_width is not _UNSET:
+        _kwargs['line_width'] = line_width
     _kwargs.update(_extras)
-    return node(wf, 'WanVideoWanDrawWanMoveTracks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanVideoWanDrawWanMoveTracks', _id, pass_raw=pass_raw, **_kwargs)
 
 def Wav2VecModelLoader(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    base_precision: Any = 'fp16',
-    load_device: Any = 'main_device',
+    _id: str | None = None,
+    model: Any = _UNSET,
+    base_precision: Any = _UNSET,
+    load_device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1577,10 +1892,13 @@ def Wav2VecModelLoader(
     Returns: wav2vec_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['base_precision'] = base_precision
-    _kwargs['load_device'] = load_device
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if base_precision is not _UNSET:
+        _kwargs['base_precision'] = base_precision
+    if load_device is not _UNSET:
+        _kwargs['load_device'] = load_device
     _kwargs.update(_extras)
-    return node(wf, 'Wav2VecModelLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Wav2VecModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['CreateCFGScheduleFloatList', 'DownloadAndLoadWav2VecModel', 'LoadWanVideoClipTextEncoder', 'LoadWanVideoT5TextEncoder', 'MultiTalkModelLoader', 'MultiTalkWav2VecEmbeds', 'NormalizeAudioLoudness', 'OviMMAudioVAELoader', 'ReCamMasterPoseVisualizer', 'WanVideoAddS2VEmbeds', 'WanVideoAddWanMoveTracks', 'WanVideoBlockSwap', 'WanVideoClipVisionEncode', 'WanVideoContextOptions', 'WanVideoControlEmbeds', 'WanVideoControlnet', 'WanVideoControlnetLoader', 'WanVideoDecode', 'WanVideoDecodeOviAudio', 'WanVideoEasyCache', 'WanVideoEmptyEmbeds', 'WanVideoEmptyMMAudioLatents', 'WanVideoEncode', 'WanVideoEnhanceAVideo', 'WanVideoExperimentalArgs', 'WanVideoExtraModelSelect', 'WanVideoFunCameraEmbeds', 'WanVideoImageToVideoEncode', 'WanVideoImageToVideoMultiTalk', 'WanVideoLoraSelect', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoOviCFG', 'WanVideoReCamMasterCameraEmbed', 'WanVideoReCamMasterDefaultCamera', 'WanVideoReCamMasterGenerateOrbitCamera', 'WanVideoSLG', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTeaCache', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoTextEncodeCached', 'WanVideoTorchCompileSettings', 'WanVideoVACEEncode', 'WanVideoVACEModelSelect', 'WanVideoVACEStartToEndFrame', 'WanVideoVAELoader', 'WanVideoVRAMManagement', 'WanVideoWanDrawWanMoveTracks', 'Wav2VecModelLoader']

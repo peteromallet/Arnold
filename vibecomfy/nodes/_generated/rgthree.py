@@ -14,6 +14,7 @@ _UNSET = object()
 def Any_Switch_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -25,11 +26,12 @@ def Any_Switch_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Any Switch (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Any Switch (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     base_ctx: Any = _UNSET,
     model: Any = _UNSET,
     clip: Any = _UNSET,
@@ -68,11 +70,12 @@ def Context_rgthree(
     if seed is not _UNSET:
         _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'Context (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Context (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Big_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     base_ctx: Any = _UNSET,
     model: Any = _UNSET,
     clip: Any = _UNSET,
@@ -153,11 +156,12 @@ def Context_Big_rgthree(
     if control_net is not _UNSET:
         _kwargs['control_net'] = control_net
     _kwargs.update(_extras)
-    return node(wf, 'Context Big (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Context Big (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Merge_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -169,11 +173,12 @@ def Context_Merge_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Context Merge (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Context Merge (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Merge_Big_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -185,11 +190,12 @@ def Context_Merge_Big_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Context Merge Big (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Context Merge Big (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Switch_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -201,11 +207,12 @@ def Context_Switch_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Context Switch (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Context Switch (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Context_Switch_Big_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -217,12 +224,13 @@ def Context_Switch_Big_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Context Switch Big (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Context Switch Big (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Display_Any_rgthree(
     wf: VibeWorkflow,
     *,
-    source: Any,
+    _id: str | None = None,
+    source: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -233,14 +241,16 @@ def Display_Any_rgthree(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['source'] = source
+    if source is not _UNSET:
+        _kwargs['source'] = source
     _kwargs.update(_extras)
-    return node(wf, 'Display Any (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Display Any (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Display_Int_rgthree(
     wf: VibeWorkflow,
     *,
-    input: Any,
+    _id: str | None = None,
+    input: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -251,13 +261,15 @@ def Display_Int_rgthree(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['input'] = input
+    if input is not _UNSET:
+        _kwargs['input'] = input
     _kwargs.update(_extras)
-    return node(wf, 'Display Int (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Display Int (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_Comparer_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     image_a: Any = _UNSET,
     image_b: Any = _UNSET,
     pass_raw: bool = False,
@@ -275,17 +287,18 @@ def Image_Comparer_rgthree(
     if image_b is not _UNSET:
         _kwargs['image_b'] = image_b
     _kwargs.update(_extras)
-    return node(wf, 'Image Comparer (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Image Comparer (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_Inset_Crop_rgthree(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    measurement: Any,
-    left: Any = 0,
-    right: Any = 0,
-    top: Any = 0,
-    bottom: Any = 0,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    measurement: Any = _UNSET,
+    left: Any = _UNSET,
+    right: Any = _UNSET,
+    top: Any = _UNSET,
+    bottom: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -296,24 +309,31 @@ def Image_Inset_Crop_rgthree(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['measurement'] = measurement
-    _kwargs['left'] = left
-    _kwargs['right'] = right
-    _kwargs['top'] = top
-    _kwargs['bottom'] = bottom
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if measurement is not _UNSET:
+        _kwargs['measurement'] = measurement
+    if left is not _UNSET:
+        _kwargs['left'] = left
+    if right is not _UNSET:
+        _kwargs['right'] = right
+    if top is not _UNSET:
+        _kwargs['top'] = top
+    if bottom is not _UNSET:
+        _kwargs['bottom'] = bottom
     _kwargs.update(_extras)
-    return node(wf, 'Image Inset Crop (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Image Inset Crop (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_Resize_rgthree(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    measurement: Any,
-    fit: Any,
-    method: Any,
-    width: Any = 0,
-    height: Any = 0,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    measurement: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    fit: Any = _UNSET,
+    method: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -324,18 +344,25 @@ def Image_Resize_rgthree(
     Returns: IMAGE, WIDTH, HEIGHT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['measurement'] = measurement
-    _kwargs['fit'] = fit
-    _kwargs['method'] = method
-    _kwargs['width'] = width
-    _kwargs['height'] = height
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if measurement is not _UNSET:
+        _kwargs['measurement'] = measurement
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if fit is not _UNSET:
+        _kwargs['fit'] = fit
+    if method is not _UNSET:
+        _kwargs['method'] = method
     _kwargs.update(_extras)
-    return node(wf, 'Image Resize (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Image Resize (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Image_or_Latent_Size_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -347,16 +374,17 @@ def Image_or_Latent_Size_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Image or Latent Size (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Image or Latent Size (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def KSampler_Config_rgthree(
     wf: VibeWorkflow,
     *,
-    sampler_name: Any,
-    scheduler: Any,
-    steps_total: Any = 30,
-    refiner_step: Any = 24,
-    cfg: Any = 8.0,
+    _id: str | None = None,
+    steps_total: Any = _UNSET,
+    refiner_step: Any = _UNSET,
+    cfg: Any = _UNSET,
+    sampler_name: Any = _UNSET,
+    scheduler: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -367,27 +395,33 @@ def KSampler_Config_rgthree(
     Returns: STEPS, REFINER_STEP, CFG, SAMPLER, SCHEDULER
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['sampler_name'] = sampler_name
-    _kwargs['scheduler'] = scheduler
-    _kwargs['steps_total'] = steps_total
-    _kwargs['refiner_step'] = refiner_step
-    _kwargs['cfg'] = cfg
+    if steps_total is not _UNSET:
+        _kwargs['steps_total'] = steps_total
+    if refiner_step is not _UNSET:
+        _kwargs['refiner_step'] = refiner_step
+    if cfg is not _UNSET:
+        _kwargs['cfg'] = cfg
+    if sampler_name is not _UNSET:
+        _kwargs['sampler_name'] = sampler_name
+    if scheduler is not _UNSET:
+        _kwargs['scheduler'] = scheduler
     _kwargs.update(_extras)
-    return node(wf, 'KSampler Config (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'KSampler Config (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Lora_Loader_Stack_rgthree(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    clip: Any,
-    lora_01: Any,
-    lora_02: Any,
-    lora_03: Any,
-    lora_04: Any,
-    strength_01: Any = 1.0,
-    strength_02: Any = 1.0,
-    strength_03: Any = 1.0,
-    strength_04: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    clip: Any = _UNSET,
+    lora_01: Any = _UNSET,
+    strength_01: Any = _UNSET,
+    lora_02: Any = _UNSET,
+    strength_02: Any = _UNSET,
+    lora_03: Any = _UNSET,
+    strength_03: Any = _UNSET,
+    lora_04: Any = _UNSET,
+    strength_04: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -398,22 +432,33 @@ def Lora_Loader_Stack_rgthree(
     Returns: MODEL, CLIP
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['clip'] = clip
-    _kwargs['lora_01'] = lora_01
-    _kwargs['lora_02'] = lora_02
-    _kwargs['lora_03'] = lora_03
-    _kwargs['lora_04'] = lora_04
-    _kwargs['strength_01'] = strength_01
-    _kwargs['strength_02'] = strength_02
-    _kwargs['strength_03'] = strength_03
-    _kwargs['strength_04'] = strength_04
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if clip is not _UNSET:
+        _kwargs['clip'] = clip
+    if lora_01 is not _UNSET:
+        _kwargs['lora_01'] = lora_01
+    if strength_01 is not _UNSET:
+        _kwargs['strength_01'] = strength_01
+    if lora_02 is not _UNSET:
+        _kwargs['lora_02'] = lora_02
+    if strength_02 is not _UNSET:
+        _kwargs['strength_02'] = strength_02
+    if lora_03 is not _UNSET:
+        _kwargs['lora_03'] = lora_03
+    if strength_03 is not _UNSET:
+        _kwargs['strength_03'] = strength_03
+    if lora_04 is not _UNSET:
+        _kwargs['lora_04'] = lora_04
+    if strength_04 is not _UNSET:
+        _kwargs['strength_04'] = strength_04
     _kwargs.update(_extras)
-    return node(wf, 'Lora Loader Stack (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Lora Loader Stack (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Lora_Loader_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     model: Any = _UNSET,
     clip: Any = _UNSET,
     pass_raw: bool = False,
@@ -431,11 +476,12 @@ def Power_Lora_Loader_rgthree(
     if clip is not _UNSET:
         _kwargs['clip'] = clip
     _kwargs.update(_extras)
-    return node(wf, 'Power Lora Loader (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Power Lora Loader (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Primitive_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -447,12 +493,13 @@ def Power_Primitive_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Power Primitive (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Power Primitive (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Prompt_rgthree(
     wf: VibeWorkflow,
     *,
-    prompt: Any,
+    _id: str | None = None,
+    prompt: Any = _UNSET,
     opt_model: Any = _UNSET,
     opt_clip: Any = _UNSET,
     insert_lora: Any = _UNSET,
@@ -468,7 +515,8 @@ def Power_Prompt_rgthree(
     Returns: CONDITIONING, MODEL, CLIP, TEXT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['prompt'] = prompt
+    if prompt is not _UNSET:
+        _kwargs['prompt'] = prompt
     if opt_model is not _UNSET:
         _kwargs['opt_model'] = opt_model
     if opt_clip is not _UNSET:
@@ -480,12 +528,13 @@ def Power_Prompt_rgthree(
     if insert_saved is not _UNSET:
         _kwargs['insert_saved'] = insert_saved
     _kwargs.update(_extras)
-    return node(wf, 'Power Prompt (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Power Prompt (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Prompt_Simple_rgthree(
     wf: VibeWorkflow,
     *,
-    prompt: Any,
+    _id: str | None = None,
+    prompt: Any = _UNSET,
     opt_clip: Any = _UNSET,
     insert_embedding: Any = _UNSET,
     insert_saved: Any = _UNSET,
@@ -499,7 +548,8 @@ def Power_Prompt_Simple_rgthree(
     Returns: CONDITIONING, TEXT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['prompt'] = prompt
+    if prompt is not _UNSET:
+        _kwargs['prompt'] = prompt
     if opt_clip is not _UNSET:
         _kwargs['opt_clip'] = opt_clip
     if insert_embedding is not _UNSET:
@@ -507,11 +557,12 @@ def Power_Prompt_Simple_rgthree(
     if insert_saved is not _UNSET:
         _kwargs['insert_saved'] = insert_saved
     _kwargs.update(_extras)
-    return node(wf, 'Power Prompt - Simple (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Power Prompt - Simple (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Power_Puter_rgthree(
     wf: VibeWorkflow,
     *,
+    _id: str | None = None,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -523,14 +574,15 @@ def Power_Puter_rgthree(
     """
     _kwargs: dict[str, Any] = {}
     _kwargs.update(_extras)
-    return node(wf, 'Power Puter (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Power Puter (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def SDXL_Empty_Latent_Image_rgthree(
     wf: VibeWorkflow,
     *,
-    dimensions: Any = '1024 x 1024  (square)',
-    clip_scale: Any = 2.0,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    dimensions: Any = _UNSET,
+    clip_scale: Any = _UNSET,
+    batch_size: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -541,28 +593,32 @@ def SDXL_Empty_Latent_Image_rgthree(
     Returns: LATENT, CLIP_WIDTH, CLIP_HEIGHT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['dimensions'] = dimensions
-    _kwargs['clip_scale'] = clip_scale
-    _kwargs['batch_size'] = batch_size
+    if dimensions is not _UNSET:
+        _kwargs['dimensions'] = dimensions
+    if clip_scale is not _UNSET:
+        _kwargs['clip_scale'] = clip_scale
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     _kwargs.update(_extras)
-    return node(wf, 'SDXL Empty Latent Image (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SDXL Empty Latent Image (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def SDXL_Power_Prompt_Positive_rgthree(
     wf: VibeWorkflow,
     *,
-    prompt_g: Any,
-    prompt_l: Any,
+    _id: str | None = None,
+    prompt_g: Any = _UNSET,
+    prompt_l: Any = _UNSET,
     opt_model: Any = _UNSET,
     opt_clip: Any = _UNSET,
-    opt_clip_width: Any = 1024.0,
-    opt_clip_height: Any = 1024.0,
+    opt_clip_width: Any = _UNSET,
+    opt_clip_height: Any = _UNSET,
     insert_lora: Any = _UNSET,
     insert_embedding: Any = _UNSET,
     insert_saved: Any = _UNSET,
-    target_width: Any = -1,
-    target_height: Any = -1,
-    crop_width: Any = -1,
-    crop_height: Any = -1,
+    target_width: Any = _UNSET,
+    target_height: Any = _UNSET,
+    crop_width: Any = _UNSET,
+    crop_height: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -573,41 +629,50 @@ def SDXL_Power_Prompt_Positive_rgthree(
     Returns: CONDITIONING, MODEL, CLIP, TEXT_G, TEXT_L
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['prompt_g'] = prompt_g
-    _kwargs['prompt_l'] = prompt_l
+    if prompt_g is not _UNSET:
+        _kwargs['prompt_g'] = prompt_g
+    if prompt_l is not _UNSET:
+        _kwargs['prompt_l'] = prompt_l
     if opt_model is not _UNSET:
         _kwargs['opt_model'] = opt_model
     if opt_clip is not _UNSET:
         _kwargs['opt_clip'] = opt_clip
-    _kwargs['opt_clip_width'] = opt_clip_width
-    _kwargs['opt_clip_height'] = opt_clip_height
+    if opt_clip_width is not _UNSET:
+        _kwargs['opt_clip_width'] = opt_clip_width
+    if opt_clip_height is not _UNSET:
+        _kwargs['opt_clip_height'] = opt_clip_height
     if insert_lora is not _UNSET:
         _kwargs['insert_lora'] = insert_lora
     if insert_embedding is not _UNSET:
         _kwargs['insert_embedding'] = insert_embedding
     if insert_saved is not _UNSET:
         _kwargs['insert_saved'] = insert_saved
-    _kwargs['target_width'] = target_width
-    _kwargs['target_height'] = target_height
-    _kwargs['crop_width'] = crop_width
-    _kwargs['crop_height'] = crop_height
+    if target_width is not _UNSET:
+        _kwargs['target_width'] = target_width
+    if target_height is not _UNSET:
+        _kwargs['target_height'] = target_height
+    if crop_width is not _UNSET:
+        _kwargs['crop_width'] = crop_width
+    if crop_height is not _UNSET:
+        _kwargs['crop_height'] = crop_height
     _kwargs.update(_extras)
-    return node(wf, 'SDXL Power Prompt - Positive (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SDXL Power Prompt - Positive (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def SDXL_Power_Prompt_Simple_Negative_rgthree(
     wf: VibeWorkflow,
     *,
-    prompt_g: Any,
-    prompt_l: Any,
+    _id: str | None = None,
+    prompt_g: Any = _UNSET,
+    prompt_l: Any = _UNSET,
     opt_clip: Any = _UNSET,
-    opt_clip_width: Any = 1024.0,
-    opt_clip_height: Any = 1024.0,
+    opt_clip_width: Any = _UNSET,
+    opt_clip_height: Any = _UNSET,
     insert_embedding: Any = _UNSET,
     insert_saved: Any = _UNSET,
-    target_width: Any = -1,
-    target_height: Any = -1,
-    crop_width: Any = -1,
-    crop_height: Any = -1,
+    target_width: Any = _UNSET,
+    target_height: Any = _UNSET,
+    crop_width: Any = _UNSET,
+    crop_height: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -618,27 +683,36 @@ def SDXL_Power_Prompt_Simple_Negative_rgthree(
     Returns: CONDITIONING, TEXT_G, TEXT_L
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['prompt_g'] = prompt_g
-    _kwargs['prompt_l'] = prompt_l
+    if prompt_g is not _UNSET:
+        _kwargs['prompt_g'] = prompt_g
+    if prompt_l is not _UNSET:
+        _kwargs['prompt_l'] = prompt_l
     if opt_clip is not _UNSET:
         _kwargs['opt_clip'] = opt_clip
-    _kwargs['opt_clip_width'] = opt_clip_width
-    _kwargs['opt_clip_height'] = opt_clip_height
+    if opt_clip_width is not _UNSET:
+        _kwargs['opt_clip_width'] = opt_clip_width
+    if opt_clip_height is not _UNSET:
+        _kwargs['opt_clip_height'] = opt_clip_height
     if insert_embedding is not _UNSET:
         _kwargs['insert_embedding'] = insert_embedding
     if insert_saved is not _UNSET:
         _kwargs['insert_saved'] = insert_saved
-    _kwargs['target_width'] = target_width
-    _kwargs['target_height'] = target_height
-    _kwargs['crop_width'] = crop_width
-    _kwargs['crop_height'] = crop_height
+    if target_width is not _UNSET:
+        _kwargs['target_width'] = target_width
+    if target_height is not _UNSET:
+        _kwargs['target_height'] = target_height
+    if crop_width is not _UNSET:
+        _kwargs['crop_width'] = crop_width
+    if crop_height is not _UNSET:
+        _kwargs['crop_height'] = crop_height
     _kwargs.update(_extras)
-    return node(wf, 'SDXL Power Prompt - Simple / Negative (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SDXL Power Prompt - Simple / Negative (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 def Seed_rgthree(
     wf: VibeWorkflow,
     *,
-    seed: Any = 0,
+    _id: str | None = None,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -649,8 +723,9 @@ def Seed_rgthree(
     Returns: SEED
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['seed'] = seed
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'Seed (rgthree)', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Seed (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['Any_Switch_rgthree', 'Context_rgthree', 'Context_Big_rgthree', 'Context_Merge_rgthree', 'Context_Merge_Big_rgthree', 'Context_Switch_rgthree', 'Context_Switch_Big_rgthree', 'Display_Any_rgthree', 'Display_Int_rgthree', 'Image_Comparer_rgthree', 'Image_Inset_Crop_rgthree', 'Image_Resize_rgthree', 'Image_or_Latent_Size_rgthree', 'KSampler_Config_rgthree', 'Lora_Loader_Stack_rgthree', 'Power_Lora_Loader_rgthree', 'Power_Primitive_rgthree', 'Power_Prompt_rgthree', 'Power_Prompt_Simple_rgthree', 'Power_Puter_rgthree', 'SDXL_Empty_Latent_Image_rgthree', 'SDXL_Power_Prompt_Positive_rgthree', 'SDXL_Power_Prompt_Simple_Negative_rgthree', 'Seed_rgthree']

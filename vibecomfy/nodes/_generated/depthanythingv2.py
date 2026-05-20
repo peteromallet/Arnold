@@ -14,8 +14,9 @@ _UNSET = object()
 def DepthAnything_V2(
     wf: VibeWorkflow,
     *,
-    da_model: Any,
-    images: Any,
+    _id: str | None = None,
+    da_model: Any = _UNSET,
+    images: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -26,16 +27,19 @@ def DepthAnything_V2(
     Returns: image
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['da_model'] = da_model
-    _kwargs['images'] = images
+    if da_model is not _UNSET:
+        _kwargs['da_model'] = da_model
+    if images is not _UNSET:
+        _kwargs['images'] = images
     _kwargs.update(_extras)
-    return node(wf, 'DepthAnything_V2', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DepthAnything_V2', _id, pass_raw=pass_raw, **_kwargs)
 
 def DownloadAndLoadDepthAnythingV2Model(
     wf: VibeWorkflow,
     *,
-    model: Any = 'depth_anything_v2_vitl_fp32.safetensors',
-    precision: Any = 'auto',
+    _id: str | None = None,
+    model: Any = _UNSET,
+    precision: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -49,9 +53,11 @@ def DownloadAndLoadDepthAnythingV2Model(
     Returns: da_v2_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['precision'] = precision
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
     _kwargs.update(_extras)
-    return node(wf, 'DownloadAndLoadDepthAnythingV2Model', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DownloadAndLoadDepthAnythingV2Model', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model']

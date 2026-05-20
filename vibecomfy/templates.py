@@ -462,7 +462,12 @@ def _finalize_impl(
             bind_kwargs["filename_prefix"] = output_prefix_fallback
 
     caller_locals = _caller_build_locals()
-    output_node_id = _resolve_output_node(wf, output_node, caller_locals)
+    try:
+        output_node_id = _resolve_output_node(wf, output_node, caller_locals)
+    except ValueError as exc:
+        if output_node is not None or "could not be auto-detected" not in str(exc):
+            raise
+        output_node_id = None
 
     output_class_type = wf.nodes.get(output_node_id).class_type if output_node_id in wf.nodes else None
     derived_output_kind = output_kind or _derive_output_kind(output_class_type)
@@ -481,15 +486,16 @@ def _finalize_impl(
 
     _assert_public_input_invariant(wf, inputs, namespace=caller_locals)
 
-    artifact_kind = bind_kwargs.pop("artifact_kind", None) or derived_output_kind
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
-        bind_output(
-            wf,
-            output_node_id,
-            artifact_kind=artifact_kind,
-            **bind_kwargs,
-        )
+    if output_node_id is not None:
+        artifact_kind = bind_kwargs.pop("artifact_kind", None) or derived_output_kind
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+            bind_output(
+                wf,
+                output_node_id,
+                artifact_kind=artifact_kind,
+                **bind_kwargs,
+            )
     return wf
 
 

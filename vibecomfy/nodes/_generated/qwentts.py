@@ -14,13 +14,14 @@ _UNSET = object()
 def AILab_Qwen3TTSCustomVoice(
     wf: VibeWorkflow,
     *,
-    text: Any = 'Hello from Qwen3-TTS.',
-    speaker: Any = 'Ryan',
-    model_size: Any = '1.7B',
-    language: Any = 'Auto',
-    instruct: Any = '',
-    unload_models: Any = True,
-    seed: Any = -1,
+    _id: str | None = None,
+    text: Any = _UNSET,
+    speaker: Any = _UNSET,
+    model_size: Any = _UNSET,
+    language: Any = _UNSET,
+    instruct: Any = _UNSET,
+    unload_models: Any = _UNSET,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -31,35 +32,43 @@ def AILab_Qwen3TTSCustomVoice(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['text'] = text
-    _kwargs['speaker'] = speaker
-    _kwargs['model_size'] = model_size
-    _kwargs['language'] = language
-    _kwargs['instruct'] = instruct
-    _kwargs['unload_models'] = unload_models
-    _kwargs['seed'] = seed
+    if text is not _UNSET:
+        _kwargs['text'] = text
+    if speaker is not _UNSET:
+        _kwargs['speaker'] = speaker
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if language is not _UNSET:
+        _kwargs['language'] = language
+    if instruct is not _UNSET:
+        _kwargs['instruct'] = instruct
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSCustomVoice', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSCustomVoice', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSCustomVoice_Advanced(
     wf: VibeWorkflow,
     *,
-    text: Any = 'Hello from Qwen3-TTS.',
-    speaker: Any = 'Ryan',
-    model_size: Any = '1.7B',
-    device: Any = 'auto',
-    precision: Any = 'bf16',
-    language: Any = 'Auto',
-    instruct: Any = '',
-    max_new_tokens: Any = 2048,
-    do_sample: Any = False,
-    top_p: Any = 0.9,
-    top_k: Any = 50,
-    temperature: Any = 0.9,
-    repetition_penalty: Any = 1.0,
-    attention: Any = 'auto',
-    unload_models: Any = True,
-    seed: Any = -1,
+    _id: str | None = None,
+    text: Any = _UNSET,
+    speaker: Any = _UNSET,
+    model_size: Any = _UNSET,
+    device: Any = _UNSET,
+    precision: Any = _UNSET,
+    language: Any = _UNSET,
+    instruct: Any = _UNSET,
+    max_new_tokens: Any = _UNSET,
+    do_sample: Any = _UNSET,
+    top_p: Any = _UNSET,
+    top_k: Any = _UNSET,
+    temperature: Any = _UNSET,
+    repetition_penalty: Any = _UNSET,
+    attention: Any = _UNSET,
+    unload_models: Any = _UNSET,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -70,30 +79,47 @@ def AILab_Qwen3TTSCustomVoice_Advanced(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['text'] = text
-    _kwargs['speaker'] = speaker
-    _kwargs['model_size'] = model_size
-    _kwargs['device'] = device
-    _kwargs['precision'] = precision
-    _kwargs['language'] = language
-    _kwargs['instruct'] = instruct
-    _kwargs['max_new_tokens'] = max_new_tokens
-    _kwargs['do_sample'] = do_sample
-    _kwargs['top_p'] = top_p
-    _kwargs['top_k'] = top_k
-    _kwargs['temperature'] = temperature
-    _kwargs['repetition_penalty'] = repetition_penalty
-    _kwargs['attention'] = attention
-    _kwargs['unload_models'] = unload_models
-    _kwargs['seed'] = seed
+    if text is not _UNSET:
+        _kwargs['text'] = text
+    if speaker is not _UNSET:
+        _kwargs['speaker'] = speaker
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if device is not _UNSET:
+        _kwargs['device'] = device
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if language is not _UNSET:
+        _kwargs['language'] = language
+    if instruct is not _UNSET:
+        _kwargs['instruct'] = instruct
+    if max_new_tokens is not _UNSET:
+        _kwargs['max_new_tokens'] = max_new_tokens
+    if do_sample is not _UNSET:
+        _kwargs['do_sample'] = do_sample
+    if top_p is not _UNSET:
+        _kwargs['top_p'] = top_p
+    if top_k is not _UNSET:
+        _kwargs['top_k'] = top_k
+    if temperature is not _UNSET:
+        _kwargs['temperature'] = temperature
+    if repetition_penalty is not _UNSET:
+        _kwargs['repetition_penalty'] = repetition_penalty
+    if attention is not _UNSET:
+        _kwargs['attention'] = attention
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSCustomVoice_Advanced', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSCustomVoice_Advanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSLoadVoice(
     wf: VibeWorkflow,
     *,
-    voice_name: Any = '',
-    custom_path: Any = '',
+    _id: str | None = None,
+    voice_name: Any = _UNSET,
+    custom_path: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -104,23 +130,26 @@ def AILab_Qwen3TTSLoadVoice(
     Returns: VOICE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['voice_name'] = voice_name
-    _kwargs['custom_path'] = custom_path
+    if voice_name is not _UNSET:
+        _kwargs['voice_name'] = voice_name
+    if custom_path is not _UNSET:
+        _kwargs['custom_path'] = custom_path
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSLoadVoice', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSLoadVoice', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceClone(
     wf: VibeWorkflow,
     *,
-    target_text: Any = 'Hello, this is a cloned voice.',
-    model_size: Any = '1.7B',
-    language: Any = 'Auto',
+    _id: str | None = None,
+    target_text: Any = _UNSET,
+    model_size: Any = _UNSET,
+    language: Any = _UNSET,
     reference_audio: Any = _UNSET,
-    reference_text: Any = '',
-    x_vector_only: Any = False,
+    reference_text: Any = _UNSET,
+    x_vector_only: Any = _UNSET,
     voice: Any = _UNSET,
-    unload_models: Any = True,
-    seed: Any = -1,
+    unload_models: Any = _UNSET,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -131,41 +160,49 @@ def AILab_Qwen3TTSVoiceClone(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['target_text'] = target_text
-    _kwargs['model_size'] = model_size
-    _kwargs['language'] = language
+    if target_text is not _UNSET:
+        _kwargs['target_text'] = target_text
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if language is not _UNSET:
+        _kwargs['language'] = language
     if reference_audio is not _UNSET:
         _kwargs['reference_audio'] = reference_audio
-    _kwargs['reference_text'] = reference_text
-    _kwargs['x_vector_only'] = x_vector_only
+    if reference_text is not _UNSET:
+        _kwargs['reference_text'] = reference_text
+    if x_vector_only is not _UNSET:
+        _kwargs['x_vector_only'] = x_vector_only
     if voice is not _UNSET:
         _kwargs['voice'] = voice
-    _kwargs['unload_models'] = unload_models
-    _kwargs['seed'] = seed
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoiceClone', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoiceClone', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceClone_Advanced(
     wf: VibeWorkflow,
     *,
-    target_text: Any = 'Hello, this is a cloned voice.',
-    model_size: Any = '1.7B',
-    device: Any = 'auto',
-    precision: Any = 'bf16',
-    language: Any = 'Auto',
+    _id: str | None = None,
+    target_text: Any = _UNSET,
+    model_size: Any = _UNSET,
+    device: Any = _UNSET,
+    precision: Any = _UNSET,
+    language: Any = _UNSET,
     reference_audio: Any = _UNSET,
-    reference_text: Any = '',
-    x_vector_only: Any = False,
+    reference_text: Any = _UNSET,
+    x_vector_only: Any = _UNSET,
     voice: Any = _UNSET,
-    max_new_tokens: Any = 2048,
-    do_sample: Any = False,
-    top_p: Any = 0.9,
-    top_k: Any = 50,
-    temperature: Any = 0.9,
-    repetition_penalty: Any = 1.0,
-    attention: Any = 'auto',
-    unload_models: Any = True,
-    seed: Any = -1,
+    max_new_tokens: Any = _UNSET,
+    do_sample: Any = _UNSET,
+    top_p: Any = _UNSET,
+    top_k: Any = _UNSET,
+    temperature: Any = _UNSET,
+    repetition_penalty: Any = _UNSET,
+    attention: Any = _UNSET,
+    unload_models: Any = _UNSET,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -176,38 +213,55 @@ def AILab_Qwen3TTSVoiceClone_Advanced(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['target_text'] = target_text
-    _kwargs['model_size'] = model_size
-    _kwargs['device'] = device
-    _kwargs['precision'] = precision
-    _kwargs['language'] = language
+    if target_text is not _UNSET:
+        _kwargs['target_text'] = target_text
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if device is not _UNSET:
+        _kwargs['device'] = device
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if language is not _UNSET:
+        _kwargs['language'] = language
     if reference_audio is not _UNSET:
         _kwargs['reference_audio'] = reference_audio
-    _kwargs['reference_text'] = reference_text
-    _kwargs['x_vector_only'] = x_vector_only
+    if reference_text is not _UNSET:
+        _kwargs['reference_text'] = reference_text
+    if x_vector_only is not _UNSET:
+        _kwargs['x_vector_only'] = x_vector_only
     if voice is not _UNSET:
         _kwargs['voice'] = voice
-    _kwargs['max_new_tokens'] = max_new_tokens
-    _kwargs['do_sample'] = do_sample
-    _kwargs['top_p'] = top_p
-    _kwargs['top_k'] = top_k
-    _kwargs['temperature'] = temperature
-    _kwargs['repetition_penalty'] = repetition_penalty
-    _kwargs['attention'] = attention
-    _kwargs['unload_models'] = unload_models
-    _kwargs['seed'] = seed
+    if max_new_tokens is not _UNSET:
+        _kwargs['max_new_tokens'] = max_new_tokens
+    if do_sample is not _UNSET:
+        _kwargs['do_sample'] = do_sample
+    if top_p is not _UNSET:
+        _kwargs['top_p'] = top_p
+    if top_k is not _UNSET:
+        _kwargs['top_k'] = top_k
+    if temperature is not _UNSET:
+        _kwargs['temperature'] = temperature
+    if repetition_penalty is not _UNSET:
+        _kwargs['repetition_penalty'] = repetition_penalty
+    if attention is not _UNSET:
+        _kwargs['attention'] = attention
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoiceClone_Advanced', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoiceClone_Advanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceDesign(
     wf: VibeWorkflow,
     *,
-    text: Any = 'Hello from Qwen3-TTS VoiceDesign.',
-    instruct: Any = 'A warm, gentle female voice.',
-    model_size: Any = '1.7B',
-    language: Any = 'Auto',
-    unload_models: Any = True,
-    seed: Any = -1,
+    _id: str | None = None,
+    text: Any = _UNSET,
+    instruct: Any = _UNSET,
+    model_size: Any = _UNSET,
+    language: Any = _UNSET,
+    unload_models: Any = _UNSET,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -218,33 +272,40 @@ def AILab_Qwen3TTSVoiceDesign(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['text'] = text
-    _kwargs['instruct'] = instruct
-    _kwargs['model_size'] = model_size
-    _kwargs['language'] = language
-    _kwargs['unload_models'] = unload_models
-    _kwargs['seed'] = seed
+    if text is not _UNSET:
+        _kwargs['text'] = text
+    if instruct is not _UNSET:
+        _kwargs['instruct'] = instruct
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if language is not _UNSET:
+        _kwargs['language'] = language
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoiceDesign', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoiceDesign', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceDesign_Advanced(
     wf: VibeWorkflow,
     *,
-    text: Any = 'Hello from Qwen3-TTS VoiceDesign.',
-    instruct: Any = 'A warm, gentle female voice.',
-    model_size: Any = '1.7B',
-    device: Any = 'auto',
-    precision: Any = 'bf16',
-    language: Any = 'Auto',
-    max_new_tokens: Any = 2048,
-    do_sample: Any = False,
-    top_p: Any = 0.9,
-    top_k: Any = 50,
-    temperature: Any = 0.9,
-    repetition_penalty: Any = 1.0,
-    attention: Any = 'auto',
-    unload_models: Any = True,
-    seed: Any = -1,
+    _id: str | None = None,
+    text: Any = _UNSET,
+    instruct: Any = _UNSET,
+    model_size: Any = _UNSET,
+    device: Any = _UNSET,
+    precision: Any = _UNSET,
+    language: Any = _UNSET,
+    max_new_tokens: Any = _UNSET,
+    do_sample: Any = _UNSET,
+    top_p: Any = _UNSET,
+    top_k: Any = _UNSET,
+    temperature: Any = _UNSET,
+    repetition_penalty: Any = _UNSET,
+    attention: Any = _UNSET,
+    unload_models: Any = _UNSET,
+    seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -255,30 +316,46 @@ def AILab_Qwen3TTSVoiceDesign_Advanced(
     Returns: audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['text'] = text
-    _kwargs['instruct'] = instruct
-    _kwargs['model_size'] = model_size
-    _kwargs['device'] = device
-    _kwargs['precision'] = precision
-    _kwargs['language'] = language
-    _kwargs['max_new_tokens'] = max_new_tokens
-    _kwargs['do_sample'] = do_sample
-    _kwargs['top_p'] = top_p
-    _kwargs['top_k'] = top_k
-    _kwargs['temperature'] = temperature
-    _kwargs['repetition_penalty'] = repetition_penalty
-    _kwargs['attention'] = attention
-    _kwargs['unload_models'] = unload_models
-    _kwargs['seed'] = seed
+    if text is not _UNSET:
+        _kwargs['text'] = text
+    if instruct is not _UNSET:
+        _kwargs['instruct'] = instruct
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if device is not _UNSET:
+        _kwargs['device'] = device
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if language is not _UNSET:
+        _kwargs['language'] = language
+    if max_new_tokens is not _UNSET:
+        _kwargs['max_new_tokens'] = max_new_tokens
+    if do_sample is not _UNSET:
+        _kwargs['do_sample'] = do_sample
+    if top_p is not _UNSET:
+        _kwargs['top_p'] = top_p
+    if top_k is not _UNSET:
+        _kwargs['top_k'] = top_k
+    if temperature is not _UNSET:
+        _kwargs['temperature'] = temperature
+    if repetition_penalty is not _UNSET:
+        _kwargs['repetition_penalty'] = repetition_penalty
+    if attention is not _UNSET:
+        _kwargs['attention'] = attention
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoiceDesign_Advanced', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoiceDesign_Advanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceInstruct(
     wf: VibeWorkflow,
     *,
-    character: Any = 'Auto',
-    style: Any = 'Auto',
-    custom_instruct: Any = '',
+    _id: str | None = None,
+    character: Any = _UNSET,
+    style: Any = _UNSET,
+    custom_instruct: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -289,18 +366,22 @@ def AILab_Qwen3TTSVoiceInstruct(
     Returns: VOICE_INSTRUCT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['character'] = character
-    _kwargs['style'] = style
-    _kwargs['custom_instruct'] = custom_instruct
+    if character is not _UNSET:
+        _kwargs['character'] = character
+    if style is not _UNSET:
+        _kwargs['style'] = style
+    if custom_instruct is not _UNSET:
+        _kwargs['custom_instruct'] = custom_instruct
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoiceInstruct', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoiceInstruct', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoiceInstructZH(
     wf: VibeWorkflow,
     *,
-    角色: Any = '自动',
-    风格: Any = '自动',
-    自定义风格指引: Any = '',
+    _id: str | None = None,
+    角色: Any = _UNSET,
+    风格: Any = _UNSET,
+    自定义风格指引: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -311,24 +392,28 @@ def AILab_Qwen3TTSVoiceInstructZH(
     Returns: VOICE_INSTRUCT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['角色'] = 角色
-    _kwargs['风格'] = 风格
-    _kwargs['自定义风格指引'] = 自定义风格指引
+    if 角色 is not _UNSET:
+        _kwargs['角色'] = 角色
+    if 风格 is not _UNSET:
+        _kwargs['风格'] = 风格
+    if 自定义风格指引 is not _UNSET:
+        _kwargs['自定义风格指引'] = 自定义风格指引
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoiceInstructZH', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoiceInstructZH', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSVoicesLibrary(
     wf: VibeWorkflow,
     *,
-    reference_audio: Any,
-    reference_text: Any = '',
-    model_size: Any = '1.7B',
-    device: Any = 'auto',
-    precision: Any = 'bf16',
-    x_vector_only: Any = False,
-    voice_name: Any = 'voice_1',
-    save_path: Any = '',
-    unload_models: Any = True,
+    _id: str | None = None,
+    reference_audio: Any = _UNSET,
+    reference_text: Any = _UNSET,
+    model_size: Any = _UNSET,
+    device: Any = _UNSET,
+    precision: Any = _UNSET,
+    x_vector_only: Any = _UNSET,
+    voice_name: Any = _UNSET,
+    save_path: Any = _UNSET,
+    unload_models: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -339,25 +424,35 @@ def AILab_Qwen3TTSVoicesLibrary(
     Returns: VOICE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['reference_audio'] = reference_audio
-    _kwargs['reference_text'] = reference_text
-    _kwargs['model_size'] = model_size
-    _kwargs['device'] = device
-    _kwargs['precision'] = precision
-    _kwargs['x_vector_only'] = x_vector_only
-    _kwargs['voice_name'] = voice_name
-    _kwargs['save_path'] = save_path
-    _kwargs['unload_models'] = unload_models
+    if reference_audio is not _UNSET:
+        _kwargs['reference_audio'] = reference_audio
+    if reference_text is not _UNSET:
+        _kwargs['reference_text'] = reference_text
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if device is not _UNSET:
+        _kwargs['device'] = device
+    if precision is not _UNSET:
+        _kwargs['precision'] = precision
+    if x_vector_only is not _UNSET:
+        _kwargs['x_vector_only'] = x_vector_only
+    if voice_name is not _UNSET:
+        _kwargs['voice_name'] = voice_name
+    if save_path is not _UNSET:
+        _kwargs['save_path'] = save_path
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSVoicesLibrary', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSVoicesLibrary', _id, pass_raw=pass_raw, **_kwargs)
 
 def AILab_Qwen3TTSWhisperSTT(
     wf: VibeWorkflow,
     *,
-    audio: Any,
-    model_size: Any = 'small',
-    language: Any = 'auto',
-    unload_models: Any = True,
+    _id: str | None = None,
+    audio: Any = _UNSET,
+    model_size: Any = _UNSET,
+    language: Any = _UNSET,
+    unload_models: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -368,11 +463,15 @@ def AILab_Qwen3TTSWhisperSTT(
     Returns: text
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
-    _kwargs['model_size'] = model_size
-    _kwargs['language'] = language
-    _kwargs['unload_models'] = unload_models
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
+    if model_size is not _UNSET:
+        _kwargs['model_size'] = model_size
+    if language is not _UNSET:
+        _kwargs['language'] = language
+    if unload_models is not _UNSET:
+        _kwargs['unload_models'] = unload_models
     _kwargs.update(_extras)
-    return node(wf, 'AILab_Qwen3TTSWhisperSTT', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AILab_Qwen3TTSWhisperSTT', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['AILab_Qwen3TTSCustomVoice', 'AILab_Qwen3TTSCustomVoice_Advanced', 'AILab_Qwen3TTSLoadVoice', 'AILab_Qwen3TTSVoiceClone', 'AILab_Qwen3TTSVoiceClone_Advanced', 'AILab_Qwen3TTSVoiceDesign', 'AILab_Qwen3TTSVoiceDesign_Advanced', 'AILab_Qwen3TTSVoiceInstruct', 'AILab_Qwen3TTSVoiceInstructZH', 'AILab_Qwen3TTSVoicesLibrary', 'AILab_Qwen3TTSWhisperSTT']

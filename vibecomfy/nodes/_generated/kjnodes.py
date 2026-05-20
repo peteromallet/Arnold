@@ -14,17 +14,18 @@ _UNSET = object()
 def AddLabel(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    font: Any,
-    text_x: Any = 10,
-    text_y: Any = 2,
-    height: Any = 48,
-    font_size: Any = 32,
-    font_color: Any = 'white',
-    label_color: Any = 'black',
-    text: Any = 'Text',
-    direction: Any = 'up',
-    caption: Any = '',
+    _id: str | None = None,
+    image: Any = _UNSET,
+    text_x: Any = _UNSET,
+    text_y: Any = _UNSET,
+    height: Any = _UNSET,
+    font_size: Any = _UNSET,
+    font_color: Any = _UNSET,
+    label_color: Any = _UNSET,
+    font: Any = _UNSET,
+    text: Any = _UNSET,
+    direction: Any = _UNSET,
+    caption: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -39,26 +40,38 @@ def AddLabel(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['font'] = font
-    _kwargs['text_x'] = text_x
-    _kwargs['text_y'] = text_y
-    _kwargs['height'] = height
-    _kwargs['font_size'] = font_size
-    _kwargs['font_color'] = font_color
-    _kwargs['label_color'] = label_color
-    _kwargs['text'] = text
-    _kwargs['direction'] = direction
-    _kwargs['caption'] = caption
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if text_x is not _UNSET:
+        _kwargs['text_x'] = text_x
+    if text_y is not _UNSET:
+        _kwargs['text_y'] = text_y
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if font_size is not _UNSET:
+        _kwargs['font_size'] = font_size
+    if font_color is not _UNSET:
+        _kwargs['font_color'] = font_color
+    if label_color is not _UNSET:
+        _kwargs['label_color'] = label_color
+    if font is not _UNSET:
+        _kwargs['font'] = font
+    if text is not _UNSET:
+        _kwargs['text'] = text
+    if direction is not _UNSET:
+        _kwargs['direction'] = direction
+    if caption is not _UNSET:
+        _kwargs['caption'] = caption
     _kwargs.update(_extras)
-    return node(wf, 'AddLabel', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AddLabel', _id, pass_raw=pass_raw, **_kwargs)
 
 def BlockifyMask(
     wf: VibeWorkflow,
     *,
-    masks: Any,
-    block_size: Any = 32,
-    device: Any = 'cpu',
+    _id: str | None = None,
+    masks: Any = _UNSET,
+    block_size: Any = _UNSET,
+    device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -69,23 +82,27 @@ def BlockifyMask(
     Returns: mask
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['masks'] = masks
-    _kwargs['block_size'] = block_size
-    _kwargs['device'] = device
+    if masks is not _UNSET:
+        _kwargs['masks'] = masks
+    if block_size is not _UNSET:
+        _kwargs['block_size'] = block_size
+    if device is not _UNSET:
+        _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'BlockifyMask', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'BlockifyMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def CameraPoseVisualizer(
     wf: VibeWorkflow,
     *,
-    pose_file_path: Any = '',
-    base_xval: Any = 0.2,
-    zval: Any = 0.3,
-    scale: Any = 1.0,
-    use_exact_fx: Any = False,
-    relative_c2w: Any = True,
-    use_viewer: Any = False,
-    cameractrl_poses: Any = None,
+    _id: str | None = None,
+    pose_file_path: Any = _UNSET,
+    base_xval: Any = _UNSET,
+    zval: Any = _UNSET,
+    scale: Any = _UNSET,
+    use_exact_fx: Any = _UNSET,
+    relative_c2w: Any = _UNSET,
+    use_viewer: Any = _UNSET,
+    cameractrl_poses: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -97,25 +114,34 @@ def CameraPoseVisualizer(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['pose_file_path'] = pose_file_path
-    _kwargs['base_xval'] = base_xval
-    _kwargs['zval'] = zval
-    _kwargs['scale'] = scale
-    _kwargs['use_exact_fx'] = use_exact_fx
-    _kwargs['relative_c2w'] = relative_c2w
-    _kwargs['use_viewer'] = use_viewer
-    _kwargs['cameractrl_poses'] = cameractrl_poses
+    if pose_file_path is not _UNSET:
+        _kwargs['pose_file_path'] = pose_file_path
+    if base_xval is not _UNSET:
+        _kwargs['base_xval'] = base_xval
+    if zval is not _UNSET:
+        _kwargs['zval'] = zval
+    if scale is not _UNSET:
+        _kwargs['scale'] = scale
+    if use_exact_fx is not _UNSET:
+        _kwargs['use_exact_fx'] = use_exact_fx
+    if relative_c2w is not _UNSET:
+        _kwargs['relative_c2w'] = relative_c2w
+    if use_viewer is not _UNSET:
+        _kwargs['use_viewer'] = use_viewer
+    if cameractrl_poses is not _UNSET:
+        _kwargs['cameractrl_poses'] = cameractrl_poses
     _kwargs.update(_extras)
-    return node(wf, 'CameraPoseVisualizer', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CameraPoseVisualizer', _id, pass_raw=pass_raw, **_kwargs)
 
 def ColorMatch(
     wf: VibeWorkflow,
     *,
-    image_ref: Any,
-    image_target: Any,
-    method: Any = 'mkl',
-    strength: Any = 1.0,
-    multithread: Any = True,
+    _id: str | None = None,
+    image_ref: Any = _UNSET,
+    image_target: Any = _UNSET,
+    method: Any = _UNSET,
+    strength: Any = _UNSET,
+    multithread: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -134,21 +160,27 @@ def ColorMatch(
     Returns: image
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image_ref'] = image_ref
-    _kwargs['image_target'] = image_target
-    _kwargs['method'] = method
-    _kwargs['strength'] = strength
-    _kwargs['multithread'] = multithread
+    if image_ref is not _UNSET:
+        _kwargs['image_ref'] = image_ref
+    if image_target is not _UNSET:
+        _kwargs['image_target'] = image_target
+    if method is not _UNSET:
+        _kwargs['method'] = method
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if multithread is not _UNSET:
+        _kwargs['multithread'] = multithread
     _kwargs.update(_extras)
-    return node(wf, 'ColorMatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ColorMatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def DrawMaskOnImage(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    mask: Any,
-    color: Any = '0, 0, 0',
-    device: Any = 'cpu',
+    _id: str | None = None,
+    image: Any = _UNSET,
+    mask: Any = _UNSET,
+    color: Any = _UNSET,
+    device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -159,17 +191,22 @@ def DrawMaskOnImage(
     Returns: images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['mask'] = mask
-    _kwargs['color'] = color
-    _kwargs['device'] = device
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
+    if color is not _UNSET:
+        _kwargs['color'] = color
+    if device is not _UNSET:
+        _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'DrawMaskOnImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DrawMaskOnImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImageSizeAndCount(
     wf: VibeWorkflow,
     *,
-    image: Any,
+    _id: str | None = None,
+    image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -181,15 +218,17 @@ def GetImageSizeAndCount(
     Returns: image, width, height, count
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
+    if image is not _UNSET:
+        _kwargs['image'] = image
     _kwargs.update(_extras)
-    return node(wf, 'GetImageSizeAndCount', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GetImageSizeAndCount', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImagesFromBatchIndexed(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    indexes: Any = '0, 1, 2',
+    _id: str | None = None,
+    images: Any = _UNSET,
+    indexes: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -200,15 +239,18 @@ def GetImagesFromBatchIndexed(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['indexes'] = indexes
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if indexes is not _UNSET:
+        _kwargs['indexes'] = indexes
     _kwargs.update(_extras)
-    return node(wf, 'GetImagesFromBatchIndexed', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GetImagesFromBatchIndexed', _id, pass_raw=pass_raw, **_kwargs)
 
 def INTConstant(
     wf: VibeWorkflow,
     *,
-    value: Any = 0,
+    _id: str | None = None,
+    value: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -219,17 +261,19 @@ def INTConstant(
     Returns: value
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['value'] = value
+    if value is not _UNSET:
+        _kwargs['value'] = value
     _kwargs.update(_extras)
-    return node(wf, 'INTConstant', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'INTConstant', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBatchExtendWithOverlap(
     wf: VibeWorkflow,
     *,
-    source_images: Any,
-    overlap: Any = 13,
-    overlap_side: Any = 'source',
-    overlap_mode: Any = 'linear_blend',
+    _id: str | None = None,
+    source_images: Any = _UNSET,
+    overlap: Any = _UNSET,
+    overlap_side: Any = _UNSET,
+    overlap_mode: Any = _UNSET,
     new_images: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -243,20 +287,25 @@ def ImageBatchExtendWithOverlap(
     Returns: source_images, start_images, extended_images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['source_images'] = source_images
-    _kwargs['overlap'] = overlap
-    _kwargs['overlap_side'] = overlap_side
-    _kwargs['overlap_mode'] = overlap_mode
+    if source_images is not _UNSET:
+        _kwargs['source_images'] = source_images
+    if overlap is not _UNSET:
+        _kwargs['overlap'] = overlap
+    if overlap_side is not _UNSET:
+        _kwargs['overlap_side'] = overlap_side
+    if overlap_mode is not _UNSET:
+        _kwargs['overlap_mode'] = overlap_mode
     if new_images is not _UNSET:
         _kwargs['new_images'] = new_images
     _kwargs.update(_extras)
-    return node(wf, 'ImageBatchExtendWithOverlap', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageBatchExtendWithOverlap', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBatchMulti(
     wf: VibeWorkflow,
     *,
-    image_1: Any,
-    inputcount: Any = 2,
+    _id: str | None = None,
+    inputcount: Any = _UNSET,
+    image_1: Any = _UNSET,
     image_2: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -270,20 +319,23 @@ def ImageBatchMulti(
     Returns: images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image_1'] = image_1
-    _kwargs['inputcount'] = inputcount
+    if inputcount is not _UNSET:
+        _kwargs['inputcount'] = inputcount
+    if image_1 is not _UNSET:
+        _kwargs['image_1'] = image_1
     if image_2 is not _UNSET:
         _kwargs['image_2'] = image_2
     _kwargs.update(_extras)
-    return node(wf, 'ImageBatchMulti', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageBatchMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageConcatMulti(
     wf: VibeWorkflow,
     *,
-    image_1: Any,
-    inputcount: Any = 2,
-    direction: Any = 'right',
-    match_image_size: Any = False,
+    _id: str | None = None,
+    inputcount: Any = _UNSET,
+    image_1: Any = _UNSET,
+    direction: Any = _UNSET,
+    match_image_size: Any = _UNSET,
     image_2: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -297,29 +349,34 @@ def ImageConcatMulti(
     Returns: images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image_1'] = image_1
-    _kwargs['inputcount'] = inputcount
-    _kwargs['direction'] = direction
-    _kwargs['match_image_size'] = match_image_size
+    if inputcount is not _UNSET:
+        _kwargs['inputcount'] = inputcount
+    if image_1 is not _UNSET:
+        _kwargs['image_1'] = image_1
+    if direction is not _UNSET:
+        _kwargs['direction'] = direction
+    if match_image_size is not _UNSET:
+        _kwargs['match_image_size'] = match_image_size
     if image_2 is not _UNSET:
         _kwargs['image_2'] = image_2
     _kwargs.update(_extras)
-    return node(wf, 'ImageConcatMulti', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageConcatMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImagePadKJ(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    pad_mode: Any,
-    left: Any = 0,
-    right: Any = 0,
-    top: Any = 0,
-    bottom: Any = 0,
-    extra_padding: Any = 0,
-    color: Any = '0, 0, 0',
+    _id: str | None = None,
+    image: Any = _UNSET,
+    left: Any = _UNSET,
+    right: Any = _UNSET,
+    top: Any = _UNSET,
+    bottom: Any = _UNSET,
+    extra_padding: Any = _UNSET,
+    pad_mode: Any = _UNSET,
+    color: Any = _UNSET,
     mask: Any = _UNSET,
-    target_width: Any = 512,
-    target_height: Any = 512,
+    target_width: Any = _UNSET,
+    target_height: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -330,30 +387,41 @@ def ImagePadKJ(
     Returns: images, masks
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['pad_mode'] = pad_mode
-    _kwargs['left'] = left
-    _kwargs['right'] = right
-    _kwargs['top'] = top
-    _kwargs['bottom'] = bottom
-    _kwargs['extra_padding'] = extra_padding
-    _kwargs['color'] = color
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if left is not _UNSET:
+        _kwargs['left'] = left
+    if right is not _UNSET:
+        _kwargs['right'] = right
+    if top is not _UNSET:
+        _kwargs['top'] = top
+    if bottom is not _UNSET:
+        _kwargs['bottom'] = bottom
+    if extra_padding is not _UNSET:
+        _kwargs['extra_padding'] = extra_padding
+    if pad_mode is not _UNSET:
+        _kwargs['pad_mode'] = pad_mode
+    if color is not _UNSET:
+        _kwargs['color'] = color
     if mask is not _UNSET:
         _kwargs['mask'] = mask
-    _kwargs['target_width'] = target_width
-    _kwargs['target_height'] = target_height
+    if target_width is not _UNSET:
+        _kwargs['target_width'] = target_width
+    if target_height is not _UNSET:
+        _kwargs['target_height'] = target_height
     _kwargs.update(_extras)
-    return node(wf, 'ImagePadKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImagePadKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageResizeKJ(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    upscale_method: Any,
-    width: Any = 512,
-    height: Any = 512,
-    keep_proportion: Any = False,
-    divisible_by: Any = 2,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    upscale_method: Any = _UNSET,
+    keep_proportion: Any = _UNSET,
+    divisible_by: Any = _UNSET,
     get_image_size: Any = _UNSET,
     crop: Any = _UNSET,
     pass_raw: bool = False,
@@ -369,30 +437,37 @@ def ImageResizeKJ(
     Returns: IMAGE, width, height
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['upscale_method'] = upscale_method
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['keep_proportion'] = keep_proportion
-    _kwargs['divisible_by'] = divisible_by
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if upscale_method is not _UNSET:
+        _kwargs['upscale_method'] = upscale_method
+    if keep_proportion is not _UNSET:
+        _kwargs['keep_proportion'] = keep_proportion
+    if divisible_by is not _UNSET:
+        _kwargs['divisible_by'] = divisible_by
     if get_image_size is not _UNSET:
         _kwargs['get_image_size'] = get_image_size
     if crop is not _UNSET:
         _kwargs['crop'] = crop
     _kwargs.update(_extras)
-    return node(wf, 'ImageResizeKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageResizeKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageResizeKJv2(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    upscale_method: Any,
-    width: Any = 512,
-    height: Any = 512,
-    keep_proportion: Any = False,
-    pad_color: Any = '0, 0, 0',
-    crop_position: Any = 'center',
-    divisible_by: Any = 2,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    upscale_method: Any = _UNSET,
+    keep_proportion: Any = _UNSET,
+    pad_color: Any = _UNSET,
+    crop_position: Any = _UNSET,
+    divisible_by: Any = _UNSET,
     mask: Any = _UNSET,
     device: Any = _UNSET,
     pass_raw: bool = False,
@@ -409,27 +484,36 @@ def ImageResizeKJv2(
     Returns: IMAGE, width, height, mask
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['upscale_method'] = upscale_method
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['keep_proportion'] = keep_proportion
-    _kwargs['pad_color'] = pad_color
-    _kwargs['crop_position'] = crop_position
-    _kwargs['divisible_by'] = divisible_by
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if upscale_method is not _UNSET:
+        _kwargs['upscale_method'] = upscale_method
+    if keep_proportion is not _UNSET:
+        _kwargs['keep_proportion'] = keep_proportion
+    if pad_color is not _UNSET:
+        _kwargs['pad_color'] = pad_color
+    if crop_position is not _UNSET:
+        _kwargs['crop_position'] = crop_position
+    if divisible_by is not _UNSET:
+        _kwargs['divisible_by'] = divisible_by
     if mask is not _UNSET:
         _kwargs['mask'] = mask
     if device is not _UNSET:
         _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'ImageResizeKJv2', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageResizeKJv2', _id, pass_raw=pass_raw, **_kwargs)
 
 def InsertLatentToIndexed(
     wf: VibeWorkflow,
     *,
-    source: Any,
-    destination: Any,
-    index: Any = 0,
+    _id: str | None = None,
+    source: Any = _UNSET,
+    destination: Any = _UNSET,
+    index: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -440,22 +524,26 @@ def InsertLatentToIndexed(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['source'] = source
-    _kwargs['destination'] = destination
-    _kwargs['index'] = index
+    if source is not _UNSET:
+        _kwargs['source'] = source
+    if destination is not _UNSET:
+        _kwargs['destination'] = destination
+    if index is not _UNSET:
+        _kwargs['index'] = index
     _kwargs.update(_extras)
-    return node(wf, 'InsertLatentToIndexed', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'InsertLatentToIndexed', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTX2AttentionTunerPatch(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    blocks: Any = '',
-    video_scale: Any = 1.0,
-    audio_scale: Any = 1.0,
-    audio_to_video_scale: Any = 1.0,
-    video_to_audio_scale: Any = 1.0,
-    triton_kernels: Any = True,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    blocks: Any = _UNSET,
+    video_scale: Any = _UNSET,
+    audio_scale: Any = _UNSET,
+    audio_to_video_scale: Any = _UNSET,
+    video_to_audio_scale: Any = _UNSET,
+    triton_kernels: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -466,21 +554,29 @@ def LTX2AttentionTunerPatch(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['blocks'] = blocks
-    _kwargs['video_scale'] = video_scale
-    _kwargs['audio_scale'] = audio_scale
-    _kwargs['audio_to_video_scale'] = audio_to_video_scale
-    _kwargs['video_to_audio_scale'] = video_to_audio_scale
-    _kwargs['triton_kernels'] = triton_kernels
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if blocks is not _UNSET:
+        _kwargs['blocks'] = blocks
+    if video_scale is not _UNSET:
+        _kwargs['video_scale'] = video_scale
+    if audio_scale is not _UNSET:
+        _kwargs['audio_scale'] = audio_scale
+    if audio_to_video_scale is not _UNSET:
+        _kwargs['audio_to_video_scale'] = audio_to_video_scale
+    if video_to_audio_scale is not _UNSET:
+        _kwargs['video_to_audio_scale'] = video_to_audio_scale
+    if triton_kernels is not _UNSET:
+        _kwargs['triton_kernels'] = triton_kernels
     _kwargs.update(_extras)
-    return node(wf, 'LTX2AttentionTunerPatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTX2AttentionTunerPatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTX2MemoryEfficientSageAttentionPatch(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    triton_kernels: Any = True,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    triton_kernels: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -491,21 +587,24 @@ def LTX2MemoryEfficientSageAttentionPatch(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['triton_kernels'] = triton_kernels
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if triton_kernels is not _UNSET:
+        _kwargs['triton_kernels'] = triton_kernels
     _kwargs.update(_extras)
-    return node(wf, 'LTX2MemoryEfficientSageAttentionPatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTX2MemoryEfficientSageAttentionPatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTX2_NAG(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    nag_scale: Any = 11.0,
-    nag_alpha: Any = 0.25,
-    nag_tau: Any = 2.5,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    nag_scale: Any = _UNSET,
+    nag_alpha: Any = _UNSET,
+    nag_tau: Any = _UNSET,
     nag_cond_video: Any = _UNSET,
     nag_cond_audio: Any = _UNSET,
-    inplace: Any = True,
+    inplace: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -516,30 +615,36 @@ def LTX2_NAG(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['nag_scale'] = nag_scale
-    _kwargs['nag_alpha'] = nag_alpha
-    _kwargs['nag_tau'] = nag_tau
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if nag_scale is not _UNSET:
+        _kwargs['nag_scale'] = nag_scale
+    if nag_alpha is not _UNSET:
+        _kwargs['nag_alpha'] = nag_alpha
+    if nag_tau is not _UNSET:
+        _kwargs['nag_tau'] = nag_tau
     if nag_cond_video is not _UNSET:
         _kwargs['nag_cond_video'] = nag_cond_video
     if nag_cond_audio is not _UNSET:
         _kwargs['nag_cond_audio'] = nag_cond_audio
-    _kwargs['inplace'] = inplace
+    if inplace is not _UNSET:
+        _kwargs['inplace'] = inplace
     _kwargs.update(_extras)
-    return node(wf, 'LTX2_NAG', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTX2_NAG', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVideoMask(
     wf: VibeWorkflow,
     *,
-    video_fps: Any = 25,
-    video_start_time: Any = 0.0,
-    video_end_time: Any = 5.0,
-    audio_start_time: Any = 0.0,
-    audio_end_time: Any = 5.0,
-    max_length: Any = 'truncate',
+    _id: str | None = None,
+    video_fps: Any = _UNSET,
+    video_start_time: Any = _UNSET,
+    video_end_time: Any = _UNSET,
+    audio_start_time: Any = _UNSET,
+    audio_end_time: Any = _UNSET,
+    max_length: Any = _UNSET,
     video_latent: Any = _UNSET,
     audio_latent: Any = _UNSET,
-    existing_mask_mode: Any = 'add',
+    existing_mask_mode: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -550,26 +655,34 @@ def LTXVAudioVideoMask(
     Returns: video_latent, audio_latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video_fps'] = video_fps
-    _kwargs['video_start_time'] = video_start_time
-    _kwargs['video_end_time'] = video_end_time
-    _kwargs['audio_start_time'] = audio_start_time
-    _kwargs['audio_end_time'] = audio_end_time
-    _kwargs['max_length'] = max_length
+    if video_fps is not _UNSET:
+        _kwargs['video_fps'] = video_fps
+    if video_start_time is not _UNSET:
+        _kwargs['video_start_time'] = video_start_time
+    if video_end_time is not _UNSET:
+        _kwargs['video_end_time'] = video_end_time
+    if audio_start_time is not _UNSET:
+        _kwargs['audio_start_time'] = audio_start_time
+    if audio_end_time is not _UNSET:
+        _kwargs['audio_end_time'] = audio_end_time
+    if max_length is not _UNSET:
+        _kwargs['max_length'] = max_length
     if video_latent is not _UNSET:
         _kwargs['video_latent'] = video_latent
     if audio_latent is not _UNSET:
         _kwargs['audio_latent'] = audio_latent
-    _kwargs['existing_mask_mode'] = existing_mask_mode
+    if existing_mask_mode is not _UNSET:
+        _kwargs['existing_mask_mode'] = existing_mask_mode
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAudioVideoMask', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAudioVideoMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVChunkFeedForward(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    chunks: Any = 2,
-    dim_threshold: Any = 4096,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    chunks: Any = _UNSET,
+    dim_threshold: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -580,18 +693,22 @@ def LTXVChunkFeedForward(
     Returns: model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['chunks'] = chunks
-    _kwargs['dim_threshold'] = dim_threshold
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if chunks is not _UNSET:
+        _kwargs['chunks'] = chunks
+    if dim_threshold is not _UNSET:
+        _kwargs['dim_threshold'] = dim_threshold
     _kwargs.update(_extras)
-    return node(wf, 'LTXVChunkFeedForward', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVChunkFeedForward', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVImgToVideoInplaceKJ(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    latent: Any,
-    num_images: Any,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    latent: Any = _UNSET,
+    num_images: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -602,18 +719,22 @@ def LTXVImgToVideoInplaceKJ(
     Returns: latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['latent'] = latent
-    _kwargs['num_images'] = num_images
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if num_images is not _UNSET:
+        _kwargs['num_images'] = num_images
     _kwargs.update(_extras)
-    return node(wf, 'LTXVImgToVideoInplaceKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVImgToVideoInplaceKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def LazySwitchKJ(
     wf: VibeWorkflow,
     *,
-    switch: Any,
-    on_false: Any,
-    on_true: Any,
+    _id: str | None = None,
+    switch: Any = _UNSET,
+    on_false: Any = _UNSET,
+    on_true: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -624,25 +745,29 @@ def LazySwitchKJ(
     Returns: *
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['switch'] = switch
-    _kwargs['on_false'] = on_false
-    _kwargs['on_true'] = on_true
+    if switch is not _UNSET:
+        _kwargs['switch'] = switch
+    if on_false is not _UNSET:
+        _kwargs['on_false'] = on_false
+    if on_true is not _UNSET:
+        _kwargs['on_true'] = on_true
     _kwargs.update(_extras)
-    return node(wf, 'LazySwitchKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LazySwitchKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadVideosFromFolder(
     wf: VibeWorkflow,
     *,
-    video: Any = 'X://insert/path/',
-    force_rate: Any = 0,
-    custom_width: Any = 0,
-    custom_height: Any = 0,
-    frame_load_cap: Any = 0,
-    skip_first_frames: Any = 0,
-    select_every_nth: Any = 1,
-    output_type: Any = 'batch',
-    grid_max_columns: Any = 4,
-    add_label: Any = False,
+    _id: str | None = None,
+    video: Any = _UNSET,
+    force_rate: Any = _UNSET,
+    custom_width: Any = _UNSET,
+    custom_height: Any = _UNSET,
+    frame_load_cap: Any = _UNSET,
+    skip_first_frames: Any = _UNSET,
+    select_every_nth: Any = _UNSET,
+    output_type: Any = _UNSET,
+    grid_max_columns: Any = _UNSET,
+    add_label: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -653,25 +778,36 @@ def LoadVideosFromFolder(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
-    _kwargs['force_rate'] = force_rate
-    _kwargs['custom_width'] = custom_width
-    _kwargs['custom_height'] = custom_height
-    _kwargs['frame_load_cap'] = frame_load_cap
-    _kwargs['skip_first_frames'] = skip_first_frames
-    _kwargs['select_every_nth'] = select_every_nth
-    _kwargs['output_type'] = output_type
-    _kwargs['grid_max_columns'] = grid_max_columns
-    _kwargs['add_label'] = add_label
+    if video is not _UNSET:
+        _kwargs['video'] = video
+    if force_rate is not _UNSET:
+        _kwargs['force_rate'] = force_rate
+    if custom_width is not _UNSET:
+        _kwargs['custom_width'] = custom_width
+    if custom_height is not _UNSET:
+        _kwargs['custom_height'] = custom_height
+    if frame_load_cap is not _UNSET:
+        _kwargs['frame_load_cap'] = frame_load_cap
+    if skip_first_frames is not _UNSET:
+        _kwargs['skip_first_frames'] = skip_first_frames
+    if select_every_nth is not _UNSET:
+        _kwargs['select_every_nth'] = select_every_nth
+    if output_type is not _UNSET:
+        _kwargs['output_type'] = output_type
+    if grid_max_columns is not _UNSET:
+        _kwargs['grid_max_columns'] = grid_max_columns
+    if add_label is not _UNSET:
+        _kwargs['add_label'] = add_label
     _kwargs.update(_extras)
-    return node(wf, 'LoadVideosFromFolder', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoadVideosFromFolder', _id, pass_raw=pass_raw, **_kwargs)
 
 def PathchSageAttentionKJ(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    sage_attention: Any = False,
-    allow_compile: Any = False,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    sage_attention: Any = _UNSET,
+    allow_compile: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -682,24 +818,28 @@ def PathchSageAttentionKJ(
     Returns: MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['sage_attention'] = sage_attention
-    _kwargs['allow_compile'] = allow_compile
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if sage_attention is not _UNSET:
+        _kwargs['sage_attention'] = sage_attention
+    if allow_compile is not _UNSET:
+        _kwargs['allow_compile'] = allow_compile
     _kwargs.update(_extras)
-    return node(wf, 'PathchSageAttentionKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PathchSageAttentionKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def PointsEditor(
     wf: VibeWorkflow,
     *,
-    points_store: Any,
-    coordinates: Any,
-    neg_coordinates: Any,
-    bbox_store: Any,
-    bboxes: Any,
-    bbox_format: Any,
-    width: Any = 512,
-    height: Any = 512,
-    normalize: Any = False,
+    _id: str | None = None,
+    points_store: Any = _UNSET,
+    coordinates: Any = _UNSET,
+    neg_coordinates: Any = _UNSET,
+    bbox_store: Any = _UNSET,
+    bboxes: Any = _UNSET,
+    bbox_format: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    normalize: Any = _UNSET,
     bg_image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -729,24 +869,34 @@ def PointsEditor(
     Returns: positive_coords, negative_coords, bbox, bbox_mask, cropped_image
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['points_store'] = points_store
-    _kwargs['coordinates'] = coordinates
-    _kwargs['neg_coordinates'] = neg_coordinates
-    _kwargs['bbox_store'] = bbox_store
-    _kwargs['bboxes'] = bboxes
-    _kwargs['bbox_format'] = bbox_format
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['normalize'] = normalize
+    if points_store is not _UNSET:
+        _kwargs['points_store'] = points_store
+    if coordinates is not _UNSET:
+        _kwargs['coordinates'] = coordinates
+    if neg_coordinates is not _UNSET:
+        _kwargs['neg_coordinates'] = neg_coordinates
+    if bbox_store is not _UNSET:
+        _kwargs['bbox_store'] = bbox_store
+    if bboxes is not _UNSET:
+        _kwargs['bboxes'] = bboxes
+    if bbox_format is not _UNSET:
+        _kwargs['bbox_format'] = bbox_format
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if normalize is not _UNSET:
+        _kwargs['normalize'] = normalize
     if bg_image is not _UNSET:
         _kwargs['bg_image'] = bg_image
     _kwargs.update(_extras)
-    return node(wf, 'PointsEditor', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PointsEditor', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewAnimation(
     wf: VibeWorkflow,
     *,
-    fps: Any = 8.0,
+    _id: str | None = None,
+    fps: Any = _UNSET,
     images: Any = _UNSET,
     masks: Any = _UNSET,
     pass_raw: bool = False,
@@ -759,19 +909,21 @@ def PreviewAnimation(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['fps'] = fps
+    if fps is not _UNSET:
+        _kwargs['fps'] = fps
     if images is not _UNSET:
         _kwargs['images'] = images
     if masks is not _UNSET:
         _kwargs['masks'] = masks
     _kwargs.update(_extras)
-    return node(wf, 'PreviewAnimation', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PreviewAnimation', _id, pass_raw=pass_raw, **_kwargs)
 
 def SimpleCalculatorKJ(
     wf: VibeWorkflow,
     *,
-    variables: Any,
-    expression: Any = 'a + b',
+    _id: str | None = None,
+    expression: Any = _UNSET,
+    variables: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -787,26 +939,29 @@ def SimpleCalculatorKJ(
     Returns: FLOAT, INT, BOOLEAN
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['variables'] = variables
-    _kwargs['expression'] = expression
+    if expression is not _UNSET:
+        _kwargs['expression'] = expression
+    if variables is not _UNSET:
+        _kwargs['variables'] = variables
     _kwargs.update(_extras)
-    return node(wf, 'SimpleCalculatorKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SimpleCalculatorKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def SplineEditor(
     wf: VibeWorkflow,
     *,
-    points_store: Any,
-    coordinates: Any,
-    mask_width: Any = 512,
-    mask_height: Any = 512,
-    points_to_sample: Any = 16,
-    sampling_method: Any = 'time',
-    interpolation: Any = 'cardinal',
-    tension: Any = 0.5,
-    repeat_output: Any = 1,
-    float_output_type: Any = 'list',
-    min_value: Any = 0.0,
-    max_value: Any = 1.0,
+    _id: str | None = None,
+    points_store: Any = _UNSET,
+    coordinates: Any = _UNSET,
+    mask_width: Any = _UNSET,
+    mask_height: Any = _UNSET,
+    points_to_sample: Any = _UNSET,
+    sampling_method: Any = _UNSET,
+    interpolation: Any = _UNSET,
+    tension: Any = _UNSET,
+    repeat_output: Any = _UNSET,
+    float_output_type: Any = _UNSET,
+    min_value: Any = _UNSET,
+    max_value: Any = _UNSET,
     bg_image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -863,29 +1018,42 @@ def SplineEditor(
     Returns: mask, coord_str, float, count, normalized_str
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['points_store'] = points_store
-    _kwargs['coordinates'] = coordinates
-    _kwargs['mask_width'] = mask_width
-    _kwargs['mask_height'] = mask_height
-    _kwargs['points_to_sample'] = points_to_sample
-    _kwargs['sampling_method'] = sampling_method
-    _kwargs['interpolation'] = interpolation
-    _kwargs['tension'] = tension
-    _kwargs['repeat_output'] = repeat_output
-    _kwargs['float_output_type'] = float_output_type
-    _kwargs['min_value'] = min_value
-    _kwargs['max_value'] = max_value
+    if points_store is not _UNSET:
+        _kwargs['points_store'] = points_store
+    if coordinates is not _UNSET:
+        _kwargs['coordinates'] = coordinates
+    if mask_width is not _UNSET:
+        _kwargs['mask_width'] = mask_width
+    if mask_height is not _UNSET:
+        _kwargs['mask_height'] = mask_height
+    if points_to_sample is not _UNSET:
+        _kwargs['points_to_sample'] = points_to_sample
+    if sampling_method is not _UNSET:
+        _kwargs['sampling_method'] = sampling_method
+    if interpolation is not _UNSET:
+        _kwargs['interpolation'] = interpolation
+    if tension is not _UNSET:
+        _kwargs['tension'] = tension
+    if repeat_output is not _UNSET:
+        _kwargs['repeat_output'] = repeat_output
+    if float_output_type is not _UNSET:
+        _kwargs['float_output_type'] = float_output_type
+    if min_value is not _UNSET:
+        _kwargs['min_value'] = min_value
+    if max_value is not _UNSET:
+        _kwargs['max_value'] = max_value
     if bg_image is not _UNSET:
         _kwargs['bg_image'] = bg_image
     _kwargs.update(_extras)
-    return node(wf, 'SplineEditor', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SplineEditor', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAELoaderKJ(
     wf: VibeWorkflow,
     *,
-    vae_name: Any,
-    device: Any,
-    weight_dtype: Any,
+    _id: str | None = None,
+    vae_name: Any = _UNSET,
+    device: Any = _UNSET,
+    weight_dtype: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -896,18 +1064,22 @@ def VAELoaderKJ(
     Returns: VAE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae_name'] = vae_name
-    _kwargs['device'] = device
-    _kwargs['weight_dtype'] = weight_dtype
+    if vae_name is not _UNSET:
+        _kwargs['vae_name'] = vae_name
+    if device is not _UNSET:
+        _kwargs['device'] = device
+    if weight_dtype is not _UNSET:
+        _kwargs['weight_dtype'] = weight_dtype
     _kwargs.update(_extras)
-    return node(wf, 'VAELoaderKJ', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VAELoaderKJ', _id, pass_raw=pass_raw, **_kwargs)
 
 def VRAM_Debug(
     wf: VibeWorkflow,
     *,
-    empty_cache: Any = True,
-    gc_collect: Any = True,
-    unload_all_models: Any = False,
+    _id: str | None = None,
+    empty_cache: Any = _UNSET,
+    gc_collect: Any = _UNSET,
+    unload_all_models: Any = _UNSET,
     any_input: Any = _UNSET,
     image_pass: Any = _UNSET,
     model_pass: Any = _UNSET,
@@ -923,9 +1095,12 @@ def VRAM_Debug(
     Returns: any_output, image_pass, model_pass, freemem_before, freemem_after
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['empty_cache'] = empty_cache
-    _kwargs['gc_collect'] = gc_collect
-    _kwargs['unload_all_models'] = unload_all_models
+    if empty_cache is not _UNSET:
+        _kwargs['empty_cache'] = empty_cache
+    if gc_collect is not _UNSET:
+        _kwargs['gc_collect'] = gc_collect
+    if unload_all_models is not _UNSET:
+        _kwargs['unload_all_models'] = unload_all_models
     if any_input is not _UNSET:
         _kwargs['any_input'] = any_input
     if image_pass is not _UNSET:
@@ -933,17 +1108,18 @@ def VRAM_Debug(
     if model_pass is not _UNSET:
         _kwargs['model_pass'] = model_pass
     _kwargs.update(_extras)
-    return node(wf, 'VRAM_Debug', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VRAM_Debug', _id, pass_raw=pass_raw, **_kwargs)
 
 def WidgetToString(
     wf: VibeWorkflow,
     *,
-    widget_name: Any,
-    id: Any = 0,
-    return_all: Any = False,
+    _id: str | None = None,
+    id: Any = _UNSET,
+    widget_name: Any = _UNSET,
+    return_all: Any = _UNSET,
     any_input: Any = _UNSET,
     node_title: Any = _UNSET,
-    allowed_float_decimals: Any = 2,
+    allowed_float_decimals: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -960,15 +1136,19 @@ def WidgetToString(
     Returns: STRING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['widget_name'] = widget_name
-    _kwargs['id'] = id
-    _kwargs['return_all'] = return_all
+    if id is not _UNSET:
+        _kwargs['id'] = id
+    if widget_name is not _UNSET:
+        _kwargs['widget_name'] = widget_name
+    if return_all is not _UNSET:
+        _kwargs['return_all'] = return_all
     if any_input is not _UNSET:
         _kwargs['any_input'] = any_input
     if node_title is not _UNSET:
         _kwargs['node_title'] = node_title
-    _kwargs['allowed_float_decimals'] = allowed_float_decimals
+    if allowed_float_decimals is not _UNSET:
+        _kwargs['allowed_float_decimals'] = allowed_float_decimals
     _kwargs.update(_extras)
-    return node(wf, 'WidgetToString', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WidgetToString', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['AddLabel', 'BlockifyMask', 'CameraPoseVisualizer', 'ColorMatch', 'DrawMaskOnImage', 'GetImageSizeAndCount', 'GetImagesFromBatchIndexed', 'INTConstant', 'ImageBatchExtendWithOverlap', 'ImageBatchMulti', 'ImageConcatMulti', 'ImagePadKJ', 'ImageResizeKJ', 'ImageResizeKJv2', 'InsertLatentToIndexed', 'LTX2AttentionTunerPatch', 'LTX2MemoryEfficientSageAttentionPatch', 'LTX2_NAG', 'LTXVAudioVideoMask', 'LTXVChunkFeedForward', 'LTXVImgToVideoInplaceKJ', 'LazySwitchKJ', 'LoadVideosFromFolder', 'PathchSageAttentionKJ', 'PointsEditor', 'PreviewAnimation', 'SimpleCalculatorKJ', 'SplineEditor', 'VAELoaderKJ', 'VRAM_Debug', 'WidgetToString']

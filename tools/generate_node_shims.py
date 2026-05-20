@@ -185,6 +185,7 @@ def _render_wrapper(function_name: str, class_type: str, entry: dict[str, Any]) 
     description = str(entry.get("description") or entry.get("display_name") or "").strip()
 
     lines = [f"def {function_name}(", "    wf: VibeWorkflow,", "    *,"]
+    lines.append("    _id: str | None = None,")
     for param in params:
         default = param["default"]
         default_text = "" if default is _NO_DEFAULT else f" = {_default_repr(default)}"
@@ -211,7 +212,7 @@ def _render_wrapper(function_name: str, class_type: str, entry: dict[str, Any]) 
         else:
             lines.append(f"    _kwargs[{original!r}] = {name}")
     lines.append("    _kwargs.update(_extras)")
-    lines.append(f"    return node(wf, {class_type!r}, pass_raw=pass_raw, **_kwargs)")
+    lines.append(f"    return node(wf, {class_type!r}, _id, pass_raw=pass_raw, **_kwargs)")
     return lines
 
 
@@ -254,14 +255,11 @@ def _input_specs(class_type: str, entry: dict[str, Any]) -> list[dict[str, Any]]
         param_name = _unique_name(_identifier(original), used_param_names)
         used_param_names.add(param_name)
         metadata = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
-        if "default" in metadata:
-            default: Any = metadata["default"]
-        elif original in CURATED_DEFAULTS.get(class_type, {}):
-            default = CURATED_DEFAULTS[class_type][original]
-        elif original in optional_names:
-            default = _UNSET_DEFAULT
-        else:
-            default = _NO_DEFAULT
+        # Keep wrappers thin: schema defaults are useful documentation, but
+        # generated templates omit them for canonical parity. Omitted wrapper
+        # kwargs must therefore stay omitted instead of being reintroduced by
+        # the convenience layer.
+        default = _UNSET_DEFAULT
         params.append({"original": original, "name": param_name, "default": default})
     return params
 

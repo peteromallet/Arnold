@@ -14,10 +14,11 @@ _UNSET = object()
 def GemmaAPITextEncode(
     wf: VibeWorkflow,
     *,
-    ckpt_name: Any,
-    api_key: Any = '',
-    prompt: Any = '',
-    enhance_prompt: Any = True,
+    _id: str | None = None,
+    api_key: Any = _UNSET,
+    prompt: Any = _UNSET,
+    enhance_prompt: Any = _UNSET,
+    ckpt_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -28,25 +29,30 @@ def GemmaAPITextEncode(
     Returns: conditioning
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['ckpt_name'] = ckpt_name
-    _kwargs['api_key'] = api_key
-    _kwargs['prompt'] = prompt
-    _kwargs['enhance_prompt'] = enhance_prompt
+    if api_key is not _UNSET:
+        _kwargs['api_key'] = api_key
+    if prompt is not _UNSET:
+        _kwargs['prompt'] = prompt
+    if enhance_prompt is not _UNSET:
+        _kwargs['enhance_prompt'] = enhance_prompt
+    if ckpt_name is not _UNSET:
+        _kwargs['ckpt_name'] = ckpt_name
     _kwargs.update(_extras)
-    return node(wf, 'GemmaAPITextEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GemmaAPITextEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def GuiderParameters(
     wf: VibeWorkflow,
     *,
-    modality: Any = 'VIDEO',
-    cfg: Any = 1.0,
-    stg: Any = 1.0,
-    perturb_attn: Any = True,
-    rescale: Any = 0.7,
-    modality_scale: Any = 0.0,
-    skip_step: Any = 0,
-    cross_attn: Any = True,
-    parameters: Any = None,
+    _id: str | None = None,
+    modality: Any = _UNSET,
+    cfg: Any = _UNSET,
+    stg: Any = _UNSET,
+    perturb_attn: Any = _UNSET,
+    rescale: Any = _UNSET,
+    modality_scale: Any = _UNSET,
+    skip_step: Any = _UNSET,
+    cross_attn: Any = _UNSET,
+    parameters: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -57,33 +63,43 @@ def GuiderParameters(
     Returns: GUIDER_PARAMETERS
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['modality'] = modality
-    _kwargs['cfg'] = cfg
-    _kwargs['stg'] = stg
-    _kwargs['perturb_attn'] = perturb_attn
-    _kwargs['rescale'] = rescale
-    _kwargs['modality_scale'] = modality_scale
-    _kwargs['skip_step'] = skip_step
-    _kwargs['cross_attn'] = cross_attn
-    _kwargs['parameters'] = parameters
+    if modality is not _UNSET:
+        _kwargs['modality'] = modality
+    if cfg is not _UNSET:
+        _kwargs['cfg'] = cfg
+    if stg is not _UNSET:
+        _kwargs['stg'] = stg
+    if perturb_attn is not _UNSET:
+        _kwargs['perturb_attn'] = perturb_attn
+    if rescale is not _UNSET:
+        _kwargs['rescale'] = rescale
+    if modality_scale is not _UNSET:
+        _kwargs['modality_scale'] = modality_scale
+    if skip_step is not _UNSET:
+        _kwargs['skip_step'] = skip_step
+    if cross_attn is not _UNSET:
+        _kwargs['cross_attn'] = cross_attn
+    if parameters is not _UNSET:
+        _kwargs['parameters'] = parameters
     _kwargs.update(_extras)
-    return node(wf, 'GuiderParameters', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GuiderParameters', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXAddVideoICLoRAGuide(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    vae: Any,
-    latent: Any,
-    image: Any,
-    frame_idx: Any = 0,
-    strength: Any = 1.0,
-    latent_downscale_factor: Any = 1.0,
-    crop: Any = 'disabled',
-    use_tiled_encode: Any = False,
-    tile_size: Any = 256,
-    tile_overlap: Any = 64,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    vae: Any = _UNSET,
+    latent: Any = _UNSET,
+    image: Any = _UNSET,
+    frame_idx: Any = _UNSET,
+    strength: Any = _UNSET,
+    latent_downscale_factor: Any = _UNSET,
+    crop: Any = _UNSET,
+    use_tiled_encode: Any = _UNSET,
+    tile_size: Any = _UNSET,
+    tile_overlap: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -94,25 +110,38 @@ def LTXAddVideoICLoRAGuide(
     Returns: positive, negative, latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['vae'] = vae
-    _kwargs['latent'] = latent
-    _kwargs['image'] = image
-    _kwargs['frame_idx'] = frame_idx
-    _kwargs['strength'] = strength
-    _kwargs['latent_downscale_factor'] = latent_downscale_factor
-    _kwargs['crop'] = crop
-    _kwargs['use_tiled_encode'] = use_tiled_encode
-    _kwargs['tile_size'] = tile_size
-    _kwargs['tile_overlap'] = tile_overlap
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if frame_idx is not _UNSET:
+        _kwargs['frame_idx'] = frame_idx
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if latent_downscale_factor is not _UNSET:
+        _kwargs['latent_downscale_factor'] = latent_downscale_factor
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
+    if use_tiled_encode is not _UNSET:
+        _kwargs['use_tiled_encode'] = use_tiled_encode
+    if tile_size is not _UNSET:
+        _kwargs['tile_size'] = tile_size
+    if tile_overlap is not _UNSET:
+        _kwargs['tile_overlap'] = tile_overlap
     _kwargs.update(_extras)
-    return node(wf, 'LTXAddVideoICLoRAGuide', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXAddVideoICLoRAGuide', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXFloatToInt(
     wf: VibeWorkflow,
     *,
-    a: Any = 0.0,
+    _id: str | None = None,
+    a: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -123,16 +152,18 @@ def LTXFloatToInt(
     Returns: INT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['a'] = a
+    if a is not _UNSET:
+        _kwargs['a'] = a
     _kwargs.update(_extras)
-    return node(wf, 'LTXFloatToInt', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXFloatToInt', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXICLoRALoaderModelOnly(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    lora_name: Any,
-    strength_model: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    lora_name: Any = _UNSET,
+    strength_model: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -143,22 +174,26 @@ def LTXICLoRALoaderModelOnly(
     Returns: model, latent_downscale_factor
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['lora_name'] = lora_name
-    _kwargs['strength_model'] = strength_model
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if lora_name is not _UNSET:
+        _kwargs['lora_name'] = lora_name
+    if strength_model is not _UNSET:
+        _kwargs['strength_model'] = strength_model
     _kwargs.update(_extras)
-    return node(wf, 'LTXICLoRALoaderModelOnly', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXICLoRALoaderModelOnly', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAddLatentGuide(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    positive: Any,
-    negative: Any,
-    latent: Any,
-    guiding_latent: Any,
-    latent_idx: Any = 0,
-    strength: Any = 1.0,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    latent: Any = _UNSET,
+    guiding_latent: Any = _UNSET,
+    latent_idx: Any = _UNSET,
+    strength: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -169,22 +204,30 @@ def LTXVAddLatentGuide(
     Returns: positive, negative, latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['latent'] = latent
-    _kwargs['guiding_latent'] = guiding_latent
-    _kwargs['latent_idx'] = latent_idx
-    _kwargs['strength'] = strength
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if guiding_latent is not _UNSET:
+        _kwargs['guiding_latent'] = guiding_latent
+    if latent_idx is not _UNSET:
+        _kwargs['latent_idx'] = latent_idx
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAddLatentGuide', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAddLatentGuide', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVGemmaCLIPModelLoader(
     wf: VibeWorkflow,
     *,
-    gemma_path: Any,
-    ltxv_path: Any,
-    max_length: Any = 1024,
+    _id: str | None = None,
+    gemma_path: Any = _UNSET,
+    ltxv_path: Any = _UNSET,
+    max_length: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -195,21 +238,25 @@ def LTXVGemmaCLIPModelLoader(
     Returns: clip
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['gemma_path'] = gemma_path
-    _kwargs['ltxv_path'] = ltxv_path
-    _kwargs['max_length'] = max_length
+    if gemma_path is not _UNSET:
+        _kwargs['gemma_path'] = gemma_path
+    if ltxv_path is not _UNSET:
+        _kwargs['ltxv_path'] = ltxv_path
+    if max_length is not _UNSET:
+        _kwargs['max_length'] = max_length
     _kwargs.update(_extras)
-    return node(wf, 'LTXVGemmaCLIPModelLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVGemmaCLIPModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVHDRDecodePostprocess(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    exposure: Any = 0.0,
-    save_exr: Any = False,
-    output_dir: Any = 'output/hdr_exr',
-    filename_prefix: Any = 'frame',
-    half_precision: Any = True,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    exposure: Any = _UNSET,
+    save_exr: Any = _UNSET,
+    output_dir: Any = _UNSET,
+    filename_prefix: Any = _UNSET,
+    half_precision: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -220,23 +267,30 @@ def LTXVHDRDecodePostprocess(
     Returns: tonemapped, hdr_linear
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['exposure'] = exposure
-    _kwargs['save_exr'] = save_exr
-    _kwargs['output_dir'] = output_dir
-    _kwargs['filename_prefix'] = filename_prefix
-    _kwargs['half_precision'] = half_precision
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if exposure is not _UNSET:
+        _kwargs['exposure'] = exposure
+    if save_exr is not _UNSET:
+        _kwargs['save_exr'] = save_exr
+    if output_dir is not _UNSET:
+        _kwargs['output_dir'] = output_dir
+    if filename_prefix is not _UNSET:
+        _kwargs['filename_prefix'] = filename_prefix
+    if half_precision is not _UNSET:
+        _kwargs['half_precision'] = half_precision
     _kwargs.update(_extras)
-    return node(wf, 'LTXVHDRDecodePostprocess', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVHDRDecodePostprocess', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVImgToVideoConditionOnly(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    image: Any,
-    latent: Any,
-    strength: Any = 1.0,
-    bypass: Any = False,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    image: Any = _UNSET,
+    latent: Any = _UNSET,
+    strength: Any = _UNSET,
+    bypass: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -247,26 +301,32 @@ def LTXVImgToVideoConditionOnly(
     Returns: latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['image'] = image
-    _kwargs['latent'] = latent
-    _kwargs['strength'] = strength
-    _kwargs['bypass'] = bypass
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if bypass is not _UNSET:
+        _kwargs['bypass'] = bypass
     _kwargs.update(_extras)
-    return node(wf, 'LTXVImgToVideoConditionOnly', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVImgToVideoConditionOnly', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVPreprocessMasks(
     wf: VibeWorkflow,
     *,
-    masks: Any,
-    vae: Any,
-    invert_input_masks: Any = False,
-    ignore_first_mask: Any = True,
-    pooling_method: Any = 'max',
-    grow_mask: Any = 0,
-    tapered_corners: Any = True,
-    clamp_min: Any = 0.5,
-    clamp_max: Any = 1.0,
+    _id: str | None = None,
+    masks: Any = _UNSET,
+    vae: Any = _UNSET,
+    invert_input_masks: Any = _UNSET,
+    ignore_first_mask: Any = _UNSET,
+    pooling_method: Any = _UNSET,
+    grow_mask: Any = _UNSET,
+    tapered_corners: Any = _UNSET,
+    clamp_min: Any = _UNSET,
+    clamp_max: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -277,23 +337,33 @@ def LTXVPreprocessMasks(
     Returns: MASK
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['masks'] = masks
-    _kwargs['vae'] = vae
-    _kwargs['invert_input_masks'] = invert_input_masks
-    _kwargs['ignore_first_mask'] = ignore_first_mask
-    _kwargs['pooling_method'] = pooling_method
-    _kwargs['grow_mask'] = grow_mask
-    _kwargs['tapered_corners'] = tapered_corners
-    _kwargs['clamp_min'] = clamp_min
-    _kwargs['clamp_max'] = clamp_max
+    if masks is not _UNSET:
+        _kwargs['masks'] = masks
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if invert_input_masks is not _UNSET:
+        _kwargs['invert_input_masks'] = invert_input_masks
+    if ignore_first_mask is not _UNSET:
+        _kwargs['ignore_first_mask'] = ignore_first_mask
+    if pooling_method is not _UNSET:
+        _kwargs['pooling_method'] = pooling_method
+    if grow_mask is not _UNSET:
+        _kwargs['grow_mask'] = grow_mask
+    if tapered_corners is not _UNSET:
+        _kwargs['tapered_corners'] = tapered_corners
+    if clamp_min is not _UNSET:
+        _kwargs['clamp_min'] = clamp_min
+    if clamp_max is not _UNSET:
+        _kwargs['clamp_max'] = clamp_max
     _kwargs.update(_extras)
-    return node(wf, 'LTXVPreprocessMasks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVPreprocessMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVSetVideoLatentNoiseMasks(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    masks: Any,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    masks: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -304,22 +374,25 @@ def LTXVSetVideoLatentNoiseMasks(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['masks'] = masks
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if masks is not _UNSET:
+        _kwargs['masks'] = masks
     _kwargs.update(_extras)
-    return node(wf, 'LTXVSetVideoLatentNoiseMasks', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVSetVideoLatentNoiseMasks', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVTiledVAEDecode(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    latents: Any,
-    horizontal_tiles: Any = 1,
-    vertical_tiles: Any = 1,
-    overlap: Any = 1,
-    last_frame_fix: Any = False,
-    working_device: Any = 'auto',
-    working_dtype: Any = 'auto',
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    latents: Any = _UNSET,
+    horizontal_tiles: Any = _UNSET,
+    vertical_tiles: Any = _UNSET,
+    overlap: Any = _UNSET,
+    last_frame_fix: Any = _UNSET,
+    working_device: Any = _UNSET,
+    working_dtype: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -330,21 +403,30 @@ def LTXVTiledVAEDecode(
     Returns: image
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['latents'] = latents
-    _kwargs['horizontal_tiles'] = horizontal_tiles
-    _kwargs['vertical_tiles'] = vertical_tiles
-    _kwargs['overlap'] = overlap
-    _kwargs['last_frame_fix'] = last_frame_fix
-    _kwargs['working_device'] = working_device
-    _kwargs['working_dtype'] = working_dtype
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if latents is not _UNSET:
+        _kwargs['latents'] = latents
+    if horizontal_tiles is not _UNSET:
+        _kwargs['horizontal_tiles'] = horizontal_tiles
+    if vertical_tiles is not _UNSET:
+        _kwargs['vertical_tiles'] = vertical_tiles
+    if overlap is not _UNSET:
+        _kwargs['overlap'] = overlap
+    if last_frame_fix is not _UNSET:
+        _kwargs['last_frame_fix'] = last_frame_fix
+    if working_device is not _UNSET:
+        _kwargs['working_device'] = working_device
+    if working_dtype is not _UNSET:
+        _kwargs['working_dtype'] = working_dtype
     _kwargs.update(_extras)
-    return node(wf, 'LTXVTiledVAEDecode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVTiledVAEDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def LowVRAMAudioVAELoader(
     wf: VibeWorkflow,
     *,
-    ckpt_name: Any,
+    _id: str | None = None,
+    ckpt_name: Any = _UNSET,
     dependencies: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -356,16 +438,18 @@ def LowVRAMAudioVAELoader(
     Returns: audio_vae
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['ckpt_name'] = ckpt_name
+    if ckpt_name is not _UNSET:
+        _kwargs['ckpt_name'] = ckpt_name
     if dependencies is not _UNSET:
         _kwargs['dependencies'] = dependencies
     _kwargs.update(_extras)
-    return node(wf, 'LowVRAMAudioVAELoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LowVRAMAudioVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LowVRAMCheckpointLoader(
     wf: VibeWorkflow,
     *,
-    ckpt_name: Any,
+    _id: str | None = None,
+    ckpt_name: Any = _UNSET,
     dependencies: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -377,20 +461,22 @@ def LowVRAMCheckpointLoader(
     Returns: MODEL, CLIP, VAE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['ckpt_name'] = ckpt_name
+    if ckpt_name is not _UNSET:
+        _kwargs['ckpt_name'] = ckpt_name
     if dependencies is not _UNSET:
         _kwargs['dependencies'] = dependencies
     _kwargs.update(_extras)
-    return node(wf, 'LowVRAMCheckpointLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LowVRAMCheckpointLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def MultimodalGuider(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    positive: Any,
-    negative: Any,
-    parameters: Any,
-    skip_blocks: Any = '',
+    _id: str | None = None,
+    model: Any = _UNSET,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    parameters: Any = _UNSET,
+    skip_blocks: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -401,12 +487,17 @@ def MultimodalGuider(
     Returns: GUIDER
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['parameters'] = parameters
-    _kwargs['skip_blocks'] = skip_blocks
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if parameters is not _UNSET:
+        _kwargs['parameters'] = parameters
+    if skip_blocks is not _UNSET:
+        _kwargs['skip_blocks'] = skip_blocks
     _kwargs.update(_extras)
-    return node(wf, 'MultimodalGuider', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'MultimodalGuider', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['GemmaAPITextEncode', 'GuiderParameters', 'LTXAddVideoICLoRAGuide', 'LTXFloatToInt', 'LTXICLoRALoaderModelOnly', 'LTXVAddLatentGuide', 'LTXVGemmaCLIPModelLoader', 'LTXVHDRDecodePostprocess', 'LTXVImgToVideoConditionOnly', 'LTXVPreprocessMasks', 'LTXVSetVideoLatentNoiseMasks', 'LTXVTiledVAEDecode', 'LowVRAMAudioVAELoader', 'LowVRAMCheckpointLoader', 'MultimodalGuider']

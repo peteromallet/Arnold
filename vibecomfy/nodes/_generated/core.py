@@ -14,9 +14,10 @@ _UNSET = object()
 def AudioConcat(
     wf: VibeWorkflow,
     *,
-    audio1: Any,
-    audio2: Any,
-    direction: Any = 'after',
+    _id: str | None = None,
+    audio1: Any = _UNSET,
+    audio2: Any = _UNSET,
+    direction: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -27,17 +28,21 @@ def AudioConcat(
     Returns: AUDIO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio1'] = audio1
-    _kwargs['audio2'] = audio2
-    _kwargs['direction'] = direction
+    if audio1 is not _UNSET:
+        _kwargs['audio1'] = audio1
+    if audio2 is not _UNSET:
+        _kwargs['audio2'] = audio2
+    if direction is not _UNSET:
+        _kwargs['direction'] = direction
     _kwargs.update(_extras)
-    return node(wf, 'AudioConcat', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AudioConcat', _id, pass_raw=pass_raw, **_kwargs)
 
 def AudioEncoderEncode(
     wf: VibeWorkflow,
     *,
-    audio_encoder: Any,
-    audio: Any,
+    _id: str | None = None,
+    audio_encoder: Any = _UNSET,
+    audio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -46,15 +51,18 @@ def AudioEncoderEncode(
     Returns: AUDIO_ENCODER_OUTPUT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio_encoder'] = audio_encoder
-    _kwargs['audio'] = audio
+    if audio_encoder is not _UNSET:
+        _kwargs['audio_encoder'] = audio_encoder
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
     _kwargs.update(_extras)
-    return node(wf, 'AudioEncoderEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AudioEncoderEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def AudioEncoderLoader(
     wf: VibeWorkflow,
     *,
-    audio_encoder_name: Any,
+    _id: str | None = None,
+    audio_encoder_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -63,17 +71,19 @@ def AudioEncoderLoader(
     Returns: AUDIO_ENCODER
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio_encoder_name'] = audio_encoder_name
+    if audio_encoder_name is not _UNSET:
+        _kwargs['audio_encoder_name'] = audio_encoder_name
     _kwargs.update(_extras)
-    return node(wf, 'AudioEncoderLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'AudioEncoderLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def BasicScheduler(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    scheduler: Any,
-    steps: Any = 20,
-    denoise: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    scheduler: Any = _UNSET,
+    steps: Any = _UNSET,
+    denoise: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -82,20 +92,25 @@ def BasicScheduler(
     Returns: SIGMAS
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['scheduler'] = scheduler
-    _kwargs['steps'] = steps
-    _kwargs['denoise'] = denoise
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if scheduler is not _UNSET:
+        _kwargs['scheduler'] = scheduler
+    if steps is not _UNSET:
+        _kwargs['steps'] = steps
+    if denoise is not _UNSET:
+        _kwargs['denoise'] = denoise
     _kwargs.update(_extras)
-    return node(wf, 'BasicScheduler', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'BasicScheduler', _id, pass_raw=pass_raw, **_kwargs)
 
 def CFGGuider(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    positive: Any,
-    negative: Any,
-    cfg: Any = 8.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    cfg: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -104,18 +119,23 @@ def CFGGuider(
     Returns: GUIDER
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['cfg'] = cfg
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if cfg is not _UNSET:
+        _kwargs['cfg'] = cfg
     _kwargs.update(_extras)
-    return node(wf, 'CFGGuider', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CFGGuider', _id, pass_raw=pass_raw, **_kwargs)
 
 def CFGNorm(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    strength: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    strength: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -124,17 +144,20 @@ def CFGNorm(
     Returns: patched_model
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['strength'] = strength
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
     _kwargs.update(_extras)
-    return node(wf, 'CFGNorm', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CFGNorm', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPLoader(
     wf: VibeWorkflow,
     *,
-    clip_name: Any,
-    type_: Any,
-    device: Any = 'default',
+    _id: str | None = None,
+    clip_name: Any = _UNSET,
+    type_: Any = _UNSET,
+    device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -156,17 +179,21 @@ def CLIPLoader(
     Returns: CLIP
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip_name'] = clip_name
-    _kwargs['type'] = type_
-    _kwargs['device'] = device
+    if clip_name is not _UNSET:
+        _kwargs['clip_name'] = clip_name
+    if type_ is not _UNSET:
+        _kwargs['type'] = type_
+    if device is not _UNSET:
+        _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'CLIPLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CLIPLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPTextEncode(
     wf: VibeWorkflow,
     *,
-    text: Any,
-    clip: Any,
+    _id: str | None = None,
+    text: Any = _UNSET,
+    clip: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -177,17 +204,20 @@ def CLIPTextEncode(
     Returns: CONDITIONING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['text'] = text
-    _kwargs['clip'] = clip
+    if text is not _UNSET:
+        _kwargs['text'] = text
+    if clip is not _UNSET:
+        _kwargs['clip'] = clip
     _kwargs.update(_extras)
-    return node(wf, 'CLIPTextEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CLIPTextEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPVisionEncode(
     wf: VibeWorkflow,
     *,
-    clip_vision: Any,
-    image: Any,
-    crop: Any = 'center',
+    _id: str | None = None,
+    clip_vision: Any = _UNSET,
+    image: Any = _UNSET,
+    crop: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -198,16 +228,20 @@ def CLIPVisionEncode(
     Returns: CLIP_VISION_OUTPUT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip_vision'] = clip_vision
-    _kwargs['image'] = image
-    _kwargs['crop'] = crop
+    if clip_vision is not _UNSET:
+        _kwargs['clip_vision'] = clip_vision
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
     _kwargs.update(_extras)
-    return node(wf, 'CLIPVisionEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CLIPVisionEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def CLIPVisionLoader(
     wf: VibeWorkflow,
     *,
-    clip_name: Any,
+    _id: str | None = None,
+    clip_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -218,14 +252,16 @@ def CLIPVisionLoader(
     Returns: CLIP_VISION
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip_name'] = clip_name
+    if clip_name is not _UNSET:
+        _kwargs['clip_name'] = clip_name
     _kwargs.update(_extras)
-    return node(wf, 'CLIPVisionLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CLIPVisionLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def CheckpointLoaderSimple(
     wf: VibeWorkflow,
     *,
-    ckpt_name: Any,
+    _id: str | None = None,
+    ckpt_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -236,15 +272,17 @@ def CheckpointLoaderSimple(
     Returns: MODEL, CLIP, VAE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['ckpt_name'] = ckpt_name
+    if ckpt_name is not _UNSET:
+        _kwargs['ckpt_name'] = ckpt_name
     _kwargs.update(_extras)
-    return node(wf, 'CheckpointLoaderSimple', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CheckpointLoaderSimple', _id, pass_raw=pass_raw, **_kwargs)
 
 def ComfyMathExpression(
     wf: VibeWorkflow,
     *,
-    values: Any,
-    expression: Any = 'a + b',
+    _id: str | None = None,
+    expression: Any = _UNSET,
+    values: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -255,17 +293,20 @@ def ComfyMathExpression(
     Returns: FLOAT, INT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['values'] = values
-    _kwargs['expression'] = expression
+    if expression is not _UNSET:
+        _kwargs['expression'] = expression
+    if values is not _UNSET:
+        _kwargs['values'] = values
     _kwargs.update(_extras)
-    return node(wf, 'ComfyMathExpression', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ComfyMathExpression', _id, pass_raw=pass_raw, **_kwargs)
 
 def ComfySwitchNode(
     wf: VibeWorkflow,
     *,
-    switch: Any,
-    on_false: Any,
-    on_true: Any,
+    _id: str | None = None,
+    switch: Any = _UNSET,
+    on_false: Any = _UNSET,
+    on_true: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -276,16 +317,20 @@ def ComfySwitchNode(
     Returns: output
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['switch'] = switch
-    _kwargs['on_false'] = on_false
-    _kwargs['on_true'] = on_true
+    if switch is not _UNSET:
+        _kwargs['switch'] = switch
+    if on_false is not _UNSET:
+        _kwargs['on_false'] = on_false
+    if on_true is not _UNSET:
+        _kwargs['on_true'] = on_true
     _kwargs.update(_extras)
-    return node(wf, 'ComfySwitchNode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ComfySwitchNode', _id, pass_raw=pass_raw, **_kwargs)
 
 def ConditioningZeroOut(
     wf: VibeWorkflow,
     *,
-    conditioning: Any,
+    _id: str | None = None,
+    conditioning: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -296,15 +341,17 @@ def ConditioningZeroOut(
     Returns: CONDITIONING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['conditioning'] = conditioning
+    if conditioning is not _UNSET:
+        _kwargs['conditioning'] = conditioning
     _kwargs.update(_extras)
-    return node(wf, 'ConditioningZeroOut', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ConditioningZeroOut', _id, pass_raw=pass_raw, **_kwargs)
 
 def CreateVideo(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    fps: Any = 30.0,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    fps: Any = _UNSET,
     audio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -316,19 +363,22 @@ def CreateVideo(
     Returns: VIDEO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['fps'] = fps
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if fps is not _UNSET:
+        _kwargs['fps'] = fps
     if audio is not _UNSET:
         _kwargs['audio'] = audio
     _kwargs.update(_extras)
-    return node(wf, 'CreateVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'CreateVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def DualCLIPLoader(
     wf: VibeWorkflow,
     *,
-    clip_name1: Any,
-    clip_name2: Any,
-    type_: Any,
+    _id: str | None = None,
+    clip_name1: Any = _UNSET,
+    clip_name2: Any = _UNSET,
+    type_: Any = _UNSET,
     device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -347,19 +397,23 @@ def DualCLIPLoader(
     Returns: CLIP
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip_name1'] = clip_name1
-    _kwargs['clip_name2'] = clip_name2
-    _kwargs['type'] = type_
+    if clip_name1 is not _UNSET:
+        _kwargs['clip_name1'] = clip_name1
+    if clip_name2 is not _UNSET:
+        _kwargs['clip_name2'] = clip_name2
+    if type_ is not _UNSET:
+        _kwargs['type'] = type_
     if device is not _UNSET:
         _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'DualCLIPLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'DualCLIPLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyAceStep1_5LatentAudio(
     wf: VibeWorkflow,
     *,
-    seconds: Any = 120.0,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    seconds: Any = _UNSET,
+    batch_size: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -370,17 +424,20 @@ def EmptyAceStep1_5LatentAudio(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['seconds'] = seconds
-    _kwargs['batch_size'] = batch_size
+    if seconds is not _UNSET:
+        _kwargs['seconds'] = seconds
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     _kwargs.update(_extras)
-    return node(wf, 'EmptyAceStep1.5LatentAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptyAceStep1.5LatentAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyAudio(
     wf: VibeWorkflow,
     *,
-    duration: Any = 60.0,
-    sample_rate: Any = 44100,
-    channels: Any = 2,
+    _id: str | None = None,
+    duration: Any = _UNSET,
+    sample_rate: Any = _UNSET,
+    channels: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -391,18 +448,22 @@ def EmptyAudio(
     Returns: AUDIO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['duration'] = duration
-    _kwargs['sample_rate'] = sample_rate
-    _kwargs['channels'] = channels
+    if duration is not _UNSET:
+        _kwargs['duration'] = duration
+    if sample_rate is not _UNSET:
+        _kwargs['sample_rate'] = sample_rate
+    if channels is not _UNSET:
+        _kwargs['channels'] = channels
     _kwargs.update(_extras)
-    return node(wf, 'EmptyAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptyAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyFlux2LatentImage(
     wf: VibeWorkflow,
     *,
-    width: Any = 1024,
-    height: Any = 1024,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    batch_size: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -413,19 +474,23 @@ def EmptyFlux2LatentImage(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['batch_size'] = batch_size
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     _kwargs.update(_extras)
-    return node(wf, 'EmptyFlux2LatentImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptyFlux2LatentImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyHunyuanLatentVideo(
     wf: VibeWorkflow,
     *,
-    width: Any = 848,
-    height: Any = 480,
-    length: Any = 25,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    length: Any = _UNSET,
+    batch_size: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -436,20 +501,25 @@ def EmptyHunyuanLatentVideo(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['length'] = length
-    _kwargs['batch_size'] = batch_size
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if length is not _UNSET:
+        _kwargs['length'] = length
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     _kwargs.update(_extras)
-    return node(wf, 'EmptyHunyuanLatentVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptyHunyuanLatentVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyImage(
     wf: VibeWorkflow,
     *,
-    width: Any = 512,
-    height: Any = 512,
-    batch_size: Any = 1,
-    color: Any = 0,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    batch_size: Any = _UNSET,
+    color: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -460,20 +530,25 @@ def EmptyImage(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['batch_size'] = batch_size
-    _kwargs['color'] = color
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
+    if color is not _UNSET:
+        _kwargs['color'] = color
     _kwargs.update(_extras)
-    return node(wf, 'EmptyImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptyImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptyLTXVLatentVideo(
     wf: VibeWorkflow,
     *,
-    width: Any = 768,
-    height: Any = 512,
-    length: Any = 97,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    length: Any = _UNSET,
+    batch_size: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -482,19 +557,24 @@ def EmptyLTXVLatentVideo(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['length'] = length
-    _kwargs['batch_size'] = batch_size
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if length is not _UNSET:
+        _kwargs['length'] = length
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     _kwargs.update(_extras)
-    return node(wf, 'EmptyLTXVLatentVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptyLTXVLatentVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def EmptySD3LatentImage(
     wf: VibeWorkflow,
     *,
-    width: Any = 1024,
-    height: Any = 1024,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    batch_size: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -503,18 +583,22 @@ def EmptySD3LatentImage(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['batch_size'] = batch_size
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     _kwargs.update(_extras)
-    return node(wf, 'EmptySD3LatentImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'EmptySD3LatentImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def Flux2Scheduler(
     wf: VibeWorkflow,
     *,
-    steps: Any = 20,
-    width: Any = 1024,
-    height: Any = 1024,
+    _id: str | None = None,
+    steps: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -523,17 +607,21 @@ def Flux2Scheduler(
     Returns: SIGMAS
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['steps'] = steps
-    _kwargs['width'] = width
-    _kwargs['height'] = height
+    if steps is not _UNSET:
+        _kwargs['steps'] = steps
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
     _kwargs.update(_extras)
-    return node(wf, 'Flux2Scheduler', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'Flux2Scheduler', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImageRangeFromBatch(
     wf: VibeWorkflow,
     *,
-    start_index: Any = 0,
-    num_frames: Any = 1,
+    _id: str | None = None,
+    start_index: Any = _UNSET,
+    num_frames: Any = _UNSET,
     images: Any = _UNSET,
     masks: Any = _UNSET,
     pass_raw: bool = False,
@@ -546,19 +634,22 @@ def GetImageRangeFromBatch(
     Returns: IMAGE, MASK
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['start_index'] = start_index
-    _kwargs['num_frames'] = num_frames
+    if start_index is not _UNSET:
+        _kwargs['start_index'] = start_index
+    if num_frames is not _UNSET:
+        _kwargs['num_frames'] = num_frames
     if images is not _UNSET:
         _kwargs['images'] = images
     if masks is not _UNSET:
         _kwargs['masks'] = masks
     _kwargs.update(_extras)
-    return node(wf, 'GetImageRangeFromBatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GetImageRangeFromBatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetImageSize(
     wf: VibeWorkflow,
     *,
-    image: Any,
+    _id: str | None = None,
+    image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -569,14 +660,16 @@ def GetImageSize(
     Returns: width, height, batch_size
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
+    if image is not _UNSET:
+        _kwargs['image'] = image
     _kwargs.update(_extras)
-    return node(wf, 'GetImageSize', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GetImageSize', _id, pass_raw=pass_raw, **_kwargs)
 
 def GetVideoComponents(
     wf: VibeWorkflow,
     *,
-    video: Any,
+    _id: str | None = None,
+    video: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -587,16 +680,18 @@ def GetVideoComponents(
     Returns: images, audio, fps
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
+    if video is not _UNSET:
+        _kwargs['video'] = video
     _kwargs.update(_extras)
-    return node(wf, 'GetVideoComponents', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GetVideoComponents', _id, pass_raw=pass_raw, **_kwargs)
 
 def GrowMask(
     wf: VibeWorkflow,
     *,
-    mask: Any,
-    expand: Any = 0,
-    tapered_corners: Any = True,
+    _id: str | None = None,
+    mask: Any = _UNSET,
+    expand: Any = _UNSET,
+    tapered_corners: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -607,19 +702,23 @@ def GrowMask(
     Returns: MASK
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
-    _kwargs['expand'] = expand
-    _kwargs['tapered_corners'] = tapered_corners
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
+    if expand is not _UNSET:
+        _kwargs['expand'] = expand
+    if tapered_corners is not _UNSET:
+        _kwargs['tapered_corners'] = tapered_corners
     _kwargs.update(_extras)
-    return node(wf, 'GrowMask', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'GrowMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBlend(
     wf: VibeWorkflow,
     *,
-    image1: Any,
-    image2: Any,
-    blend_mode: Any,
-    blend_factor: Any = 0.5,
+    _id: str | None = None,
+    image1: Any = _UNSET,
+    image2: Any = _UNSET,
+    blend_factor: Any = _UNSET,
+    blend_mode: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -630,19 +729,24 @@ def ImageBlend(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image1'] = image1
-    _kwargs['image2'] = image2
-    _kwargs['blend_mode'] = blend_mode
-    _kwargs['blend_factor'] = blend_factor
+    if image1 is not _UNSET:
+        _kwargs['image1'] = image1
+    if image2 is not _UNSET:
+        _kwargs['image2'] = image2
+    if blend_factor is not _UNSET:
+        _kwargs['blend_factor'] = blend_factor
+    if blend_mode is not _UNSET:
+        _kwargs['blend_mode'] = blend_mode
     _kwargs.update(_extras)
-    return node(wf, 'ImageBlend', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageBlend', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageBlur(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    blur_radius: Any = 1,
-    sigma: Any = 1.0,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    blur_radius: Any = _UNSET,
+    sigma: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -653,18 +757,22 @@ def ImageBlur(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['blur_radius'] = blur_radius
-    _kwargs['sigma'] = sigma
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if blur_radius is not _UNSET:
+        _kwargs['blur_radius'] = blur_radius
+    if sigma is not _UNSET:
+        _kwargs['sigma'] = sigma
     _kwargs.update(_extras)
-    return node(wf, 'ImageBlur', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageBlur', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageFromBatch(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    batch_index: Any = 0,
-    length: Any = 1,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    batch_index: Any = _UNSET,
+    length: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -673,20 +781,24 @@ def ImageFromBatch(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['batch_index'] = batch_index
-    _kwargs['length'] = length
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if batch_index is not _UNSET:
+        _kwargs['batch_index'] = batch_index
+    if length is not _UNSET:
+        _kwargs['length'] = length
     _kwargs.update(_extras)
-    return node(wf, 'ImageFromBatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageFromBatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageScale(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    upscale_method: Any,
-    width: Any = 512,
-    height: Any = 512,
-    crop: Any = 'none',
+    _id: str | None = None,
+    image: Any = _UNSET,
+    upscale_method: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    crop: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -697,20 +809,26 @@ def ImageScale(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['upscale_method'] = upscale_method
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['crop'] = crop
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if upscale_method is not _UNSET:
+        _kwargs['upscale_method'] = upscale_method
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if crop is not _UNSET:
+        _kwargs['crop'] = crop
     _kwargs.update(_extras)
-    return node(wf, 'ImageScale', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageScale', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageScaleBy(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    upscale_method: Any,
-    scale_by: Any = 1.0,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    upscale_method: Any = _UNSET,
+    scale_by: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -721,19 +839,23 @@ def ImageScaleBy(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['upscale_method'] = upscale_method
-    _kwargs['scale_by'] = scale_by
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if upscale_method is not _UNSET:
+        _kwargs['upscale_method'] = upscale_method
+    if scale_by is not _UNSET:
+        _kwargs['scale_by'] = scale_by
     _kwargs.update(_extras)
-    return node(wf, 'ImageScaleBy', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageScaleBy', _id, pass_raw=pass_raw, **_kwargs)
 
 def ImageScaleToTotalPixels(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    upscale_method: Any,
-    megapixels: Any = 1.0,
-    resolution_steps: Any = 1,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    upscale_method: Any = _UNSET,
+    megapixels: Any = _UNSET,
+    resolution_steps: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -742,26 +864,31 @@ def ImageScaleToTotalPixels(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['upscale_method'] = upscale_method
-    _kwargs['megapixels'] = megapixels
-    _kwargs['resolution_steps'] = resolution_steps
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if upscale_method is not _UNSET:
+        _kwargs['upscale_method'] = upscale_method
+    if megapixels is not _UNSET:
+        _kwargs['megapixels'] = megapixels
+    if resolution_steps is not _UNSET:
+        _kwargs['resolution_steps'] = resolution_steps
     _kwargs.update(_extras)
-    return node(wf, 'ImageScaleToTotalPixels', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ImageScaleToTotalPixels', _id, pass_raw=pass_raw, **_kwargs)
 
 def KSampler(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    sampler_name: Any,
-    positive: Any,
-    negative: Any,
-    latent_image: Any,
-    seed: Any = 0,
-    steps: Any = 20,
-    cfg: Any = 8.0,
-    scheduler: Any = 'simple',
-    denoise: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    seed: Any = _UNSET,
+    steps: Any = _UNSET,
+    cfg: Any = _UNSET,
+    sampler_name: Any = _UNSET,
+    scheduler: Any = _UNSET,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    latent_image: Any = _UNSET,
+    denoise: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -772,23 +899,34 @@ def KSampler(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['sampler_name'] = sampler_name
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['latent_image'] = latent_image
-    _kwargs['seed'] = seed
-    _kwargs['steps'] = steps
-    _kwargs['cfg'] = cfg
-    _kwargs['scheduler'] = scheduler
-    _kwargs['denoise'] = denoise
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
+    if steps is not _UNSET:
+        _kwargs['steps'] = steps
+    if cfg is not _UNSET:
+        _kwargs['cfg'] = cfg
+    if sampler_name is not _UNSET:
+        _kwargs['sampler_name'] = sampler_name
+    if scheduler is not _UNSET:
+        _kwargs['scheduler'] = scheduler
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if latent_image is not _UNSET:
+        _kwargs['latent_image'] = latent_image
+    if denoise is not _UNSET:
+        _kwargs['denoise'] = denoise
     _kwargs.update(_extras)
-    return node(wf, 'KSampler', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'KSampler', _id, pass_raw=pass_raw, **_kwargs)
 
 def KSamplerSelect(
     wf: VibeWorkflow,
     *,
-    sampler_name: Any,
+    _id: str | None = None,
+    sampler_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -797,16 +935,18 @@ def KSamplerSelect(
     Returns: SAMPLER
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['sampler_name'] = sampler_name
+    if sampler_name is not _UNSET:
+        _kwargs['sampler_name'] = sampler_name
     _kwargs.update(_extras)
-    return node(wf, 'KSamplerSelect', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'KSamplerSelect', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXAVTextEncoderLoader(
     wf: VibeWorkflow,
     *,
-    text_encoder: Any,
-    ckpt_name: Any,
-    device: Any,
+    _id: str | None = None,
+    text_encoder: Any = _UNSET,
+    ckpt_name: Any = _UNSET,
+    device: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -819,22 +959,26 @@ def LTXAVTextEncoderLoader(
     Returns: CLIP
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['text_encoder'] = text_encoder
-    _kwargs['ckpt_name'] = ckpt_name
-    _kwargs['device'] = device
+    if text_encoder is not _UNSET:
+        _kwargs['text_encoder'] = text_encoder
+    if ckpt_name is not _UNSET:
+        _kwargs['ckpt_name'] = ckpt_name
+    if device is not _UNSET:
+        _kwargs['device'] = device
     _kwargs.update(_extras)
-    return node(wf, 'LTXAVTextEncoderLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXAVTextEncoderLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAddGuide(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    vae: Any,
-    latent: Any,
-    image: Any,
-    frame_idx: Any = 0,
-    strength: Any = 1.0,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    vae: Any = _UNSET,
+    latent: Any = _UNSET,
+    image: Any = _UNSET,
+    frame_idx: Any = _UNSET,
+    strength: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -843,24 +987,32 @@ def LTXVAddGuide(
     Returns: positive, negative, latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['vae'] = vae
-    _kwargs['latent'] = latent
-    _kwargs['image'] = image
-    _kwargs['frame_idx'] = frame_idx
-    _kwargs['strength'] = strength
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if frame_idx is not _UNSET:
+        _kwargs['frame_idx'] = frame_idx
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAddGuide', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAddGuide', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAddGuideMulti(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    vae: Any,
-    latent: Any,
-    num_guides: Any,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    vae: Any = _UNSET,
+    latent: Any = _UNSET,
+    num_guides: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -871,19 +1023,25 @@ def LTXVAddGuideMulti(
     Returns: positive, negative, latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['vae'] = vae
-    _kwargs['latent'] = latent
-    _kwargs['num_guides'] = num_guides
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if num_guides is not _UNSET:
+        _kwargs['num_guides'] = num_guides
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAddGuideMulti', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAddGuideMulti', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVAEDecode(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    audio_vae: Any,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    audio_vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -894,16 +1052,19 @@ def LTXVAudioVAEDecode(
     Returns: Audio
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['audio_vae'] = audio_vae
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if audio_vae is not _UNSET:
+        _kwargs['audio_vae'] = audio_vae
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAudioVAEDecode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAudioVAEDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVAEEncode(
     wf: VibeWorkflow,
     *,
-    audio: Any,
-    audio_vae: Any,
+    _id: str | None = None,
+    audio: Any = _UNSET,
+    audio_vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -914,15 +1075,18 @@ def LTXVAudioVAEEncode(
     Returns: Audio Latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
-    _kwargs['audio_vae'] = audio_vae
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
+    if audio_vae is not _UNSET:
+        _kwargs['audio_vae'] = audio_vae
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAudioVAEEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAudioVAEEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVAudioVAELoader(
     wf: VibeWorkflow,
     *,
-    ckpt_name: Any,
+    _id: str | None = None,
+    ckpt_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -933,15 +1097,17 @@ def LTXVAudioVAELoader(
     Returns: Audio VAE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['ckpt_name'] = ckpt_name
+    if ckpt_name is not _UNSET:
+        _kwargs['ckpt_name'] = ckpt_name
     _kwargs.update(_extras)
-    return node(wf, 'LTXVAudioVAELoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVAudioVAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVConcatAVLatent(
     wf: VibeWorkflow,
     *,
-    video_latent: Any,
-    audio_latent: Any,
+    _id: str | None = None,
+    video_latent: Any = _UNSET,
+    audio_latent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -950,17 +1116,20 @@ def LTXVConcatAVLatent(
     Returns: latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video_latent'] = video_latent
-    _kwargs['audio_latent'] = audio_latent
+    if video_latent is not _UNSET:
+        _kwargs['video_latent'] = video_latent
+    if audio_latent is not _UNSET:
+        _kwargs['audio_latent'] = audio_latent
     _kwargs.update(_extras)
-    return node(wf, 'LTXVConcatAVLatent', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVConcatAVLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVConditioning(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    frame_rate: Any = 25.0,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    frame_rate: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -969,18 +1138,22 @@ def LTXVConditioning(
     Returns: positive, negative
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['frame_rate'] = frame_rate
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if frame_rate is not _UNSET:
+        _kwargs['frame_rate'] = frame_rate
     _kwargs.update(_extras)
-    return node(wf, 'LTXVConditioning', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVConditioning', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVCropGuides(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    latent: Any,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    latent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -989,19 +1162,23 @@ def LTXVCropGuides(
     Returns: positive, negative, latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['latent'] = latent
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
     _kwargs.update(_extras)
-    return node(wf, 'LTXVCropGuides', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVCropGuides', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVEmptyLatentAudio(
     wf: VibeWorkflow,
     *,
-    audio_vae: Any,
-    frames_number: Any = 97,
-    frame_rate: Any = 25,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    frames_number: Any = _UNSET,
+    frame_rate: Any = _UNSET,
+    batch_size: Any = _UNSET,
+    audio_vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1012,21 +1189,26 @@ def LTXVEmptyLatentAudio(
     Returns: Latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio_vae'] = audio_vae
-    _kwargs['frames_number'] = frames_number
-    _kwargs['frame_rate'] = frame_rate
-    _kwargs['batch_size'] = batch_size
+    if frames_number is not _UNSET:
+        _kwargs['frames_number'] = frames_number
+    if frame_rate is not _UNSET:
+        _kwargs['frame_rate'] = frame_rate
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
+    if audio_vae is not _UNSET:
+        _kwargs['audio_vae'] = audio_vae
     _kwargs.update(_extras)
-    return node(wf, 'LTXVEmptyLatentAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVEmptyLatentAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVImgToVideoInplace(
     wf: VibeWorkflow,
     *,
-    vae: Any,
-    image: Any,
-    latent: Any,
-    strength: Any = 1.0,
-    bypass: Any = False,
+    _id: str | None = None,
+    vae: Any = _UNSET,
+    image: Any = _UNSET,
+    latent: Any = _UNSET,
+    strength: Any = _UNSET,
+    bypass: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1035,20 +1217,26 @@ def LTXVImgToVideoInplace(
     Returns: latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae'] = vae
-    _kwargs['image'] = image
-    _kwargs['latent'] = latent
-    _kwargs['strength'] = strength
-    _kwargs['bypass'] = bypass
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if latent is not _UNSET:
+        _kwargs['latent'] = latent
+    if strength is not _UNSET:
+        _kwargs['strength'] = strength
+    if bypass is not _UNSET:
+        _kwargs['bypass'] = bypass
     _kwargs.update(_extras)
-    return node(wf, 'LTXVImgToVideoInplace', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVImgToVideoInplace', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVLatentUpsampler(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    upscale_model: Any,
-    vae: Any,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    upscale_model: Any = _UNSET,
+    vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1059,17 +1247,21 @@ def LTXVLatentUpsampler(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['upscale_model'] = upscale_model
-    _kwargs['vae'] = vae
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if upscale_model is not _UNSET:
+        _kwargs['upscale_model'] = upscale_model
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
     _kwargs.update(_extras)
-    return node(wf, 'LTXVLatentUpsampler', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVLatentUpsampler', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVPreprocess(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    img_compression: Any = 35,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    img_compression: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1078,19 +1270,22 @@ def LTXVPreprocess(
     Returns: output_image
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['img_compression'] = img_compression
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if img_compression is not _UNSET:
+        _kwargs['img_compression'] = img_compression
     _kwargs.update(_extras)
-    return node(wf, 'LTXVPreprocess', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVPreprocess', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVScheduler(
     wf: VibeWorkflow,
     *,
-    steps: Any = 20,
-    max_shift: Any = 2.05,
-    base_shift: Any = 0.95,
-    stretch: Any = True,
-    terminal: Any = 0.1,
+    _id: str | None = None,
+    steps: Any = _UNSET,
+    max_shift: Any = _UNSET,
+    base_shift: Any = _UNSET,
+    stretch: Any = _UNSET,
+    terminal: Any = _UNSET,
     latent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1100,20 +1295,26 @@ def LTXVScheduler(
     Returns: SIGMAS
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['steps'] = steps
-    _kwargs['max_shift'] = max_shift
-    _kwargs['base_shift'] = base_shift
-    _kwargs['stretch'] = stretch
-    _kwargs['terminal'] = terminal
+    if steps is not _UNSET:
+        _kwargs['steps'] = steps
+    if max_shift is not _UNSET:
+        _kwargs['max_shift'] = max_shift
+    if base_shift is not _UNSET:
+        _kwargs['base_shift'] = base_shift
+    if stretch is not _UNSET:
+        _kwargs['stretch'] = stretch
+    if terminal is not _UNSET:
+        _kwargs['terminal'] = terminal
     if latent is not _UNSET:
         _kwargs['latent'] = latent
     _kwargs.update(_extras)
-    return node(wf, 'LTXVScheduler', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVScheduler', _id, pass_raw=pass_raw, **_kwargs)
 
 def LTXVSeparateAVLatent(
     wf: VibeWorkflow,
     *,
-    av_latent: Any,
+    _id: str | None = None,
+    av_latent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1124,14 +1325,16 @@ def LTXVSeparateAVLatent(
     Returns: video_latent, audio_latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['av_latent'] = av_latent
+    if av_latent is not _UNSET:
+        _kwargs['av_latent'] = av_latent
     _kwargs.update(_extras)
-    return node(wf, 'LTXVSeparateAVLatent', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LTXVSeparateAVLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def LatentUpscaleModelLoader(
     wf: VibeWorkflow,
     *,
-    model_name: Any,
+    _id: str | None = None,
+    model_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1142,14 +1345,16 @@ def LatentUpscaleModelLoader(
     Returns: LATENT_UPSCALE_MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model_name'] = model_name
+    if model_name is not _UNSET:
+        _kwargs['model_name'] = model_name
     _kwargs.update(_extras)
-    return node(wf, 'LatentUpscaleModelLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LatentUpscaleModelLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadAudio(
     wf: VibeWorkflow,
     *,
-    audio: Any,
+    _id: str | None = None,
+    audio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1160,14 +1365,16 @@ def LoadAudio(
     Returns: AUDIO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
     _kwargs.update(_extras)
-    return node(wf, 'LoadAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoadAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadImage(
     wf: VibeWorkflow,
     *,
-    image: Any,
+    _id: str | None = None,
+    image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1178,14 +1385,16 @@ def LoadImage(
     Returns: IMAGE, MASK
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
+    if image is not _UNSET:
+        _kwargs['image'] = image
     _kwargs.update(_extras)
-    return node(wf, 'LoadImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoadImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoadVideo(
     wf: VibeWorkflow,
     *,
-    file: Any,
+    _id: str | None = None,
+    file: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1196,16 +1405,18 @@ def LoadVideo(
     Returns: VIDEO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['file'] = file
+    if file is not _UNSET:
+        _kwargs['file'] = file
     _kwargs.update(_extras)
-    return node(wf, 'LoadVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoadVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def LoraLoaderModelOnly(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    lora_name: Any,
-    strength_model: Any = 1.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    lora_name: Any = _UNSET,
+    strength_model: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1216,16 +1427,20 @@ def LoraLoaderModelOnly(
     Returns: MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['lora_name'] = lora_name
-    _kwargs['strength_model'] = strength_model
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if lora_name is not _UNSET:
+        _kwargs['lora_name'] = lora_name
+    if strength_model is not _UNSET:
+        _kwargs['strength_model'] = strength_model
     _kwargs.update(_extras)
-    return node(wf, 'LoraLoaderModelOnly', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'LoraLoaderModelOnly', _id, pass_raw=pass_raw, **_kwargs)
 
 def ManualSigmas(
     wf: VibeWorkflow,
     *,
-    sigmas: Any = '1, 0.5',
+    _id: str | None = None,
+    sigmas: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1234,14 +1449,16 @@ def ManualSigmas(
     Returns: SIGMAS
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['sigmas'] = sigmas
+    if sigmas is not _UNSET:
+        _kwargs['sigmas'] = sigmas
     _kwargs.update(_extras)
-    return node(wf, 'ManualSigmas', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ManualSigmas', _id, pass_raw=pass_raw, **_kwargs)
 
 def MaskPreview(
     wf: VibeWorkflow,
     *,
-    mask: Any,
+    _id: str | None = None,
+    mask: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1252,14 +1469,16 @@ def MaskPreview(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
     _kwargs.update(_extras)
-    return node(wf, 'MaskPreview', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'MaskPreview', _id, pass_raw=pass_raw, **_kwargs)
 
 def MaskToImage(
     wf: VibeWorkflow,
     *,
-    mask: Any,
+    _id: str | None = None,
+    mask: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1270,15 +1489,17 @@ def MaskToImage(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['mask'] = mask
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
     _kwargs.update(_extras)
-    return node(wf, 'MaskToImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'MaskToImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def ModelSamplingAuraFlow(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    shift: Any = 1.73,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    shift: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1289,16 +1510,19 @@ def ModelSamplingAuraFlow(
     Returns: MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['shift'] = shift
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if shift is not _UNSET:
+        _kwargs['shift'] = shift
     _kwargs.update(_extras)
-    return node(wf, 'ModelSamplingAuraFlow', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ModelSamplingAuraFlow', _id, pass_raw=pass_raw, **_kwargs)
 
 def ModelSamplingSD3(
     wf: VibeWorkflow,
     *,
-    model: Any,
-    shift: Any = 3.0,
+    _id: str | None = None,
+    model: Any = _UNSET,
+    shift: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1309,18 +1533,21 @@ def ModelSamplingSD3(
     Returns: MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['model'] = model
-    _kwargs['shift'] = shift
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if shift is not _UNSET:
+        _kwargs['shift'] = shift
     _kwargs.update(_extras)
-    return node(wf, 'ModelSamplingSD3', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ModelSamplingSD3', _id, pass_raw=pass_raw, **_kwargs)
 
 def PixelPerfectResolution(
     wf: VibeWorkflow,
     *,
-    original_image: Any,
-    image_gen_width: Any = 512,
-    image_gen_height: Any = 512,
-    resize_mode: Any = 'Just Resize',
+    _id: str | None = None,
+    original_image: Any = _UNSET,
+    image_gen_width: Any = _UNSET,
+    image_gen_height: Any = _UNSET,
+    resize_mode: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1331,17 +1558,22 @@ def PixelPerfectResolution(
     Returns: RESOLUTION (INT)
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['original_image'] = original_image
-    _kwargs['image_gen_width'] = image_gen_width
-    _kwargs['image_gen_height'] = image_gen_height
-    _kwargs['resize_mode'] = resize_mode
+    if original_image is not _UNSET:
+        _kwargs['original_image'] = original_image
+    if image_gen_width is not _UNSET:
+        _kwargs['image_gen_width'] = image_gen_width
+    if image_gen_height is not _UNSET:
+        _kwargs['image_gen_height'] = image_gen_height
+    if resize_mode is not _UNSET:
+        _kwargs['resize_mode'] = resize_mode
     _kwargs.update(_extras)
-    return node(wf, 'PixelPerfectResolution', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PixelPerfectResolution', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewAny(
     wf: VibeWorkflow,
     *,
-    source: Any,
+    _id: str | None = None,
+    source: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1352,14 +1584,16 @@ def PreviewAny(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['source'] = source
+    if source is not _UNSET:
+        _kwargs['source'] = source
     _kwargs.update(_extras)
-    return node(wf, 'PreviewAny', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PreviewAny', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewAudio(
     wf: VibeWorkflow,
     *,
-    audio: Any,
+    _id: str | None = None,
+    audio: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1370,14 +1604,16 @@ def PreviewAudio(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
     _kwargs.update(_extras)
-    return node(wf, 'PreviewAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PreviewAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def PreviewImage(
     wf: VibeWorkflow,
     *,
-    images: Any,
+    _id: str | None = None,
+    images: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1388,14 +1624,16 @@ def PreviewImage(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
+    if images is not _UNSET:
+        _kwargs['images'] = images
     _kwargs.update(_extras)
-    return node(wf, 'PreviewImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PreviewImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def PrimitiveStringMultiline(
     wf: VibeWorkflow,
     *,
-    value: Any,
+    _id: str | None = None,
+    value: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1406,14 +1644,16 @@ def PrimitiveStringMultiline(
     Returns: STRING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['value'] = value
+    if value is not _UNSET:
+        _kwargs['value'] = value
     _kwargs.update(_extras)
-    return node(wf, 'PrimitiveStringMultiline', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'PrimitiveStringMultiline', _id, pass_raw=pass_raw, **_kwargs)
 
 def RandomNoise(
     wf: VibeWorkflow,
     *,
-    noise_seed: Any = 0,
+    _id: str | None = None,
+    noise_seed: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1422,14 +1662,16 @@ def RandomNoise(
     Returns: NOISE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['noise_seed'] = noise_seed
+    if noise_seed is not _UNSET:
+        _kwargs['noise_seed'] = noise_seed
     _kwargs.update(_extras)
-    return node(wf, 'RandomNoise', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'RandomNoise', _id, pass_raw=pass_raw, **_kwargs)
 
 def ReferenceLatent(
     wf: VibeWorkflow,
     *,
-    conditioning: Any,
+    _id: str | None = None,
+    conditioning: Any = _UNSET,
     latent: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
@@ -1441,17 +1683,19 @@ def ReferenceLatent(
     Returns: CONDITIONING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['conditioning'] = conditioning
+    if conditioning is not _UNSET:
+        _kwargs['conditioning'] = conditioning
     if latent is not _UNSET:
         _kwargs['latent'] = latent
     _kwargs.update(_extras)
-    return node(wf, 'ReferenceLatent', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ReferenceLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def RepeatImageBatch(
     wf: VibeWorkflow,
     *,
-    image: Any,
-    amount: Any = 1,
+    _id: str | None = None,
+    image: Any = _UNSET,
+    amount: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1460,17 +1704,20 @@ def RepeatImageBatch(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['image'] = image
-    _kwargs['amount'] = amount
+    if image is not _UNSET:
+        _kwargs['image'] = image
+    if amount is not _UNSET:
+        _kwargs['amount'] = amount
     _kwargs.update(_extras)
-    return node(wf, 'RepeatImageBatch', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'RepeatImageBatch', _id, pass_raw=pass_raw, **_kwargs)
 
 def ResizeImageMaskNode(
     wf: VibeWorkflow,
     *,
-    input: Any,
-    resize_type: Any,
-    scale_method: Any = 'area',
+    _id: str | None = None,
+    input: Any = _UNSET,
+    resize_type: Any = _UNSET,
+    scale_method: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1481,17 +1728,21 @@ def ResizeImageMaskNode(
     Returns: resized
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['input'] = input
-    _kwargs['resize_type'] = resize_type
-    _kwargs['scale_method'] = scale_method
+    if input is not _UNSET:
+        _kwargs['input'] = input
+    if resize_type is not _UNSET:
+        _kwargs['resize_type'] = resize_type
+    if scale_method is not _UNSET:
+        _kwargs['scale_method'] = scale_method
     _kwargs.update(_extras)
-    return node(wf, 'ResizeImageMaskNode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ResizeImageMaskNode', _id, pass_raw=pass_raw, **_kwargs)
 
 def ResizeImagesByLongerEdge(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    longer_edge: Any = 1024,
+    _id: str | None = None,
+    images: Any = _UNSET,
+    longer_edge: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1502,19 +1753,22 @@ def ResizeImagesByLongerEdge(
     Returns: images
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['longer_edge'] = longer_edge
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if longer_edge is not _UNSET:
+        _kwargs['longer_edge'] = longer_edge
     _kwargs.update(_extras)
-    return node(wf, 'ResizeImagesByLongerEdge', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'ResizeImagesByLongerEdge', _id, pass_raw=pass_raw, **_kwargs)
 
 def SamplerCustomAdvanced(
     wf: VibeWorkflow,
     *,
-    noise: Any,
-    guider: Any,
-    sampler: Any,
-    sigmas: Any,
-    latent_image: Any,
+    _id: str | None = None,
+    noise: Any = _UNSET,
+    guider: Any = _UNSET,
+    sampler: Any = _UNSET,
+    sigmas: Any = _UNSET,
+    latent_image: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1523,19 +1777,25 @@ def SamplerCustomAdvanced(
     Returns: output, denoised_output
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['noise'] = noise
-    _kwargs['guider'] = guider
-    _kwargs['sampler'] = sampler
-    _kwargs['sigmas'] = sigmas
-    _kwargs['latent_image'] = latent_image
+    if noise is not _UNSET:
+        _kwargs['noise'] = noise
+    if guider is not _UNSET:
+        _kwargs['guider'] = guider
+    if sampler is not _UNSET:
+        _kwargs['sampler'] = sampler
+    if sigmas is not _UNSET:
+        _kwargs['sigmas'] = sigmas
+    if latent_image is not _UNSET:
+        _kwargs['latent_image'] = latent_image
     _kwargs.update(_extras)
-    return node(wf, 'SamplerCustomAdvanced', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SamplerCustomAdvanced', _id, pass_raw=pass_raw, **_kwargs)
 
 def SamplerEulerAncestral(
     wf: VibeWorkflow,
     *,
-    eta: Any = 1.0,
-    s_noise: Any = 1.0,
+    _id: str | None = None,
+    eta: Any = _UNSET,
+    s_noise: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1544,17 +1804,20 @@ def SamplerEulerAncestral(
     Returns: SAMPLER
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['eta'] = eta
-    _kwargs['s_noise'] = s_noise
+    if eta is not _UNSET:
+        _kwargs['eta'] = eta
+    if s_noise is not _UNSET:
+        _kwargs['s_noise'] = s_noise
     _kwargs.update(_extras)
-    return node(wf, 'SamplerEulerAncestral', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SamplerEulerAncestral', _id, pass_raw=pass_raw, **_kwargs)
 
 def SaveAudioMP3(
     wf: VibeWorkflow,
     *,
-    audio: Any,
-    filename_prefix: Any = 'audio/ComfyUI',
-    quality: Any = 'V0',
+    _id: str | None = None,
+    audio: Any = _UNSET,
+    filename_prefix: Any = _UNSET,
+    quality: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1565,17 +1828,21 @@ def SaveAudioMP3(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
-    _kwargs['filename_prefix'] = filename_prefix
-    _kwargs['quality'] = quality
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
+    if filename_prefix is not _UNSET:
+        _kwargs['filename_prefix'] = filename_prefix
+    if quality is not _UNSET:
+        _kwargs['quality'] = quality
     _kwargs.update(_extras)
-    return node(wf, 'SaveAudioMP3', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SaveAudioMP3', _id, pass_raw=pass_raw, **_kwargs)
 
 def SaveImage(
     wf: VibeWorkflow,
     *,
-    images: Any,
-    filename_prefix: Any = 'ComfyUI',
+    _id: str | None = None,
+    images: Any = _UNSET,
+    filename_prefix: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1586,18 +1853,21 @@ def SaveImage(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['images'] = images
-    _kwargs['filename_prefix'] = filename_prefix
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    if filename_prefix is not _UNSET:
+        _kwargs['filename_prefix'] = filename_prefix
     _kwargs.update(_extras)
-    return node(wf, 'SaveImage', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SaveImage', _id, pass_raw=pass_raw, **_kwargs)
 
 def SaveVideo(
     wf: VibeWorkflow,
     *,
-    video: Any,
-    filename_prefix: Any = 'video/ComfyUI',
-    format: Any = 'auto',
-    codec: Any = 'auto',
+    _id: str | None = None,
+    video: Any = _UNSET,
+    filename_prefix: Any = _UNSET,
+    format: Any = _UNSET,
+    codec: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1608,18 +1878,23 @@ def SaveVideo(
     Returns: None
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['video'] = video
-    _kwargs['filename_prefix'] = filename_prefix
-    _kwargs['format'] = format
-    _kwargs['codec'] = codec
+    if video is not _UNSET:
+        _kwargs['video'] = video
+    if filename_prefix is not _UNSET:
+        _kwargs['filename_prefix'] = filename_prefix
+    if format is not _UNSET:
+        _kwargs['format'] = format
+    if codec is not _UNSET:
+        _kwargs['codec'] = codec
     _kwargs.update(_extras)
-    return node(wf, 'SaveVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SaveVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def SetLatentNoiseMask(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    mask: Any,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    mask: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1630,18 +1905,21 @@ def SetLatentNoiseMask(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['mask'] = mask
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if mask is not _UNSET:
+        _kwargs['mask'] = mask
     _kwargs.update(_extras)
-    return node(wf, 'SetLatentNoiseMask', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SetLatentNoiseMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def SimpleMath(
     wf: VibeWorkflow,
     *,
-    value: Any = '',
-    a: Any = 0.0,
-    b: Any = 0.0,
-    c: Any = 0.0,
+    _id: str | None = None,
+    value: Any = _UNSET,
+    a: Any = _UNSET,
+    b: Any = _UNSET,
+    c: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1652,19 +1930,24 @@ def SimpleMath(
     Returns: INT, FLOAT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['value'] = value
-    _kwargs['a'] = a
-    _kwargs['b'] = b
-    _kwargs['c'] = c
+    if value is not _UNSET:
+        _kwargs['value'] = value
+    if a is not _UNSET:
+        _kwargs['a'] = a
+    if b is not _UNSET:
+        _kwargs['b'] = b
+    if c is not _UNSET:
+        _kwargs['c'] = c
     _kwargs.update(_extras)
-    return node(wf, 'SimpleMath+', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SimpleMath+', _id, pass_raw=pass_raw, **_kwargs)
 
 def SolidMask(
     wf: VibeWorkflow,
     *,
-    value: Any = 1.0,
-    width: Any = 512,
-    height: Any = 512,
+    _id: str | None = None,
+    value: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1673,18 +1956,22 @@ def SolidMask(
     Returns: MASK
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['value'] = value
-    _kwargs['width'] = width
-    _kwargs['height'] = height
+    if value is not _UNSET:
+        _kwargs['value'] = value
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
     _kwargs.update(_extras)
-    return node(wf, 'SolidMask', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'SolidMask', _id, pass_raw=pass_raw, **_kwargs)
 
 def StringConcatenate(
     wf: VibeWorkflow,
     *,
-    string_a: Any,
-    string_b: Any,
-    delimiter: Any = '',
+    _id: str | None = None,
+    string_a: Any = _UNSET,
+    string_b: Any = _UNSET,
+    delimiter: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1695,30 +1982,34 @@ def StringConcatenate(
     Returns: STRING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['string_a'] = string_a
-    _kwargs['string_b'] = string_b
-    _kwargs['delimiter'] = delimiter
+    if string_a is not _UNSET:
+        _kwargs['string_a'] = string_a
+    if string_b is not _UNSET:
+        _kwargs['string_b'] = string_b
+    if delimiter is not _UNSET:
+        _kwargs['delimiter'] = delimiter
     _kwargs.update(_extras)
-    return node(wf, 'StringConcatenate', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'StringConcatenate', _id, pass_raw=pass_raw, **_kwargs)
 
 def TextEncodeAceStepAudio1_5(
     wf: VibeWorkflow,
     *,
-    clip: Any,
-    tags: Any,
-    lyrics: Any,
-    timesignature: Any,
-    language: Any,
-    keyscale: Any,
-    seed: Any = 0,
-    bpm: Any = 120,
-    duration: Any = 120.0,
-    generate_audio_codes: Any = True,
-    cfg_scale: Any = 2.0,
-    temperature: Any = 0.85,
-    top_p: Any = 0.9,
-    top_k: Any = 0,
-    min_p: Any = 0.0,
+    _id: str | None = None,
+    clip: Any = _UNSET,
+    tags: Any = _UNSET,
+    lyrics: Any = _UNSET,
+    seed: Any = _UNSET,
+    bpm: Any = _UNSET,
+    duration: Any = _UNSET,
+    timesignature: Any = _UNSET,
+    language: Any = _UNSET,
+    keyscale: Any = _UNSET,
+    generate_audio_codes: Any = _UNSET,
+    cfg_scale: Any = _UNSET,
+    temperature: Any = _UNSET,
+    top_p: Any = _UNSET,
+    top_k: Any = _UNSET,
+    min_p: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1727,29 +2018,45 @@ def TextEncodeAceStepAudio1_5(
     Returns: CONDITIONING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip'] = clip
-    _kwargs['tags'] = tags
-    _kwargs['lyrics'] = lyrics
-    _kwargs['timesignature'] = timesignature
-    _kwargs['language'] = language
-    _kwargs['keyscale'] = keyscale
-    _kwargs['seed'] = seed
-    _kwargs['bpm'] = bpm
-    _kwargs['duration'] = duration
-    _kwargs['generate_audio_codes'] = generate_audio_codes
-    _kwargs['cfg_scale'] = cfg_scale
-    _kwargs['temperature'] = temperature
-    _kwargs['top_p'] = top_p
-    _kwargs['top_k'] = top_k
-    _kwargs['min_p'] = min_p
+    if clip is not _UNSET:
+        _kwargs['clip'] = clip
+    if tags is not _UNSET:
+        _kwargs['tags'] = tags
+    if lyrics is not _UNSET:
+        _kwargs['lyrics'] = lyrics
+    if seed is not _UNSET:
+        _kwargs['seed'] = seed
+    if bpm is not _UNSET:
+        _kwargs['bpm'] = bpm
+    if duration is not _UNSET:
+        _kwargs['duration'] = duration
+    if timesignature is not _UNSET:
+        _kwargs['timesignature'] = timesignature
+    if language is not _UNSET:
+        _kwargs['language'] = language
+    if keyscale is not _UNSET:
+        _kwargs['keyscale'] = keyscale
+    if generate_audio_codes is not _UNSET:
+        _kwargs['generate_audio_codes'] = generate_audio_codes
+    if cfg_scale is not _UNSET:
+        _kwargs['cfg_scale'] = cfg_scale
+    if temperature is not _UNSET:
+        _kwargs['temperature'] = temperature
+    if top_p is not _UNSET:
+        _kwargs['top_p'] = top_p
+    if top_k is not _UNSET:
+        _kwargs['top_k'] = top_k
+    if min_p is not _UNSET:
+        _kwargs['min_p'] = min_p
     _kwargs.update(_extras)
-    return node(wf, 'TextEncodeAceStepAudio1.5', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'TextEncodeAceStepAudio1.5', _id, pass_raw=pass_raw, **_kwargs)
 
 def TextEncodeQwenImageEdit(
     wf: VibeWorkflow,
     *,
-    clip: Any,
-    prompt: Any,
+    _id: str | None = None,
+    clip: Any = _UNSET,
+    prompt: Any = _UNSET,
     vae: Any = _UNSET,
     image: Any = _UNSET,
     pass_raw: bool = False,
@@ -1760,24 +2067,27 @@ def TextEncodeQwenImageEdit(
     Returns: CONDITIONING
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip'] = clip
-    _kwargs['prompt'] = prompt
+    if clip is not _UNSET:
+        _kwargs['clip'] = clip
+    if prompt is not _UNSET:
+        _kwargs['prompt'] = prompt
     if vae is not _UNSET:
         _kwargs['vae'] = vae
     if image is not _UNSET:
         _kwargs['image'] = image
     _kwargs.update(_extras)
-    return node(wf, 'TextEncodeQwenImageEdit', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'TextEncodeQwenImageEdit', _id, pass_raw=pass_raw, **_kwargs)
 
 def TextGenerateLTX2Prompt(
     wf: VibeWorkflow,
     *,
-    clip: Any,
-    sampling_mode: Any,
-    prompt: Any = '',
-    max_length: Any = 256,
+    _id: str | None = None,
+    clip: Any = _UNSET,
+    prompt: Any = _UNSET,
+    max_length: Any = _UNSET,
+    sampling_mode: Any = _UNSET,
     image: Any = _UNSET,
-    thinking: Any = False,
+    thinking: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1786,22 +2096,28 @@ def TextGenerateLTX2Prompt(
     Returns: generated_text
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['clip'] = clip
-    _kwargs['sampling_mode'] = sampling_mode
-    _kwargs['prompt'] = prompt
-    _kwargs['max_length'] = max_length
+    if clip is not _UNSET:
+        _kwargs['clip'] = clip
+    if prompt is not _UNSET:
+        _kwargs['prompt'] = prompt
+    if max_length is not _UNSET:
+        _kwargs['max_length'] = max_length
+    if sampling_mode is not _UNSET:
+        _kwargs['sampling_mode'] = sampling_mode
     if image is not _UNSET:
         _kwargs['image'] = image
-    _kwargs['thinking'] = thinking
+    if thinking is not _UNSET:
+        _kwargs['thinking'] = thinking
     _kwargs.update(_extras)
-    return node(wf, 'TextGenerateLTX2Prompt', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'TextGenerateLTX2Prompt', _id, pass_raw=pass_raw, **_kwargs)
 
 def TrimAudioDuration(
     wf: VibeWorkflow,
     *,
-    audio: Any,
-    start_index: Any = 0.0,
-    duration: Any = 60.0,
+    _id: str | None = None,
+    audio: Any = _UNSET,
+    start_index: Any = _UNSET,
+    duration: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1812,17 +2128,21 @@ def TrimAudioDuration(
     Returns: AUDIO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['audio'] = audio
-    _kwargs['start_index'] = start_index
-    _kwargs['duration'] = duration
+    if audio is not _UNSET:
+        _kwargs['audio'] = audio
+    if start_index is not _UNSET:
+        _kwargs['start_index'] = start_index
+    if duration is not _UNSET:
+        _kwargs['duration'] = duration
     _kwargs.update(_extras)
-    return node(wf, 'TrimAudioDuration', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'TrimAudioDuration', _id, pass_raw=pass_raw, **_kwargs)
 
 def TrimVideoLatent(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    trim_amount: Any = 0,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    trim_amount: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1831,16 +2151,19 @@ def TrimVideoLatent(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['trim_amount'] = trim_amount
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if trim_amount is not _UNSET:
+        _kwargs['trim_amount'] = trim_amount
     _kwargs.update(_extras)
-    return node(wf, 'TrimVideoLatent', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'TrimVideoLatent', _id, pass_raw=pass_raw, **_kwargs)
 
 def UNETLoader(
     wf: VibeWorkflow,
     *,
-    unet_name: Any,
-    weight_dtype: Any = 'default',
+    _id: str | None = None,
+    unet_name: Any = _UNSET,
+    weight_dtype: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1851,16 +2174,19 @@ def UNETLoader(
     Returns: MODEL
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['unet_name'] = unet_name
-    _kwargs['weight_dtype'] = weight_dtype
+    if unet_name is not _UNSET:
+        _kwargs['unet_name'] = unet_name
+    if weight_dtype is not _UNSET:
+        _kwargs['weight_dtype'] = weight_dtype
     _kwargs.update(_extras)
-    return node(wf, 'UNETLoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'UNETLoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEDecode(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    vae: Any,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1871,16 +2197,19 @@ def VAEDecode(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['vae'] = vae
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
     _kwargs.update(_extras)
-    return node(wf, 'VAEDecode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VAEDecode', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEDecodeAudio(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    vae: Any,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1891,20 +2220,23 @@ def VAEDecodeAudio(
     Returns: AUDIO
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['vae'] = vae
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
     _kwargs.update(_extras)
-    return node(wf, 'VAEDecodeAudio', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VAEDecodeAudio', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEDecodeTiled(
     wf: VibeWorkflow,
     *,
-    samples: Any,
-    vae: Any,
-    tile_size: Any = 512,
-    overlap: Any = 64,
-    temporal_size: Any = 64,
-    temporal_overlap: Any = 8,
+    _id: str | None = None,
+    samples: Any = _UNSET,
+    vae: Any = _UNSET,
+    tile_size: Any = _UNSET,
+    overlap: Any = _UNSET,
+    temporal_size: Any = _UNSET,
+    temporal_overlap: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1915,20 +2247,27 @@ def VAEDecodeTiled(
     Returns: IMAGE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['samples'] = samples
-    _kwargs['vae'] = vae
-    _kwargs['tile_size'] = tile_size
-    _kwargs['overlap'] = overlap
-    _kwargs['temporal_size'] = temporal_size
-    _kwargs['temporal_overlap'] = temporal_overlap
+    if samples is not _UNSET:
+        _kwargs['samples'] = samples
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if tile_size is not _UNSET:
+        _kwargs['tile_size'] = tile_size
+    if overlap is not _UNSET:
+        _kwargs['overlap'] = overlap
+    if temporal_size is not _UNSET:
+        _kwargs['temporal_size'] = temporal_size
+    if temporal_overlap is not _UNSET:
+        _kwargs['temporal_overlap'] = temporal_overlap
     _kwargs.update(_extras)
-    return node(wf, 'VAEDecodeTiled', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VAEDecodeTiled', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAEEncode(
     wf: VibeWorkflow,
     *,
-    pixels: Any,
-    vae: Any,
+    _id: str | None = None,
+    pixels: Any = _UNSET,
+    vae: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1939,15 +2278,18 @@ def VAEEncode(
     Returns: LATENT
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['pixels'] = pixels
-    _kwargs['vae'] = vae
+    if pixels is not _UNSET:
+        _kwargs['pixels'] = pixels
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
     _kwargs.update(_extras)
-    return node(wf, 'VAEEncode', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VAEEncode', _id, pass_raw=pass_raw, **_kwargs)
 
 def VAELoader(
     wf: VibeWorkflow,
     *,
-    vae_name: Any,
+    _id: str | None = None,
+    vae_name: Any = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1958,22 +2300,24 @@ def VAELoader(
     Returns: VAE
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['vae_name'] = vae_name
+    if vae_name is not _UNSET:
+        _kwargs['vae_name'] = vae_name
     _kwargs.update(_extras)
-    return node(wf, 'VAELoader', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'VAELoader', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanAnimateToVideo(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    vae: Any,
-    width: Any = 832,
-    height: Any = 480,
-    length: Any = 77,
-    batch_size: Any = 1,
-    continue_motion_max_frames: Any = 5,
-    video_frame_offset: Any = 0,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    vae: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    length: Any = _UNSET,
+    batch_size: Any = _UNSET,
+    continue_motion_max_frames: Any = _UNSET,
+    video_frame_offset: Any = _UNSET,
     clip_vision_output: Any = _UNSET,
     reference_image: Any = _UNSET,
     face_video: Any = _UNSET,
@@ -1989,15 +2333,24 @@ def WanAnimateToVideo(
     Returns: positive, negative, latent, trim_latent, trim_image, video_frame_offset
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['vae'] = vae
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['length'] = length
-    _kwargs['batch_size'] = batch_size
-    _kwargs['continue_motion_max_frames'] = continue_motion_max_frames
-    _kwargs['video_frame_offset'] = video_frame_offset
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if length is not _UNSET:
+        _kwargs['length'] = length
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
+    if continue_motion_max_frames is not _UNSET:
+        _kwargs['continue_motion_max_frames'] = continue_motion_max_frames
+    if video_frame_offset is not _UNSET:
+        _kwargs['video_frame_offset'] = video_frame_offset
     if clip_vision_output is not _UNSET:
         _kwargs['clip_vision_output'] = clip_vision_output
     if reference_image is not _UNSET:
@@ -2013,18 +2366,19 @@ def WanAnimateToVideo(
     if continue_motion is not _UNSET:
         _kwargs['continue_motion'] = continue_motion
     _kwargs.update(_extras)
-    return node(wf, 'WanAnimateToVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanAnimateToVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 def WanImageToVideo(
     wf: VibeWorkflow,
     *,
-    positive: Any,
-    negative: Any,
-    vae: Any,
-    width: Any = 832,
-    height: Any = 480,
-    length: Any = 81,
-    batch_size: Any = 1,
+    _id: str | None = None,
+    positive: Any = _UNSET,
+    negative: Any = _UNSET,
+    vae: Any = _UNSET,
+    width: Any = _UNSET,
+    height: Any = _UNSET,
+    length: Any = _UNSET,
+    batch_size: Any = _UNSET,
     clip_vision_output: Any = _UNSET,
     start_image: Any = _UNSET,
     pass_raw: bool = False,
@@ -2035,18 +2389,25 @@ def WanImageToVideo(
     Returns: positive, negative, latent
     """
     _kwargs: dict[str, Any] = {}
-    _kwargs['positive'] = positive
-    _kwargs['negative'] = negative
-    _kwargs['vae'] = vae
-    _kwargs['width'] = width
-    _kwargs['height'] = height
-    _kwargs['length'] = length
-    _kwargs['batch_size'] = batch_size
+    if positive is not _UNSET:
+        _kwargs['positive'] = positive
+    if negative is not _UNSET:
+        _kwargs['negative'] = negative
+    if vae is not _UNSET:
+        _kwargs['vae'] = vae
+    if width is not _UNSET:
+        _kwargs['width'] = width
+    if height is not _UNSET:
+        _kwargs['height'] = height
+    if length is not _UNSET:
+        _kwargs['length'] = length
+    if batch_size is not _UNSET:
+        _kwargs['batch_size'] = batch_size
     if clip_vision_output is not _UNSET:
         _kwargs['clip_vision_output'] = clip_vision_output
     if start_image is not _UNSET:
         _kwargs['start_image'] = start_image
     _kwargs.update(_extras)
-    return node(wf, 'WanImageToVideo', pass_raw=pass_raw, **_kwargs)
+    return node(wf, 'WanImageToVideo', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['AudioConcat', 'AudioEncoderEncode', 'AudioEncoderLoader', 'BasicScheduler', 'CFGGuider', 'CFGNorm', 'CLIPLoader', 'CLIPTextEncode', 'CLIPVisionEncode', 'CLIPVisionLoader', 'CheckpointLoaderSimple', 'ComfyMathExpression', 'ComfySwitchNode', 'ConditioningZeroOut', 'CreateVideo', 'DualCLIPLoader', 'EmptyAceStep1_5LatentAudio', 'EmptyAudio', 'EmptyFlux2LatentImage', 'EmptyHunyuanLatentVideo', 'EmptyImage', 'EmptyLTXVLatentVideo', 'EmptySD3LatentImage', 'Flux2Scheduler', 'GetImageRangeFromBatch', 'GetImageSize', 'GetVideoComponents', 'GrowMask', 'ImageBlend', 'ImageBlur', 'ImageFromBatch', 'ImageScale', 'ImageScaleBy', 'ImageScaleToTotalPixels', 'KSampler', 'KSamplerSelect', 'LTXAVTextEncoderLoader', 'LTXVAddGuide', 'LTXVAddGuideMulti', 'LTXVAudioVAEDecode', 'LTXVAudioVAEEncode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVImgToVideoInplace', 'LTXVLatentUpsampler', 'LTXVPreprocess', 'LTXVScheduler', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader', 'LoadAudio', 'LoadImage', 'LoadVideo', 'LoraLoaderModelOnly', 'ManualSigmas', 'MaskPreview', 'MaskToImage', 'ModelSamplingAuraFlow', 'ModelSamplingSD3', 'PixelPerfectResolution', 'PreviewAny', 'PreviewAudio', 'PreviewImage', 'PrimitiveStringMultiline', 'RandomNoise', 'ReferenceLatent', 'RepeatImageBatch', 'ResizeImageMaskNode', 'ResizeImagesByLongerEdge', 'SamplerCustomAdvanced', 'SamplerEulerAncestral', 'SaveAudioMP3', 'SaveImage', 'SaveVideo', 'SetLatentNoiseMask', 'SimpleMath', 'SolidMask', 'StringConcatenate', 'TextEncodeAceStepAudio1_5', 'TextEncodeQwenImageEdit', 'TextGenerateLTX2Prompt', 'TrimAudioDuration', 'TrimVideoLatent', 'UNETLoader', 'VAEDecode', 'VAEDecodeAudio', 'VAEDecodeTiled', 'VAEEncode', 'VAELoader', 'WanAnimateToVideo', 'WanImageToVideo']

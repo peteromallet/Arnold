@@ -73,15 +73,15 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     )
 
     assert "READY_METADATA =" in text
-    assert "READY_REQUIREMENTS =" in text
-    assert 'READY_METADATA["ready_template"]' in text
-    # Sprint 3: shared helpers replace inline VibeWorkflow construction
-    assert "from vibecomfy.registry.ready_template import" in text
-    assert "ready_workflow" in text
-    assert "ready_node" in text
-    assert "finalize_ready_template" in text
+    assert "READY_REQUIREMENTS =" not in text
+    assert "ReadyMetadata.build(" in text
+    assert "template_id='image/sample'" in text
+    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node, ref" in text
+    assert "from vibecomfy.registry.ready_template import" not in text
     assert "def _node" not in text
-    assert "bind_input(wf, 'prefix', saveimage.node.id, 'filename_prefix', default='out/sample')" in text
+    assert "'prefix': InputSpec(node=ref('saveimage'), field='filename_prefix', default='out/sample')" in text
+    assert "bind_input(" not in text
+    assert "bind_output(" not in text
     assert "artifact_kind='image'" in text
 
     namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
@@ -91,9 +91,9 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert isinstance(workflow, VibeWorkflow)
     assert workflow.id == "image/sample"
     assert workflow.source.source_type == "ready_template"
-    assert sorted(workflow.nodes) == ["1", "2"]
+    assert sorted(workflow.nodes) == ["10", "20"]
     assert workflow.metadata["ready_template"] == "image/sample"
-    assert workflow.inputs["prefix"].node_id == "2"
+    assert workflow.inputs["prefix"].node_id == "20"
     assert workflow.inputs["prefix"].default == "out/sample"
     assert workflow.outputs[0].artifact_kind == "image"
 

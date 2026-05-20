@@ -224,21 +224,19 @@ def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
         row.note = f"exec_failed: {type(exc).__name__}: {exc}"
         return (row, emitted, original_api)
 
-    # Roundtrip-equality only meaningful for LEGACY (no subgraph divergence).
-    if shape == "legacy":
-        try:
-            from vibecomfy.porting.parity import compile_equivalent
-            new_api = new_workflow.compile("api")
-            ok, diffs = compile_equivalent(original_api, new_api)
-            row.roundtrip = "ok" if ok else "fail"
-            if not ok:
-                row.diffs.extend(diffs[:10])
-        except Exception as exc:
-            row.roundtrip = "fail"
-            row.note = f"roundtrip_failed: {type(exc).__name__}: {exc}"
-    else:
-        # AUTHORED shape: divergence expected. Only check structural shape.
-        row.roundtrip = "skip-authored"
+    # All emitted previews must be canonical-equal to the original compiled
+    # workflow before dry-run/write accepts them. The canonical comparator
+    # absorbs id renumbering while preserving topology and literal kwargs.
+    try:
+        from vibecomfy.porting.parity import compile_equivalent
+        new_api = new_workflow.compile("api")
+        ok, diffs = compile_equivalent(original_api, new_api)
+        row.roundtrip = "ok" if ok else "fail"
+        if not ok:
+            row.diffs.extend(diffs[:10])
+    except Exception as exc:
+        row.roundtrip = "fail"
+        row.note = f"roundtrip_failed: {type(exc).__name__}: {exc}"
 
     return (row, emitted, original_api)
 
@@ -406,7 +404,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"    note: {r.note}")
             for d in r.diffs[:3]:
                 print(f"    diff: {d}")
-    return 0 if not failures else 1
+    hard_failures = [
+        r for r in rows
+        if r.validate == "fail" or r.parse == "fail" or r.build == "fail" or (args.write and r.roundtrip == "fail")
+    ]
+    return 0 if not hard_failures else 1
 
 
 if __name__ == "__main__":
