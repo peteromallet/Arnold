@@ -554,15 +554,16 @@ def test_analyze_source_infers_node_packs_from_runtime_classes_only(tmp_path: Pa
     custom_node_errors = [
         issue for issue in payload["diagnostics"] if issue["code"] == "unresolved_runtime_class"
     ]
+    expected_message = "unknown class: UnknownRuntimeNode. Run 'nodes lookup UnknownRuntimeNode' to find the providing pack, then 'nodes install <slug>'."
     assert custom_node_errors == [
         {
             "code": "unresolved_runtime_class",
-            "message": "Runtime class 'UnknownRuntimeNode' is not present in schema data and no known node pack maps it.",
+            "message": expected_message,
             "severity": "error",
             "node_id": None,
             "class_type": "UnknownRuntimeNode",
             "detail": {"category": "custom_nodes", "runtime_class_type": "UnknownRuntimeNode"},
-            "recommendation": "Add this class to node-pack metadata or install/update object_info before RunPod validation.",
+            "recommendation": expected_message,
         }
     ]
 

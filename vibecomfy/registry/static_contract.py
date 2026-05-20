@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 from typing import Any
+from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 
 from vibecomfy.metadata import (
     MODEL_KEYS,
@@ -72,6 +73,11 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
             if descriptor["default"] is None and descriptor["value"] is not None:
                 descriptor["default"] = descriptor["value"]
             public_inputs.append(descriptor)
+            for alias in descriptor["aliases"]:
+                alias_descriptor = dict(descriptor)
+                alias_descriptor["name"] = str(alias)
+                alias_descriptor["aliases"] = []
+                public_inputs.append(alias_descriptor)
 
     # ── Derive public_outputs from finalize(..., output_node=...) call ──
     _extract_finalize_outputs(tree, assignments, public_outputs, diagnostics)
@@ -94,15 +100,21 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
     # Merge requirements from metadata (ReadyMetadata.build may include them)
     meta_reqs = _dict_or_empty(metadata.get("requirements"))
     merged_models = _list_items(requirements.get("models")) + _list_items(meta_reqs.get("models"))
-    merged_custom_nodes = _list_items(requirements.get("custom_nodes")) + _list_items(meta_reqs.get("custom_nodes"))
+    reqs_normalized, _warnings = normalize_custom_node_requirements(requirements)
+    meta_reqs_normalized, _meta_warnings = normalize_custom_node_requirements(meta_reqs)
+    merged_custom_nodes = _list_items(reqs_normalized.get("custom_nodes")) + _list_items(meta_reqs_normalized.get("custom_nodes"))
+    merged_custom_node_refs = _list_items(reqs_normalized.get("custom_node_refs")) + _list_items(meta_reqs_normalized.get("custom_node_refs"))
 
     # Also count MODELS assignment for model_count when it's a dict of ModelAsset calls
     models_dict = assignments.get("MODELS")
     models_from_mod = len(models_dict) if isinstance(models_dict, dict) else 0
     model_count = max(len(merged_models), models_from_mod)
+    model_assets = [item for item in merged_models if isinstance(item, dict)]
+    if not model_assets and isinstance(models_dict, dict):
+        model_assets = [item for item in models_dict.values() if isinstance(item, dict)]
 
     marker = _template_marker(source)
-    return {
+    summary = {
         "public_inputs": public_inputs,
         "public_outputs": public_outputs,
         "diagnostics": diagnostics,
@@ -111,11 +123,17 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
         "artifact_expectations": public_outputs,
         "model_count": model_count,
         "custom_nodes": sorted(set(item for item in merged_custom_nodes if isinstance(item, str))),
+        "model_assets": model_assets,
+        "hardware": metadata.get("hardware") if isinstance(metadata.get("hardware"), dict) else {},
+        "python_env": metadata.get("python_env") if isinstance(metadata.get("python_env"), dict) else {},
         "app_active": _is_app_active(metadata),
         "blocked": _has_marker(metadata, "blocked"),
         "reference": _has_marker(metadata, "reference"),
         "supplemental": _has_marker(metadata, "supplemental"),
     }
+    if merged_custom_node_refs:
+        summary["custom_node_refs"] = merged_custom_node_refs
+    return summary
 
 
 def _extract_finalize_outputs(
@@ -345,10 +363,16 @@ def _runtime_node_call(node: ast.Call, next_auto_id: int, assignments: dict[str,
         if isinstance(extras, dict):
             keyword_inputs.update({str(key): value for key, value in extras.items()})
     elif call_name == "node":
-        # node(wf, 'ClassName', 'node_id', key=value, ...)
-        # Positional args: 0=wf, 1=class_type, 2=node_id
-        class_type = _literal_arg(node, 1, "class_type", [], call_name, required=False)
-        raw_node_id = _literal_arg(node, 2, "node_id", [], call_name, required=False)
+        # helper: node(wf, 'ClassName', 'node_id', key=value, ...)
+        # method: wf.node('ClassName', key=value, ...)
+        class_arg_index = 1 if isinstance(node.func, ast.Name) else 0
+        node_arg_index = 2 if isinstance(node.func, ast.Name) else -1
+        class_type = _literal_arg(node, class_arg_index, "class_type", [], call_name, required=False)
+        raw_node_id = (
+            _literal_arg(node, node_arg_index, "node_id", [], call_name, required=False)
+            if node_arg_index >= 0
+            else _UNSUPPORTED
+        )
         node_id = str(raw_node_id) if isinstance(raw_node_id, (str, int)) and raw_node_id is not _UNSUPPORTED else str(next_auto_id)
         keyword_inputs = _literal_keyword_inputs(node, assignments=assignments)
     else:
@@ -505,6 +529,17 @@ def _eval_ready_metadata_build(node: ast.Call, assignments: dict[str, Any]) -> d
         if value is _UNSUPPORTED:
             continue
         result[kw.arg] = value
+    template_id = result.get("template_id")
+    if isinstance(template_id, str):
+        result.setdefault("ready_template", template_id)
+        result.setdefault("workflow_template", template_id.rsplit("/", 1)[-1])
+    models = result.get("models")
+    if isinstance(models, dict):
+        result.setdefault("model_assets", [item for item in models.values() if isinstance(item, dict)])
+    provenance = result.get("provenance")
+    if isinstance(provenance, dict):
+        for key, value in provenance.items():
+            result.setdefault(str(key), value)
     return result
 
 
@@ -523,7 +558,7 @@ def _eval_input_spec_call(node: ast.Call, assignments: dict[str, Any]) -> dict[s
             continue
         value = _literal_value(kw.value, assignments)
         if value is not _UNSUPPORTED:
-            result[kw.arg] = value
+            result[kw.arg] = list(value) if kw.arg == "aliases" and isinstance(value, tuple) else value
     return result
 
 
@@ -550,6 +585,10 @@ def _eval_model_asset_call(node: ast.Call, assignments: dict[str, Any]) -> dict[
         "filename": filename_val,
         "url": result.get("url", ""),
         "subdir": result.get("subdir", ""),
+        **({"target_path": result["target_path"]} if isinstance(result.get("target_path"), str) else {}),
+        **({"sha256": result["sha256"]} if isinstance(result.get("sha256"), str) else {}),
+        **({"hf_revision": result["hf_revision"]} if isinstance(result.get("hf_revision"), str) else {}),
+        **({"size_bytes": result["size_bytes"]} if isinstance(result.get("size_bytes"), int) else {}),
     }
 
 

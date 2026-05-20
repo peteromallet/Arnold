@@ -291,8 +291,8 @@ def _classify_marker(source: str) -> str:
         return "generated"
 
     # Check for reference marker
-    has_api = bool(re.search(r"^API_WORKFLOW\\s*=", source, re.MULTILINE))
-    has_nodes = bool(re.search(r"^NODES\\s*=", source, re.MULTILINE))
+    has_api = bool(re.search(r"^API_WORKFLOW\s*=", source, re.MULTILINE))
+    has_nodes = bool(re.search(r"^NODES\s*=", source, re.MULTILINE))
 
     if has_api:
         if "vibecomfy: manual" in first_line:

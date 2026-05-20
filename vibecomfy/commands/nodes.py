@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 from dataclasses import asdict
@@ -10,11 +11,13 @@ import sys
 
 from vibecomfy.commands._output import emit
 from vibecomfy.commands._index_files import IndexReadError, print_index_error, read_index_json
+from vibecomfy.custom_node_refs import lock_entry_to_ref
 from vibecomfy.registry import load_workflow_reference
+from vibecomfy.registry.pack_resolver import AmbiguousPackError, PackNotFoundError, lookup_class_candidates, resolve_pack
 from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import object_info_cache_candidates
 import vibecomfy.node_packs_install as node_packs_install
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
+from vibecomfy.node_packs_lockfile import LockEntry, compute_schema_hash, read_lockfile, write_lockfile
 
 
 def _cmd_nodes_list(args: argparse.Namespace) -> int:
@@ -122,6 +125,60 @@ def _cmd_nodes_install(args: argparse.Namespace) -> int:
     return 0 if result.status in {"installed", "refreshed"} else 1
 
 
+def _cmd_nodes_lookup(args: argparse.Namespace) -> int:
+    query = args.query
+    try:
+        resolution = resolve_pack(query)
+        candidates = list(resolution.candidates) or [resolution.ref]
+        payload = {
+            "query": query,
+            "status": "resolved",
+            "pack": resolution.ref.to_dict(),
+            "candidates": [candidate.to_dict() for candidate in candidates],
+        }
+        return emit(payload, json=args.json, text_renderer=_render_lookup_result)
+    except AmbiguousPackError as exc:
+        payload = {
+            "query": query,
+            "status": "ambiguous",
+            "candidates": [candidate.to_dict() for candidate in exc.candidates],
+        }
+        emit(payload, json=args.json, text_renderer=_render_lookup_result)
+        return 2
+    except PackNotFoundError:
+        candidates = lookup_class_candidates(query)
+        payload = {
+            "query": query,
+            "status": "unresolved" if not candidates else "candidates",
+            "candidates": [candidate.to_dict() for candidate in candidates],
+        }
+        emit(payload, json=args.json, text_renderer=_render_lookup_result)
+        return 1 if not candidates else 0
+
+
+def _render_lookup_result(payload: dict[str, object]) -> str:
+    status = payload.get("status")
+    candidates = payload.get("candidates") or []
+    if status == "resolved":
+        pack = payload.get("pack")
+        slug = pack.get("slug") if isinstance(pack, dict) else "<unknown>"
+        source = pack.get("source") if isinstance(pack, dict) else "<unknown>"
+        return f"{payload['query']}: {slug} ({source})"
+    if status == "ambiguous":
+        lines = [f"ambiguous lookup for {payload['query']}:"]
+    elif status == "candidates":
+        lines = [f"candidate packs for {payload['query']}:"]
+    else:
+        return (
+            f"unknown class: {payload['query']}. "
+            f"Run 'nodes lookup {payload['query']}' to find the providing pack, then 'nodes install <slug>'."
+        )
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            lines.append(f"- {candidate.get('slug')} ({candidate.get('source')})")
+    return "\n".join(lines)
+
+
 def _cmd_nodes_ensure(args: argparse.Namespace) -> int:
     path = args.template or args.workflow
     schema_provider = get_schema_provider("auto")
@@ -175,6 +232,15 @@ def _cmd_nodes_lock(args: argparse.Namespace) -> int:
                 name=entry.name,
                 git_commit_sha=git_commit_sha,
                 url=entry.url,
+                slug=entry.slug,
+                source=entry.source,
+                version=entry.version,
+                commit=git_commit_sha,
+                path=entry.path,
+                schema_hash=class_schema_sha256 or entry.schema_hash,
+                class_set=entry.class_set,
+                last_seen_at=entry.last_seen_at,
+                pip_packages=entry.pip_packages,
                 semantic_label=entry.semantic_label,
                 source_sha256=source_sha256,
                 class_schema_sha256=class_schema_sha256,
@@ -196,6 +262,131 @@ def _cmd_nodes_restore(args: argparse.Namespace) -> int:
             print(result.error, file=sys.stderr)
         ok = ok and result.status in {"installed", "refreshed"}
     return 0 if ok else 1
+
+
+def _cmd_nodes_refresh_template(args: argparse.Namespace) -> int:
+    result = _refresh_template(Path(args.file), dry_run=args.dry_run, show_diff=args.diff)
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        _print_refresh_result(result)
+    return 0 if result["status"] in {"updated", "unchanged", "dry-run"} else 1
+
+
+def _cmd_nodes_refresh_corpus(args: argparse.Namespace) -> int:
+    paths = sorted(Path("ready_templates").glob("**/*.py"))
+    results = [_refresh_template(path, dry_run=True if args.dry_run else False, show_diff=args.diff) for path in paths]
+    payload = {"templates": results, "updated": sum(1 for item in results if item["status"] == "updated")}
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for item in results:
+            _print_refresh_result(item)
+    return 1 if any(item["status"] == "error" for item in results) else 0
+
+
+def _refresh_template(path: Path, *, dry_run: bool, show_diff: bool) -> dict[str, object]:
+    entries = read_lockfile()
+    try:
+        workflow = load_workflow_reference(str(path), schema_provider=get_schema_provider("auto"), allow_scratchpad=True)
+    except Exception as exc:
+        return {"path": str(path), "status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    validation = workflow.validate(schema_provider=get_schema_provider("auto"))
+    if not validation.ok:
+        return {"path": str(path), "status": "error", "error": "local validation failed"}
+    refs, unresolved = _pack_refs_for_workflow(workflow.runtime_class_types(), entries)
+    if unresolved:
+        return {"path": str(path), "status": "error", "error": "unresolved custom node classes", "unresolved": unresolved}
+    original = path.read_text(encoding="utf-8")
+    updated = _replace_requirements_block(original, refs)
+    diff = "".join(difflib.unified_diff(original.splitlines(True), updated.splitlines(True), fromfile=str(path), tofile=str(path)))
+    status = "unchanged" if original == updated else ("dry-run" if dry_run else "updated")
+    if status == "updated":
+        path.write_text(updated, encoding="utf-8")
+    result: dict[str, object] = {
+        "path": str(path),
+        "status": status,
+        "custom_nodes": sorted(ref["slug"] for ref in refs if isinstance(ref.get("slug"), str)),
+        "custom_node_refs": refs,
+    }
+    if show_diff and diff:
+        result["diff"] = diff
+    return result
+
+
+def _pack_refs_for_workflow(class_types: set[str], entries: list[LockEntry]) -> tuple[list[dict[str, object]], list[str]]:
+    refs_by_slug: dict[str, dict[str, object]] = {}
+    unresolved: list[str] = []
+    for class_type in sorted(class_types):
+        matched = [entry for entry in entries if class_type in set(entry.class_set)]
+        if not matched:
+            continue
+        if len(matched) > 1:
+            unresolved.append(class_type)
+            continue
+        ref = lock_entry_to_ref(matched[0])
+        refs_by_slug[str(ref["slug"])] = ref
+    return [refs_by_slug[key] for key in sorted(refs_by_slug)], unresolved
+
+
+def _replace_requirements_block(source: str, refs: list[dict[str, object]]) -> str:
+    custom_nodes = sorted(ref["slug"] for ref in refs if isinstance(ref.get("slug"), str))
+    block = json.dumps({"custom_nodes": custom_nodes, "custom_node_refs": refs}, indent=8, sort_keys=True)
+    indented = "\n".join((" " * 8 + line if index else line) for index, line in enumerate(block.splitlines()))
+    replacement = f"requirements={indented},"
+    if "requirements=" not in source:
+        marker = "READY_METADATA = ReadyMetadata.build("
+        start = source.find(marker)
+        if start == -1:
+            return source
+        insert_at = source.find("\n)", start)
+        if insert_at == -1:
+            return source
+        return source[:insert_at] + f"\n    {replacement}" + source[insert_at:]
+    start = source.find("requirements=")
+    value_start = start + len("requirements=")
+    end = _find_requirement_value_end(source, value_start)
+    if end is None:
+        return source
+    return source[:start] + replacement + source[end:]
+
+
+def _find_requirement_value_end(source: str, value_start: int) -> int | None:
+    depth = 0
+    in_string: str | None = None
+    escape = False
+    for index in range(value_start, len(source)):
+        char = source[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == in_string:
+                in_string = None
+            continue
+        if char in {'"', "'"}:
+            in_string = char
+            continue
+        if char in "([{":
+            depth += 1
+            continue
+        if char in ")]}":
+            if depth == 0:
+                return index
+            depth -= 1
+            continue
+        if char == "," and depth == 0:
+            return index + 1
+    return None
+
+
+def _print_refresh_result(result: dict[str, object]) -> None:
+    print(f"{result['path']}: {result['status']}")
+    if result.get("error"):
+        print(f"  {result['error']}")
+    if result.get("diff"):
+        print(result["diff"])
 
 
 def _installed_nodepack_dir(name: str) -> Path | None:
@@ -243,24 +434,14 @@ def _compute_class_schema_sha256(pack_name: str) -> str | None:
         from vibecomfy.porting.object_info.consume import get_class
     except ImportError:
         return None
-    # Build canonical projection: sorted class -> sorted input keys
-    projection: dict[str, list[str]] = {}
+    class_schemas: dict[str, dict] = {}
     for class_type in sorted(pack.classes):
         entry = get_class(class_type)
         if entry is None:
             # Missing schema — cannot compute a stable hash
             return None
-        inputs = entry.get("inputs", {})
-        input_keys: set[str] = set()
-        if isinstance(inputs, dict):
-            for section in ("required", "optional"):
-                section_data = inputs.get(section)
-                if isinstance(section_data, dict):
-                    input_keys.update(section_data.keys())
-        projection[class_type] = sorted(input_keys)
-    # Serialize deterministically: sorted class names, each with sorted keys
-    canonical = json.dumps(projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        class_schemas[class_type] = entry
+    return compute_schema_hash(class_schemas)
 
 
 def register(subparsers) -> None:
@@ -277,6 +458,10 @@ def register(subparsers) -> None:
         help="Use a captured ComfyUI /object_info JSON file, for example one fetched from a RunPod runtime.",
     )
     nodes_spec.set_defaults(func=_cmd_nodes_spec)
+    nodes_lookup = nodes_sub.add_parser("lookup")
+    nodes_lookup.add_argument("query")
+    nodes_lookup.add_argument("--json", action="store_true")
+    nodes_lookup.set_defaults(func=_cmd_nodes_lookup)
     nodes_install = nodes_sub.add_parser("install-plan")
     nodes_install.add_argument("path")
     nodes_install.add_argument("--json", action="store_true")
@@ -299,3 +484,14 @@ def register(subparsers) -> None:
     nodes_restore = nodes_sub.add_parser("restore")
     nodes_restore.add_argument("--lockfile", default="custom_nodes.lock")
     nodes_restore.set_defaults(func=_cmd_nodes_restore)
+    nodes_refresh_template = nodes_sub.add_parser("refresh-template")
+    nodes_refresh_template.add_argument("file")
+    nodes_refresh_template.add_argument("--dry-run", action="store_true")
+    nodes_refresh_template.add_argument("--diff", action="store_true")
+    nodes_refresh_template.add_argument("--json", action="store_true")
+    nodes_refresh_template.set_defaults(func=_cmd_nodes_refresh_template)
+    nodes_refresh_corpus = nodes_sub.add_parser("refresh-corpus")
+    nodes_refresh_corpus.add_argument("--dry-run", action="store_true")
+    nodes_refresh_corpus.add_argument("--diff", action="store_true")
+    nodes_refresh_corpus.add_argument("--json", action="store_true")
+    nodes_refresh_corpus.set_defaults(func=_cmd_nodes_refresh_corpus)

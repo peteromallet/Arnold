@@ -25,7 +25,25 @@ READY_REQUIREMENTS = {'models': [],
  'custom_nodes': ['ComfyUI-KJNodes',
                   'ComfyUI-VideoHelperSuite',
                   'ComfyUI-WanVideoWrapper',
-                  'comfyui_controlnet_aux']}
+                  'comfyui_controlnet_aux',
+                  'rgthree-comfy'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-VideoHelperSuite',
+                       'source': 'git',
+                       'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
+                      {'slug': 'ComfyUI-WanVideoWrapper',
+                       'source': 'git',
+                       'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c',
+                       'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'},
+                      {'slug': 'comfyui_controlnet_aux',
+                       'source': 'git',
+                       'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'},
+                      {'slug': 'rgthree-comfy',
+                       'source': 'git',
+                       'url': 'https://github.com/rgthree/rgthree-comfy.git'}]}
 
 
 def build() -> VibeWorkflow:

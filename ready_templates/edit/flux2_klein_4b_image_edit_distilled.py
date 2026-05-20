@@ -36,7 +36,11 @@ READY_REQUIREMENTS = {'models': [{'name': 'flux-2-klein-4b-fp8.safetensors',
             {'name': 'flux2-vae.safetensors',
              'url': 'https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors',
              'subdir': 'vae'}],
- 'custom_nodes': []}
+ 'custom_nodes': ['ComfyUI-KJNodes'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}]}
 
 
 def build() -> VibeWorkflow:

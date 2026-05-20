@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Mapping
+import hashlib
 import httpx
 
 
@@ -43,10 +44,25 @@ def is_present(entry: Mapping[str, Any], *, root: Path | None = None) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
+def verify(entry: Mapping[str, Any], path: Path | None = None, *, root: Path | None = None) -> None:
+    resolved = path or local_path(entry, root=root)
+    expected_size = entry.get("size_bytes")
+    if isinstance(expected_size, int) and resolved.stat().st_size != expected_size:
+        raise RuntimeError(
+            f"size mismatch for {entry['name']}: expected {expected_size} bytes, got {resolved.stat().st_size}"
+        )
+    expected_sha = entry.get("sha256")
+    if isinstance(expected_sha, str) and expected_sha:
+        actual_sha = hashlib.sha256(resolved.read_bytes()).hexdigest()
+        if actual_sha.lower() != expected_sha.lower():
+            raise RuntimeError(f"sha256 mismatch for {entry['name']}: expected {expected_sha}, got {actual_sha}")
+
+
 def download(entry: Mapping[str, Any], *, force: bool = False, client: Any = None, root: Path | None = None) -> Path:
     path = local_path(entry, root=root)
     name = str(entry["name"])
     if is_present(entry, root=root) and not force:
+        verify(entry, path, root=root)
         print(f"skipped {name}")
         return path
 
@@ -75,6 +91,7 @@ def download(entry: Mapping[str, Any], *, force: bool = False, client: Any = Non
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    verify(entry, path, root=root)
     return path
 
 
@@ -110,4 +127,4 @@ def _raise_for_status(status_code: int, url: str) -> None:
 from vibecomfy.model_assets import _strip_download_true as _strip_download_true  # noqa: E402,F401
 
 
-__all__ = ["download", "download_many", "is_present", "local_path", "models_root"]
+__all__ = ["download", "download_many", "is_present", "local_path", "models_root", "verify"]

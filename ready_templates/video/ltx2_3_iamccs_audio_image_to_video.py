@@ -29,7 +29,27 @@ READY_METADATA = {'model_assets': [],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
 READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+ 'custom_nodes': ['ComfyUI-GGUF',
+                  'ComfyUI-KJNodes',
+                  'ComfyUI-LTXVideo',
+                  'ComfyUI-VideoHelperSuite',
+                  'rgthree-comfy'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-GGUF',
+                       'source': 'git',
+                       'url': 'https://github.com/city96/ComfyUI-GGUF.git'},
+                      {'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-LTXVideo',
+                       'source': 'git',
+                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'},
+                      {'slug': 'ComfyUI-VideoHelperSuite',
+                       'source': 'git',
+                       'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
+                      {'slug': 'rgthree-comfy',
+                       'source': 'git',
+                       'url': 'https://github.com/rgthree/rgthree-comfy.git'}]}
 
 
 def build() -> VibeWorkflow:

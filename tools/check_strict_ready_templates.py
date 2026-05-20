@@ -31,6 +31,7 @@ VERSION = 1
 STYLE_CATEGORY = "generated_template_style"
 STATIC_DRIFT_CATEGORY = "static_contract_drift"
 PACK_VALIDATION_CATEGORY = "pack_validation"
+PACK_PROVENANCE_CATEGORY = "pack_provenance"
 LEGACY_VOCABULARY_CATEGORY = "legacy_vocabulary"
 
 
@@ -106,6 +107,13 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
         path=relative_path,
         enforced=protected or generated,
     )
+    pack_provenance_diagnostics = _pack_provenance_diagnostics(
+        ready_id=ready_id,
+        path=path,
+        relative_path=relative_path,
+        marker=inventory_entry.marker if inventory_entry is not None else "unknown",
+        strict_ready_protected=protected,
+    )
     legacy_diagnostics = _legacy_vocabulary_diagnostics(
         ready_id=ready_id,
         path=relative_path,
@@ -114,7 +122,14 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
     strict_ready_diagnostics: list[dict[str, Any]] = []
     if protected:
         strict_ready_diagnostics = _strict_ready_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path)
-    diagnostics = [*static_drift, *strict_ready_diagnostics, *style_diagnostics, *pack_diagnostics, *legacy_diagnostics]
+    diagnostics = [
+        *static_drift,
+        *strict_ready_diagnostics,
+        *style_diagnostics,
+        *pack_diagnostics,
+        *pack_provenance_diagnostics,
+        *legacy_diagnostics,
+    ]
     return {
         "ready_id": ready_id,
         "path": relative_path,
@@ -129,6 +144,7 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
         "strict_ready_diagnostics": strict_ready_diagnostics,
         "style_diagnostics": style_diagnostics,
         "pack_validation_diagnostics": pack_diagnostics,
+        "pack_provenance_diagnostics": pack_provenance_diagnostics,
         "legacy_vocabulary_diagnostics": legacy_diagnostics,
         "ok": not any(item["severity"] == "error" and item.get("enforced") is True for item in diagnostics),
     }
@@ -417,6 +433,40 @@ def _pack_validation_diagnostics(
     return diagnostics
 
 
+def _pack_provenance_diagnostics(
+    *,
+    ready_id: str,
+    path: Path,
+    relative_path: str,
+    marker: str,
+    strict_ready_protected: bool,
+) -> list[dict[str, Any]]:
+    """Run the v2.4 pack provenance checker in report-only mode.
+
+    Hard strict-ready enforcement is intentionally deferred until the
+    migration/report-only pass is clean.
+    """
+    try:
+        from tools.check_pack_provenance import diagnostics_for_template
+    except ImportError:
+        return []
+    diagnostics = diagnostics_for_template(
+        ready_id=ready_id,
+        path=path,
+        marker=marker,
+        strict_ready_protected=strict_ready_protected,
+        enforced=False,
+    )
+    return [
+        {
+            **item,
+            "target": item.get("target") or relative_path,
+            "enforced": False,
+        }
+        for item in diagnostics
+    ]
+
+
 def _workflow_from_repo_template(template_id: str, path: Path) -> VibeWorkflow:
     spec = importlib.util.spec_from_file_location(f"vibecomfy_strict_ready_{path.stem}", path)
     if spec is None or spec.loader is None:
@@ -507,6 +557,7 @@ def _flatten_diagnostics(targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         diagnostics.extend(target["strict_ready_diagnostics"])
         diagnostics.extend(target["style_diagnostics"])
         diagnostics.extend(target.get("pack_validation_diagnostics", []))
+        diagnostics.extend(target.get("pack_provenance_diagnostics", []))
         diagnostics.extend(target.get("legacy_vocabulary_diagnostics", []))
     return sorted(diagnostics, key=lambda item: (item["ready_id"], item["category"], item["code"], item["target"]))
 

@@ -8,6 +8,17 @@ import pytest
 
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.node_packs_install import _known_schema_classes, _resolve_node_index_path, install_pack, missing_packs_for_workflow, restore_pack
+
+_VHS_CLASSES = ("VHS_LoadVideo", "VHS_VideoCombine")
+
+
+def _video_helper_entry(sha: str) -> LockEntry:
+    return LockEntry(
+        name="ComfyUI-VideoHelperSuite",
+        git_commit_sha=sha,
+        url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
+        class_set=_VHS_CLASSES,
+    )
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -93,11 +104,7 @@ def test_install_clones_and_upserts_on_success(tmp_path: Path) -> None:
         str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
     ]
     assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-VideoHelperSuite",
-            git_commit_sha="feedface",
-            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        )
+        _video_helper_entry("feedface")
     ]
 
 
@@ -156,11 +163,7 @@ def test_install_idempotent_when_clean(tmp_path: Path) -> None:
     assert result.status == "refreshed"
     assert not any(call[:2] == ["git", "clone"] for call in runner.calls)
     assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-VideoHelperSuite",
-            git_commit_sha="cleanhead",
-            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        )
+        _video_helper_entry("cleanhead")
     ]
 
 
@@ -203,11 +206,7 @@ def test_install_force_dirty_does_not_clone_and_upserts_head(tmp_path: Path) -> 
     assert result.status == "refreshed"
     assert not any(call[:2] == ["git", "clone"] for call in runner.calls)
     assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-VideoHelperSuite",
-            git_commit_sha="dirtyhead",
-            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        )
+        _video_helper_entry("dirtyhead")
     ]
 
 
@@ -241,6 +240,39 @@ def test_install_with_repo_url_infers_name_and_skips_pip_when_uncatalogued(tmp_p
     ]
 
 
+def test_install_registry_pack_fails_when_class_set_cannot_be_derived(tmp_path: Path, monkeypatch) -> None:
+    import vibecomfy.node_packs_install as node_packs_install
+    from vibecomfy.registry.pack_resolver import PackRef, PackResolution
+
+    monkeypatch.setattr(
+        node_packs_install,
+        "resolve_pack",
+        lambda name: PackResolution(
+            query=name,
+            query_type="slug",
+            ref=PackRef(
+                slug=name,
+                source="comfy-registry",
+                url="https://example.test/registry-pack.git",
+            ),
+        ),
+    )
+    runner = FakeRunner(sha="registryhead")
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    result = install_pack(
+        name="registry-pack",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=lockfile,
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
+    )
+
+    assert result.status == "failed"
+    assert "failed to derive class_set" in (result.error or "")
+    assert read_lockfile(lockfile) == []
+
+
 def test_install_uses_cm_cli_when_available(tmp_path: Path) -> None:
     install_dir = tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"
     runner = FakeRunner(sha="cmclihead", cm_cli_checkout_dir=install_dir)
@@ -261,11 +293,7 @@ def test_install_uses_cm_cli_when_available(tmp_path: Path) -> None:
     assert not any(call[:2] == ["git", "clone"] for call in runner.calls)
     assert not any(len(call) >= 4 and call[1:4] == ["-m", "pip", "install"] for call in runner.calls)
     assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-VideoHelperSuite",
-            git_commit_sha="cmclihead",
-            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        )
+        _video_helper_entry("cmclihead")
     ]
 
 
@@ -290,11 +318,7 @@ def test_install_cm_cli_failure_falls_back_to_clone(tmp_path: Path) -> None:
         str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
     ] in runner.calls
     assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-VideoHelperSuite",
-            git_commit_sha="fallbackhead",
-            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        )
+        _video_helper_entry("fallbackhead")
     ]
 
 
@@ -319,11 +343,7 @@ def test_install_cm_cli_succeeded_but_no_git_falls_back_to_clone(tmp_path: Path)
         str(tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"),
     ] in runner.calls
     assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-VideoHelperSuite",
-            git_commit_sha="fallbackhead",
-            url="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        )
+        _video_helper_entry("fallbackhead")
     ]
 
 
@@ -347,13 +367,12 @@ def test_install_falls_back_to_clone_when_cm_cli_missing(tmp_path: Path) -> None
         str(tmp_path / "custom_nodes" / "ComfyUI-KJNodes"),
     ]
     assert any(len(call) >= 4 and call[1:4] == ["-m", "pip", "install"] for call in runner.calls)
-    assert read_lockfile(lockfile) == [
-        LockEntry(
-            name="ComfyUI-KJNodes",
-            git_commit_sha="fallbackhead",
-            url="https://github.com/kijai/ComfyUI-KJNodes.git",
-        )
-    ]
+    [entry] = read_lockfile(lockfile)
+    assert entry.name == "ComfyUI-KJNodes"
+    assert entry.git_commit_sha == "fallbackhead"
+    assert entry.url == "https://github.com/kijai/ComfyUI-KJNodes.git"
+    assert "ImageResizeKJv2" in entry.class_set
+    assert entry.pip_packages == ("matplotlib",)
 
 
 def test_restore_clones_and_checks_out_pinned_sha(tmp_path: Path) -> None:

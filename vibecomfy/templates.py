@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output, ready_node, ready_workflow
 from vibecomfy.workflow import VibeWorkflow
+from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 
 
 _OUTPUT_KIND_HEURISTIC: dict[str, str] = {
@@ -21,6 +22,15 @@ _OUTPUT_KIND_HEURISTIC: dict[str, str] = {
 }
 
 _MODEL_DISAGREEMENT_WARNED = False
+
+
+def _category_qualified_template_id(template_id: str, source_path: str | None) -> str:
+    if "/" in template_id or not source_path:
+        return template_id
+    path = Path(source_path)
+    if path.parent.name and path.parent.parent.name == "ready_templates":
+        return f"{path.parent.name}/{template_id}"
+    return template_id
 
 
 def _derive_output_kind(class_type: str | None) -> str | None:
@@ -45,14 +55,18 @@ def new_workflow(metadata: Mapping[str, Any], *, source_path: str | None = None)
     ``vibecomfy.registry.ready_template``. Generated templates should pass
     ``source_path=__file__`` because the fallback here is this helper module.
     """
-    workflow_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
+    raw_workflow_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
+    workflow_id = _category_qualified_template_id(raw_workflow_id, source_path)
+    metadata = dict(metadata)
+    metadata["ready_template"] = workflow_id
+    metadata["workflow_template"] = workflow_id.rsplit("/", 1)[-1]
     provenance = metadata.get("provenance")
     wf = ready_workflow(
         workflow_id,
         source_path=source_path or __file__,
         provenance=provenance if isinstance(provenance, Mapping) else None,
     )
-    wf.metadata.update(dict(metadata))
+    wf.metadata.update(metadata)
     return wf
 
 
@@ -137,9 +151,23 @@ class InputSpec:
             type=self.type,
             default=self.default,
             required=self.required,
-            aliases=self.aliases,
+            aliases=(),
             media_semantics=self.media_semantics,
         )
+        for alias in self.aliases:
+            if alias in wf.inputs:
+                continue
+            wf.register_input(
+                alias,
+                node_id,
+                self.field,
+                value,
+                type=self.type,
+                default=self.default,
+                required=self.required,
+                aliases=(),
+                media_semantics=self.media_semantics,
+            )
 
 
 @dataclass(frozen=True)
@@ -148,6 +176,9 @@ class ModelAsset:
     url: str
     subdir: str
     target_path: str | None = None
+    sha256: str | None = None
+    hf_revision: str | None = None
+    size_bytes: int | None = None
 
 
 class ReadyMetadata:
@@ -182,6 +213,13 @@ class ReadyMetadata:
             "edit_guide": _derive_edit_guide(inputs, edit_guide_extra),
             "requirements": derived_requirements,
         }
+        provenance = extras.get("provenance")
+        if isinstance(provenance, Mapping):
+            metadata.update({
+                key: value
+                for key, value in provenance.items()
+                if key not in metadata
+            })
         metadata.update({
             key: value
             for key, value in extras.items()
@@ -213,12 +251,16 @@ def finalize(
 
     # Merge metadata['requirements'] custom_nodes into explicit requirements.
     meta_reqs = metadata.get("requirements")
-    if isinstance(meta_reqs, dict) and meta_reqs.get("custom_nodes"):
-        meta_custom = list(meta_reqs["custom_nodes"])
+    if isinstance(meta_reqs, dict) and (meta_reqs.get("custom_nodes") or meta_reqs.get("custom_node_refs")):
+        meta_normalized, _warnings = normalize_custom_node_requirements(meta_reqs)
+        meta_custom = list(meta_normalized["custom_nodes"])
         if requirements is None:
             requirements = {}
         existing_custom = list(requirements.get("custom_nodes") or [])
         requirements["custom_nodes"] = sorted(set(existing_custom + meta_custom))
+        if meta_normalized.get("custom_node_refs"):
+            existing_refs = list(requirements.get("custom_node_refs") or [])
+            requirements["custom_node_refs"] = [*existing_refs, *meta_normalized["custom_node_refs"]]
 
     # Fall back to metadata output_prefix when filename_prefix not provided.
     if "filename_prefix" not in bind_kwargs:
@@ -277,6 +319,7 @@ def _requirements_with_models(
         if isinstance(asset, Mapping)
     ]
     merged: dict[str, Any] = dict(requirements or {})
+    merged, _warnings = normalize_custom_node_requirements(merged)
     existing_models = merged.get("models")
     if existing_models:
         _warn_on_model_requirement_disagreement(existing_models, derived_models)
@@ -312,13 +355,19 @@ def _warn_on_model_requirement_disagreement(existing_models: Any, derived_models
 
 
 def _model_asset_metadata(model: ModelAsset) -> dict[str, str]:
-    data = {
+    data: dict[str, Any] = {
         "name": model.filename,
         "url": model.url,
         "subdir": model.subdir,
     }
     if model.target_path is not None:
         data["target_path"] = model.target_path
+    if model.sha256 is not None:
+        data["sha256"] = model.sha256
+    if model.hf_revision is not None:
+        data["hf_revision"] = model.hf_revision
+    if model.size_bytes is not None:
+        data["size_bytes"] = model.size_bytes
     return data
 
 

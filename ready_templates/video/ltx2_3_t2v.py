@@ -30,7 +30,15 @@ READY_METADATA = {'model_assets': [],
                         'their custom node packs and service credentials are declared.'],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
-READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']}
+READY_REQUIREMENTS = {'models': [],
+ 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-LTXVideo',
+                       'source': 'git',
+                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]}
 
 
 def build() -> VibeWorkflow:

@@ -15,9 +15,11 @@ from vibecomfy.commands._output import emit
 from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.contracts import build_contract
 from vibecomfy.contracts.surface import build_contract_surface
+from vibecomfy.custom_node_refs import check_pack_pin_compatibility
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import extract_from_raw_workflow
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.environment_diagnostics import metadata_environment_warnings
+from vibecomfy.node_packs_lockfile import read_lockfile
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.schema.format import format_issue
 from vibecomfy.workflow import VibeEdge, VibeWorkflow
@@ -64,6 +66,11 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         return 1
     suggested_patches = _patch_suggestions(workflow)
     drift_warnings, drift_errors = _nodepack_lockfile_drift()
+    pin_issues = check_pack_pin_compatibility(workflow, read_lockfile())
+    pin_warnings = [issue.message for issue in pin_issues if issue.severity == "warning"]
+    pin_errors = [issue.message for issue in pin_issues if issue.severity == "error"]
+    drift_warnings.extend(pin_warnings)
+    drift_errors.extend(pin_errors)
     if drift_errors:
         if allow_drift:
             payload = {"status": "warning", "nodepack_drift": [*drift_warnings, *drift_errors], "suggested_patches": suggested_patches}
@@ -353,6 +360,7 @@ def _doctor_warnings(workflow: VibeWorkflow) -> list[str]:
     warnings.extend(_video_audio_warnings(workflow))
     warnings.extend(_video_frame_cap_warnings(workflow))
     warnings.extend(_ltx_audio_vae_loader_warnings(workflow))
+    warnings.extend(metadata_environment_warnings(workflow.metadata))
     return warnings
 
 

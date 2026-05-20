@@ -57,41 +57,43 @@ def build_template_index(*, generated_at: str | None = None) -> dict[str, Any]:
         static_contract = extract_ready_template_contract(REPO_ROOT / path)
         coverage_row = coverage.get(template_id, {})
         coverage_tier = metadata.get("coverage_tier") or coverage_row.get("coverage_tier", "")
-        templates.append(
-            {
-                "id": template_id,
-                "path": path,
-                "source_scope": "repo",
-                "indexed": True,
-                "capability": metadata.get("capability") or coverage_row.get("task", ""),
-                "coverage_tier": coverage_tier,
-                "custom_nodes": static_contract.get("custom_nodes")
-                or sorted(_string_items(requirements.get("custom_nodes"))),
-                "model_count": static_contract.get("model_count", len(_list_items(requirements.get("models")))),
-                "public_inputs": static_contract["public_inputs"],
-                "public_outputs": static_contract["public_outputs"],
-                "contract_shape": CONTRACT_SHAPE,
-                "artifact_expectations": static_contract["artifact_expectations"],
-                "static_diagnostics": static_contract["diagnostics"],
-                "public_input_status": _public_status(static_contract["public_inputs"], static_contract["diagnostics"]),
-                "public_output_status": _public_status(static_contract["public_outputs"], static_contract["diagnostics"]),
-                "custom_node_count": len(
-                    static_contract.get("custom_nodes")
-                    or sorted(_string_items(requirements.get("custom_nodes")))
-                ),
-                "strict_ready_diagnostic_counts": {},
-                "readiness_class": static_contract["readiness_class"],
-                "marker": static_contract["marker"],
-                "app_active": static_contract["app_active"] or coverage_tier == "required",
-                "blocked": static_contract["blocked"] or coverage_tier == "blocked",
-                "reference": static_contract["reference"] or coverage_tier == "reference",
-                "supplemental": static_contract["supplemental"] or coverage_tier == "supplemental",
-                "vibecomfy_version": metadata.get("vibecomfy_version"),
-                "comfy_core": metadata.get("comfy_core"),
-                "source_workflow": (metadata.get("provenance") or {}).get("source_workflow"),
-                "source_sha256": _extract_source_sha256(REPO_ROOT / path),
-            }
-        )
+        row = {
+            "id": template_id,
+            "path": path,
+            "source_scope": "repo",
+            "indexed": True,
+            "capability": metadata.get("capability") or coverage_row.get("task", ""),
+            "coverage_tier": coverage_tier,
+            "custom_nodes": static_contract.get("custom_nodes")
+            or sorted(_string_items(requirements.get("custom_nodes"))),
+            "model_count": static_contract.get("model_count", len(_list_items(requirements.get("models")))),
+            "public_inputs": static_contract["public_inputs"],
+            "public_outputs": static_contract["public_outputs"],
+            "contract_shape": CONTRACT_SHAPE,
+            "artifact_expectations": static_contract["artifact_expectations"],
+            "static_diagnostics": static_contract["diagnostics"],
+            "public_input_status": _public_status(static_contract["public_inputs"], static_contract["diagnostics"]),
+            "public_output_status": _public_status(static_contract["public_outputs"], static_contract["diagnostics"]),
+            "custom_node_count": len(
+                static_contract.get("custom_nodes")
+                or sorted(_string_items(requirements.get("custom_nodes")))
+            ),
+            "strict_ready_diagnostic_counts": {},
+            "readiness_class": static_contract["readiness_class"],
+            "marker": static_contract["marker"],
+            "app_active": static_contract["app_active"] or coverage_tier == "required",
+            "blocked": static_contract["blocked"] or coverage_tier == "blocked",
+            "reference": static_contract["reference"] or coverage_tier == "reference",
+            "supplemental": static_contract["supplemental"] or coverage_tier == "supplemental",
+            "vibecomfy_version": metadata.get("vibecomfy_version"),
+            "comfy_core": metadata.get("comfy_core"),
+            "source_workflow": (metadata.get("provenance") or {}).get("source_workflow"),
+            "source_sha256": _extract_source_sha256(REPO_ROOT / path),
+        }
+        custom_node_refs = static_contract.get("custom_node_refs") or _list_items(requirements.get("custom_node_refs"))
+        if custom_node_refs:
+            row["custom_node_refs"] = custom_node_refs
+        templates.append(row)
 
     return {
         "generated_at": generated_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),

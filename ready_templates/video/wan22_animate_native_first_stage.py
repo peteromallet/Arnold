@@ -55,7 +55,17 @@ READY_REQUIREMENTS = {'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-segment-anyth
              'url': 'https://huggingface.co/hr16/yolox-onnx/resolve/main/yolox_l.onnx'},
             {'directory': 'onnx/dwpose',
              'name': 'dw-ll_ucoco_384_bs5.torchscript.pt',
-             'url': 'https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt'}]}
+             'url': 'https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt'}],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-segment-anything-2',
+                       'source': 'git',
+                       'url': 'https://github.com/kijai/ComfyUI-segment-anything-2.git'},
+                      {'slug': 'comfyui_controlnet_aux',
+                       'source': 'git',
+                       'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'}]}
 
 
 def build() -> VibeWorkflow:

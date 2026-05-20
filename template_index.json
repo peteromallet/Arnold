@@ -180,6 +180,24 @@
           "source": "InputSpec"
         },
         {
+          "name": "noise_seed",
+          "target": {
+            "node_id": "3",
+            "field": "seed"
+          },
+          "node_id": "3",
+          "field": "seed",
+          "value": 561594583201063,
+          "type": "INT",
+          "default": 561594583201063,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "model",
           "target": {
             "node_id": "125",
@@ -230,7 +248,7 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "unmarked",
+      "readiness_class": "ready",
       "marker": "unmarked",
       "app_active": true,
       "blocked": false,
@@ -294,7 +312,15 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-QwenTTS",
+          "source": "git",
+          "commit": "d8122a8ba835b65fd65c113d2b273b1ad1579293",
+          "url": "https://github.com/1038lab/ComfyUI-QwenTTS.git"
+        }
+      ]
     },
     {
       "id": "audio/qwen3_tts_voice_clone",
@@ -344,7 +370,15 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-QwenTTS",
+          "source": "git",
+          "commit": "d8122a8ba835b65fd65c113d2b273b1ad1579293",
+          "url": "https://github.com/1038lab/ComfyUI-QwenTTS.git"
+        }
+      ]
     },
     {
       "id": "audio/qwen3_tts_voice_design",
@@ -394,7 +428,15 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-QwenTTS",
+          "source": "git",
+          "commit": "d8122a8ba835b65fd65c113d2b273b1ad1579293",
+          "url": "https://github.com/1038lab/ComfyUI-QwenTTS.git"
+        }
+      ]
     },
     {
       "id": "edit/flux2_klein_4b_image_edit_base",
@@ -432,7 +474,9 @@
       "indexed": true,
       "capability": "image_edit",
       "coverage_tier": "required",
-      "custom_nodes": [],
+      "custom_nodes": [
+        "ComfyUI-KJNodes"
+      ],
       "model_count": 3,
       "public_inputs": [
         {
@@ -540,7 +584,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
-      "custom_node_count": 0,
+      "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -551,7 +595,15 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        }
+      ]
     },
     {
       "id": "edit/flux2_klein_9b_image_edit_base",
@@ -715,6 +767,42 @@
           "source": "InputSpec"
         },
         {
+          "name": "input_image",
+          "target": {
+            "node_id": "78",
+            "field": "image"
+          },
+          "node_id": "78",
+          "field": "image",
+          "value": "image_qwen_image_edit_input_image.png",
+          "type": "IMAGE",
+          "default": "image_qwen_image_edit_input_image.png",
+          "required": true,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "image",
+          "target": {
+            "node_id": "78",
+            "field": "image"
+          },
+          "node_id": "78",
+          "field": "image",
+          "value": "image_qwen_image_edit_input_image.png",
+          "type": "IMAGE",
+          "default": "image_qwen_image_edit_input_image.png",
+          "required": true,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "model",
           "target": {
             "node_id": "102:37",
@@ -765,7 +853,7 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "unmarked",
+      "readiness_class": "ready",
       "marker": "unmarked",
       "app_active": true,
       "blocked": false,
@@ -1138,7 +1226,14 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        }
+      ]
     },
     {
       "id": "image/flux2_klein_9b_t2i",
@@ -1213,6 +1308,24 @@
           "aliases": [
             "negative"
           ],
+          "media_semantics": "text",
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "negative",
+          "target": {
+            "node_id": "238:228",
+            "field": "text"
+          },
+          "node_id": "238:228",
+          "field": "text",
+          "value": "\u4f4e\u5206\u8fa8\u7387\uff0c\u4f4e\u753b\u8d28\uff0c\u80a2\u4f53\u7578\u5f62\uff0c\u624b\u6307\u7578\u5f62\uff0c\u753b\u9762\u8fc7\u9971\u548c\uff0c\u8721\u50cf\u611f\uff0c\u4eba\u8138\u65e0\u7ec6\u8282\uff0c\u8fc7\u5ea6\u5149\u6ed1\uff0c\u753b\u9762\u5177\u6709AI\u611f\u3002\u6784\u56fe\u6df7\u4e71\u3002\u6587\u5b57\u6a21\u7cca\uff0c\u626d\u66f2",
+          "type": "STRING",
+          "default": "\u4f4e\u5206\u8fa8\u7387\uff0c\u4f4e\u753b\u8d28\uff0c\u80a2\u4f53\u7578\u5f62\uff0c\u624b\u6307\u7578\u5f62\uff0c\u753b\u9762\u8fc7\u9971\u548c\uff0c\u8721\u50cf\u611f\uff0c\u4eba\u8138\u65e0\u7ec6\u8282\uff0c\u8fc7\u5ea6\u5149\u6ed1\uff0c\u753b\u9762\u5177\u6709AI\u611f\u3002\u6784\u56fe\u6df7\u4e71\u3002\u6587\u5b57\u6a21\u7cca\uff0c\u626d\u66f2",
+          "required": false,
+          "range": null,
+          "aliases": [],
           "media_semantics": "text",
           "status": "static",
           "source": "InputSpec"
@@ -1358,7 +1471,7 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "unmarked",
+      "readiness_class": "ready",
       "marker": "unmarked",
       "app_active": true,
       "blocked": false,
@@ -1493,6 +1606,24 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
+        },
+        {
+          "name": "model",
+          "target": {
+            "node_id": "1",
+            "field": "unet_name"
+          },
+          "node_id": "1",
+          "field": "unet_name",
+          "value": "z_image_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -1547,12 +1678,67 @@
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
       "model_count": 3,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "2",
+            "field": "unet_name"
+          },
+          "node_id": "2",
+          "field": "unet_name",
+          "value": "z_image_bf16.safetensors",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "10",
+            "field": "seed"
+          },
+          "node_id": "10",
+          "field": "seed",
+          "value": 770044821593082,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "steps",
+          "target": {
+            "node_id": "10",
+            "field": "steps"
+          },
+          "node_id": "10",
+          "field": "steps",
+          "value": 12,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
@@ -1754,6 +1940,24 @@
           "source": "InputSpec"
         },
         {
+          "name": "negative",
+          "target": {
+            "node_id": "11",
+            "field": "text"
+          },
+          "node_id": "11",
+          "field": "text",
+          "value": null,
+          "type": "STRING",
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": "text",
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "seed",
           "target": {
             "node_id": "14",
@@ -1823,6 +2027,24 @@
           "aliases": [
             "fps"
           ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "2076",
+            "field": "value"
+          },
+          "node_id": "2076",
+          "field": "value",
+          "value": 8,
+          "type": "STRING",
+          "default": 8,
+          "required": false,
+          "range": null,
+          "aliases": [],
           "media_semantics": null,
           "status": "static",
           "source": "InputSpec"
@@ -1902,6 +2124,24 @@
           "source": "InputSpec"
         },
         {
+          "name": "frames",
+          "target": {
+            "node_id": "2078",
+            "field": "value"
+          },
+          "node_id": "2078",
+          "field": "value",
+          "value": 9,
+          "type": "STRING",
+          "default": 9,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "guide_strength",
           "target": {
             "node_id": "5012",
@@ -1917,6 +2157,24 @@
           "aliases": [
             "strength"
           ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "strength",
+          "target": {
+            "node_id": "5012",
+            "field": "strength"
+          },
+          "node_id": "5012",
+          "field": "strength",
+          "value": 1,
+          "type": "STRING",
+          "default": 1,
+          "required": false,
+          "range": null,
+          "aliases": [],
           "media_semantics": null,
           "status": "static",
           "source": "InputSpec"
@@ -1972,7 +2230,7 @@
       "public_output_status": "declared",
       "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "unmarked",
+      "readiness_class": "ready",
       "marker": "unmarked",
       "app_active": true,
       "blocked": false,
@@ -1986,7 +2244,35 @@
         "status": "unavailable"
       },
       "source_workflow": "manual composition of Runexx first/last frame and Lightricks IC-LoRA union control",
-      "source_sha256": "9c48c9b95bad68ed8196e239dedfd5ec887836e569e21bcb60ff6e5ec0a9c0a2"
+      "source_sha256": "9c48c9b95bad68ed8196e239dedfd5ec887836e569e21bcb60ff6e5ec0a9c0a2",
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-DepthAnythingV2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-DepthAnythingV2.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_i2v",
@@ -2232,7 +2518,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_iamccs_audio_extend_low_ram",
@@ -2333,7 +2632,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [
@@ -2398,7 +2698,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "missing",
-      "custom_node_count": 4,
+      "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -2409,7 +2709,35 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_iamccs_long_i2v",
@@ -2421,7 +2749,8 @@
       "custom_nodes": [
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
-        "ComfyUI-LTXVideo"
+        "ComfyUI-LTXVideo",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [
@@ -2450,7 +2779,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "missing",
-      "custom_node_count": 3,
+      "custom_node_count": 4,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -2461,7 +2790,30 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_lightricks_first_last_parity",
@@ -2471,6 +2823,7 @@
       "capability": "first_last_frame_video",
       "coverage_tier": "required",
       "custom_nodes": [
+        "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
       "model_count": 0,
@@ -2828,7 +3181,7 @@
       ],
       "public_input_status": "declared",
       "public_output_status": "declared",
-      "custom_node_count": 1,
+      "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "manual",
       "marker": "manual",
@@ -2839,7 +3192,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_lightricks_first_last_two_stage_lowvram",
@@ -2852,7 +3218,7 @@
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo"
       ],
-      "model_count": 0,
+      "model_count": 3,
       "public_inputs": [
         {
           "name": "prompt",
@@ -3285,11 +3651,6 @@
           "message": "READY_METADATA contains dynamic values"
         },
         {
-          "code": "static_dynamic_assignment",
-          "severity": "warning",
-          "message": "READY_REQUIREMENTS contains dynamic values"
-        },
-        {
           "code": "static_dynamic_value",
           "severity": "warning",
           "message": "register_input has dynamic 'value'"
@@ -3318,7 +3679,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_hdr",
@@ -3429,7 +3803,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_motion_track",
@@ -3562,7 +3949,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_union_control",
@@ -3651,7 +4051,30 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-DepthAnythingV2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-DepthAnythingV2.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_lightricks_two_stage",
@@ -3762,7 +4185,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_custom_audio",
@@ -3852,7 +4288,35 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_first_last_frame",
@@ -3867,7 +4331,7 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0,
+      "model_count": 8,
       "public_inputs": [
         {
           "name": "start_image",
@@ -4262,11 +4726,6 @@
           "code": "static_dynamic_assignment",
           "severity": "warning",
           "message": "READY_METADATA contains dynamic values"
-        },
-        {
-          "code": "static_dynamic_assignment",
-          "severity": "warning",
-          "message": "READY_REQUIREMENTS contains dynamic values"
         }
       ],
       "public_input_status": "declared",
@@ -4282,7 +4741,30 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_first_last_raw_video_guide",
@@ -4297,7 +4779,7 @@
         "ComfyUI-VideoHelperSuite",
         "rgthree-comfy"
       ],
-      "model_count": 0,
+      "model_count": 6,
       "public_inputs": [
         {
           "name": "start_image",
@@ -4584,11 +5066,6 @@
           "code": "static_dynamic_assignment",
           "severity": "warning",
           "message": "READY_METADATA contains dynamic values"
-        },
-        {
-          "code": "static_dynamic_assignment",
-          "severity": "warning",
-          "message": "READY_REQUIREMENTS contains dynamic values"
         }
       ],
       "public_input_status": "declared",
@@ -4604,7 +5081,30 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_first_middle_last_frame",
@@ -4808,7 +5308,35 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_motion_transfer_dwpose",
@@ -4899,7 +5427,40 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_music_video_low_ram",
@@ -5007,7 +5568,35 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
@@ -5116,7 +5705,41 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-QwenTTS",
+          "source": "git",
+          "commit": "d8122a8ba835b65fd65c113d2b273b1ad1579293",
+          "url": "https://github.com/1038lab/ComfyUI-QwenTTS.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_runexx_video_to_video_extend",
@@ -5129,7 +5752,8 @@
         "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
-        "ComfyUI-VideoHelperSuite"
+        "ComfyUI-VideoHelperSuite",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [
@@ -5212,7 +5836,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "missing",
-      "custom_node_count": 4,
+      "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -5223,7 +5847,35 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-GGUF",
+          "source": "git",
+          "url": "https://github.com/city96/ComfyUI-GGUF.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/ltx2_3_t2v",
@@ -5448,7 +6100,20 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-LTXVideo",
+          "source": "git",
+          "url": "https://github.com/Lightricks/ComfyUI-LTXVideo.git"
+        }
+      ]
     },
     {
       "id": "video/wan22_animate_native_first_stage",
@@ -5554,7 +6219,25 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-segment-anything-2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-segment-anything-2.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        }
+      ]
     },
     {
       "id": "video/wan22_i2v_comfy_lightx2v",
@@ -5707,6 +6390,24 @@
           "source": "InputSpec"
         },
         {
+          "name": "negative",
+          "target": {
+            "node_id": "7",
+            "field": "text"
+          },
+          "node_id": "7",
+          "field": "text",
+          "value": null,
+          "type": "STRING",
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": "text",
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "seed",
           "target": {
             "node_id": "3",
@@ -5758,6 +6459,24 @@
           "aliases": [
             "fps"
           ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "fps",
+          "target": {
+            "node_id": "55",
+            "field": "fps"
+          },
+          "node_id": "55",
+          "field": "fps",
+          "value": 16,
+          "type": "FLOAT",
+          "default": 16,
+          "required": false,
+          "range": null,
+          "aliases": [],
           "media_semantics": null,
           "status": "static",
           "source": "InputSpec"
@@ -5874,6 +6593,42 @@
           "source": "InputSpec"
         },
         {
+          "name": "input_image",
+          "target": {
+            "node_id": "52",
+            "field": "image"
+          },
+          "node_id": "52",
+          "field": "image",
+          "value": "image_to_video_wan_start_image.png",
+          "type": "IMAGE",
+          "default": "image_to_video_wan_start_image.png",
+          "required": true,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "image",
+          "target": {
+            "node_id": "52",
+            "field": "image"
+          },
+          "node_id": "52",
+          "field": "image",
+          "value": "image_to_video_wan_start_image.png",
+          "type": "IMAGE",
+          "default": "image_to_video_wan_start_image.png",
+          "required": true,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "model",
           "target": {
             "node_id": "37",
@@ -5924,7 +6679,7 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "unmarked",
+      "readiness_class": "ready",
       "marker": "unmarked",
       "app_active": true,
       "blocked": false,
@@ -6189,7 +6944,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_13b_recammaster",
@@ -6201,7 +6975,8 @@
       "custom_nodes": [
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
-        "ComfyUI-WanVideoWrapper"
+        "ComfyUI-WanVideoWrapper",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [
@@ -6230,7 +7005,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "missing",
-      "custom_node_count": 3,
+      "custom_node_count": 4,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -6241,7 +7016,31 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_13b_vace",
@@ -6254,7 +7053,8 @@
         "ComfyUI-DepthAnythingV2",
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
-        "ComfyUI-WanVideoWrapper"
+        "ComfyUI-WanVideoWrapper",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [],
@@ -6264,7 +7064,7 @@
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
-      "custom_node_count": 4,
+      "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -6275,7 +7075,36 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-DepthAnythingV2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-DepthAnythingV2.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_flf2v",
@@ -6287,7 +7116,8 @@
       "custom_nodes": [
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
-        "ComfyUI-WanVideoWrapper"
+        "ComfyUI-WanVideoWrapper",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [
@@ -6316,7 +7146,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "missing",
-      "custom_node_count": 3,
+      "custom_node_count": 4,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -6327,7 +7157,31 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control",
@@ -6340,7 +7194,90 @@
         "ComfyUI-DepthAnythingV2",
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
-        "ComfyUI-WanVideoWrapper"
+        "ComfyUI-WanVideoWrapper",
+        "rgthree-comfy"
+      ],
+      "model_count": 0,
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "49",
+            "field": "text"
+          },
+          "node_id": "49",
+          "field": "text",
+          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
+      "public_outputs": [],
+      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
+      "artifact_expectations": [],
+      "static_diagnostics": [],
+      "public_input_status": "declared",
+      "public_output_status": "missing",
+      "custom_node_count": 5,
+      "strict_ready_diagnostic_counts": {},
+      "readiness_class": "ready",
+      "marker": "manual",
+      "app_active": false,
+      "blocked": false,
+      "reference": false,
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-DepthAnythingV2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-DepthAnythingV2.git"
+        },
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
+    },
+    {
+      "id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
+      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
+      "source_scope": "repo",
+      "indexed": true,
+      "capability": "camera_control_video",
+      "coverage_tier": "supplemental",
+      "custom_nodes": [
+        "ComfyUI-KJNodes",
+        "ComfyUI-VideoHelperSuite",
+        "ComfyUI-WanVideoWrapper",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [
@@ -6380,59 +7317,31 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
-    },
-    {
-      "id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
-      "path": "ready_templates/video/wanvideo_wrapper_21_14b_fun_control_camera.py",
-      "source_scope": "repo",
-      "indexed": true,
-      "capability": "camera_control_video",
-      "coverage_tier": "supplemental",
-      "custom_nodes": [
-        "ComfyUI-KJNodes",
-        "ComfyUI-VideoHelperSuite",
-        "ComfyUI-WanVideoWrapper"
-      ],
-      "model_count": 0,
-      "public_inputs": [
+      "source_sha256": null,
+      "custom_node_refs": [
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
         }
-      ],
-      "public_outputs": [],
-      "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
-      "static_diagnostics": [],
-      "public_input_status": "declared",
-      "public_output_status": "missing",
-      "custom_node_count": 3,
-      "strict_ready_diagnostic_counts": {},
-      "readiness_class": "ready",
-      "marker": "manual",
-      "app_active": false,
-      "blocked": false,
-      "reference": false,
-      "supplemental": true,
-      "vibecomfy_version": null,
-      "comfy_core": null,
-      "source_workflow": null,
-      "source_sha256": null
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_i2v",
@@ -6484,7 +7393,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_t2v",
@@ -6536,7 +7464,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
@@ -6548,7 +7495,8 @@
       "custom_nodes": [
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
-        "ComfyUI-WanVideoWrapper"
+        "ComfyUI-WanVideoWrapper",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [],
@@ -6558,7 +7506,7 @@
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
-      "custom_node_count": 3,
+      "custom_node_count": 4,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -6569,7 +7517,31 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
@@ -6602,7 +7574,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_i2v_kijai",
@@ -6844,7 +7835,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
@@ -6877,7 +7887,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
@@ -6910,7 +7939,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
@@ -6943,7 +7991,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_s2v_context_window",
@@ -6976,7 +8043,26 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
@@ -6989,7 +8075,8 @@
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper",
-        "comfyui_controlnet_aux"
+        "comfyui_controlnet_aux",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [],
@@ -6999,7 +8086,7 @@
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
-      "custom_node_count": 4,
+      "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -7010,7 +8097,36 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai",
@@ -7025,7 +8141,8 @@
         "ComfyUI-WanAnimatePreprocess",
         "ComfyUI-WanVideoWrapper",
         "ComfyUI-segment-anything-2",
-        "comfyui_controlnet_aux"
+        "comfyui_controlnet_aux",
+        "rgthree-comfy"
       ],
       "model_count": 11,
       "public_inputs": [
@@ -7072,7 +8189,7 @@
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "missing",
-      "custom_node_count": 6,
+      "custom_node_count": 7,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -7083,7 +8200,46 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanAnimatePreprocess",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "ComfyUI-segment-anything-2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-segment-anything-2.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     },
     {
       "id": "video/wanvideo_wrapper_wan_animate",
@@ -7096,7 +8252,9 @@
         "ComfyUI-KJNodes",
         "ComfyUI-VideoHelperSuite",
         "ComfyUI-WanVideoWrapper",
-        "comfyui_controlnet_aux"
+        "ComfyUI-segment-anything-2",
+        "comfyui_controlnet_aux",
+        "rgthree-comfy"
       ],
       "model_count": 0,
       "public_inputs": [],
@@ -7106,7 +8264,7 @@
       "static_diagnostics": [],
       "public_input_status": "missing",
       "public_output_status": "missing",
-      "custom_node_count": 4,
+      "custom_node_count": 6,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
       "marker": "manual",
@@ -7117,7 +8275,41 @@
       "vibecomfy_version": null,
       "comfy_core": null,
       "source_workflow": null,
-      "source_sha256": null
+      "source_sha256": null,
+      "custom_node_refs": [
+        {
+          "slug": "ComfyUI-KJNodes",
+          "source": "git",
+          "commit": "b7646ad70a7daa7aeb919ca542274758d26ba2df",
+          "url": "https://github.com/kijai/ComfyUI-KJNodes.git"
+        },
+        {
+          "slug": "ComfyUI-VideoHelperSuite",
+          "source": "git",
+          "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"
+        },
+        {
+          "slug": "ComfyUI-WanVideoWrapper",
+          "source": "git",
+          "commit": "df8f3e49daaad117cf3090cc916c83f3d001494c",
+          "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+        },
+        {
+          "slug": "ComfyUI-segment-anything-2",
+          "source": "git",
+          "url": "https://github.com/kijai/ComfyUI-segment-anything-2.git"
+        },
+        {
+          "slug": "comfyui_controlnet_aux",
+          "source": "git",
+          "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+        },
+        {
+          "slug": "rgthree-comfy",
+          "source": "git",
+          "url": "https://github.com/rgthree/rgthree-comfy.git"
+        }
+      ]
     }
   ]
 }

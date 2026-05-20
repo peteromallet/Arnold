@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -33,6 +34,7 @@ class ModelSource:
     repo: str | None = None
     filename: str | None = None
     url: str | None = None
+    revision: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,8 @@ class ModelEntry:
     aliases: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     notes: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
 
 
 _REGISTRY_CACHE: dict[Path, tuple[ModelEntry, ...]] = {}
@@ -75,6 +79,7 @@ def load_registry(path: str | Path | None = None) -> tuple[ModelEntry, ...]:
 def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
     source = _download_source(entry, models_root=models_root)
     _check_size(source, entry.min_size, entry.id)
+    _check_pins(source, entry)
     staged_paths: list[Path] = []
     for target in entry.targets:
         staged = models_root / target.path
@@ -87,6 +92,7 @@ def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
         except OSError:
             os.symlink(source, staged)
         _check_size(staged, entry.min_size, entry.id)
+        _check_pins(staged, entry)
         staged_paths.append(staged)
     return staged_paths
 
@@ -140,6 +146,7 @@ def _parse_entry(raw: Any, *, registry_path: Path) -> ModelEntry:
         repo=_optional_str(source_raw.get("repo")),
         filename=_optional_str(source_raw.get("filename")),
         url=_optional_str(source_raw.get("url")),
+        revision=_optional_str(source_raw.get("revision")),
     )
     if not isinstance(targets_raw := raw.get("targets", []), list) or not targets_raw:
         raise ValueError(f"{entry_id}: targets must be a non-empty list")
@@ -149,6 +156,10 @@ def _parse_entry(raw: Any, *, registry_path: Path) -> ModelEntry:
     tags = _str_tuple(raw.get("tags", []), entry_id=entry_id, field="tags")
     if not isinstance(min_size := raw.get("min_size"), int) or min_size < 0:
         raise ValueError(f"{entry_id}: min_size must be a non-negative integer")
+    size_bytes = raw.get("size_bytes")
+    if size_bytes is not None and (not isinstance(size_bytes, int) or size_bytes < 0):
+        raise ValueError(f"{entry_id}: size_bytes must be a non-negative integer when set")
+    sha256 = _optional_str(raw.get("sha256"))
     if (notes := raw.get("notes")) is not None and not isinstance(notes, str):
         raise ValueError(f"{entry_id}: notes must be a string")
     return ModelEntry(
@@ -156,6 +167,8 @@ def _parse_entry(raw: Any, *, registry_path: Path) -> ModelEntry:
         source=source,
         min_size=min_size,
         targets=targets,
+        sha256=sha256,
+        size_bytes=size_bytes,
         canonical_name=canonical_name,
         aliases=aliases,
         tags=tags,
@@ -213,11 +226,23 @@ def _download_source(entry: ModelEntry, *, models_root: Path) -> Path:
     if entry.source.kind == "huggingface":
         from huggingface_hub import hf_hub_download
 
-        path = hf_hub_download(repo_id=entry.source.repo, filename=entry.source.filename)
+        kwargs = {"repo_id": entry.source.repo, "filename": entry.source.filename}
+        if entry.source.revision is not None:
+            kwargs["revision"] = entry.source.revision
+        path = hf_hub_download(**kwargs)
         return Path(path).resolve(strict=True)
     if entry.source.kind == "url":
         filename = _source_filename(entry.source)
-        downloaded = fetch_assets.download({"name": filename, "subdir": "_registry", "url": entry.source.url}, root=models_root)
+        downloaded = fetch_assets.download(
+            {
+                "name": filename,
+                "subdir": "_registry",
+                "url": entry.source.url,
+                **({"sha256": entry.sha256} if entry.sha256 else {}),
+                **({"size_bytes": entry.size_bytes} if entry.size_bytes is not None else {}),
+            },
+            root=models_root,
+        )
         return downloaded.resolve(strict=True)
     raise ValueError(f"{entry.id}: unsupported source kind {entry.source.kind!r}")
 
@@ -237,6 +262,15 @@ def _check_size(path: Path, min_size: int, entry_id: str) -> None:
     size = path.stat().st_size
     if size < min_size:
         raise RuntimeError(f"{entry_id}: {path} is too small ({size} bytes < {min_size} bytes)")
+
+
+def _check_pins(path: Path, entry: ModelEntry) -> None:
+    if entry.size_bytes is not None and path.stat().st_size != entry.size_bytes:
+        raise RuntimeError(f"{entry.id}: {path} size {path.stat().st_size} does not match pinned size_bytes {entry.size_bytes}")
+    if entry.sha256:
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual.lower() != entry.sha256.lower():
+            raise RuntimeError(f"{entry.id}: {path} sha256 {actual} does not match pinned sha256 {entry.sha256}")
 
 
 def _select_by_ids(entries: Sequence[ModelEntry], ids: Sequence[str] | None) -> tuple[ModelEntry, ...]:
@@ -266,7 +300,8 @@ def _filter_entries(entries: Sequence[ModelEntry], *, ids: Sequence[str] | None,
 def _print_dry_run(entries: Sequence[ModelEntry], *, models_root: Path) -> None:
     for entry in entries:
         source = _source_label(entry.source)
-        print(f"{entry.id}: {source}")
+        pins = _pin_status(entry)
+        print(f"{entry.id}: {source}{f' [{pins}]' if pins else ''}")
         for target in entry.targets:
             staged = models_root / target.path
             if staged.exists():
@@ -288,7 +323,21 @@ def _source_filename(source: ModelSource) -> str:
 
 
 def _source_label(source: ModelSource) -> str:
-    return f"hf://{source.repo}/{source.filename}" if source.kind == "huggingface" else source.url or "url:<missing>"
+    if source.kind == "huggingface":
+        revision = f"@{source.revision}" if source.revision else ""
+        return f"hf://{source.repo}/{source.filename}{revision}"
+    return source.url or "url:<missing>"
+
+
+def _pin_status(entry: ModelEntry) -> str:
+    parts: list[str] = []
+    if entry.source.revision:
+        parts.append(f"revision={entry.source.revision}")
+    if entry.sha256:
+        parts.append(f"sha256={entry.sha256}")
+    if entry.size_bytes is not None:
+        parts.append(f"size_bytes={entry.size_bytes}")
+    return ", ".join(parts)
 
 
 def _required_str(raw: Mapping[str, Any], key: str, entry_id: str) -> str:

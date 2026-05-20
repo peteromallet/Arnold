@@ -13,11 +13,14 @@ PortAnalysisMode = Literal["auto", "scratchpad", "strict_ready", "app_active"]
 
 from vibecomfy.cli_loader import _ready_id_for
 from vibecomfy.commands._workflow_path import resolve_workflow_path
+from vibecomfy.environment_diagnostics import metadata_environment_warnings
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape, normalize_to_api
 from vibecomfy.metadata import OUTPUT_NODE_NAMES
 from vibecomfy.contracts import build_contract
 from vibecomfy.node_packs import resolve_node_packs, unresolved_class_types
+from vibecomfy.custom_node_refs import check_pack_pin_compatibility
+from vibecomfy.node_packs_lockfile import read_lockfile
 from vibecomfy.porting.assets import analyze_model_assets
 from vibecomfy.porting.emitter import (
     READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
@@ -149,6 +152,7 @@ def analyze_source(
     report.diagnostics.extend(
         _known_runtime_compatibility_diagnostics(api_prompt, metadata=workflow.metadata)
     )
+    report.diagnostics.extend(_metadata_environment_diagnostics(workflow.metadata))
 
     asset_analysis = analyze_model_assets(
         raw_workflow=loaded.raw_workflow,
@@ -235,6 +239,19 @@ def analyze_source(
         report.recommendations.append("Resolve error diagnostics before spending RunPod GPU time.")
 
     return report
+
+
+def _metadata_environment_diagnostics(metadata: dict[str, Any]) -> list[PortIssue]:
+    return [
+        PortIssue(
+            code="metadata_environment_warning",
+            message=warning,
+            severity="warning",
+            detail={"category": "environment"},
+            recommendation="Review READY_METADATA hardware/python_env before launching an ensured or GPU-backed run.",
+        )
+        for warning in metadata_environment_warnings(metadata)
+    ]
 
 
 def _dedupe_strict_ready_diagnostics(diagnostics: list[PortIssue]) -> list[PortIssue]:
@@ -791,14 +808,25 @@ def _custom_node_analysis(workflow: VibeWorkflow, *, schema_provider: Any | None
     diagnostics = [
         PortIssue(
             code="unresolved_runtime_class",
-            message=f"Runtime class {class_type!r} is not present in schema data and no known node pack maps it.",
+            message=_unknown_class_message(class_type),
             severity="error",
             class_type=class_type,
             detail={"category": "custom_nodes", "runtime_class_type": class_type},
-            recommendation="Add this class to node-pack metadata or install/update object_info before RunPod validation.",
+            recommendation=_unknown_class_message(class_type),
         )
         for class_type in unresolved
     ]
+    diagnostics.extend(
+        PortIssue(
+            code=issue.code,
+            message=issue.message,
+            severity=issue.severity,
+            class_type=None,
+            detail={"category": "custom_nodes", **issue.detail},
+            recommendation="Align READY_METADATA requirements.custom_node_refs with custom_nodes.lock before running with ensured packs.",
+        )
+        for issue in check_pack_pin_compatibility(workflow, read_lockfile())
+    )
     return {
         "status": status,
         "runtime_class_types": sorted(runtime_class_types),
@@ -808,6 +836,10 @@ def _custom_node_analysis(workflow: VibeWorkflow, *, schema_provider: Any | None
         "suggestions": suggestions,
         "diagnostics": diagnostics,
     }
+
+
+def _unknown_class_message(class_type: str) -> str:
+    return f"unknown class: {class_type}. Run 'nodes lookup {class_type}' to find the providing pack, then 'nodes install <slug>'."
 
 
 def _class_in_known_pack(class_type: str) -> bool:

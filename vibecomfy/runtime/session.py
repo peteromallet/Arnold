@@ -6,9 +6,7 @@ import json
 import logging
 import os
 import signal
-import shutil
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -191,9 +189,15 @@ class EmbeddedSession:
         if self._inflight_run is not None and not self._inflight_run.done():
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
         if ensure_packs:
+            from vibecomfy.custom_node_refs import check_pack_pin_compatibility
             from vibecomfy.node_packs_install import install_pack, missing_packs_for_workflow, restore_pack
             from vibecomfy.node_packs_lockfile import read_lockfile
 
+            lockfile_entries = read_lockfile()
+            pin_issues = check_pack_pin_compatibility(workflow, lockfile_entries)
+            pin_errors = [issue.message for issue in pin_issues if issue.severity == "error"]
+            if pin_errors:
+                raise RuntimeError("ensure_packs: " + "; ".join(pin_errors))
             # Dev convenience only; production should pre-stage nodepacks with `vibecomfy nodes ensure`.
             try:
                 packs, _unresolved = missing_packs_for_workflow(workflow)
@@ -212,7 +216,7 @@ class EmbeddedSession:
             except ValueError as exc:
                 raise RuntimeError("ensure_packs: " + str(exc)) from exc
             installed_or_refreshed = False
-            lock_entries = {entry.name: entry for entry in read_lockfile()}
+            lock_entries = {entry.name: entry for entry in lockfile_entries}
             for pack in packs:
                 lock_entry = lock_entries.get(pack.name)
                 result = restore_pack(lock_entry) if lock_entry is not None else install_pack(name=pack.name)

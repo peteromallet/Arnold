@@ -29,7 +29,23 @@ READY_METADATA = {'model_assets': [],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
 READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-DepthAnythingV2', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'comfyui_controlnet_aux']}
+ 'custom_nodes': ['ComfyUI-DepthAnythingV2',
+                  'ComfyUI-KJNodes',
+                  'ComfyUI-LTXVideo',
+                  'comfyui_controlnet_aux'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-DepthAnythingV2',
+                       'source': 'git',
+                       'url': 'https://github.com/kijai/ComfyUI-DepthAnythingV2.git'},
+                      {'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-LTXVideo',
+                       'source': 'git',
+                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'},
+                      {'slug': 'comfyui_controlnet_aux',
+                       'source': 'git',
+                       'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'}]}
 
 
 def build() -> VibeWorkflow:

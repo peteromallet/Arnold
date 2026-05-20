@@ -21,7 +21,12 @@ READY_METADATA = {'model_assets': [],
  'runtime_variant': 'qwen3-tts-smoke',
  'input_fixtures': []}
 
-READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-QwenTTS']}
+READY_REQUIREMENTS = {'models': [],
+ 'custom_nodes': ['ComfyUI-QwenTTS'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-QwenTTS',
+                       'source': 'git',
+                       'commit': 'd8122a8ba835b65fd65c113d2b273b1ad1579293',
+                       'url': 'https://github.com/1038lab/ComfyUI-QwenTTS.git'}]}
 
 
 def build() -> VibeWorkflow:

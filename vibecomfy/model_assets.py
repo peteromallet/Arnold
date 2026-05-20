@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 _HF_SPLIT_FILES_RE = re.compile(r"/split_files/([^/]+)/[^/]+$")
 
 
-def extract_from_raw_workflow(raw: Mapping[str, Any]) -> list[dict[str, str]]:
+def extract_from_raw_workflow(raw: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Extract structured model asset entries from a ComfyUI workflow JSON object."""
 
     if not isinstance(raw, Mapping):
@@ -73,7 +73,7 @@ def extract_from_raw_workflow(raw: Mapping[str, Any]) -> list[dict[str, str]]:
     if not has_nodes and not has_subgraphs:
         return []
 
-    entries: list[dict[str, str]] = []
+    entries: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for node in _iter_workflow_nodes(raw):
         for entry in _entries_from_node(node):
@@ -85,7 +85,7 @@ def extract_from_raw_workflow(raw: Mapping[str, Any]) -> list[dict[str, str]]:
     return entries
 
 
-def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, str]]:
+def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, Any]]:
     """Read structured model assets from a materialized ready scratchpad."""
 
     module_ast = ast.parse(Path(path).read_text(encoding="utf-8"), filename=str(path))
@@ -116,7 +116,7 @@ def resolve_referenced_assets(
     workflow: VibeWorkflow,
     *,
     registry: Sequence[ModelEntry] | None = None,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Resolve model-picker inputs in a built workflow to downloadable assets.
 
     Authored ``model_assets`` is still the preferred place for bespoke URLs, but
@@ -127,7 +127,7 @@ def resolve_referenced_assets(
     from vibecomfy.registry.models_loader import load_registry
 
     entries = tuple(registry) if registry is not None else load_registry()
-    resolved: list[dict[str, str]] = []
+    resolved: list[dict[str, Any]] = []
     unresolved: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for reference in _referenced_model_values(workflow):
@@ -159,7 +159,7 @@ def _literal_eval_with_constants(node: ast.AST, constants: Mapping[str, Any]) ->
     return ast.literal_eval(node)
 
 
-def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, str]]:
+def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, Any]]:
     properties = node.get("properties", {})
     if not isinstance(properties, Mapping):
         return []
@@ -167,7 +167,7 @@ def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, str]]:
     if not isinstance(models, list):
         return []
     class_type = _node_class_type(node)
-    entries: list[dict[str, str]] = []
+    entries: list[dict[str, Any]] = []
     for model in models:
         entry = _normalise_model_entry(model, class_type=class_type)
         if entry is not None:
@@ -209,7 +209,7 @@ def _asset_for_reference(
     reference: Mapping[str, str],
     *,
     registry: Sequence[ModelEntry],
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     value = reference["value"].replace("\\", "/")
     subdir = reference["subdir"].replace("\\", "/")
     expected_paths = {f"{subdir}/{value}", f"{subdir}/{Path(value).name}"}
@@ -229,7 +229,15 @@ def _asset_for_reference(
             else:
                 name = Path(target_path).name
                 asset_subdir = str(Path(target_path).parent)
-            return {"name": name, "url": url, "subdir": asset_subdir}
+            asset: dict[str, Any] = {"name": name, "url": url, "subdir": asset_subdir}
+            if getattr(entry, "sha256", None):
+                asset["sha256"] = entry.sha256
+            if getattr(entry, "size_bytes", None) is not None:
+                asset["size_bytes"] = entry.size_bytes
+            revision = getattr(entry.source, "revision", None)
+            if revision:
+                asset["hf_revision"] = revision
+            return asset
     return None
 
 
@@ -238,7 +246,8 @@ def _url_for_registry_entry(entry: ModelEntry) -> str | None:
     if source.url:
         return source.url
     if source.kind == "huggingface" and source.repo and source.filename:
-        return f"https://huggingface.co/{source.repo}/resolve/main/{source.filename}"
+        revision = getattr(source, "revision", None) or "main"
+        return f"https://huggingface.co/{source.repo}/resolve/{revision}/{source.filename}"
     return None
 
 
@@ -246,8 +255,8 @@ def _looks_like_runtime_input(value: str) -> bool:
     return value.startswith(("http://", "https://", "/", "./", "../")) or value in {"none", "None"}
 
 
-def _normalise_requirement_entries(models: Iterable[Any]) -> list[dict[str, str]]:
-    entries: list[dict[str, str]] = []
+def _normalise_requirement_entries(models: Iterable[Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for model in models:
         if not isinstance(model, Mapping):
@@ -263,7 +272,7 @@ def _normalise_requirement_entries(models: Iterable[Any]) -> list[dict[str, str]
     return entries
 
 
-def _normalise_model_entry(model: Any, *, class_type: str) -> dict[str, str] | None:
+def _normalise_model_entry(model: Any, *, class_type: str) -> dict[str, Any] | None:
     if not isinstance(model, Mapping):
         return None
     name = model.get("name")
@@ -273,10 +282,19 @@ def _normalise_model_entry(model: Any, *, class_type: str) -> dict[str, str] | N
     if not isinstance(url, str) or not url:
         return None
     subdir = _subdir_for_model(model, class_type=class_type, url=url)
-    entry = {"name": name, "url": _strip_download_true(url), "subdir": subdir}
+    entry: dict[str, Any] = {"name": name, "url": _strip_download_true(url), "subdir": subdir}
     target_path = model.get("target_path")
     if isinstance(target_path, str) and target_path:
         entry["target_path"] = target_path
+    sha256 = model.get("sha256")
+    if isinstance(sha256, str) and sha256:
+        entry["sha256"] = sha256
+    hf_revision = model.get("hf_revision") or model.get("revision")
+    if isinstance(hf_revision, str) and hf_revision:
+        entry["hf_revision"] = hf_revision
+    size_bytes = model.get("size_bytes")
+    if isinstance(size_bytes, int) and size_bytes >= 0:
+        entry["size_bytes"] = size_bytes
     return entry
 
 

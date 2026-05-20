@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 
@@ -17,6 +16,7 @@ from vibecomfy.porting.convert import (
     port_convert_workflow,
 )
 from vibecomfy.porting.strict_ready import STRICT_READY_MISSING_OUTPUT_CONTRACT
+from vibecomfy.node_packs_lockfile import LockEntry
 # parity helpers exercised indirectly through port_convert_workflow
 from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
@@ -125,6 +125,37 @@ def test_port_convert_ready_template_candidate_requires_ready_id() -> None:
     assert "'ready_id': 'image/sample'" in result.text
     assert "'custom_nodes': ['ComfyUI-TestPack']" in result.text
     assert "'model.safetensors'" in result.text
+
+
+def test_port_convert_ready_template_emits_structured_custom_node_refs(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vibecomfy.porting.convert as convert
+
+    monkeypatch.setattr(
+        convert,
+        "read_lockfile",
+        lambda: [
+            LockEntry(
+                name="ComfyUI-TestPack",
+                git_commit_sha="abc",
+                url="https://example.test/pack.git",
+                slug="comfyui-testpack",
+                source="git",
+                commit="abc",
+                class_set=("LoadImage",),
+            )
+        ],
+    )
+
+    result = port_convert_workflow(
+        _sample_workflow(),
+        ready_id="image/sample",
+        source_path="workflow_corpus/source.json",
+        schema_provider=_provider(),
+    )
+
+    assert "'custom_nodes': ['ComfyUI-TestPack']" in result.text
+    assert "'custom_node_refs':" in result.text
+    assert "'slug': 'comfyui-testpack'" in result.text
 
 
 def test_port_convert_rejects_ready_template_candidate_without_kind_name_id() -> None:

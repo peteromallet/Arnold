@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, upsert_lockfile_entry, write_lockfile
+from vibecomfy.node_packs_lockfile import (
+    LockEntry,
+    canonical_pack_schema_projection,
+    compute_schema_hash,
+    read_lockfile,
+    upsert_lockfile_entry,
+    write_lockfile,
+)
 
 
 def test_lockfile_legacy_round_trip_to_text(tmp_path: Path) -> None:
@@ -213,3 +220,108 @@ def test_lockfile_toml_with_source_and_schema_sha256(tmp_path: Path) -> None:
     write_lockfile(entries, lockfile)
     again = read_lockfile(lockfile)
     assert again == entries
+
+
+def test_lockfile_rich_toml_round_trip_with_v24_identity_fields(tmp_path: Path) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    entry = LockEntry(
+        name="ComfyUI-KJNodes",
+        slug="comfyui-kjnodes",
+        source="comfy-registry",
+        version="1.2.3",
+        commit="abc123",
+        url="https://github.com/kijai/ComfyUI-KJNodes.git",
+        schema_hash="feedface",
+        class_set=("ZNode", "ImageResizeKJv2", "ImageResizeKJv2"),
+        last_seen_at="2026-05-20T00:00:00Z",
+        pip_packages=("opencv-python-headless", "onnx", "onnx"),
+    )
+
+    write_lockfile([entry], lockfile)
+
+    raw = lockfile.read_text(encoding="utf-8")
+    assert "[nodepacks.ComfyUI-KJNodes]" in raw
+    assert 'slug = "comfyui-kjnodes"' in raw
+    assert 'source = "comfy-registry"' in raw
+    assert 'version = "1.2.3"' in raw
+    assert 'commit = "abc123"' in raw
+    assert 'schema_hash = "feedface"' in raw
+    assert 'class_set = ["ImageResizeKJv2", "ZNode"]' in raw
+    assert 'pip_packages = ["onnx", "opencv-python-headless"]' in raw
+
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="abc123",
+            slug="comfyui-kjnodes",
+            source="comfy-registry",
+            version="1.2.3",
+            commit="abc123",
+            url="https://github.com/kijai/ComfyUI-KJNodes.git",
+            schema_hash="feedface",
+            class_schema_sha256="feedface",
+            class_set=("ImageResizeKJv2", "ZNode"),
+            last_seen_at="2026-05-20T00:00:00Z",
+            pip_packages=("onnx", "opencv-python-headless"),
+        )
+    ]
+
+
+def test_lockfile_reads_local_rich_entry_without_git_commit(tmp_path: Path) -> None:
+    lockfile = tmp_path / "custom_nodes.lock"
+    lockfile.write_text(
+        """
+[nodepacks.LocalPack]
+source = "local"
+path = "../LocalPack"
+class_set = ["BetaNode", "AlphaNode"]
+""",
+        encoding="utf-8",
+    )
+
+    assert read_lockfile(lockfile) == [
+        LockEntry(
+            name="LocalPack",
+            slug="LocalPack",
+            source="local",
+            path="../LocalPack",
+            class_set=("AlphaNode", "BetaNode"),
+        )
+    ]
+
+
+def test_schema_hash_projection_is_stable_and_limited_to_contract_fields() -> None:
+    schema_a = {
+        "ExampleNode": {
+            "input": {
+                "required": {
+                    "prompt": ("STRING", {"default": "a"}),
+                    "steps": ("INT", {"default": 20, "min": 1}),
+                },
+                "optional": {"seed": ("INT", {"default": 7})},
+                "hidden": {"auth": "TOKEN"},
+            },
+            "output": ["IMAGE"],
+            "output_name": ["image"],
+            "ignored_runtime_noise": "changes",
+        }
+    }
+    schema_b = {
+        "ExampleNode": {
+            "ignored_runtime_noise": "different",
+            "output_name": ["image"],
+            "output": ["IMAGE"],
+            "input": {
+                "hidden": {"auth": "TOKEN"},
+                "optional": {"seed": ("INT", {"default": 7})},
+                "required": {
+                    "steps": ("INT", {"min": 1, "default": 20}),
+                    "prompt": ("STRING", {"default": "a"}),
+                },
+            },
+        }
+    }
+
+    assert canonical_pack_schema_projection(schema_a) == canonical_pack_schema_projection(schema_b)
+    assert compute_schema_hash(schema_a) == compute_schema_hash(schema_b)
+    assert len(compute_schema_hash(schema_a)) == 64

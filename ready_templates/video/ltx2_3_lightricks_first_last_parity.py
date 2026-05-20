@@ -53,10 +53,15 @@ READY_METADATA = {
     "comfy_configuration": {"memory_profile": 3, "fp8_e4m3fn_text_enc": True},
 }
 
-READY_REQUIREMENTS = {
-    "models": [],
-    "custom_nodes": ["ComfyUI-LTXVideo"],
-}
+READY_REQUIREMENTS = {'models': [],
+ 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-LTXVideo',
+                       'source': 'git',
+                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]}
 
 
 VIDEO_OUTPUT_NODE = "68"

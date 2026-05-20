@@ -24,7 +24,10 @@ READY_METADATA = {'model_assets': [{'name': 'qwen_3_8b_fp8mixed.safetensors',
 READY_REQUIREMENTS = {'models': [{'name': 'qwen_3_8b_fp8mixed.safetensors',
              'url': 'https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
              'subdir': 'text_encoders'}],
- 'custom_nodes': ['ComfyUI-GGUF']}
+ 'custom_nodes': ['ComfyUI-GGUF'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-GGUF',
+                       'source': 'git',
+                       'url': 'https://github.com/city96/ComfyUI-GGUF.git'}]}
 
 
 def build() -> VibeWorkflow:

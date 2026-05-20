@@ -21,7 +21,19 @@ READY_METADATA = {'model_assets': [],
  'discord_signal': None,
  'smoke_resolution': '256x256x5_frames'}
 
-READY_REQUIREMENTS = {'models': [], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']}
+READY_REQUIREMENTS = {'models': [],
+ 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-VideoHelperSuite',
+                       'source': 'git',
+                       'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'},
+                      {'slug': 'ComfyUI-WanVideoWrapper',
+                       'source': 'git',
+                       'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c',
+                       'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}]}
 
 
 def build() -> VibeWorkflow:

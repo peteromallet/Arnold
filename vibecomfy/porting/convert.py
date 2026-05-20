@@ -19,6 +19,8 @@ from vibecomfy.porting.parity import (
     widget_value_counter,
 )
 from vibecomfy.porting.report import PortIssue
+from vibecomfy.custom_node_refs import normalize_custom_node_requirements, structured_refs_from_lock_entries
+from vibecomfy.node_packs_lockfile import read_lockfile
 from vibecomfy.porting.strict_ready import (
     STRICT_READY_BUILD_FAILED,
     STRICT_READY_COMPILE_FAILED,
@@ -504,10 +506,22 @@ def _ready_metadata(
 def _ready_requirements(workflow: VibeWorkflow) -> dict[str, Any]:
     model_assets = workflow.metadata.get("model_assets")
     models = model_assets if isinstance(model_assets, list) else list(workflow.requirements.models)
-    return {
+    requirements = {
         "models": models,
         "custom_nodes": list(workflow.requirements.custom_nodes),
     }
+    metadata_requirements = workflow.metadata.get("requirements")
+    if isinstance(metadata_requirements, dict):
+        normalized, _warnings = normalize_custom_node_requirements(metadata_requirements)
+        refs = normalized.get("custom_node_refs")
+        if isinstance(refs, list) and refs:
+            requirements["custom_node_refs"] = refs
+            requirements["custom_nodes"] = normalized.get("custom_nodes", requirements["custom_nodes"])
+            return requirements
+    refs = structured_refs_from_lock_entries(list(workflow.requirements.custom_nodes), read_lockfile())
+    if refs:
+        requirements["custom_node_refs"] = refs
+    return requirements
 
 
 # ---------------------------------------------------------------------------

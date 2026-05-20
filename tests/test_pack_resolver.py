@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from vibecomfy.registry.pack_resolver import AmbiguousPackError, PackRef, lookup_class_candidates, resolve_pack
+
+
+class FakeRegistryClient:
+    def __init__(self, routes: dict[tuple[str, tuple[tuple[str, str], ...]], Any]):
+        self.routes = routes
+        self.calls: list[tuple[str, tuple[tuple[str, str], ...]]] = []
+
+    def get(self, url: str, **kwargs: Any) -> httpx.Response:
+        assert "registry.comfy.org/api/v1/packs" not in url
+        params = tuple(sorted((kwargs.get("params") or {}).items()))
+        key = (url, params)
+        self.calls.append(key)
+        payload = self.routes.get(key)
+        request = httpx.Request("GET", url)
+        if payload is None:
+            return httpx.Response(404, request=request, json={"error": "not found"})
+        return httpx.Response(200, request=request, json=payload)
+
+
+def test_resolve_pack_uses_exact_comfy_node_endpoint_first(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            ("https://api.comfy.org/comfy-nodes/ImageResizeKJv2/node", ()): {
+                "node": {
+                    "id": "comfyui-kjnodes",
+                    "name": "ComfyUI-KJNodes",
+                    "latest_version": "1.2.3",
+                    "commit": "abc123",
+                    "repository": "https://github.com/kijai/ComfyUI-KJNodes",
+                }
+            }
+        }
+    )
+
+    resolution = resolve_pack("ImageResizeKJv2", cache_root=tmp_path, client=client)
+
+    assert resolution.query_type == "class"
+    assert resolution.ref == PackRef(
+        slug="comfyui-kjnodes",
+        source="comfy-registry",
+        version="1.2.3",
+        commit="abc123",
+        url="https://github.com/kijai/ComfyUI-KJNodes",
+        name="ComfyUI-KJNodes",
+        registry_id="comfyui-kjnodes",
+    )
+    assert client.calls == [("https://api.comfy.org/comfy-nodes/ImageResizeKJv2/node", ())]
+
+
+def test_resolve_pack_falls_back_to_class_search(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            (
+                "https://api.comfy.org/nodes/search",
+                (("comfy_node_search", "MissingClass"),),
+            ): {
+                "nodes": [
+                    {
+                        "id": "comfyui-example",
+                        "name": "ComfyUI Example",
+                        "version": "0.4.0",
+                        "commitSha": "def456",
+                    }
+                ]
+            }
+        }
+    )
+
+    resolution = resolve_pack("MissingClass", cache_root=tmp_path, client=client)
+
+    assert resolution.ref.slug == "comfyui-example"
+    assert resolution.ref.version == "0.4.0"
+    assert resolution.ref.commit == "def456"
+    assert client.calls == [
+        ("https://api.comfy.org/comfy-nodes/MissingClass/node", ()),
+        ("https://api.comfy.org/nodes/search", (("comfy_node_search", "MissingClass"),)),
+    ]
+
+
+def test_resolve_pack_uses_registry_search_for_slug_lookup(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            ("https://api.comfy.org/nodes/search", (("search", "comfyui-controlnet-aux"),)): {
+                "nodes": [
+                    {
+                        "id": "comfyui-controlnet-aux",
+                        "name": "ComfyUI ControlNet Aux",
+                        "latestVersion": "1.0.5",
+                        "commit_sha": "fedcba",
+                    }
+                ]
+            }
+        }
+    )
+
+    resolution = resolve_pack("comfyui-controlnet-aux", cache_root=tmp_path, client=client)
+
+    assert resolution.query_type == "slug"
+    assert resolution.ref.slug == "comfyui-controlnet-aux"
+    assert resolution.ref.version == "1.0.5"
+    assert client.calls == [("https://api.comfy.org/nodes/search", (("search", "comfyui-controlnet-aux"),))]
+
+
+def test_resolve_pack_raises_on_ambiguous_class_search(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            ("https://api.comfy.org/nodes/search", (("comfy_node_search", "AmbiguousNode"),)): {
+                "nodes": [
+                    {"id": "pack-a", "name": "Pack A"},
+                    {"id": "pack-b", "name": "Pack B"},
+                ]
+            }
+        }
+    )
+
+    with pytest.raises(AmbiguousPackError) as exc:
+        resolve_pack("AmbiguousNode", cache_root=tmp_path, client=client)
+
+    assert [candidate.slug for candidate in exc.value.candidates] == ["pack-a", "pack-b"]
+
+
+def test_lookup_class_candidates_searches_registry_class_index(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            ("https://api.comfy.org/nodes/search", (("comfy_node_search", "AnyNode"),)): {
+                "items": [{"id": "pack-a", "displayName": "Pack A"}]
+            }
+        }
+    )
+
+    candidates = lookup_class_candidates("AnyNode", cache_root=tmp_path, client=client)
+
+    assert candidates == [PackRef(slug="pack-a", source="comfy-registry", name="Pack A", registry_id="pack-a")]
+    assert client.calls == [("https://api.comfy.org/nodes/search", (("comfy_node_search", "AnyNode"),))]
+
+
+def test_resolver_writes_deterministic_cache_and_reuses_it(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            ("https://api.comfy.org/nodes/search", (("search", "comfyui-cache-test"),)): {
+                "nodes": [{"id": "comfyui-cache-test", "name": "ComfyUI Cache Test"}]
+            }
+        }
+    )
+
+    first = resolve_pack("comfyui-cache-test", cache_root=tmp_path, client=client)
+    second = resolve_pack("comfyui-cache-test", cache_root=tmp_path, client=client)
+
+    assert first.ref == second.ref
+    assert second.cache_hit is True
+    assert len(client.calls) == 1
+    files = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.glob("*.json"))
+    assert files == [
+        "nodes_search.7d893668414e2b03a35615aa9258cdcb34fc7ade9d72d3bb2b489b2eb81c6911.json",
+    ]
+
+
+def test_obsolete_registry_packs_endpoint_is_never_called(tmp_path: Path) -> None:
+    client = FakeRegistryClient(
+        {
+            ("https://api.comfy.org/comfy-nodes/KSampler/node", ()): {
+                "node": {"id": "comfy-core", "name": "Comfy Core"}
+            },
+            ("https://api.comfy.org/nodes/search", (("search", "ComfyUI-KJNodes"),)): {
+                "nodes": [{"id": "comfyui-kjnodes", "name": "ComfyUI-KJNodes"}]
+            },
+        }
+    )
+
+    resolve_pack("KSampler", cache_root=tmp_path, client=client)
+    resolve_pack("ComfyUI-KJNodes", cache_root=tmp_path, client=client)
+
+    called_urls = [url for url, _params in client.calls]
+    assert all("registry.comfy.org/api/v1/packs" not in url for url in called_urls)
+    assert called_urls == [
+        "https://api.comfy.org/comfy-nodes/KSampler/node",
+        "https://api.comfy.org/nodes/search",
+    ]

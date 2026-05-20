@@ -334,6 +334,7 @@ class ParseResult:
 
 _NODE_HELPER_NAME = "_node"
 _AT_HELPER_NAME = "_at"
+_PUBLIC_NODE_HELPER_NAME = "node"
 
 
 def _extract_id_sidecar(tree: ast.Module) -> dict[str, str]:
@@ -418,15 +419,17 @@ def parse_template(source: str) -> ParseResult:
             for call in ast.walk(build_func)
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
-            and call.func.id in {_NODE_HELPER_NAME, _AT_HELPER_NAME}
+            and call.func.id in {_NODE_HELPER_NAME, _AT_HELPER_NAME, _PUBLIC_NODE_HELPER_NAME}
         }
         if _NODE_HELPER_NAME in helper_names:
             helper_name = _NODE_HELPER_NAME
         elif _AT_HELPER_NAME in helper_names:
             helper_name = _AT_HELPER_NAME
+        elif _PUBLIC_NODE_HELPER_NAME in helper_names:
+            helper_name = _PUBLIC_NODE_HELPER_NAME
         else:
             raise SystemExit(
-                "error: input file does not define top-level `_node` or `_at` calls.\n"
+                "error: input file does not define top-level `_node`, `_at`, or `node` calls.\n"
                 "       This codemod only handles templates that use one of those shims."
             )
     id_sidecar = _extract_id_sidecar(tree)
@@ -460,6 +463,7 @@ def parse_template(source: str) -> ParseResult:
 
         # Positional args:
         #   _node(wf, class_type, id, ...)
+        #   node(wf, class_type, id, ...)
         #   _at(wf, ID["role"], class_type, ...)
         if len(value.args) < 3:
             raise SystemExit(
@@ -1257,6 +1261,7 @@ def render_output(
     pre_build_block = "".join(lines[last_import_end:build_func.lineno - 1])
     # Strip leading blank lines for tidiness.
     pre_build_block = pre_build_block.lstrip("\n")
+    pre_build_block = _strip_module_assignment(pre_build_block, "READY_REQUIREMENTS")
 
     # ID block.
     id_block = render_id_block(parsed.node_calls)
@@ -1308,6 +1313,31 @@ def render_output(
         build_src,
     ]
     return "\n".join(out_parts)
+
+
+def _strip_module_assignment(source: str, name: str) -> str:
+    """Remove a top-level assignment from a source block."""
+    if not source.strip():
+        return source
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source
+    lines = source.splitlines(keepends=True)
+    remove_ranges: list[tuple[int, int]] = []
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in stmt.targets):
+            continue
+        end_lineno = stmt.end_lineno or stmt.lineno
+        remove_ranges.append((stmt.lineno, end_lineno))
+    if not remove_ranges:
+        return source
+    removed_lines: set[int] = set()
+    for start, end in remove_ranges:
+        removed_lines.update(range(start, end + 1))
+    return "".join(line for lineno, line in enumerate(lines, start=1) if lineno not in removed_lines).lstrip("\n")
 
 
 _VAR_REWRITE_RE_CACHE: dict[str, re.Pattern[str]] = {}
@@ -2392,6 +2422,7 @@ def cmd_codemod_v2(
     if mode == "restructure" and _is_v231_generated_source(source):
         # Even for already-v2.3.1 templates, refresh the source provenance comment.
         updated_source = _inject_source_provenance(source, src_path)
+        updated_source = _remove_top_level_assignments(updated_source, {"READY_REQUIREMENTS"})
         return _emit_v2(source, updated_source, src_path, out_path, dry_run, diff, "_v231.py", mode)
 
     # Parse the template
@@ -7786,7 +7817,9 @@ def _render_finalize_footer(bind_call: ast.Call | None, output_prefix: Any) -> s
 
 def _convert_restructure_to_v23(source: str) -> str:
     """Convert the v2.2 narrative output into the v2.3 single-source shape."""
-    if _is_v231_generated_source(source) or "VibeWorkflow" not in source:
+    if _is_v231_generated_source(source):
+        return _remove_top_level_assignments(source, {"READY_REQUIREMENTS"})
+    if "VibeWorkflow" not in source:
         return source
     try:
         tree = ast.parse(source)
@@ -7835,6 +7868,7 @@ def _convert_restructure_to_v23(source: str) -> str:
             "PUBLIC_INPUTS",
             "EDIT_GUIDE",
             "READY_METADATA",
+            "READY_REQUIREMENTS",
         } | model_asset_assignment_names,
     )
     converted = _rewrite_imports_for_v23(converted)
@@ -7925,7 +7959,7 @@ def _convert_restructure_to_v23(source: str) -> str:
         1,
     )
     converted = _relocate_ready_metadata_update_lines(converted)
-    converted = _remove_top_level_assignments(converted, {"ID"})
+    converted = _remove_top_level_assignments(converted, {"ID", "READY_REQUIREMENTS"})
     converted = converted.replace("_node(", "node(")
 
     # Generate structured module docstring (T11)

@@ -101,6 +101,9 @@ def test_ready_metadata_build_serializes_inputs_models_and_filters_none_extras()
             url="https://example.test/aux.safetensors",
             subdir="loras",
             target_path="custom_nodes/pack/aux.safetensors",
+            sha256="0" * 64,
+            hf_revision="abc123",
+            size_bytes=123,
         ),
     }
 
@@ -130,6 +133,9 @@ def test_ready_metadata_build_serializes_inputs_models_and_filters_none_extras()
             "url": "https://example.test/aux.safetensors",
             "subdir": "loras",
             "target_path": "custom_nodes/pack/aux.safetensors",
+            "sha256": "0" * 64,
+            "hf_revision": "abc123",
+            "size_bytes": 123,
         },
     ]
     assert metadata["edit_guide"] == "Public inputs:\n- prompt: Prompt text.\n- image: Controls image."
@@ -618,6 +624,50 @@ def test_static_contract_extracts_public_outputs_from_finalize() -> None:
     output = finalize_outputs[0]
     assert output["node_id"] == "56"
     assert output.get("output_type") == "SaveVideo"
+
+
+def test_static_contract_preserves_model_asset_reproducibility_pins(tmp_path: Path) -> None:
+    from vibecomfy.registry.static_contract import extract_ready_template_contract
+
+    source = tmp_path / "template.py"
+    source.write_text(
+        """
+from vibecomfy.templates import ModelAsset, ReadyMetadata
+
+MODELS = {
+    "main": ModelAsset(
+        filename="model.safetensors",
+        url="https://example.test/model.safetensors",
+        subdir="checkpoints",
+        sha256="abc",
+        hf_revision="rev1",
+        size_bytes=42,
+    )
+}
+READY_METADATA = ReadyMetadata.build(
+    template_id="image/example",
+    capability="test",
+    inputs={},
+    models=MODELS,
+    output_prefix="out/example",
+)
+""",
+        encoding="utf-8",
+    )
+
+    contract = extract_ready_template_contract(source)
+
+    assert contract["model_assets"] == [
+        {
+            "name": "model.safetensors",
+            "filename": "model.safetensors",
+            "url": "https://example.test/model.safetensors",
+            "subdir": "checkpoints",
+            "sha256": "abc",
+            "hf_revision": "rev1",
+            "size_bytes": 42,
+        }
+    ]
 
 
 def test_ready_template_metadata_handles_ready_metadata_build_call() -> None:

@@ -146,6 +146,28 @@ def test_entries_from_scratchpad_path_reads_materialized_requirements(tmp_path: 
     ]
 
 
+def test_entries_from_scratchpad_path_preserves_reproducibility_pins(tmp_path: Path) -> None:
+    scratchpad = tmp_path / "pinned.py"
+    scratchpad.write_text(
+        "READY_REQUIREMENTS = {'models': ["
+        "{'name': 'model.safetensors', 'url': 'https://example.test/model.safetensors', 'subdir': 'checkpoints', "
+        "'sha256': 'abc', 'hf_revision': 'rev1', 'size_bytes': 42}"
+        "]}\n",
+        encoding="utf-8",
+    )
+
+    assert entries_from_scratchpad_path(scratchpad) == [
+        {
+            "name": "model.safetensors",
+            "url": "https://example.test/model.safetensors",
+            "subdir": "checkpoints",
+            "sha256": "abc",
+            "hf_revision": "rev1",
+            "size_bytes": 42,
+        }
+    ]
+
+
 def test_entries_from_scratchpad_path_resolves_literal_module_constants(tmp_path: Path) -> None:
     scratchpad = tmp_path / "scratch.py"
     scratchpad.write_text(

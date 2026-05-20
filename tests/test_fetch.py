@@ -62,6 +62,16 @@ def test_download_skips_present_file(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert capsys.readouterr().out == "skipped model.safetensors\n"
 
 
+def test_download_verifies_present_file_sha256(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    path = tmp_path / "checkpoints" / "model.safetensors"
+    path.parent.mkdir()
+    path.write_bytes(b"present")
+
+    with pytest.raises(RuntimeError, match="sha256 mismatch for model.safetensors"):
+        fetch.download({**ENTRY, "sha256": "0" * 64})
+
+
 def test_download_writes_tmp_then_renames(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
     requested: dict[str, object] = {}
@@ -80,6 +90,16 @@ def test_download_writes_tmp_then_renames(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert requested["method"] == "GET"
     assert requested["url"] == "https://example.test/model.safetensors"
     assert requested["follow_redirects"] is True
+
+
+def test_download_verifies_downloaded_file_sha256(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    monkeypatch.setattr(fetch.httpx, "stream", lambda *_args, **_kwargs: fake_stream(FakeResponse(chunks=[b"abc"])))
+
+    with pytest.raises(RuntimeError, match="sha256 mismatch for model.safetensors"):
+        fetch.download({**ENTRY, "sha256": "0" * 64})
+
+    assert (tmp_path / "checkpoints" / "model.safetensors").read_bytes() == b"abc"
 
 
 def test_download_supports_repo_relative_target_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

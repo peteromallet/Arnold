@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 from vibecomfy.handles import Handle
+from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 from vibecomfy.workflow import VibeOutput, VibeWorkflow, WorkflowSource
 
 
@@ -44,7 +45,17 @@ def apply_ready_template_policy(
         PendingDeprecationWarning,
         stacklevel=2,
     )
-    workflow.metadata.update(dict(ready_metadata))
+    metadata = dict(ready_metadata)
+    template_id = metadata.get("ready_template")
+    if isinstance(template_id, str) and "/" not in template_id:
+        path = Path(source_path)
+        if path.parent.name and path.parent.parent.name == "ready_templates":
+            metadata["ready_template"] = f"{path.parent.name}/{template_id}"
+            metadata["workflow_template"] = template_id
+    provenance = metadata.get("provenance")
+    if isinstance(provenance, Mapping):
+        metadata.update({str(key): value for key, value in provenance.items() if key not in metadata})
+    workflow.metadata.update(metadata)
     workflow.metadata["ready_template_path"] = source_path
     workflow.metadata["python_policy_applied"] = True
     if not workflow.nodes:
@@ -142,6 +153,7 @@ def _is_authored_link(value: Any, node_ids: set[str]) -> bool:
 
 
 def _merge_requirements(workflow: VibeWorkflow, requirements: Mapping[str, list[Any]]) -> None:
+    normalized, _warnings = normalize_custom_node_requirements(requirements)
     for model in requirements.get("models", []):
         if isinstance(model, Mapping):
             name = model.get("name")
@@ -152,11 +164,17 @@ def _merge_requirements(workflow: VibeWorkflow, requirements: Mapping[str, list[
             _append_model_asset(workflow, model)
         elif isinstance(model, str) and model not in workflow.requirements.models:
             workflow.requirements.models.append(model)
-    for custom_node in requirements.get("custom_nodes", []):
+    for custom_node in normalized.get("custom_nodes", []):
         if custom_node not in workflow.requirements.custom_nodes:
             workflow.requirements.custom_nodes.append(custom_node)
     workflow.requirements.models.sort()
     workflow.requirements.custom_nodes.sort()
+    if normalized.get("custom_node_refs"):
+        meta_reqs = workflow.metadata.setdefault("requirements", {})
+        if isinstance(meta_reqs, dict):
+            existing_refs = list(meta_reqs.get("custom_node_refs") or [])
+            meta_reqs["custom_node_refs"] = [*existing_refs, *normalized["custom_node_refs"]]
+            meta_reqs["custom_nodes"] = sorted(set(workflow.requirements.custom_nodes))
 
 
 def _append_model_asset(workflow: VibeWorkflow, asset: Mapping[str, Any]) -> None:

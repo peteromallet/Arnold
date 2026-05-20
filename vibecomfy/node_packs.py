@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+
+from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,7 +15,7 @@ class CustomNodePack:
     class_schema_sha256: str | None = None
 
 
-KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
+_STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
     CustomNodePack(
         name="ComfyUI-WanVideoWrapper",
         repo="https://github.com/kijai/ComfyUI-WanVideoWrapper.git",
@@ -214,11 +217,45 @@ KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (
 )
 
 
+def _pack_from_lock_entry(entry: LockEntry) -> CustomNodePack | None:
+    if not entry.class_set:
+        return None
+    repo = entry.url or entry.path
+    if not repo:
+        return None
+    return CustomNodePack(
+        name=entry.name,
+        repo=repo,
+        classes=frozenset(entry.class_set),
+        pip_packages=tuple(entry.pip_packages),
+        class_schema_sha256=entry.class_schema_sha256 or entry.schema_hash,
+    )
+
+
+def _rich_lock_packs(lockfile_path: Path = Path("custom_nodes.lock")) -> tuple[CustomNodePack, ...]:
+    try:
+        entries = read_lockfile(lockfile_path)
+    except (OSError, ValueError):
+        return ()
+    return tuple(pack for entry in entries if (pack := _pack_from_lock_entry(entry)) is not None)
+
+
+def _known_node_packs(lockfile_path: Path = Path("custom_nodes.lock")) -> tuple[CustomNodePack, ...]:
+    by_name = {pack.name: pack for pack in _STATIC_NODE_PACKS}
+    for pack in _rich_lock_packs(lockfile_path):
+        by_name[pack.name] = pack
+    return tuple(sorted(by_name.values(), key=lambda pack: pack.name.lower()))
+
+
+KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = _known_node_packs()
+
+
 def resolve_node_packs(class_types: set[str]) -> list[CustomNodePack]:
-    packs = [pack for pack in KNOWN_NODE_PACKS if class_types & pack.classes]
+    packs = [pack for pack in _known_node_packs() if class_types & pack.classes]
     return sorted(packs, key=lambda pack: pack.name.lower())
 
 
 def unresolved_class_types(class_types: set[str]) -> list[str]:
-    covered = set().union(*(pack.classes for pack in KNOWN_NODE_PACKS))
+    packs = _known_node_packs()
+    covered = set().union(*(pack.classes for pack in packs)) if packs else set()
     return sorted(class_types - covered)

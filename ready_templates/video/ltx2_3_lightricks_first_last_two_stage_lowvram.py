@@ -68,10 +68,23 @@ READY_METADATA = {
     "comfy_configuration": {"memory_profile": 3, "fp8_e4m3fn_text_enc": True},
 }
 
-READY_REQUIREMENTS = {
-    "models": LTX_FIRST_LAST_TWO_STAGE_ASSETS,
-    "custom_nodes": ["ComfyUI-LTXVideo", "ComfyUI-KJNodes"],
-}
+READY_REQUIREMENTS = {'models': [{'name': 'ltx-2.3-22b-distilled-fp8.safetensors',
+             'url': 'https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-distilled-fp8.safetensors',
+             'subdir': 'checkpoints'},
+            {'name': 'gemma_3_12B_it_fp4_mixed.safetensors',
+             'url': 'https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
+             'subdir': 'text_encoders'},
+            {'name': 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
+             'url': 'https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
+             'subdir': 'latent_upscale_models'}],
+ 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'],
+ 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes',
+                       'source': 'git',
+                       'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df',
+                       'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'},
+                      {'slug': 'ComfyUI-LTXVideo',
+                       'source': 'git',
+                       'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]}
 
 
 VIDEO_OUTPUT_NODE = "4852"

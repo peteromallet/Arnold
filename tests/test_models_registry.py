@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import re
 import warnings
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -91,6 +91,86 @@ def test_stage_entry_hardlinks_or_symlinks_all_targets(monkeypatch: pytest.Monke
     for staged in staged_paths:
         assert staged.read_bytes() == b"model-bytes"
         assert staged.exists()
+
+
+def test_load_registry_preserves_reproducibility_pins_and_dry_run_reports_them(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    digest = hashlib.sha256(b"model-bytes").hexdigest()
+    registry = _write_registry(
+        tmp_path / "models.yaml",
+        f"""
+models:
+  - id: pinned
+    source:
+      kind: huggingface
+      repo: example/repo
+      filename: nested/model.bin
+      revision: abc123
+    min_size: 1
+    sha256: {digest}
+    size_bytes: 11
+    targets:
+      - node_pack: pack
+        path: checkpoints/model.bin
+""",
+    )
+
+    entry = load_registry(registry)[0]
+
+    assert entry.source.revision == "abc123"
+    assert entry.sha256 == digest
+    assert entry.size_bytes == 11
+    models_loader._print_dry_run([entry], models_root=tmp_path / "models")
+    output = capsys.readouterr().out
+    assert "hf://example/repo/nested/model.bin@abc123" in output
+    assert f"sha256={digest}" in output
+    assert "revision=abc123" in output
+    assert "size_bytes=11" in output
+
+
+def test_stage_entry_passes_hf_revision_and_verifies_pins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    payload = b"model-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    source = tmp_path / "hf" / "model.bin"
+    source.parent.mkdir()
+    source.write_bytes(payload)
+    calls: list[dict[str, str]] = []
+
+    def fake_hf_download(**kwargs: str) -> str:
+        calls.append(kwargs)
+        return str(source)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_download)
+    entry = ModelEntry(
+        id="pinned",
+        source=ModelSource(kind="huggingface", repo="example/repo", filename="model.bin", revision="abc123"),
+        min_size=1,
+        targets=(ModelTarget(node_pack="pack", path="checkpoints/model.bin"),),
+        sha256=digest,
+        size_bytes=len(payload),
+    )
+
+    staged_paths = stage_entry(entry, models_root=tmp_path / "models")
+
+    assert calls == [{"repo_id": "example/repo", "filename": "model.bin", "revision": "abc123"}]
+    assert staged_paths[0].read_bytes() == payload
+
+
+def test_stage_entry_rejects_pinned_sha_or_size_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    source = tmp_path / "hf" / "model.bin"
+    source.parent.mkdir()
+    source.write_bytes(b"model-bytes")
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", lambda repo_id, filename: str(source))
+    entry = ModelEntry(
+        id="pinned",
+        source=ModelSource(kind="huggingface", repo="example/repo", filename="model.bin"),
+        min_size=1,
+        targets=(ModelTarget(node_pack="pack", path="checkpoints/model.bin"),),
+        sha256="0" * 64,
+        size_bytes=len(b"model-bytes") + 1,
+    )
+
+    with pytest.raises(RuntimeError, match="pinned size_bytes"):
+        stage_entry(entry, models_root=tmp_path / "models")
 
 
 def test_stage_entry_rejects_small_staged_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -12,9 +12,13 @@ from vibecomfy.commands.nodes import (
     _cmd_nodes_install,
     _cmd_nodes_install_plan,
     _cmd_nodes_list,
+    _cmd_nodes_lookup,
+    _cmd_nodes_refresh_template,
     _cmd_nodes_restore,
     _cmd_nodes_spec,
 )
+from vibecomfy.node_packs_lockfile import LockEntry
+from vibecomfy.registry.pack_resolver import PackRef, PackResolution
 from vibecomfy.commands.workflows import (
     _cmd_workflows_enrich_targets,
     _cmd_workflows_lens,
@@ -272,6 +276,68 @@ def test_cmd_nodes_install_translates_install_result_to_exit_codes(
         assert "install issue" in captured.err
     else:
         assert captured.err == ""
+
+
+def test_cmd_nodes_lookup_resolves_pack(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import vibecomfy.commands.nodes as nodes_cmd
+
+    monkeypatch.setattr(
+        nodes_cmd,
+        "resolve_pack",
+        lambda query: PackResolution(
+            query=query,
+            query_type="class",
+            ref=PackRef(slug="comfyui-example", source="comfy-registry", version="1.0.0"),
+        ),
+    )
+
+    assert _cmd_nodes_lookup(argparse.Namespace(query="ExampleNode", json=True)) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pack"]["slug"] == "comfyui-example"
+
+
+def test_cmd_nodes_refresh_template_dry_run_reports_diff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import vibecomfy.commands.nodes as nodes_cmd
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    template = tmp_path / "template.py"
+    template.write_text(
+        "READY_METADATA = ReadyMetadata.build(\n"
+        "    template_id='image/example',\n"
+        "    capability='test',\n"
+        "    inputs={},\n"
+        "    models={},\n"
+        "    output_prefix='out/example',\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    workflow = VibeWorkflow("image/example", WorkflowSource("image/example", path=str(template)))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="ExampleNode")
+    monkeypatch.setattr(nodes_cmd, "load_workflow_reference", lambda *_args, **_kwargs: workflow)
+    monkeypatch.setattr(nodes_cmd, "read_lockfile", lambda *_args, **_kwargs: [
+        LockEntry(
+            name="ExamplePack",
+            git_commit_sha="abc",
+            url="https://example.test/pack.git",
+            slug="example-pack",
+            source="git",
+            commit="abc",
+            class_set=("ExampleNode",),
+        )
+    ])
+
+    assert _cmd_nodes_refresh_template(argparse.Namespace(file=str(template), dry_run=True, diff=True, json=True)) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "dry-run"
+    assert payload["custom_nodes"] == ["example-pack"]
+    assert "custom_node_refs" in payload["diff"]
+    assert "custom_node_refs" not in template.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

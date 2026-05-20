@@ -16,6 +16,9 @@
 #       aliases: [accepted-old-name.safetensors]
 #       tags: [phase:core]
 #       notes: optional prose
+#       sha256: optional exact file SHA256 verified after staging
+#       size_bytes: optional exact byte size verified after staging
+#       # source.revision is optional for Hugging Face rows and is passed to hf_hub_download
 #
 # target.path is relative to the models root passed to the staging command.
 # It must not be absolute, contain '..', or start with models/ or models\.
