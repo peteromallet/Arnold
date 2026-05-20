@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 
+from megaplan.cloud.cli import _ensure_repo_checkout, _ensure_repo_command
 from megaplan.cloud.spec import RepoSpec, load_spec
 from megaplan.cloud.template import (
     render_ensure_repo_command,
@@ -161,3 +163,105 @@ def test_entrypoint_renders_multi_repo_block(tmp_path: Path) -> None:
     assert "/workspace/app" in rendered
     assert "/workspace/worker" in rendered
     assert "https://github.com/example/worker.git" in rendered
+
+
+# --- chain-launch path: cli._ensure_repo_checkout must clone every repo ----
+#
+# The container entrypoint clones primary + extras at boot, but that only runs
+# once per `cloud deploy`. A `megaplan cloud chain` launched against a
+# container that pre-dates an `extra_repos` edit would otherwise silently
+# leave siblings missing on the persistent volume — blocking any milestone
+# that depends on them. These tests pin the behavior of the chain-launch
+# hook so the regression cannot reappear.
+
+
+class _RecordingProvider:
+    def __init__(self, returncode: int = 0, stderr: str = "") -> None:
+        self.commands: list[str] = []
+        self.returncode = returncode
+        self.stderr = stderr
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        return subprocess.CompletedProcess(
+            args=["ssh"], returncode=self.returncode, stdout="", stderr=self.stderr
+        )
+
+
+def test_ensure_repo_command_emits_block_covering_primary_and_each_extra(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["extra_repos"] = [
+        {
+            "url": "https://github.com/example/worker.git",
+            "branch": "release",
+            "workspace": "/workspace/worker",
+        },
+        {
+            "url": "https://github.com/example/sibling.git",
+            "branch": "trunk",
+            "workspace": "/workspace/sibling",
+        },
+    ]
+    spec = load_spec(_write(tmp_path, payload))
+
+    command = _ensure_repo_command(spec)
+
+    assert command == render_ensure_repos_block(spec)
+    assert render_ensure_repo_command(spec.repo) in command
+    primary_idx = command.index(render_ensure_repo_command(spec.repo))
+    last_idx = primary_idx
+    for extra in spec.extra_repos:
+        snippet = render_ensure_repo_command(extra)
+        assert snippet in command
+        idx = command.index(snippet)
+        assert idx > last_idx, "extras must follow primary in declared order"
+        last_idx = idx
+
+
+def test_ensure_repo_checkout_ssh_execs_single_block_with_every_repo(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["extra_repos"] = [
+        {
+            "url": "https://github.com/example/worker.git",
+            "branch": "release",
+            "workspace": "/workspace/worker",
+        },
+        {
+            "url": "https://github.com/example/orchestrator.git",
+            "branch": "main",
+            "workspace": "/workspace/orchestrator",
+        },
+    ]
+    spec = load_spec(_write(tmp_path, payload))
+    provider = _RecordingProvider()
+
+    _ensure_repo_checkout(spec, provider, relay=False)
+
+    assert len(provider.commands) == 1, "ensure_repo_checkout must dispatch exactly one SSH call"
+    sent = provider.commands[0]
+    for repo in (spec.repo, *spec.extra_repos):
+        assert repo.workspace in sent
+        assert repo.url in sent
+        assert repo.branch in sent
+
+
+def test_ensure_repo_checkout_failure_message_lists_every_repo(tmp_path: Path) -> None:
+    payload = _base_spec()
+    payload["extra_repos"] = [
+        {
+            "url": "https://github.com/example/worker.git",
+            "branch": "release",
+            "workspace": "/workspace/worker",
+        },
+    ]
+    spec = load_spec(_write(tmp_path, payload))
+    provider = _RecordingProvider(returncode=42, stderr="boom\n")
+
+    with pytest.raises(CliError) as exc:
+        _ensure_repo_checkout(spec, provider, relay=False)
+
+    message = exc.value.message
+    assert "exit 42" in message
+    assert spec.repo.url in message
+    for extra in spec.extra_repos:
+        assert extra.url in message
