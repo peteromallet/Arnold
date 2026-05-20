@@ -82,9 +82,13 @@ def _at(
 ) -> Any:
     """Narrative-form alias of ``node`` with ``_id`` in position 2.
 
-    Generated ready templates call ``_at(wf, ID["role"], "Class", ...)`` so the
-    role/id sits visually adjacent to ``wf`` in every line. Semantically
-    identical to ``node(wf, class_type, _id, ...)``.
+    .. deprecated::
+        Prefer ``node(wf, class_type, _id, ...)``.  ``_at`` is retained as a
+        compatibility alias for hand-authored templates that use the older
+        ``_at(wf, ID["role"], "Class", ...)`` calling convention.  Generated
+        ready-templates always use ``node``.
+
+    Semantically identical to ``node(wf, class_type, _id, ...)``.
     """
     return node(wf, class_type, _id, _extras=_extras, **kwargs)
 
@@ -207,6 +211,21 @@ def finalize(
     if source_path is None:
         source_path = wf.source.path or str(Path.cwd())
 
+    # Merge metadata['requirements'] custom_nodes into explicit requirements.
+    meta_reqs = metadata.get("requirements")
+    if isinstance(meta_reqs, dict) and meta_reqs.get("custom_nodes"):
+        meta_custom = list(meta_reqs["custom_nodes"])
+        if requirements is None:
+            requirements = {}
+        existing_custom = list(requirements.get("custom_nodes") or [])
+        requirements["custom_nodes"] = sorted(set(existing_custom + meta_custom))
+
+    # Fall back to metadata output_prefix when filename_prefix not provided.
+    if "filename_prefix" not in bind_kwargs:
+        output_prefix_fallback = metadata.get("output_prefix")
+        if output_prefix_fallback is not None:
+            bind_kwargs["filename_prefix"] = output_prefix_fallback
+
     output_class_type = wf.nodes.get(str(output_node)).class_type if str(output_node) in wf.nodes else None
     derived_output_kind = output_kind or _derive_output_kind(output_class_type)
     if derived_output_kind is None:
@@ -215,7 +234,9 @@ def finalize(
     requirements = _requirements_with_models(requirements, metadata.get("model_assets", []))
 
     wf.finalize_metadata()
-    apply_ready_template_policy(wf, metadata, source_path=str(source_path), requirements=requirements)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+        apply_ready_template_policy(wf, metadata, source_path=str(source_path), requirements=requirements)
 
     for name, spec in inputs.items():
         spec.register(wf, name)
@@ -223,12 +244,14 @@ def finalize(
     _assert_public_input_invariant(wf, inputs)
 
     artifact_kind = bind_kwargs.pop("artifact_kind", None) or derived_output_kind
-    bind_output(
-        wf,
-        str(output_node),
-        artifact_kind=artifact_kind,
-        **bind_kwargs,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=PendingDeprecationWarning)
+        bind_output(
+            wf,
+            str(output_node),
+            artifact_kind=artifact_kind,
+            **bind_kwargs,
+        )
     return wf
 
 
@@ -331,6 +354,7 @@ __all__ = [
     "InputSpec",
     "ModelAsset",
     "ReadyMetadata",
+    "_at",
     "_derive_output_kind",
     "finalize",
     "new_workflow",

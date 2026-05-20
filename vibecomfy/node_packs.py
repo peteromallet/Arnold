@@ -9,6 +9,7 @@ class CustomNodePack:
     repo: str
     classes: frozenset[str]
     pip_packages: tuple[str, ...] = ()
+    class_schema_sha256: str | None = None
 
 
 KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = (

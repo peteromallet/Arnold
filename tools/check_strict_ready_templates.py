@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 from pathlib import Path
@@ -29,6 +30,8 @@ from vibecomfy.workflow import VibeWorkflow
 VERSION = 1
 STYLE_CATEGORY = "generated_template_style"
 STATIC_DRIFT_CATEGORY = "static_contract_drift"
+PACK_VALIDATION_CATEGORY = "pack_validation"
+LEGACY_VOCABULARY_CATEGORY = "legacy_vocabulary"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -98,10 +101,20 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
         path=relative_path,
         enforced=protected and generated,
     )
+    pack_diagnostics = _pack_validation_diagnostics(
+        ready_id=ready_id,
+        path=relative_path,
+        enforced=protected or generated,
+    )
+    legacy_diagnostics = _legacy_vocabulary_diagnostics(
+        ready_id=ready_id,
+        path=relative_path,
+        enforced=protected or generated,
+    )
     strict_ready_diagnostics: list[dict[str, Any]] = []
     if protected:
         strict_ready_diagnostics = _strict_ready_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path)
-    diagnostics = [*static_drift, *strict_ready_diagnostics, *style_diagnostics]
+    diagnostics = [*static_drift, *strict_ready_diagnostics, *style_diagnostics, *pack_diagnostics, *legacy_diagnostics]
     return {
         "ready_id": ready_id,
         "path": relative_path,
@@ -115,6 +128,8 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
         "strict_ready_ok": not any(item["severity"] == "error" for item in strict_ready_diagnostics),
         "strict_ready_diagnostics": strict_ready_diagnostics,
         "style_diagnostics": style_diagnostics,
+        "pack_validation_diagnostics": pack_diagnostics,
+        "legacy_vocabulary_diagnostics": legacy_diagnostics,
         "ok": not any(item["severity"] == "error" and item.get("enforced") is True for item in diagnostics),
     }
 
@@ -241,6 +256,167 @@ def _style_diagnostics(
     return diagnostics
 
 
+def _legacy_vocabulary_diagnostics(
+    *,
+    ready_id: str,
+    path: str,
+    enforced: bool,
+) -> list[dict[str, Any]]:
+    """Reject generated templates importing or calling legacy vocabulary.
+
+    Checks for:
+    - Import of ``vibecomfy.registry.ready_template``
+    - Direct calls to ``bind_input``, ``bind_output``, ``apply_ready_template_policy``,
+      ``wf.register_input`` inside ``build()``.
+    """
+    if not enforced:
+        return []
+    # Only enforce for the 5 generated/pilot templates. Legacy templates
+    # still use the old vocabulary and will be migrated separately.
+    if path not in _PILOT_TEMPLATE_PATHS:
+        return []
+    template_path = REPO_ROOT / path
+    if not template_path.is_file():
+        return []
+    try:
+        source = template_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+    try:
+        tree = ast.parse(source, filename=str(template_path))
+    except SyntaxError:
+        return []
+
+    diagnostics: list[dict[str, Any]] = []
+    _LEGACY_IMPORT = "vibecomfy.registry.ready_template"
+    _LEGACY_CALLS = frozenset({"bind_input", "bind_output", "apply_ready_template_policy"})
+
+    # Check imports
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", None)
+            if module == _LEGACY_IMPORT or (isinstance(node, ast.Import) and any(
+                getattr(alias, "name", "") == _LEGACY_IMPORT for alias in node.names
+            )):
+                diagnostics.append(
+                    _diagnostic(
+                        code="legacy_vocabulary_import",
+                        message=f"Generated template imports legacy module {_LEGACY_IMPORT!r}.",
+                        ready_id=ready_id,
+                        target=path,
+                        severity="error",
+                        category=LEGACY_VOCABULARY_CATEGORY,
+                        enforced=enforced,
+                        detail={"import": _LEGACY_IMPORT, "line": node.lineno},
+                    )
+                )
+        # Check legacy function calls inside build()
+        if isinstance(node, ast.Call):
+            func_name = None
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                if node.func.value.id == "wf" and node.func.attr == "register_input":
+                    func_name = "wf.register_input"
+            if func_name in _LEGACY_CALLS or func_name == "wf.register_input":
+                # Verify we're inside a build() function
+                call_name = func_name or (
+                    f"wf.{node.func.attr}" if isinstance(node.func, ast.Attribute) else "unknown"
+                )
+                diagnostics.append(
+                    _diagnostic(
+                        code="legacy_vocabulary_call",
+                        message=f"Generated template calls legacy function {call_name!r}.",
+                        ready_id=ready_id,
+                        target=f"{path}:{node.lineno}",
+                        severity="error",
+                        category=LEGACY_VOCABULARY_CATEGORY,
+                        enforced=enforced,
+                        detail={"call": call_name, "line": node.lineno},
+                    )
+                )
+
+    return diagnostics
+
+
+# The 5 pilot templates that are the target of pack validation.
+_PILOT_TEMPLATE_PATHS: frozenset[str] = frozenset({
+    "ready_templates/video/ltx2_3_first_last_frame_travel_iclora_control.py",
+    "ready_templates/image/qwen_image_2512.py",
+    "ready_templates/video/wan_i2v.py",
+    "ready_templates/audio/ace_step_1_5_t2a_song.py",
+    "ready_templates/edit/qwen_image_edit.py",
+})
+
+
+def _pack_validation_diagnostics(
+    *,
+    ready_id: str,
+    path: str,
+    enforced: bool,
+) -> list[dict[str, Any]]:
+    """Validate template node classes against known custom-node packs.
+
+    Only runs for the 5 generated/pilot templates.  Returns diagnostics for
+    unknown classes.  Deferred all-template enforcement until legacy _node
+    templates are migrated or allowed.
+    """
+    if not enforced or path not in _PILOT_TEMPLATE_PATHS:
+        return []
+    try:
+        from tools.validate_templates_against_packs import (
+            _extract_node_classes,
+            _is_comfy_core,
+            _load_known_packs,
+            _suggest_pack,
+        )
+    except ImportError:
+        return []
+
+    template_path = REPO_ROOT / path
+    if not template_path.is_file():
+        return []
+
+    try:
+        source = template_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    class_to_pack, _all_classes = _load_known_packs()
+
+    diagnostics: list[dict[str, Any]] = []
+    for class_name, node_id, lineno in _extract_node_classes(source, template_path):
+        pack_name = class_to_pack.get(class_name)
+        if pack_name is not None:
+            continue  # known pack class
+        if _is_comfy_core(class_name):
+            continue  # known ComfyUI core class
+        # Unknown class — try fuzzy match
+        suggested = _suggest_pack(class_name, class_to_pack)
+        if suggested is None:
+            continue  # no suggestion, treat as core
+
+        diagnostics.append(
+            _diagnostic(
+                code="pack_validation_unknown_class",
+                message=f"Unknown class {class_name!r} (node {node_id!r}) — suggested pack: {suggested}",
+                ready_id=ready_id,
+                target=f"{path}:{lineno}",
+                severity="error",
+                category=PACK_VALIDATION_CATEGORY,
+                enforced=enforced,
+                detail={
+                    "class": class_name,
+                    "node_id": node_id,
+                    "line": lineno,
+                    "suggested_pack": suggested,
+                },
+            )
+        )
+
+    return diagnostics
+
+
 def _workflow_from_repo_template(template_id: str, path: Path) -> VibeWorkflow:
     spec = importlib.util.spec_from_file_location(f"vibecomfy_strict_ready_{path.stem}", path)
     if spec is None or spec.loader is None:
@@ -330,6 +506,8 @@ def _flatten_diagnostics(targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         diagnostics.extend(target["static_drift"])
         diagnostics.extend(target["strict_ready_diagnostics"])
         diagnostics.extend(target["style_diagnostics"])
+        diagnostics.extend(target.get("pack_validation_diagnostics", []))
+        diagnostics.extend(target.get("legacy_vocabulary_diagnostics", []))
     return sorted(diagnostics, key=lambda item: (item["ready_id"], item["category"], item["code"], item["target"]))
 
 

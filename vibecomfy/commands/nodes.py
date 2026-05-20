@@ -169,6 +169,7 @@ def _cmd_nodes_lock(args: argparse.Namespace) -> int:
         source_sha256 = dict(entry.source_sha256)
         if getattr(args, "with_source_sha256", False) and pack_dir is not None:
             source_sha256 = _source_sha256(pack_dir)
+        class_schema_sha256 = _compute_class_schema_sha256(entry.name)
         locked.append(
             LockEntry(
                 name=entry.name,
@@ -176,6 +177,7 @@ def _cmd_nodes_lock(args: argparse.Namespace) -> int:
                 url=entry.url,
                 semantic_label=entry.semantic_label,
                 source_sha256=source_sha256,
+                class_schema_sha256=class_schema_sha256,
             )
         )
     write_lockfile(locked, lockfile_path)
@@ -222,6 +224,43 @@ def _source_sha256(pack_dir: Path) -> dict[str, str]:
         rel = source.relative_to(pack_dir).as_posix()
         hashes[rel] = hashlib.sha256(source.read_bytes()).hexdigest()
     return hashes
+
+
+def _compute_class_schema_sha256(pack_name: str) -> str | None:
+    """Compute a deterministic SHA256 of the pack's class schema.
+
+    Canonical projection: sorted class names + sorted input keys from object_info.
+    Returns None when object_info is unavailable for any class in the pack.
+    """
+    try:
+        from vibecomfy.node_packs import KNOWN_NODE_PACKS
+    except ImportError:
+        return None
+    pack = next((p for p in KNOWN_NODE_PACKS if p.name == pack_name), None)
+    if pack is None or not pack.classes:
+        return None
+    try:
+        from vibecomfy.porting.object_info.consume import get_class
+    except ImportError:
+        return None
+    # Build canonical projection: sorted class -> sorted input keys
+    projection: dict[str, list[str]] = {}
+    for class_type in sorted(pack.classes):
+        entry = get_class(class_type)
+        if entry is None:
+            # Missing schema — cannot compute a stable hash
+            return None
+        inputs = entry.get("inputs", {})
+        input_keys: set[str] = set()
+        if isinstance(inputs, dict):
+            for section in ("required", "optional"):
+                section_data = inputs.get(section)
+                if isinstance(section_data, dict):
+                    input_keys.update(section_data.keys())
+        projection[class_type] = sorted(input_keys)
+    # Serialize deterministically: sorted class names, each with sorted keys
+    canonical = json.dumps(projection, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def register(subparsers) -> None:

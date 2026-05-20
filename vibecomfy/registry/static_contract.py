@@ -48,6 +48,35 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
     public_inputs: list[dict[str, Any]] = []
     public_outputs: list[dict[str, Any]] = []
 
+    # ── Derive public_inputs from PUBLIC_INPUTS/InputSpec when present ──
+    public_inputs_dict = assignments.get("PUBLIC_INPUTS")
+    if isinstance(public_inputs_dict, dict):
+        for name, spec in public_inputs_dict.items():
+            if not isinstance(spec, dict):
+                continue
+            descriptor: dict[str, Any] = {
+                "name": str(name),
+                "target": {"node_id": str(spec.get("node", "")), "field": str(spec.get("field", ""))},
+                "node_id": str(spec.get("node", "")),
+                "field": str(spec.get("field", "")),
+                "value": spec.get("default"),
+                "type": spec.get("type"),
+                "default": spec.get("default"),
+                "required": spec.get("required", False),
+                "range": spec.get("range"),
+                "aliases": spec.get("aliases", []),
+                "media_semantics": spec.get("media_semantics"),
+                "status": "static",
+                "source": "InputSpec",
+            }
+            if descriptor["default"] is None and descriptor["value"] is not None:
+                descriptor["default"] = descriptor["value"]
+            public_inputs.append(descriptor)
+
+    # ── Derive public_outputs from finalize(..., output_node=...) call ──
+    _extract_finalize_outputs(tree, assignments, public_outputs, diagnostics)
+
+    # ── Fallback: walk bind_input/bind_output calls (legacy templates) ──
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -60,7 +89,17 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
             descriptor = _extract_output_call(node, call_name, diagnostics)
             if descriptor is not None:
                 public_outputs.append(descriptor)
-    public_inputs.extend(_infer_common_input_contracts(tree, public_inputs))
+    public_inputs.extend(_infer_common_input_contracts(tree, public_inputs, assignments))
+
+    # Merge requirements from metadata (ReadyMetadata.build may include them)
+    meta_reqs = _dict_or_empty(metadata.get("requirements"))
+    merged_models = _list_items(requirements.get("models")) + _list_items(meta_reqs.get("models"))
+    merged_custom_nodes = _list_items(requirements.get("custom_nodes")) + _list_items(meta_reqs.get("custom_nodes"))
+
+    # Also count MODELS assignment for model_count when it's a dict of ModelAsset calls
+    models_dict = assignments.get("MODELS")
+    models_from_mod = len(models_dict) if isinstance(models_dict, dict) else 0
+    model_count = max(len(merged_models), models_from_mod)
 
     marker = _template_marker(source)
     return {
@@ -70,13 +109,50 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
         "marker": marker,
         "readiness_class": _readiness_class(metadata, marker),
         "artifact_expectations": public_outputs,
-        "model_count": len(_list_items(requirements.get("models"))),
-        "custom_nodes": sorted(item for item in _list_items(requirements.get("custom_nodes")) if isinstance(item, str)),
+        "model_count": model_count,
+        "custom_nodes": sorted(set(item for item in merged_custom_nodes if isinstance(item, str))),
         "app_active": _is_app_active(metadata),
         "blocked": _has_marker(metadata, "blocked"),
         "reference": _has_marker(metadata, "reference"),
         "supplemental": _has_marker(metadata, "supplemental"),
     }
+
+
+def _extract_finalize_outputs(
+    tree: ast.Module,
+    assignments: dict[str, Any],
+    public_outputs: list[dict[str, Any]],
+    diagnostics: list[dict[str, Any]],
+) -> None:
+    """Derive public outputs from ``finalize(..., output_node=..., ...)`` calls."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) != "finalize":
+            continue
+        output_node = _keyword_literal(node, "output_node", diagnostics, "finalize")
+        if not isinstance(output_node, str):
+            continue
+        output_type = _keyword_literal(node, "output_type", diagnostics, "finalize")
+        output_kind = _keyword_literal(node, "output_kind", diagnostics, "finalize")
+        name = _keyword_literal(node, "name", diagnostics, "finalize")
+        mime_type = _keyword_literal(node, "mime_type", diagnostics, "finalize")
+        artifact_kind = _keyword_literal(node, "artifact_kind", diagnostics, "finalize")
+        filename_prefix = _keyword_literal(node, "filename_prefix", diagnostics, "finalize")
+        expected_cardinality = _keyword_literal(node, "expected_cardinality", diagnostics, "finalize")
+
+        descriptor: dict[str, Any] = {
+            "name": name,
+            "node_id": output_node,
+            "output_type": output_type,
+            "artifact_kind": artifact_kind or output_kind,
+            "mime_type": mime_type,
+            "filename_prefix": filename_prefix,
+            "expected_cardinality": expected_cardinality,
+            "status": "static",
+            "source": "finalize",
+        }
+        public_outputs.append(descriptor)
 
 
 def compare_public_contracts(
@@ -115,15 +191,32 @@ def public_contracts_match(
     return all(not values for values in comparison.values())
 
 
+_KNOWN_TOP_LEVEL_NAMES = frozenset({
+    "READY_METADATA",
+    "READY_REQUIREMENTS",
+    "PUBLIC_INPUTS",
+    "MODELS",
+    "OUTPUT_PREFIX",
+    "PRIVATE_KNOBS",
+})
+
+
 def _module_assignments(tree: ast.Module, diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collect module-level assignments for known template top-level names.
+
+    Handles both literal dict assignments and ``ReadyMetadata.build(...)``
+    call expressions (which are evaluated into a dict).
+    """
     assignments: dict[str, Any] = {}
+    # Two-pass: first collect all simple assignments for cross-references,
+    # then evaluate call expressions.
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
             if not isinstance(target, ast.Name):
                 continue
-            if target.id not in {"READY_METADATA", "READY_REQUIREMENTS"}:
+            if target.id not in _KNOWN_TOP_LEVEL_NAMES:
                 continue
             value = _literal_value(node.value, assignments)
             if value is _UNSUPPORTED:
@@ -199,6 +292,7 @@ def _extract_output_call(
 def _infer_common_input_contracts(
     tree: ast.AST,
     explicit_inputs: list[dict[str, Any]],
+    assignments: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     explicit_names = {item.get("name") for item in explicit_inputs if isinstance(item.get("name"), str)}
     inferred: dict[str, dict[str, Any]] = {}
@@ -209,7 +303,7 @@ def _infer_common_input_contracts(
         if isinstance(node, ast.Call) and _call_name(node.func) in {"_node", "node", "ready_node"}
     ]
     for call in sorted(calls, key=lambda item: (getattr(item, "lineno", 0), getattr(item, "col_offset", 0))):
-        node_info = _runtime_node_call(call, next_auto_id)
+        node_info = _runtime_node_call(call, next_auto_id, assignments)
         if node_info is None:
             continue
         next_auto_id += 1
@@ -237,23 +331,26 @@ def _infer_common_input_contracts(
     return [inferred[name] for name in sorted(inferred)]
 
 
-def _runtime_node_call(node: ast.Call, next_auto_id: int) -> dict[str, Any] | None:
+def _runtime_node_call(node: ast.Call, next_auto_id: int, assignments: dict[str, Any] | None = None) -> dict[str, Any] | None:
     call_name = _call_name(node.func)
     if call_name == "_node":
         class_type = _literal_arg(node, 1, "class_type", [], call_name, required=False)
         node_id = _literal_arg(node, 2, "node_id", [], call_name, required=False)
-        keyword_inputs = _literal_keyword_inputs(node)
+        keyword_inputs = _literal_keyword_inputs(node, assignments=assignments)
     elif call_name == "ready_node":
         class_type = _literal_arg(node, 1, "class_type", [], call_name, required=False)
         node_id = _keyword_literal(node, "source_id", [], call_name) or str(next_auto_id)
-        keyword_inputs = _literal_keyword_inputs(node, excluded={"source_id", "outputs", "extras"})
+        keyword_inputs = _literal_keyword_inputs(node, excluded={"source_id", "outputs", "extras"}, assignments=assignments)
         extras = _keyword_literal(node, "extras", [], call_name)
         if isinstance(extras, dict):
             keyword_inputs.update({str(key): value for key, value in extras.items()})
     elif call_name == "node":
-        class_type = _literal_arg(node, 0, "class_type", [], call_name, required=False)
-        node_id = str(next_auto_id)
-        keyword_inputs = _literal_keyword_inputs(node)
+        # node(wf, 'ClassName', 'node_id', key=value, ...)
+        # Positional args: 0=wf, 1=class_type, 2=node_id
+        class_type = _literal_arg(node, 1, "class_type", [], call_name, required=False)
+        raw_node_id = _literal_arg(node, 2, "node_id", [], call_name, required=False)
+        node_id = str(raw_node_id) if isinstance(raw_node_id, (str, int)) and raw_node_id is not _UNSUPPORTED else str(next_auto_id)
+        keyword_inputs = _literal_keyword_inputs(node, assignments=assignments)
     else:
         return None
     if not isinstance(class_type, str) or not isinstance(node_id, str):
@@ -261,13 +358,14 @@ def _runtime_node_call(node: ast.Call, next_auto_id: int) -> dict[str, Any] | No
     return {"class_type": class_type, "node_id": node_id, "inputs": keyword_inputs}
 
 
-def _literal_keyword_inputs(node: ast.Call, *, excluded: set[str] | None = None) -> dict[str, Any]:
+def _literal_keyword_inputs(node: ast.Call, *, excluded: set[str] | None = None, assignments: dict[str, Any] | None = None) -> dict[str, Any]:
     excluded = excluded or set()
     result: dict[str, Any] = {}
+    lookup = assignments or {}
     for keyword in node.keywords:
         if keyword.arg is None or keyword.arg in excluded:
             continue
-        value = _literal_value(keyword.value, {})
+        value = _literal_value(keyword.value, lookup)
         if value is _UNSUPPORTED:
             continue
         result[keyword.arg] = value
@@ -368,10 +466,101 @@ def _literal_value(node: ast.AST, assignments: dict[str, Any]) -> Any:
         key = _literal_value(node.slice, assignments)
         if isinstance(value, dict) and key is not _UNSUPPORTED:
             return value.get(key, _UNSUPPORTED)
+    if isinstance(node, ast.Attribute):
+        obj = _literal_value(node.value, assignments)
+        if isinstance(obj, dict) and node.attr in obj:
+            return obj[node.attr]
+        return _UNSUPPORTED
+    if isinstance(node, ast.Call):
+        return _evaluate_call(node, assignments)
     try:
         return ast.literal_eval(node)
     except (ValueError, TypeError):
         return _UNSUPPORTED
+
+
+def _evaluate_call(node: ast.Call, assignments: dict[str, Any]) -> Any:
+    """Evaluate a function call AST node to a dict for known builders.
+
+    Handles ``ReadyMetadata.build(...)``, ``InputSpec(...)``, and
+    ``ModelAsset(...)``.  Returns ``_UNSUPPORTED`` for other calls.
+    """
+    func_name = _call_qualified_name(node.func)
+    if func_name in ("ReadyMetadata.build", "ReadyMetadata.build"):
+        return _eval_ready_metadata_build(node, assignments)
+    if func_name in ("InputSpec",):
+        return _eval_input_spec_call(node, assignments)
+    if func_name in ("ModelAsset",):
+        return _eval_model_asset_call(node, assignments)
+    return _UNSUPPORTED
+
+
+def _eval_ready_metadata_build(node: ast.Call, assignments: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate ``ReadyMetadata.build(**kwargs)`` into a dict of keyword values."""
+    result: dict[str, Any] = {}
+    for kw in node.keywords:
+        if kw.arg is None:
+            continue
+        value = _literal_value(kw.value, assignments)
+        if value is _UNSUPPORTED:
+            continue
+        result[kw.arg] = value
+    return result
+
+
+def _eval_input_spec_call(node: ast.Call, assignments: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate ``InputSpec(node=..., field=..., ...)`` into a dict."""
+    result: dict[str, Any] = {}
+    # Positional args: node, field, default, type
+    arg_names = ("node", "field", "default", "type")
+    for i, value_node in enumerate(node.args):
+        if i < len(arg_names):
+            value = _literal_value(value_node, assignments)
+            if value is not _UNSUPPORTED:
+                result[arg_names[i]] = value
+    for kw in node.keywords:
+        if kw.arg is None:
+            continue
+        value = _literal_value(kw.value, assignments)
+        if value is not _UNSUPPORTED:
+            result[kw.arg] = value
+    return result
+
+
+def _eval_model_asset_call(node: ast.Call, assignments: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate ``ModelAsset(filename=..., url=..., subdir=..., ...)`` into a dict."""
+    result: dict[str, Any] = {}
+    # Positional args: filename, url, subdir
+    arg_names = ("filename", "url", "subdir")
+    for i, value_node in enumerate(node.args):
+        if i < len(arg_names):
+            value = _literal_value(value_node, assignments)
+            if value is not _UNSUPPORTED:
+                result[arg_names[i]] = value
+    for kw in node.keywords:
+        if kw.arg is None:
+            continue
+        value = _literal_value(kw.value, assignments)
+        if value is not _UNSUPPORTED:
+            result[kw.arg] = value
+    # Map to canonical model asset shape
+    filename_val = result.get("filename", result.get("name", ""))
+    return {
+        "name": filename_val,
+        "filename": filename_val,
+        "url": result.get("url", ""),
+        "subdir": result.get("subdir", ""),
+    }
+
+
+def _call_qualified_name(func: ast.AST) -> str:
+    """Return the dotted name of a call target (e.g. ``ReadyMetadata.build``)."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        prefix = _call_qualified_name(func.value)
+        return f"{prefix}.{func.attr}" if prefix else func.attr
+    return ""
 
 
 def _input_key(item: dict[str, Any]) -> tuple[str, str, str]:
@@ -417,6 +606,8 @@ def _template_marker(source: str) -> str:
     if "# vibecomfy: manual" in header:
         return "manual"
     if "# vibecomfy: generated" in header:
+        return "generated"
+    if "# vibecomfy: narrative" in header:
         return "generated"
     return "unmarked"
 

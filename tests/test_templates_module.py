@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -400,3 +401,247 @@ def test_finalize_allows_unrelated_auto_inputs_but_rejects_public_target_drift()
             output_kind="image",
             output_type="SaveImage",
         )
+
+
+def test_finalize_merges_metadata_custom_nodes_into_wf_requirements() -> None:
+    """T4(a): custom-node requirements in READY_METADATA reach wf.requirements.custom_nodes."""
+    wf = _workflow("image/example")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+    _force_id(wf, wf.node("SaveImage"), "2")
+    inputs = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/example",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="out",
+        requirements={"custom_nodes": ["PackA", "PackB"]},
+    )
+
+    # Call finalize WITHOUT explicit requirements= — metadata requirements should flow through.
+    finalize(wf, inputs, metadata, output_node="2", output_kind="image", output_type="SaveImage")
+
+    assert "PackA" in wf.requirements.custom_nodes
+    assert "PackB" in wf.requirements.custom_nodes
+
+
+def test_finalize_unions_custom_nodes_from_both_sources() -> None:
+    """T4(a): union custom_nodes lists from explicit requirements and metadata deterministically."""
+    wf = _workflow("image/example")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+    _force_id(wf, wf.node("SaveImage"), "2")
+    inputs = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/example",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="out",
+        requirements={"custom_nodes": ["PackA", "PackC"]},
+    )
+
+    # Call finalize WITH explicit requirements that overlap.
+    finalize(
+        wf,
+        inputs,
+        metadata,
+        output_node="2",
+        output_kind="image",
+        output_type="SaveImage",
+        requirements={"custom_nodes": ["PackB", "PackC"]},
+    )
+
+    custom = wf.requirements.custom_nodes
+    assert "PackA" in custom
+    assert "PackB" in custom
+    assert "PackC" in custom
+    # Deterministic ordering: sorted.
+    assert custom == sorted(custom)
+
+
+def test_finalize_uses_metadata_output_prefix_as_filename_fallback() -> None:
+    """T4(b): metadata output_prefix reaches finalized output when filename_prefix omitted."""
+    wf = _workflow("image/example")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+    _force_id(wf, wf.node("SaveImage"), "2")
+    inputs = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/example",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="video/ComfyUI",
+    )
+
+    # Call finalize WITHOUT filename_prefix — should fall back to metadata output_prefix.
+    finalize(wf, inputs, metadata, output_node="2", output_kind="image", output_type="SaveImage")
+
+    output = next(item for item in wf.outputs if item.node_id == "2")
+    assert output.filename_prefix == "video/ComfyUI"
+
+
+def test_finalize_explicit_filename_prefix_overrides_metadata_output_prefix() -> None:
+    """T4(c): explicit filename_prefix still wins over metadata output_prefix."""
+    wf = _workflow("image/example")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+    _force_id(wf, wf.node("SaveImage"), "2")
+    inputs = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/example",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="video/ComfyUI",
+    )
+
+    finalize(
+        wf,
+        inputs,
+        metadata,
+        output_node="2",
+        output_kind="image",
+        output_type="SaveImage",
+        filename_prefix="custom/prefix",
+    )
+
+    output = next(item for item in wf.outputs if item.node_id == "2")
+    assert output.filename_prefix == "custom/prefix"
+
+
+# ── T19: PendingDeprecationWarning tests ──
+
+
+def test_legacy_bind_input_still_works_and_warns() -> None:
+    """T19: bind_input still works but emits PendingDeprecationWarning."""
+    from vibecomfy.registry.ready_template import bind_input
+
+    wf = _workflow("test/legacy")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = bind_input(wf, "text", "1", "value", type="STRING")
+
+    assert result is wf
+    assert wf.inputs["text"].value == "hello"
+    assert len(caught) >= 1
+    assert any("bind_input is deprecated" in str(w.message) for w in caught)
+    assert all(issubclass(w.category, PendingDeprecationWarning) for w in caught)
+
+
+def test_legacy_bind_output_still_works_and_warns() -> None:
+    """T19: bind_output still works but emits PendingDeprecationWarning."""
+    from vibecomfy.registry.ready_template import bind_output
+
+    wf = _workflow("test/legacy")
+    _force_id(wf, wf.node("SaveImage", filename_prefix="out"), "10")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = bind_output(wf, "10", output_type="SaveImage", name="image")
+
+    assert result is wf
+    assert wf.outputs[0].name == "image"
+    assert len(caught) >= 1
+    assert any("bind_output is deprecated" in str(w.message) for w in caught)
+    assert all(issubclass(w.category, PendingDeprecationWarning) for w in caught)
+
+
+def test_legacy_apply_ready_template_policy_still_works_and_warns() -> None:
+    """T19: apply_ready_template_policy still works but emits PendingDeprecationWarning."""
+    from vibecomfy.registry.ready_template import apply_ready_template_policy
+
+    wf = _workflow("test/legacy")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        apply_ready_template_policy(wf, {"ready_template": "test"}, source_path="test.py")
+
+    assert wf.metadata["python_policy_applied"] is True
+    assert len(caught) >= 1
+    assert any("apply_ready_template_policy is deprecated" in str(w.message) for w in caught)
+    assert all(issubclass(w.category, PendingDeprecationWarning) for w in caught)
+
+
+def test_canonical_finalize_does_not_warn() -> None:
+    """T19: Canonical finalize() path suppresses PendingDeprecationWarning."""
+    wf = _workflow("image/example")
+    _force_id(wf, wf.node("PrimitiveString", value="hello"), "1")
+    _force_id(wf, wf.node("SaveImage"), "2")
+    inputs = {"prompt": InputSpec("1", "value", "hello", "STRING")}
+    metadata = ReadyMetadata.build(
+        template_id="image/example",
+        capability="text_to_image",
+        inputs=inputs,
+        models={},
+        output_prefix="out",
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        finalize(wf, inputs, metadata, output_node="2", output_kind="image", output_type="SaveImage")
+
+    deprecation_warnings = [w for w in caught if issubclass(w.category, PendingDeprecationWarning)]
+    assert len(deprecation_warnings) == 0, f"Unexpected PendingDeprecationWarning: {deprecation_warnings}"
+
+
+# ── T5: Regression tests for four-block template static consumers ──
+
+
+def test_static_contract_extracts_public_inputs_from_inputspec() -> None:
+    """T5(b): static_contract derives public_inputs from PUBLIC_INPUTS/InputSpec AST nodes."""
+    from vibecomfy.registry.static_contract import extract_ready_template_contract
+
+    # wan_i2v.py has PUBLIC_INPUTS with InputSpec nodes
+    contract = extract_ready_template_contract(
+        Path(__file__).resolve().parents[1] / "ready_templates" / "video" / "wan_i2v.py"
+    )
+
+    public_input_names = {item["name"] for item in contract["public_inputs"]}
+    expected = {"prompt", "negative_prompt", "seed", "steps", "output_fps", "width", "height", "length", "cfg", "sampler_name", "start_image"}
+    for name in expected:
+        assert name in public_input_names, f"Missing public input: {name}"
+
+
+def test_static_contract_extracts_public_outputs_from_finalize() -> None:
+    """T5(b): static_contract derives public_outputs from finalize(..., output_node=...) call."""
+    from vibecomfy.registry.static_contract import extract_ready_template_contract
+
+    contract = extract_ready_template_contract(
+        Path(__file__).resolve().parents[1] / "ready_templates" / "video" / "wan_i2v.py"
+    )
+
+    # Should find at least one output from finalize call
+    finalize_outputs = [item for item in contract["public_outputs"] if item.get("source") == "finalize"]
+    assert len(finalize_outputs) > 0, "No outputs extracted from finalize()"
+    output = finalize_outputs[0]
+    assert output["node_id"] == "56"
+    assert output.get("output_type") == "SaveVideo"
+
+
+def test_ready_template_metadata_handles_ready_metadata_build_call() -> None:
+    """T5(a): _ready_template_metadata handles ReadyMetadata.build(...) call expressions."""
+    from tools.refresh_template_index import _ready_template_metadata
+
+    metadata, requirements = _ready_template_metadata(
+        Path(__file__).resolve().parents[1] / "ready_templates" / "video" / "wan_i2v.py"
+    )
+
+    assert isinstance(metadata, dict)
+    assert metadata.get("capability") == "image_to_video"
+    assert metadata.get("coverage_tier") == "required"
+    assert metadata.get("output_prefix") == "video/ComfyUI"
+
+
+def test_readability_inventory_parses_ready_metadata_build_call() -> None:
+    """T5(c): _parse_ready_metadata handles ReadyMetadata.build(...) call expressions."""
+    from vibecomfy.porting.readability_inventory import _parse_ready_metadata
+
+    metadata, requirements = _parse_ready_metadata(
+        Path(__file__).resolve().parents[1] / "ready_templates" / "video" / "wan_i2v.py"
+    )
+
+    assert isinstance(metadata, dict)
+    assert metadata.get("capability") == "image_to_video"
+    assert metadata.get("coverage_tier") == "required"

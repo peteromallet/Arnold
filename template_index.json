@@ -12,10 +12,7 @@
       "indexed": true,
       "capability": "text_to_audio_song",
       "coverage_tier": "required",
-      "custom_nodes": [
-        "EmptyAceStep1",
-        "TextEncodeAceStepAudio1"
-      ],
+      "custom_nodes": [],
       "model_count": 4,
       "public_inputs": [
         {
@@ -26,15 +23,15 @@
           },
           "node_id": "124",
           "field": "lyrics",
-          "value": null,
+          "value": "Verse\nTiny signal in the night.",
           "type": "STRING",
-          "default": null,
+          "default": "Verse\nTiny signal in the night.",
           "required": true,
           "range": null,
           "aliases": [],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "tags",
@@ -44,15 +41,15 @@
           },
           "node_id": "124",
           "field": "tags",
-          "value": null,
+          "value": "synthwave, short instrumental",
           "type": "STRING",
-          "default": null,
-          "required": null,
+          "default": "synthwave, short instrumental",
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "duration",
@@ -62,15 +59,15 @@
           },
           "node_id": "124",
           "field": "duration",
-          "value": null,
+          "value": 2,
           "type": "FLOAT",
-          "default": null,
-          "required": null,
+          "default": 2,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "bpm",
@@ -80,15 +77,15 @@
           },
           "node_id": "124",
           "field": "bpm",
-          "value": null,
+          "value": 120,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 120,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "seed",
@@ -98,15 +95,15 @@
           },
           "node_id": "124",
           "field": "seed",
-          "value": null,
+          "value": 561594583201063,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 561594583201063,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "steps",
@@ -116,15 +113,71 @@
           },
           "node_id": "3",
           "field": "steps",
-          "value": null,
+          "value": 1,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 1,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
+        },
+        {
+          "name": "cfg",
+          "target": {
+            "node_id": "3",
+            "field": "cfg"
+          },
+          "node_id": "3",
+          "field": "cfg",
+          "value": 1,
+          "type": "INT",
+          "default": 1,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "sampler_name",
+          "target": {
+            "node_id": "3",
+            "field": "sampler_name"
+          },
+          "node_id": "3",
+          "field": "sampler_name",
+          "value": "euler",
+          "type": "STRING",
+          "default": "euler",
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "seed_2",
+          "target": {
+            "node_id": "3",
+            "field": "seed"
+          },
+          "node_id": "3",
+          "field": "seed",
+          "value": 561594583201063,
+          "type": "INT",
+          "default": 561594583201063,
+          "required": false,
+          "range": null,
+          "aliases": [
+            "noise_seed"
+          ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
         },
         {
           "name": "model",
@@ -150,12 +203,12 @@
           "name": "audio",
           "node_id": "59",
           "output_type": "SaveAudioMP3",
-          "artifact_kind": "audio",
+          "artifact_kind": null,
           "mime_type": "audio/mpeg",
           "filename_prefix": "audio/vibecomfy_ace_step_smoke",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
@@ -164,25 +217,34 @@
           "name": "audio",
           "node_id": "59",
           "output_type": "SaveAudioMP3",
-          "artifact_kind": "audio",
+          "artifact_kind": null,
           "mime_type": "audio/mpeg",
           "filename_prefix": "audio/vibecomfy_ace_step_smoke",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
-      "custom_node_count": 2,
+      "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "ready",
-      "marker": "manual",
+      "readiness_class": "unmarked",
+      "marker": "unmarked",
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": "0.1.0",
+      "comfy_core": {
+        "min_version": null,
+        "tested_at": null,
+        "commit": null,
+        "status": "unavailable"
+      },
+      "source_workflow": "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json",
+      "source_sha256": "6cbab4f5679824d0c33518953582613dea10e21dfe9ab8e66ff1d4e5d7a6c7ba"
     },
     {
       "id": "audio/qwen3_tts_custom_voice",
@@ -228,7 +290,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "audio/qwen3_tts_voice_clone",
@@ -274,7 +340,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "audio/qwen3_tts_voice_design",
@@ -320,7 +390,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "edit/flux2_klein_4b_image_edit_base",
@@ -345,7 +419,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "edit/flux2_klein_4b_image_edit_distilled",
@@ -469,7 +547,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "edit/flux2_klein_9b_image_edit_base",
@@ -494,7 +576,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "edit/flux2_klein_9b_image_edit_distilled",
@@ -519,7 +605,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "edit/qwen_image_edit",
@@ -531,26 +621,6 @@
       "custom_nodes": [],
       "model_count": 4,
       "public_inputs": [
-        {
-          "name": "image",
-          "target": {
-            "node_id": "78",
-            "field": "image"
-          },
-          "node_id": "78",
-          "field": "image",
-          "value": null,
-          "type": "IMAGE",
-          "default": null,
-          "required": true,
-          "range": null,
-          "aliases": [
-            "input_image"
-          ],
-          "media_semantics": "image",
-          "status": "static",
-          "source": "bind_input"
-        },
         {
           "name": "prompt",
           "target": {
@@ -567,7 +637,7 @@
           "aliases": [],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "seed",
@@ -577,15 +647,72 @@
           },
           "node_id": "102:3",
           "field": "seed",
-          "value": null,
+          "value": 344147753686358,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 344147753686358,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
+        },
+        {
+          "name": "use_lora",
+          "target": {
+            "node_id": "102:111",
+            "field": "value"
+          },
+          "node_id": "102:111",
+          "field": "value",
+          "value": false,
+          "type": "BOOLEAN",
+          "default": false,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "sampler_name",
+          "target": {
+            "node_id": "102:3",
+            "field": "sampler_name"
+          },
+          "node_id": "102:3",
+          "field": "sampler_name",
+          "value": "euler",
+          "type": "STRING",
+          "default": "euler",
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "source_image",
+          "target": {
+            "node_id": "78",
+            "field": "image"
+          },
+          "node_id": "78",
+          "field": "image",
+          "value": "image_qwen_image_edit_input_image.png",
+          "type": "IMAGE",
+          "default": "image_qwen_image_edit_input_image.png",
+          "required": true,
+          "range": null,
+          "aliases": [
+            "input_image",
+            "image"
+          ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
         },
         {
           "name": "model",
@@ -611,12 +738,12 @@
           "name": "image",
           "node_id": "60",
           "output_type": "SaveImage",
-          "artifact_kind": "image",
+          "artifact_kind": null,
           "mime_type": "image/png",
-          "filename_prefix": "ComfyUI",
+          "filename_prefix": "",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
@@ -625,12 +752,12 @@
           "name": "image",
           "node_id": "60",
           "output_type": "SaveImage",
-          "artifact_kind": "image",
+          "artifact_kind": null,
           "mime_type": "image/png",
-          "filename_prefix": "ComfyUI",
+          "filename_prefix": "",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "static_diagnostics": [],
@@ -638,12 +765,21 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "ready",
-      "marker": "manual",
+      "readiness_class": "unmarked",
+      "marker": "unmarked",
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": "0.1.0",
+      "comfy_core": {
+        "min_version": null,
+        "tested_at": null,
+        "commit": null,
+        "status": "unavailable"
+      },
+      "source_workflow": "workflow_corpus/official/edit/qwen_image_edit.json",
+      "source_sha256": "34d4a94e9a60c9e60ccd96b965834eee92d0428288cbe000cea6837d9b2f9a94"
     },
     {
       "id": "image/basic_image_upscale",
@@ -668,7 +804,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "image/flux2_klein_4b_t2i",
@@ -828,7 +968,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "image/flux2_klein_9b_gguf_t2i",
@@ -990,7 +1134,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "image/flux2_klein_9b_t2i",
@@ -1015,7 +1163,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "image/qwen_image_2512",
@@ -1043,7 +1195,7 @@
           "aliases": [],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "negative_prompt",
@@ -1053,17 +1205,17 @@
           },
           "node_id": "238:228",
           "field": "text",
-          "value": null,
+          "value": "\u4f4e\u5206\u8fa8\u7387\uff0c\u4f4e\u753b\u8d28\uff0c\u80a2\u4f53\u7578\u5f62\uff0c\u624b\u6307\u7578\u5f62\uff0c\u753b\u9762\u8fc7\u9971\u548c\uff0c\u8721\u50cf\u611f\uff0c\u4eba\u8138\u65e0\u7ec6\u8282\uff0c\u8fc7\u5ea6\u5149\u6ed1\uff0c\u753b\u9762\u5177\u6709AI\u611f\u3002\u6784\u56fe\u6df7\u4e71\u3002\u6587\u5b57\u6a21\u7cca\uff0c\u626d\u66f2",
           "type": "STRING",
-          "default": null,
-          "required": null,
+          "default": "\u4f4e\u5206\u8fa8\u7387\uff0c\u4f4e\u753b\u8d28\uff0c\u80a2\u4f53\u7578\u5f62\uff0c\u624b\u6307\u7578\u5f62\uff0c\u753b\u9762\u8fc7\u9971\u548c\uff0c\u8721\u50cf\u611f\uff0c\u4eba\u8138\u65e0\u7ec6\u8282\uff0c\u8fc7\u5ea6\u5149\u6ed1\uff0c\u753b\u9762\u5177\u6709AI\u611f\u3002\u6784\u56fe\u6df7\u4e71\u3002\u6587\u5b57\u6a21\u7cca\uff0c\u626d\u66f2",
+          "required": false,
           "range": null,
           "aliases": [
             "negative"
           ],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "seed",
@@ -1073,15 +1225,15 @@
           },
           "node_id": "238:230",
           "field": "seed",
-          "value": null,
+          "value": 1232512,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 1232512,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "width",
@@ -1091,15 +1243,15 @@
           },
           "node_id": "238:232",
           "field": "width",
-          "value": null,
+          "value": 768,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 768,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "height",
@@ -1109,15 +1261,51 @@
           },
           "node_id": "238:232",
           "field": "height",
-          "value": null,
+          "value": 768,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 768,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
+        },
+        {
+          "name": "use_lora",
+          "target": {
+            "node_id": "238:229",
+            "field": "value"
+          },
+          "node_id": "238:229",
+          "field": "value",
+          "value": true,
+          "type": "BOOLEAN",
+          "default": true,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "sampler_name",
+          "target": {
+            "node_id": "238:230",
+            "field": "sampler_name"
+          },
+          "node_id": "238:230",
+          "field": "sampler_name",
+          "value": "euler",
+          "type": "STRING",
+          "default": "euler",
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
         },
         {
           "name": "model",
@@ -1143,12 +1331,12 @@
           "name": "image",
           "node_id": "60",
           "output_type": "SaveImage",
-          "artifact_kind": "image",
+          "artifact_kind": null,
           "mime_type": "image/png",
           "filename_prefix": "Qwen-Image-2512",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
@@ -1157,12 +1345,12 @@
           "name": "image",
           "node_id": "60",
           "output_type": "SaveImage",
-          "artifact_kind": "image",
+          "artifact_kind": null,
           "mime_type": "image/png",
           "filename_prefix": "Qwen-Image-2512",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "static_diagnostics": [],
@@ -1170,12 +1358,21 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "ready",
-      "marker": "manual",
+      "readiness_class": "unmarked",
+      "marker": "unmarked",
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": "0.1.0",
+      "comfy_core": {
+        "min_version": null,
+        "tested_at": null,
+        "commit": null,
+        "status": "unavailable"
+      },
+      "source_workflow": "workflow_corpus/official/image/qwen_image_2512.json",
+      "source_sha256": "1825da34e2124e9d6d54c8fbcf5b9f1ab901d2fe39be03b358130bb30f06fbdb"
     },
     {
       "id": "image/z_image",
@@ -1296,24 +1493,6 @@
           "media_semantics": null,
           "status": "static",
           "source": "bind_input"
-        },
-        {
-          "name": "model",
-          "target": {
-            "node_id": "1",
-            "field": "unet_name"
-          },
-          "node_id": "1",
-          "field": "unet_name",
-          "value": "z_image_bf16.safetensors",
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
@@ -1353,7 +1532,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "image/z_image_img2img",
@@ -1364,67 +1547,12 @@
       "coverage_tier": "production_parity_candidate",
       "custom_nodes": [],
       "model_count": 3,
-      "public_inputs": [
-        {
-          "name": "model",
-          "target": {
-            "node_id": "2",
-            "field": "unet_name"
-          },
-          "node_id": "2",
-          "field": "unet_name",
-          "value": "z_image_bf16.safetensors",
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
-        },
-        {
-          "name": "seed",
-          "target": {
-            "node_id": "10",
-            "field": "seed"
-          },
-          "node_id": "10",
-          "field": "seed",
-          "value": 770044821593082,
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
-        },
-        {
-          "name": "steps",
-          "target": {
-            "node_id": "10",
-            "field": "steps"
-          },
-          "node_id": "10",
-          "field": "steps",
-          "value": 12,
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
-        }
-      ],
+      "public_inputs": [],
       "public_outputs": [],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "declared",
+      "public_input_status": "missing",
       "public_output_status": "missing",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
@@ -1433,7 +1561,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "smoke/empty_image_red",
@@ -1458,7 +1590,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/basic_video_enhance",
@@ -1485,7 +1621,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_first_last_frame_travel_iclora_control",
@@ -1496,13 +1636,12 @@
       "coverage_tier": "required",
       "custom_nodes": [
         "ComfyUI-DepthAnythingV2",
-        "ComfyUI-GGUF",
         "ComfyUI-KJNodes",
         "ComfyUI-LTXVideo",
         "ComfyUI-VideoHelperSuite",
         "comfyui_controlnet_aux"
       ],
-      "model_count": 0,
+      "model_count": 10,
       "public_inputs": [
         {
           "name": "start_image",
@@ -1513,14 +1652,14 @@
           "node_id": "45",
           "field": "image",
           "value": "example.png",
-          "type": null,
+          "type": "STRING",
           "default": "example.png",
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
-          "media_semantics": null,
+          "media_semantics": "image",
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "end_image",
@@ -1531,14 +1670,14 @@
           "node_id": "47",
           "field": "image",
           "value": "egyptian_queen.png",
-          "type": null,
+          "type": "STRING",
           "default": "egyptian_queen.png",
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
-          "media_semantics": null,
+          "media_semantics": "image",
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "control_video",
@@ -1549,14 +1688,14 @@
           "node_id": "5001",
           "field": "video",
           "value": "ltx_smoke_guide.mp4",
-          "type": null,
+          "type": "STRING",
           "default": "ltx_smoke_guide.mp4",
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
-          "media_semantics": null,
+          "media_semantics": "video",
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "control_mode",
@@ -1567,14 +1706,14 @@
           "node_id": "6000",
           "field": "value",
           "value": "canny",
-          "type": null,
+          "type": "STRING",
           "default": "canny",
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "prompt",
@@ -1585,17 +1724,17 @@
           "node_id": "16",
           "field": "text",
           "value": null,
-          "type": null,
+          "type": "STRING",
           "default": null,
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
-          "media_semantics": null,
+          "media_semantics": "text",
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
-          "name": "negative",
+          "name": "negative_prompt",
           "target": {
             "node_id": "11",
             "field": "text"
@@ -1603,14 +1742,16 @@
           "node_id": "11",
           "field": "text",
           "value": null,
-          "type": null,
+          "type": "STRING",
           "default": null,
-          "required": null,
+          "required": false,
           "range": null,
-          "aliases": [],
-          "media_semantics": null,
+          "aliases": [
+            "negative"
+          ],
+          "media_semantics": "text",
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "seed",
@@ -1621,71 +1762,53 @@
           "node_id": "14",
           "field": "noise_seed",
           "value": 43,
-          "type": null,
+          "type": "STRING",
           "default": 43,
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
-        },
-        {
-          "name": "frames",
-          "target": {
-            "node_id": "2078",
-            "field": "widget_0"
-          },
-          "node_id": "2078",
-          "field": "widget_0",
-          "value": 9,
-          "type": null,
-          "default": 9,
-          "required": null,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "width",
           "target": {
             "node_id": "2080",
-            "field": "widget_0"
+            "field": "value"
           },
           "node_id": "2080",
-          "field": "widget_0",
+          "field": "value",
           "value": 256,
-          "type": null,
+          "type": "STRING",
           "default": 256,
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "height",
           "target": {
             "node_id": "2079",
-            "field": "widget_0"
+            "field": "value"
           },
           "node_id": "2079",
-          "field": "widget_0",
+          "field": "value",
           "value": 256,
-          "type": null,
+          "type": "STRING",
           "default": 256,
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
-          "name": "fps",
+          "name": "output_fps",
           "target": {
             "node_id": "2076",
             "field": "value"
@@ -1693,32 +1816,16 @@
           "node_id": "2076",
           "field": "value",
           "value": 8,
-          "type": null,
+          "type": "STRING",
           "default": 8,
-          "required": null,
+          "required": false,
           "range": null,
-          "aliases": [],
+          "aliases": [
+            "fps"
+          ],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
-        },
-        {
-          "name": "strength",
-          "target": {
-            "node_id": "5012",
-            "field": "strength"
-          },
-          "node_id": "5012",
-          "field": "strength",
-          "value": 1,
-          "type": null,
-          "default": 1,
-          "required": null,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "ic_lora_filename",
@@ -1729,14 +1836,14 @@
           "node_id": "5011",
           "field": "lora_name",
           "value": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
-          "type": null,
+          "type": "STRING",
           "default": "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
         },
         {
           "name": "ic_lora_strength",
@@ -1747,14 +1854,72 @@
           "node_id": "5011",
           "field": "strength_model",
           "value": 1,
-          "type": null,
+          "type": "STRING",
           "default": 1,
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "register_input"
+          "source": "InputSpec"
+        },
+        {
+          "name": "seed_refine",
+          "target": {
+            "node_id": "15",
+            "field": "noise_seed"
+          },
+          "node_id": "15",
+          "field": "noise_seed",
+          "value": 42,
+          "type": "INT",
+          "default": 42,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "length",
+          "target": {
+            "node_id": "2078",
+            "field": "value"
+          },
+          "node_id": "2078",
+          "field": "value",
+          "value": 9,
+          "type": "STRING",
+          "default": 9,
+          "required": false,
+          "range": null,
+          "aliases": [
+            "frames"
+          ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "guide_strength",
+          "target": {
+            "node_id": "5012",
+            "field": "strength"
+          },
+          "node_id": "5012",
+          "field": "strength",
+          "value": 1,
+          "type": "STRING",
+          "default": 1,
+          "required": false,
+          "range": null,
+          "aliases": [
+            "strength"
+          ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
         },
         {
           "name": "model",
@@ -1780,12 +1945,12 @@
           "name": "video",
           "node_id": "43",
           "output_type": "VHS_VideoCombine",
-          "artifact_kind": "video",
+          "artifact_kind": null,
           "mime_type": "video/mp4",
-          "filename_prefix": "reigh_vibecomfy_ltx_control_first_last",
+          "filename_prefix": "",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
@@ -1794,31 +1959,34 @@
           "name": "video",
           "node_id": "43",
           "output_type": "VHS_VideoCombine",
-          "artifact_kind": "video",
+          "artifact_kind": null,
           "mime_type": "video/mp4",
-          "filename_prefix": "reigh_vibecomfy_ltx_control_first_last",
+          "filename_prefix": "",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
-      "static_diagnostics": [
-        {
-          "code": "static_dynamic_assignment",
-          "severity": "warning",
-          "message": "READY_METADATA contains dynamic values"
-        }
-      ],
+      "static_diagnostics": [],
       "public_input_status": "declared",
       "public_output_status": "declared",
-      "custom_node_count": 6,
+      "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "manual",
-      "marker": "manual",
+      "readiness_class": "unmarked",
+      "marker": "unmarked",
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": "0.1.0",
+      "comfy_core": {
+        "min_version": null,
+        "tested_at": null,
+        "commit": null,
+        "status": "unavailable"
+      },
+      "source_workflow": "manual composition of Runexx first/last frame and Lightricks IC-LoRA union control",
+      "source_sha256": "9c48c9b95bad68ed8196e239dedfd5ec887836e569e21bcb60ff6e5ec0a9c0a2"
     },
     {
       "id": "video/ltx2_3_i2v",
@@ -2060,7 +2228,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_iamccs_audio_extend_low_ram",
@@ -2144,7 +2316,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_iamccs_audio_image_to_video",
@@ -2229,7 +2405,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_iamccs_long_i2v",
@@ -2277,7 +2457,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_lightricks_first_last_parity",
@@ -2651,7 +2835,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_lightricks_first_last_two_stage_lowvram",
@@ -3126,7 +3314,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_hdr",
@@ -3233,7 +3425,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_motion_track",
@@ -3362,7 +3558,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_lightricks_iclora_union_control",
@@ -3447,7 +3647,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_lightricks_two_stage",
@@ -3554,7 +3758,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_custom_audio",
@@ -3640,7 +3848,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_first_last_frame",
@@ -4066,7 +4278,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_first_last_raw_video_guide",
@@ -4384,7 +4600,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_first_middle_last_frame",
@@ -4476,7 +4696,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_lipsync_custom_audio",
@@ -4580,7 +4804,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_motion_transfer_dwpose",
@@ -4667,7 +4895,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_music_video_low_ram",
@@ -4771,7 +5003,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
@@ -4876,7 +5112,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_runexx_video_to_video_extend",
@@ -4979,7 +5219,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/ltx2_3_t2v",
@@ -5200,7 +5444,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wan22_animate_native_first_stage",
@@ -5302,7 +5550,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wan22_i2v_comfy_lightx2v",
@@ -5400,7 +5652,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wan_i2v",
@@ -5412,27 +5668,6 @@
       "custom_nodes": [],
       "model_count": 4,
       "public_inputs": [
-        {
-          "name": "image",
-          "target": {
-            "node_id": "52",
-            "field": "image"
-          },
-          "node_id": "52",
-          "field": "image",
-          "value": null,
-          "type": "IMAGE",
-          "default": null,
-          "required": true,
-          "range": null,
-          "aliases": [
-            "input_image",
-            "start_image"
-          ],
-          "media_semantics": "image",
-          "status": "static",
-          "source": "bind_input"
-        },
         {
           "name": "prompt",
           "target": {
@@ -5449,7 +5684,7 @@
           "aliases": [],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "negative_prompt",
@@ -5462,14 +5697,14 @@
           "value": null,
           "type": "STRING",
           "default": null,
-          "required": null,
+          "required": false,
           "range": null,
           "aliases": [
             "negative"
           ],
           "media_semantics": "text",
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "seed",
@@ -5479,15 +5714,15 @@
           },
           "node_id": "3",
           "field": "seed",
-          "value": null,
+          "value": 987948718394761,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 987948718394761,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
           "name": "steps",
@@ -5497,33 +5732,146 @@
           },
           "node_id": "3",
           "field": "steps",
-          "value": null,
+          "value": 20,
           "type": "INT",
-          "default": null,
-          "required": null,
+          "default": 20,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
         },
         {
-          "name": "fps",
+          "name": "output_fps",
           "target": {
             "node_id": "55",
             "field": "fps"
           },
           "node_id": "55",
           "field": "fps",
-          "value": null,
+          "value": 16,
           "type": "FLOAT",
-          "default": null,
-          "required": null,
+          "default": 16,
+          "required": false,
+          "range": null,
+          "aliases": [
+            "fps"
+          ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "width",
+          "target": {
+            "node_id": "50",
+            "field": "width"
+          },
+          "node_id": "50",
+          "field": "width",
+          "value": 512,
+          "type": "INT",
+          "default": 512,
+          "required": false,
           "range": null,
           "aliases": [],
           "media_semantics": null,
           "status": "static",
-          "source": "bind_input"
+          "source": "InputSpec"
+        },
+        {
+          "name": "height",
+          "target": {
+            "node_id": "50",
+            "field": "height"
+          },
+          "node_id": "50",
+          "field": "height",
+          "value": 512,
+          "type": "INT",
+          "default": 512,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "length",
+          "target": {
+            "node_id": "50",
+            "field": "length"
+          },
+          "node_id": "50",
+          "field": "length",
+          "value": 33,
+          "type": "INT",
+          "default": 33,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "cfg",
+          "target": {
+            "node_id": "3",
+            "field": "cfg"
+          },
+          "node_id": "3",
+          "field": "cfg",
+          "value": 6,
+          "type": "INT",
+          "default": 6,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "sampler_name",
+          "target": {
+            "node_id": "3",
+            "field": "sampler_name"
+          },
+          "node_id": "3",
+          "field": "sampler_name",
+          "value": "uni_pc",
+          "type": "STRING",
+          "default": "uni_pc",
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "start_image",
+          "target": {
+            "node_id": "52",
+            "field": "image"
+          },
+          "node_id": "52",
+          "field": "image",
+          "value": "image_to_video_wan_start_image.png",
+          "type": "IMAGE",
+          "default": "image_to_video_wan_start_image.png",
+          "required": true,
+          "range": null,
+          "aliases": [
+            "input_image",
+            "image"
+          ],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
         },
         {
           "name": "model",
@@ -5549,12 +5897,12 @@
           "name": "video",
           "node_id": "56",
           "output_type": "SaveVideo",
-          "artifact_kind": "video",
+          "artifact_kind": null,
           "mime_type": "video/mp4",
           "filename_prefix": "video/ComfyUI",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
@@ -5563,12 +5911,12 @@
           "name": "video",
           "node_id": "56",
           "output_type": "SaveVideo",
-          "artifact_kind": "video",
+          "artifact_kind": null,
           "mime_type": "video/mp4",
           "filename_prefix": "video/ComfyUI",
           "expected_cardinality": "one",
           "status": "static",
-          "source": "bind_output"
+          "source": "finalize"
         }
       ],
       "static_diagnostics": [],
@@ -5576,12 +5924,21 @@
       "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
-      "readiness_class": "ready",
-      "marker": "manual",
+      "readiness_class": "unmarked",
+      "marker": "unmarked",
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": "0.1.0",
+      "comfy_core": {
+        "min_version": null,
+        "tested_at": null,
+        "commit": null,
+        "status": "unavailable"
+      },
+      "source_workflow": "workflow_corpus/official/video/wan_i2v.json",
+      "source_sha256": "e455b28ec1eb5c2312ec4bb65dd2e2e69e9193ee766bdfc251a9c001a15edee4"
     },
     {
       "id": "video/wan_t2v",
@@ -5795,7 +6152,11 @@
       "app_active": true,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_13b_control_lora",
@@ -5824,7 +6185,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_13b_recammaster",
@@ -5872,7 +6237,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_13b_vace",
@@ -5902,7 +6271,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_flf2v",
@@ -5950,7 +6323,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control",
@@ -5999,7 +6376,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_fun_control_camera",
@@ -6047,7 +6428,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_i2v",
@@ -6095,7 +6480,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_t2v",
@@ -6143,7 +6532,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_v2v_infinitetalk",
@@ -6172,7 +6565,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
@@ -6201,7 +6598,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_i2v_kijai",
@@ -6285,7 +6686,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_t2i",
@@ -6313,7 +6718,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_14b_vace_cocktail",
@@ -6379,7 +6788,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v",
@@ -6427,7 +6840,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_i2v_controlnet",
@@ -6456,7 +6873,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_ovi_audio_i2v",
@@ -6485,7 +6906,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_5b_t2v_controlnet",
@@ -6514,7 +6939,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_s2v_context_window",
@@ -6543,7 +6972,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_s2v_framepack_pose",
@@ -6573,7 +7006,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_22_wan_animate_preprocess_kijai",
@@ -6642,7 +7079,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": false
+      "supplemental": false,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     },
     {
       "id": "video/wanvideo_wrapper_wan_animate",
@@ -6672,7 +7113,11 @@
       "app_active": false,
       "blocked": false,
       "reference": false,
-      "supplemental": true
+      "supplemental": true,
+      "vibecomfy_version": null,
+      "comfy_core": null,
+      "source_workflow": null,
+      "source_sha256": null
     }
   ]
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -37,6 +38,12 @@ def apply_ready_template_policy(
     source_path: str,
     requirements: Mapping[str, list[Any]] | None = None,
 ) -> VibeWorkflow:
+    warnings.warn(
+        "apply_ready_template_policy is deprecated for generated ready templates. "
+        "Use vibecomfy.templates.finalize() instead.",
+        PendingDeprecationWarning,
+        stacklevel=2,
+    )
     workflow.metadata.update(dict(ready_metadata))
     workflow.metadata["ready_template_path"] = source_path
     workflow.metadata["python_policy_applied"] = True
@@ -288,6 +295,12 @@ def bind_input(
     known input/widget key on that node.  Raises ``ValueError`` with a
     descriptive message when either check fails.
     """
+    warnings.warn(
+        "bind_input is deprecated for generated ready templates. "
+        "Use InputSpec.register() inside vibecomfy.templates.finalize() instead.",
+        PendingDeprecationWarning,
+        stacklevel=2,
+    )
     if node_id not in wf.nodes:
         raise ValueError(
             f"bind_input({name!r}): target node {node_id!r} does not exist "
@@ -338,6 +351,12 @@ def bind_output(
     This should be called **after** ``finalize_ready_template()`` so that
     the binding survives finalization.
     """
+    warnings.warn(
+        "bind_output is deprecated for generated ready templates. "
+        "Use vibecomfy.templates.finalize() instead.",
+        PendingDeprecationWarning,
+        stacklevel=2,
+    )
     output_type = output_type or ""
     for existing in wf.outputs:
         if existing.node_id == node_id:

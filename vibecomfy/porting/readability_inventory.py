@@ -125,8 +125,23 @@ def _ready_id_for_path(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
+_KNOWN_TOP_LEVEL_NAMES_RI = frozenset({
+    "READY_METADATA",
+    "READY_REQUIREMENTS",
+    "PUBLIC_INPUTS",
+    "MODELS",
+    "OUTPUT_PREFIX",
+    "PRIVATE_KNOBS",
+})
+
+
 def _parse_ready_metadata(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Parse READY_METADATA and READY_REQUIREMENTS from a template file."""
+    """Parse READY_METADATA and READY_REQUIREMENTS from a template file.
+
+    Handles both literal dict assignments and ``ReadyMetadata.build(...)``
+    call expressions.  When requirements are embedded in the
+    ``ReadyMetadata.build`` call, they are merged into the requirements dict.
+    """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except (OSError, SyntaxError):
@@ -136,11 +151,25 @@ def _parse_ready_metadata(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         if not isinstance(node, ast.Assign):
             continue
         for target in node.targets:
-            if not isinstance(target, ast.Name) or target.id not in {"READY_METADATA", "READY_REQUIREMENTS"}:
+            if not isinstance(target, ast.Name) or target.id not in _KNOWN_TOP_LEVEL_NAMES_RI:
                 continue
             assignments[target.id] = _literal_value(node.value, assignments)
     metadata = assignments.get("READY_METADATA")
     requirements = assignments.get("READY_REQUIREMENTS")
+
+    # If READY_METADATA was built via ReadyMetadata.build(...), extract
+    # requirements from within it.
+    meta_reqs = None
+    if isinstance(metadata, dict) and metadata.get("requirements"):
+        meta_reqs = metadata["requirements"]
+    if meta_reqs is not None and isinstance(meta_reqs, dict):
+        if isinstance(requirements, dict):
+            merged = dict(meta_reqs)
+            merged.update(requirements)
+            requirements = merged
+        else:
+            requirements = dict(meta_reqs)
+
     return (
         metadata if isinstance(metadata, dict) else {},
         requirements if isinstance(requirements, dict) else {},
@@ -167,10 +196,19 @@ def _literal_value(node: ast.AST, assignments: dict[str, Any]) -> Any:
         key = _literal_value(node.slice, assignments)
         if isinstance(value, dict):
             return value.get(key)
+    if isinstance(node, ast.Call):
+        return _evaluate_known_call_ri(node, assignments)
     try:
         return ast.literal_eval(node)
     except (ValueError, TypeError):
         return None
+
+
+def _evaluate_known_call_ri(node: ast.Call, assignments: dict[str, Any]) -> Any:
+    """Evaluate known builder calls (ReadyMetadata.build, InputSpec, ModelAsset)."""
+    from vibecomfy.registry.static_contract import _evaluate_call
+
+    return _evaluate_call(node, assignments)
 
 
 # ---------------------------------------------------------------------------
@@ -231,10 +269,10 @@ def _count_local_node_copies(source: str) -> int:
 def _detect_missing_output_contract(source: str) -> bool:
     """Check if the template is missing an explicit output contract.
 
-    Looks for semantic ``bind_output`` / ``register_output`` descriptors or
-    graph-level ``_outputs`` metadata in the source.
+    Looks for semantic ``bind_output`` / ``register_output`` descriptors,
+    graph-level ``_outputs`` metadata, or ``finalize()`` calls in the source.
     """
-    has_output = bool(re.search(r"bind_output|register_output|_outputs\s*=", source))
+    has_output = bool(re.search(r"bind_output|register_output|_outputs\s*=|finalize\(", source))
     return not has_output
 
 
@@ -249,10 +287,12 @@ def _classify_marker(source: str) -> str:
         return "manual"
     if "# vibecomfy: generated" in first_line:
         return "generated"
+    if "# vibecomfy: narrative" in first_line:
+        return "generated"
 
     # Check for reference marker
-    has_api = bool(re.search(r"^API_WORKFLOW\s*=", source, re.MULTILINE))
-    has_nodes = bool(re.search(r"^NODES\s*=", source, re.MULTILINE))
+    has_api = bool(re.search(r"^API_WORKFLOW\\s*=", source, re.MULTILINE))
+    has_nodes = bool(re.search(r"^NODES\\s*=", source, re.MULTILINE))
 
     if has_api:
         if "vibecomfy: manual" in first_line:
@@ -261,6 +301,8 @@ def _classify_marker(source: str) -> str:
     if "vibecomfy: manual" in first_line:
         return "manual"
     if "vibecomfy: generated" in first_line:
+        return "generated"
+    if "vibecomfy: narrative" in first_line:
         return "generated"
     if has_nodes:
         return "authored"

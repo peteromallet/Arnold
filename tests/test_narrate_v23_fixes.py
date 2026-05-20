@@ -231,11 +231,12 @@ def test_restructure_v23_shape_and_no_duplicate_truth(tmp_path: Path) -> None:
         assert "MODELS = {" in generated
         assert "PUBLIC_INPUTS = {" in generated
         assert "EDIT_GUIDE =" not in generated
-        assert "OUTPUT_PREFIX =" in generated
+        assert "OUTPUT_PREFIX =" not in generated
         assert "READY_METADATA = ReadyMetadata.build(" in generated
         assert "inputs=PUBLIC_INPUTS" in generated
         assert "models=MODELS" in generated
-        assert "READY_REQUIREMENTS: dict[str, object] = {" in generated
+        assert "READY_REQUIREMENTS: dict[str, object] = {" not in generated
+        assert "READY_REQUIREMENTS =" not in generated
         assert "return finalize(" in generated
         assert generated.count("return finalize(") == 1
 

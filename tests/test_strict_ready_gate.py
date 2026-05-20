@@ -77,6 +77,111 @@ def test_generated_style_diagnostics_are_warnings_until_protected() -> None:
     assert all(item["severity"] == "warning" and item["enforced"] is False for item in diagnostics)
 
 
+def test_legacy_vocabulary_diagnostic_flips_per_target_ok_false(monkeypatch) -> None:
+    """Synthetic legacy import/call diagnostic causes per-target ok=false."""
+    monkeypatch.setattr(
+        gate,
+        "_legacy_vocabulary_diagnostics",
+        lambda **_kwargs: [
+            gate._diagnostic(
+                code="legacy_vocabulary_import",
+                message="Generated template imports legacy module 'vibecomfy.registry.ready_template'.",
+                ready_id="image/example",
+                target="ready_templates/image/example.py",
+                severity="error",
+                category="legacy_vocabulary",
+                enforced=True,
+                detail={"import": "vibecomfy.registry.ready_template", "line": 5},
+            ),
+        ],
+    )
+
+    target = gate._check_template(
+        {
+            "id": "image/example",
+            "path": "ready_templates/image/example.py",
+            "coverage_tier": "required",
+            "app_active": True,
+        },
+        None,
+    )
+
+    assert target["ok"] is False
+    assert len(target["legacy_vocabulary_diagnostics"]) == 1
+    diag = target["legacy_vocabulary_diagnostics"][0]
+    assert diag["code"] == "legacy_vocabulary_import"
+    assert diag["severity"] == "error"
+    assert diag["enforced"] is True
+    assert diag["category"] == "legacy_vocabulary"
+
+
+def test_legacy_vocabulary_call_flips_per_target_ok_false(monkeypatch) -> None:
+    """Synthetic legacy call diagnostic causes per-target ok=false and exits nonzero."""
+    monkeypatch.setattr(
+        gate,
+        "_legacy_vocabulary_diagnostics",
+        lambda **_kwargs: [
+            gate._diagnostic(
+                code="legacy_vocabulary_call",
+                message="Generated template calls legacy function 'bind_input'.",
+                ready_id="video/legacy",
+                target="ready_templates/video/legacy.py:42",
+                severity="error",
+                category="legacy_vocabulary",
+                enforced=True,
+                detail={"call": "bind_input", "line": 42},
+            ),
+        ],
+    )
+
+    target = gate._check_template(
+        {
+            "id": "video/legacy",
+            "path": "ready_templates/video/legacy.py",
+            "coverage_tier": "required",
+            "app_active": True,
+        },
+        None,
+    )
+
+    assert target["ok"] is False
+    assert len(target["legacy_vocabulary_diagnostics"]) == 1
+    diag = target["legacy_vocabulary_diagnostics"][0]
+    assert diag["code"] == "legacy_vocabulary_call"
+    assert diag["severity"] == "error"
+    assert diag["enforced"] is True
+    assert diag["category"] == "legacy_vocabulary"
+
+
+def test_legacy_vocabulary_main_exits_nonzero(monkeypatch, capsys) -> None:
+    """Synthetic legacy diagnostic causes main() to exit nonzero and report ok=false."""
+    monkeypatch.setattr(
+        gate,
+        "build_strict_ready_report",
+        lambda: {
+            "ok": False,
+            "target_count": 1,
+            "summary": {"diagnostics": 1, "enforced_errors": 1},
+            "diagnostics": [
+                {
+                    "ready_id": "image/example",
+                    "category": "legacy_vocabulary",
+                    "code": "legacy_vocabulary_call",
+                    "target": "ready_templates/image/example.py:42",
+                    "severity": "error",
+                    "enforced": True,
+                    "message": "Generated template calls legacy function 'bind_input'.",
+                }
+            ],
+        },
+    )
+
+    assert gate.main(["--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["summary"]["enforced_errors"] == 1
+
+
 def test_strict_ready_gate_main_exits_nonzero_for_enforced_errors(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         gate,

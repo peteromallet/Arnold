@@ -136,3 +136,80 @@ def test_upsert_lockfile_entry_replaces_existing_name(tmp_path: Path) -> None:
         "ComfyUI-KJNodes updated https://example.test/kj-updated.git",
         "ComfyUI-WanVideoWrapper def456 https://example.test/wan.git",
     ]
+
+
+def test_lockfile_toml_round_trip_with_class_schema(tmp_path: Path) -> None:
+    """Phase 5a: class_schema_sha256 persists in TOML and rereads correctly."""
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    write_lockfile(
+        [
+            LockEntry(
+                name="ComfyUI-KJNodes",
+                git_commit_sha="abc123",
+                url="https://example.test/kj.git",
+                class_schema_sha256="deadbeef1234",
+            ),
+        ],
+        lockfile,
+    )
+
+    raw = lockfile.read_text(encoding="utf-8")
+    # Written as TOML because class_schema_sha256 is present.
+    assert "[nodepacks.ComfyUI-KJNodes]" in raw
+    assert 'class_schema_sha256 = "deadbeef1234"' in raw
+
+    entries = read_lockfile(lockfile)
+    assert entries == [
+        LockEntry(
+            name="ComfyUI-KJNodes",
+            git_commit_sha="abc123",
+            url="https://example.test/kj.git",
+            class_schema_sha256="deadbeef1234",
+        ),
+    ]
+
+    # Round-trip: rewrite and verify it stays.
+    write_lockfile(entries, lockfile)
+    again = read_lockfile(lockfile)
+    assert again == entries
+
+
+def test_lockfile_toml_with_source_and_schema_sha256(tmp_path: Path) -> None:
+    """Phase 5a: both source_sha256 and class_schema_sha256 survive round-trip."""
+    lockfile = tmp_path / "custom_nodes.lock"
+
+    write_lockfile(
+        [
+            LockEntry(
+                name="ComfyUI-KJNodes",
+                git_commit_sha="abc123",
+                url="https://example.test/kj.git",
+                source_sha256={"nodes.py": "beef1111"},
+                class_schema_sha256="cafe2222",
+            ),
+            LockEntry(
+                name="ComfyUI-WanVideoWrapper",
+                git_commit_sha="def456",
+                url="https://example.test/wan.git",
+                source_sha256={"requirements.txt": "feed3333"},
+            ),
+        ],
+        lockfile,
+    )
+
+    entries = read_lockfile(lockfile)
+    assert len(entries) == 2
+
+    kj = next(e for e in entries if e.name == "ComfyUI-KJNodes")
+    assert kj.source_sha256 == {"nodes.py": "beef1111"}
+    assert kj.class_schema_sha256 == "cafe2222"
+
+    wan = next(e for e in entries if e.name == "ComfyUI-WanVideoWrapper")
+    assert wan.source_sha256 == {"requirements.txt": "feed3333"}
+    assert wan.class_schema_sha256 is None
+
+    # Rewrite and verify all values survive.
+    write_lockfile(entries, lockfile)
+    again = read_lockfile(lockfile)
+    assert again == entries
