@@ -26,21 +26,33 @@ MODELS = {
         filename='flux-2-klein-base-4b.safetensors',
         url='https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/diffusion_models/flux-2-klein-base-4b.safetensors',
         subdir='diffusion_models',
+        sha256='9c5fed22b76baea749d88fc2abe3ad53245e7b21a0d353a762665eea00043b92',
+        hf_revision='a9e4ca87c16db4c4e1a16406a9ddb300ab0ae246',
+        size_bytes=7751105712,
     ),
     'qwen_3_4b': ModelAsset(
         filename='qwen_3_4b.safetensors',
         url='https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors',
         subdir='text_encoders',
+        sha256='6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a',
+        hf_revision='a9e4ca87c16db4c4e1a16406a9ddb300ab0ae246',
+        size_bytes=8044982048,
     ),
     'flux2_vae': ModelAsset(
         filename='flux2-vae.safetensors',
         url='https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors',
         subdir='vae',
+        sha256='d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5',
+        hf_revision='03d6521e6f6a47396b3f951cbea50f7e6c2f482e',
+        size_bytes=336213556,
     ),
     'flux_2_klein_4b': ModelAsset(
         filename='flux-2-klein-4b.safetensors',
         url='https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/diffusion_models/flux-2-klein-4b.safetensors',
         subdir='diffusion_models',
+        sha256='ec3d4e733a771f61c052fb4856c48b336c55eaf2c65487c2a1faeb9bbda7a343',
+        hf_revision='a9e4ca87c16db4c4e1a16406a9ddb300ab0ae246',
+        size_bytes=7751105712,
     ),
 }
 

@@ -52,16 +52,25 @@ MODELS = {
         filename='ltx-2.3-22b-distilled-fp8.safetensors',
         url='https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-distilled-fp8.safetensors',
         subdir='checkpoints',
+        sha256='d9646b6f2d5c42d337b23671634c43bfeece6989644f51b4a3aa088465ccd3b2',
+        hf_revision='1d756cd27fa11c0896c4dfee093cd1bf36c7f7a1',
+        size_bytes=29531884062,
     ),
     'gemma_3_12b_it_fp4_mixed': ModelAsset(
         filename='gemma_3_12B_it_fp4_mixed.safetensors',
         url='https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
         subdir='text_encoders',
+        sha256='aaca463d11e6d8d2a4bdb0d6299214c15ef78a3f73e0ef8113d5a9d0219b3f6d',
+        hf_revision='bd5f9c87fcb0360ae7112f9784562670894d9492',
+        size_bytes=9447702218,
     ),
     'ltx_2_3_spatial_upscaler_x2_1_1': ModelAsset(
         filename='ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
         url='https://huggingface.co/Lightricks/LTX-2.3/resolve/main/ltx-2.3-spatial-upscaler-x2-1.1.safetensors',
         subdir='latent_upscale_models',
+        sha256='5f416311fa8172b65af67530758964708d29a317b830d689a51143b7f91913ed',
+        hf_revision='76730e634e70a28f4e8d51f5e29c08e40e2d8e74',
+        size_bytes=995743560,
     ),
 }
 

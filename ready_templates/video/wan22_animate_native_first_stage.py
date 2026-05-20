@@ -20,6 +20,9 @@ MODELS = {
         filename='Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
         url='https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors',
         subdir='diffusion_models',
+        sha256='2936b31473a967e7a429a6646bba60e7862d0938e178b58b2a140f391dd5b8e6',
+        hf_revision='5571ff9d81a631ee97946a703e94911d63214c44',
+        size_bytes=18401760586,
     ),
     'lightx2v_i2v_14b_480p_cfg_step_distill_ran': ModelAsset(
         filename='lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors',
@@ -30,6 +33,9 @@ MODELS = {
         filename='WanAnimate_relight_lora_fp16.safetensors',
         url='https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/LoRAs/Wan22_relight/WanAnimate_relight_lora_fp16.safetensors',
         subdir='loras',
+        sha256='fc646c74c73f4b251f5fd9bc440ef21b03b27305f499966c68b2b3aa31498561',
+        hf_revision='87badb1f794c15daf51db60838a433ca08bb218f',
+        size_bytes=1436672440,
     ),
     'clip_vision_h': ModelAsset(
         filename='clip_vision_h.safetensors',

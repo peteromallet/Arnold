@@ -26,21 +26,33 @@ MODELS = {
         filename='qwen_0.6b_ace15.safetensors',
         url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_0.6b_ace15.safetensors',
         subdir='text_encoders',
+        sha256='fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7',
+        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
+        size_bytes=1191588248,
     ),
     'qwen_4b_ace15': ModelAsset(
         filename='qwen_4b_ace15.safetensors',
         url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/text_encoders/qwen_4b_ace15.safetensors',
         subdir='text_encoders',
+        sha256='ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873',
+        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
+        size_bytes=8379154232,
     ),
     'ace_1_5_vae': ModelAsset(
         filename='ace_1.5_vae.safetensors',
         url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/vae/ace_1.5_vae.safetensors',
         subdir='vae',
+        sha256='6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb',
+        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
+        size_bytes=337431732,
     ),
     'acestep_v1_5_turbo': ModelAsset(
         filename='acestep_v1.5_turbo.safetensors',
         url='https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/main/split_files/diffusion_models/acestep_v1.5_turbo.safetensors',
         subdir='diffusion_models',
+        sha256='3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7',
+        hf_revision='54b2ef4d8af5582f54c7e6b84c22b679a194bc4b',
+        size_bytes=4787825604,
     ),
 }
 

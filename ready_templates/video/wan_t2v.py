@@ -30,6 +30,9 @@ MODELS = {
         filename='wan2.1_t2v_1.3B_fp16.safetensors',
         url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors',
         subdir='diffusion_models',
+        sha256='be531024cd9018cb5b48c40cfbb6a6191645b1c792eb8bf4f8c1c6e10f924dc5',
+        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
+        size_bytes=2838303560,
     ),
     'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(
         filename='umt5_xxl_fp8_e4m3fn_scaled.safetensors',

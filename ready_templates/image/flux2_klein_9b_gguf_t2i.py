@@ -23,6 +23,9 @@ MODELS = {
         filename='qwen_3_8b_fp8mixed.safetensors',
         url='https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
         subdir='text_encoders',
+        sha256='abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6',
+        hf_revision='23fbc8aa8b621f29f2249cd1bd9c47e5d0eebd83',
+        size_bytes=8664848742,
     ),
     'flux_2_klein_base_9b_fp8_unet': ModelAsset(
         filename='flux-2-klein-base-9b-fp8.safetensors',

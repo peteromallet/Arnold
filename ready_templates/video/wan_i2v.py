@@ -32,21 +32,33 @@ MODELS = {
         filename='wan2.1_i2v_480p_14B_fp16.safetensors',
         url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors',
         subdir='diffusion_models',
+        sha256='27988f6b510eb8d5fdd7485671b54897f8683f2bba7a772c5671be21d3491253',
+        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
+        size_bytes=32791377504,
     ),
     'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(
         filename='umt5_xxl_fp8_e4m3fn_scaled.safetensors',
         url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors',
         subdir='text_encoders',
+        sha256='c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68',
+        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
+        size_bytes=6735906897,
     ),
     'wan_2_1_vae': ModelAsset(
         filename='wan_2.1_vae.safetensors',
         url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors',
         subdir='vae',
+        sha256='2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b',
+        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
+        size_bytes=253815318,
     ),
     'clip_vision_h': ModelAsset(
         filename='clip_vision_h.safetensors',
         url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors',
         subdir='clip_vision',
+        sha256='64a7ef761bfccbadbaa3da77366aac4185a6c58fa5de5f589b42a65bcc21f161',
+        hf_revision='06e001fc51048fb03433a6fb25334de7836704a5',
+        size_bytes=1264219396,
     ),
 }
 

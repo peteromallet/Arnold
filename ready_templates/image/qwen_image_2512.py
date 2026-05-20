@@ -27,21 +27,33 @@ MODELS = {
         filename='qwen_image_2512_fp8_e4m3fn.safetensors',
         url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors',
         subdir='diffusion_models',
+        sha256='5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b',
+        hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5',
+        size_bytes=20430679144,
     ),
     'qwen_2_5_vl_7b_fp8_scaled': ModelAsset(
         filename='qwen_2.5_vl_7b_fp8_scaled.safetensors',
         url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors',
         subdir='text_encoders',
+        sha256='cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4',
+        hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5',
+        size_bytes=9384670680,
     ),
     'qwen_image_vae': ModelAsset(
         filename='qwen_image_vae.safetensors',
         url='https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors',
         subdir='vae',
+        sha256='a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f',
+        hf_revision='c232bcb51c1523899c62d6dcaa960b2627668de5',
+        size_bytes=253806246,
     ),
     'qwen_image_2512_lightning_4steps_v1_0_fp32': ModelAsset(
         filename='Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors',
         url='https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors',
         subdir='loras',
+        sha256='ad12117461cb41e2ea637fec8df6392ce8e8550c47fbe2b829ed3deb98262066',
+        hf_revision='a52649c9d0f6e1a248bff13f0df33bb8a2abdb52',
+        size_bytes=1698951104,
     ),
 }
 

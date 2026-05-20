@@ -16,16 +16,25 @@ MODELS = {
         filename='flux-2-klein-9b-fp8.safetensors',
         url='https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors',
         subdir='diffusion_models',
+        sha256='gated',
+        hf_revision='gated',
+        # gated: black-forest-labs/FLUX.2-klein-9b-fp8
     ),
     'qwen_3_8b_fp8mixed': ModelAsset(
         filename='qwen_3_8b_fp8mixed.safetensors',
         url='https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors',
         subdir='text_encoders',
+        sha256='abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6',
+        hf_revision='23fbc8aa8b621f29f2249cd1bd9c47e5d0eebd83',
+        size_bytes=8664848742,
     ),
     'full_encoder_small_decoder': ModelAsset(
         filename='full_encoder_small_decoder.safetensors',
         url='https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors',
         subdir='vae',
+        sha256='ea4273f02d1fafbf8e1d1c2cf6018ed8748652eb0bf34f2dd91171f16f15ab62',
+        hf_revision='a3efc24f613ef42d9428af62fdbd6f5fd8856c4a',
+        size_bytes=249519092,
     ),
 }
 

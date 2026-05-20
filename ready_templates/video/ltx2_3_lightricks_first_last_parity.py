@@ -20,11 +20,17 @@ MODELS = {
         filename='ltx-2.3-22b-distilled-fp8.safetensors',
         url='https://huggingface.co/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-distilled-fp8.safetensors',
         subdir='checkpoints',
+        sha256='d9646b6f2d5c42d337b23671634c43bfeece6989644f51b4a3aa088465ccd3b2',
+        hf_revision='1d756cd27fa11c0896c4dfee093cd1bf36c7f7a1',
+        size_bytes=29531884062,
     ),
     'gemma_3_12b_it_fp4_mixed': ModelAsset(
         filename='gemma_3_12B_it_fp4_mixed.safetensors',
         url='https://huggingface.co/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors',
         subdir='text_encoders',
+        sha256='aaca463d11e6d8d2a4bdb0d6299214c15ef78a3f73e0ef8113d5a9d0219b3f6d',
+        hf_revision='bd5f9c87fcb0360ae7112f9784562670894d9492',
+        size_bytes=9447702218,
     ),
 }
 
