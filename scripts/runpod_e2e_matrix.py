@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import shlex
@@ -28,27 +27,31 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.runpod_artifacts import _load_json as _artifacts_load_json
-from scripts.runpod_artifacts import _sha256 as _reuse_sha256
-from scripts.runpod_matrix_plan import (
-    MANIFEST,
-    CorpusMatrixPlan,
-    MatrixRow,
-    build_corpus_matrix_plan,
-)
-from scripts.runpod_runner import (
-    DEFAULT_UPLOAD_EXCLUDES,
-    REMOTE_ROOT,
-    ROOT,
-    _runpod_config_kwargs,
-    run_pod_detached,
-)
+# Ensure the repo root is on sys.path so that ``import scripts.runpod_*``
+# works regardless of how this file is invoked (e.g. ``python3 scripts/...``
+# vs ``PYTHONPATH=. python scripts/...``).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+# -- constants defined locally so dry-run never needs runpod_runner/artifacts --
+ROOT: Path = _REPO_ROOT
+REMOTE_ROOT: str = "/workspace/vibecomfy"
+REGENERATABLE_MANIFEST: str = "workflow_corpus/manifests/coverage.json"
+ESTIMATED_COST_PER_TEMPLATE: float = 0.25
+DEFAULT_UPLOAD_EXCLUDES: set[str] = {
+    ".git", ".venv", "__pycache__", ".pytest_cache", ".desloppify", ".megaplan",
+    "out", "output", "vendor", "workflow_corpus", "custom_nodes", "input",
+    "node_modules", ".mypy_cache", ".ruff_cache", ".DS_Store",
+}
+
+# MatrixRow is a lightweight dataclass from runpod_matrix_plan (no heavy deps).
+# We import it directly; the rest of runpod_matrix_plan is not needed here.
+from scripts.runpod_matrix_plan import MatrixRow  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Regeneratable filter (FLAG-001)
 # ---------------------------------------------------------------------------
-
-REGENERATABLE_MANIFEST = "workflow_corpus/manifests/coverage.json"
 
 
 def _load_coverage_manifest(root: Path | None = None) -> list[dict[str, Any]]:
@@ -139,9 +142,6 @@ def _matches_regeneratable_scope(workflow_id: str, media: str, scope: str) -> bo
 # ---------------------------------------------------------------------------
 # Cost estimation
 # ---------------------------------------------------------------------------
-
-# Conservative per-template cost estimate (USD) for a short smoke run on a 4090.
-ESTIMATED_COST_PER_TEMPLATE = 0.25
 
 
 def _estimate_cost(template_count: int) -> float:
@@ -422,7 +422,13 @@ async def _run_real(
     output_root: Path,
     attention_profile: str,
 ) -> int:
-    """Ship and execute the e2e matrix on a RunPod pod (real mode)."""
+    """Ship and execute the e2e matrix on a RunPod pod (real mode).
+
+    Imports ``scripts.runpod_runner`` lazily so dry-run never needs
+    ``runpod_lifecycle`` or other RunPod launch dependencies.
+    """
+    from scripts.runpod_runner import run_pod_detached  # noqa: E402
+
     remote_script = _build_remote_script(rows, attention_profile=attention_profile)
     return await run_pod_detached(
         remote_script,
@@ -554,10 +560,11 @@ def _parse_peak_vram_from_watchdogs(artifact_root: Path) -> dict[str, int | None
             peak_by_id[tid] = peak
 
     # Also check run-level watchdog files
+    from scripts.runpod_artifacts import _load_json  # noqa: E402
     runs_dir = artifact_root / "out" / "runs"
     for wd_path in sorted(runs_dir.glob("*/watchdog.json")):
         try:
-            wd = _artifacts_load_json(wd_path)
+            wd = _load_json(wd_path)
             if isinstance(wd, dict):
                 # Try to map run_id to template_id via results.json
                 state = wd.get("state", {}) if isinstance(wd.get("state"), dict) else {}
@@ -573,7 +580,8 @@ def _parse_peak_vram_from_watchdogs(artifact_root: Path) -> dict[str, int | None
 
 def _extract_peak_vram_from_json(path: Path) -> int | None:
     """Extract peak VRAM (used bytes) from a watchdog JSON file."""
-    data = _artifacts_load_json(path)
+    from scripts.runpod_artifacts import _load_json  # noqa: E402
+    data = _load_json(path)
     if not isinstance(data, dict):
         return None
     return _extract_peak_vram_from_watchdog_data(data)
@@ -624,6 +632,7 @@ def _post_process_results(artifact_root: Path, output_root: Path) -> None:
                 entry["peak_vram_bytes"] = peak
 
     # Compute output sha256s for the local artifact root
+    from scripts.runpod_artifacts import _sha256  # noqa: E402
     e2e_output_dir = artifact_root / "out" / "e2e" / "output"
     if e2e_output_dir.exists():
         for entry in results:
@@ -636,7 +645,7 @@ def _post_process_results(artifact_root: Path, output_root: Path) -> None:
             sha_list = []
             for fpath in sorted(template_output.rglob("*")):
                 if fpath.is_file():
-                    digest = _reuse_sha256(fpath)
+                    digest = _sha256(fpath)
                     if digest:
                         sha_list.append(
                             {"path": str(fpath.relative_to(template_output)), "sha256": digest}
