@@ -10,7 +10,7 @@ from megaplan._core import (
     compute_task_batches,
     configured_robustness,
     creative_form_id,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     read_json,
@@ -18,7 +18,7 @@ from megaplan._core import (
 from megaplan.forms import Form, get_form
 from megaplan.types import PlanState
 
-from ._shared import _debt_watch_lines, _render_prep_block
+from ._shared import _debt_watch_lines
 from .execute import _execute_approval_note, _execute_nudges, _execute_rerun_guidance, _execute_review_block
 
 
@@ -98,7 +98,6 @@ def _execute_creative_prompt(
     active_form = _form(state, form)
     project_dir = Path(state["config"]["project_dir"])
     output_path = state["config"].get("output_path", "output.md")
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
     checkpoint_path = str(plan_dir / "execution_checkpoint.json")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
@@ -117,10 +116,7 @@ def _execute_creative_prompt(
         Primary criterion:
         {_primary_criterion(state)}
 
-        {prep_block}
-        {prep_instruction}
-
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Execution tracking source of truth (`finalize.json`):
         {json_dump(finalize_data).strip()}
@@ -184,7 +180,7 @@ def _execute_creative_batch_prompt(
         Primary criterion:
         {_primary_criterion(state)}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Batch framing:
         - Execute batch {batch_number} of {len(global_batches) or 1}.

@@ -9,7 +9,7 @@ from typing import Any
 from megaplan._core import (
     configured_robustness,
     creative_form_id,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -20,7 +20,6 @@ from megaplan._core import (
 from megaplan.forms import Form, get_form
 from megaplan.types import PlanState
 
-from ._shared import _render_prep_block
 from .critique import _settled_decisions_block
 
 
@@ -57,7 +56,6 @@ def _revise_creative_prompt(
 ) -> str:
     project_dir = Path(state["config"]["project_dir"])
     active_form = form or get_form(creative_form_id(state) or "joke")
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = read_json(plan_dir / "gate.json")
@@ -89,10 +87,7 @@ def _revise_creative_prompt(
         Project directory:
         {project_dir}
 
-        {prep_block}
-        {prep_instruction}
-
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Current plan (markdown):
         {latest_plan}

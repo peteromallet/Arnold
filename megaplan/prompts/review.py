@@ -11,7 +11,7 @@ from typing import Any
 from megaplan._core import (
     collect_git_diff_patch,
     collect_git_diff_summary,
-    intent_and_notes_block,
+    intent_brief_reference,
     is_prose_mode,
     json_dump,
     latest_plan_meta_path,
@@ -97,7 +97,7 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
         git_diff = collect_git_diff_patch(project_dir)
     return {
         "project_dir": project_dir,
-        "intent_block": intent_and_notes_block(state),
+        "intent_block": intent_brief_reference(state),
         "git_diff": git_diff,
         "finalize_data": read_json(plan_dir / "finalize.json"),
         "settled_decisions": settled_decisions,
@@ -483,7 +483,7 @@ def _review_prompt(
         Project directory:
         {project_dir}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Approved plan:
         {latest_plan}

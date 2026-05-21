@@ -10,7 +10,7 @@ from megaplan._core import (
     batch_artifact_path,
     compute_task_batches,
     configured_robustness,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     read_json,
@@ -231,7 +231,7 @@ def _execute_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) 
 
         {prep_instruction}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Execution tracking source of truth (`finalize.json`):
         {json_dump(finalize_data).strip()}
@@ -369,7 +369,7 @@ def _execute_batch_prompt(
         Project directory:
         {Path(state["config"]["project_dir"])}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Batch framing:
         - Execute batch {batch_number} of {batch_total}.

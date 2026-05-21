@@ -8,7 +8,7 @@ from pathlib import Path
 from megaplan._core import (
     configured_robustness,
     current_iteration_artifact,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -77,7 +77,7 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         Project directory:
         {project_dir}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Plan:
         {latest_plan}
