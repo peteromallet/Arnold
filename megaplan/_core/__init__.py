@@ -66,6 +66,7 @@ from .io import (
     scrub_stale_staging_files,
     sha256_file,
     sha256_text,
+    split_oversized_batches,
     slugify,
     write_journal_commit_marker,
 )
@@ -213,6 +214,7 @@ __all__ = [
     "scrub_stale_staging_files",
     "sha256_file",
     "sha256_text",
+    "split_oversized_batches",
     "slugify",
     "write_journal_commit_marker",
     # phase_runtime

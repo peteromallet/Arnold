@@ -104,6 +104,27 @@ def compute_task_batches(
     return batches
 
 
+def split_oversized_batches(
+    batches: list[list[str]],
+    max_size: int,
+    *,
+    default_max_size: int = 5,
+) -> list[list[str]]:
+    if max_size <= 0:
+        max_size = default_max_size
+    if max_size <= 0:
+        max_size = 5
+
+    split_batches: list[list[str]] = []
+    for batch in batches:
+        if len(batch) <= max_size:
+            split_batches.append(batch)
+            continue
+        for index in range(0, len(batch), max_size):
+            split_batches.append(batch[index:index + max_size])
+    return split_batches
+
+
 def compute_global_batches(finalize_data: dict[str, Any]) -> list[list[str]]:
     tasks = finalize_data.get("tasks", [])
     return compute_task_batches(tasks)

@@ -13,7 +13,7 @@ import megaplan.execute.core
 import megaplan.handlers
 import megaplan.handlers.execute as execute_handler
 import megaplan.workers
-from megaplan._core import load_plan
+from megaplan._core import compute_task_batches, load_plan, split_oversized_batches
 from megaplan.execute.quality import (
     _auto_attribute_unclaimed_paths,
     _capture_git_status_snapshot,
@@ -43,6 +43,72 @@ def _missing_code_task_evidence(tasks: list[dict[str, object]]) -> list[str]:
         missing_message="missing: ",
         advisory_message="advisory: ",
     )
+
+
+def _batch_task_ids(
+    count: int,
+    *,
+    depends_on: dict[int, list[str]] | None = None,
+) -> list[dict[str, object]]:
+    depends_on = depends_on or {}
+    return [
+        {"id": f"T{index}", "depends_on": depends_on.get(index, [])}
+        for index in range(1, count + 1)
+    ]
+
+
+def _capacity_batches(
+    tasks: list[dict[str, object]],
+    max_tasks_per_batch: int = 5,
+) -> list[list[str]]:
+    return split_oversized_batches(
+        compute_task_batches(tasks),
+        max_tasks_per_batch,
+    )
+
+
+def test_9_independent_tasks_split_at_default_ceiling() -> None:
+    batches = _capacity_batches(_batch_task_ids(9))
+
+    assert batches == [
+        ["T1", "T2", "T3", "T4", "T5"],
+        ["T6", "T7", "T8", "T9"],
+    ]
+
+
+def test_3_independent_tasks_stay_one_batch() -> None:
+    assert _capacity_batches(_batch_task_ids(3)) == [["T1", "T2", "T3"]]
+
+
+def test_dep_chain_preserved_through_split() -> None:
+    tasks = _batch_task_ids(7, depends_on={7: ["T6"]})
+
+    assert _capacity_batches(tasks, max_tasks_per_batch=3) == [
+        ["T1", "T2", "T3"],
+        ["T4", "T5", "T6"],
+        ["T7"],
+    ]
+
+
+def test_custom_ceiling() -> None:
+    assert _capacity_batches(_batch_task_ids(10), max_tasks_per_batch=4) == [
+        ["T1", "T2", "T3", "T4"],
+        ["T5", "T6", "T7", "T8"],
+        ["T9", "T10"],
+    ]
+
+
+def test_ceiling_zero_or_negative_falls_back_to_default() -> None:
+    tasks = _batch_task_ids(6)
+
+    assert _capacity_batches(tasks, max_tasks_per_batch=0) == [
+        ["T1", "T2", "T3", "T4", "T5"],
+        ["T6"],
+    ]
+    assert _capacity_batches(tasks, max_tasks_per_batch=-1) == [
+        ["T1", "T2", "T3", "T4", "T5"],
+        ["T6"],
+    ]
 
 
 def test_auto_attribute_single_done_task_with_unclaimed_changes(tmp_path: Path) -> None:

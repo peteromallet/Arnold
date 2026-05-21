@@ -27,7 +27,12 @@ VALID_PHASE_KEYS = frozenset(DEFAULT_AGENT_ROUTING.keys())
 # stripped before validation so the loader doesn't complain about them,
 # and surfaced via ``ProfileSource.metadata`` for downstream consumers
 # (currently just ``--vendor`` / ``--critic`` rejection on locked profiles).
-PROFILE_METADATA_KEYS = frozenset({"vendor_locked", "default", "extends"})
+PROFILE_METADATA_KEYS = frozenset({
+    "vendor_locked",
+    "default",
+    "extends",
+    "max_tasks_per_batch",
+})
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
@@ -119,6 +124,15 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
                     f"expected a string for 'extends', got {type(value).__name__}",
                 )
             validated["extends"] = value
+        elif key == "max_tasks_per_batch":
+            if not isinstance(value, int):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"expected an integer for 'max_tasks_per_batch', got {type(value).__name__}",
+                )
+            validated["max_tasks_per_batch"] = value
         # Future metadata keys go here.
     return validated
 
@@ -944,6 +958,15 @@ def apply_profile_expansion(
         resolved = resolve_profile(profile_name, profiles)
         profile_meta = metadata.get(profile_name, {})
         vendor_locked = bool(profile_meta.get("vendor_locked", False))
+        if (
+            state is not None
+            and "max_tasks_per_batch" in profile_meta
+            and getattr(args, "max_tasks_per_batch", None) is None
+            and "max_tasks_per_batch" not in (state.get("config") or {})
+        ):
+            state.setdefault("config", {})["max_tasks_per_batch"] = profile_meta[
+                "max_tasks_per_batch"
+            ]
 
         # Resolve vendor + critic + depth with CLI > state > config-default precedence.
         cli_vendor = getattr(args, "vendor", None)
