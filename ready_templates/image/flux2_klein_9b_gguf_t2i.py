@@ -56,7 +56,7 @@ def build() -> VibeWorkflow:
         primitiveint_2 = raw_call('PrimitiveInt', '75:69', value=1024)
 
         # Sampling
-        flux2scheduler = Flux2Scheduler(height=primitiveint_2, width=primitiveint)
+        flux2scheduler = Flux2Scheduler(width=primitiveint, height=primitiveint_2)
 
         emptyflux2latentimage = EmptyFlux2LatentImage(
             width=primitiveint,

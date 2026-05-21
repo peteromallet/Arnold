@@ -146,11 +146,7 @@ def build() -> VibeWorkflow:
             images=image_image,
         )
 
-        setnode_2 = raw_call('SetNode', '88',
-            widget_0=WIDGET_0_2,
-            IMAGE=depthanything_v2,
-        )
-
+        setnode_2 = raw_call('SetNode', '88', widget_0=WIDGET_0_2, IMAGE=depthanything_v2)
         wanvideodecode = WanVideoDecode(samples=samples, vae=getnode_3.out(0))
 
         image_get, width_get, height_get, count = GetImageSizeAndCount(

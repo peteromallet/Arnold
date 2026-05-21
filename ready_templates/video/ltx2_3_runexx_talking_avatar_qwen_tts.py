@@ -181,11 +181,7 @@ def build() -> VibeWorkflow:
         primitiveboolean_2 = raw_call('PrimitiveBoolean', '1929', value=True)
         getnode_37 = raw_call('GetNode', '1931', widget_0=WIDGET_0_21)
         getnode_38 = raw_call('GetNode', '1935', widget_0=WIDGET_0_15)
-
-        melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937',
-            widget_0=MODEL_NAME_10,
-        )
-
+        melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937', widget_0=MODEL_NAME_10)
         primitivestringmultiline_2 = PrimitiveStringMultiline(value='')
         loadaudio = LoadAudio(audio='d1b26d5a32db420183fa17af9c699278.mp3')
 
@@ -193,45 +189,17 @@ def build() -> VibeWorkflow:
             value='So what if you just want to prompt. Text to video works fine as well. Go generate some while I enjoy my coffee. ',
         )
 
-        setnode_4 = raw_call('SetNode', '1555',
-            widget_0=WIDGET_0_12,
-            LATENT_UPSCALE_MODEL=latentupscalemodelloader,
-        )
-
-        setnode_5 = raw_call('SetNode', '1556',
-            widget_0=WIDGET_0_11,
-            VAE=ltxvaudiovaeloader,
-        )
-
+        setnode_4 = raw_call('SetNode', '1555', widget_0=WIDGET_0_12, LATENT_UPSCALE_MODEL=latentupscalemodelloader)
+        setnode_5 = raw_call('SetNode', '1556', widget_0=WIDGET_0_11, VAE=ltxvaudiovaeloader)
         setnode_6 = raw_call('SetNode', '1557', widget_0=WIDGET_0, VAE=vaeloader)
-
-        setnode_7 = raw_call('SetNode', '1558',
-            widget_0=WIDGET_0_2,
-            CLIP=dualcliploader,
-        )
-
+        setnode_7 = raw_call('SetNode', '1558', widget_0=WIDGET_0_2, CLIP=dualcliploader)
         setnode_8 = raw_call('SetNode', '1568', widget_0=WIDGET_0_18, VAE=vaeloader_2)
         setnode_9 = raw_call('SetNode', '1575', widget_0=WIDGET_0_4, INT=intconstant_2)
         setnode_10 = raw_call('SetNode', '1576', widget_0=WIDGET_0_3, INT=intconstant_3)
-
-        setnode_11 = raw_call('SetNode', '1577',
-            widget_0=WIDGET_0_6,
-            FLOAT=primitivefloat,
-        )
-
-        setnode_19 = raw_call('SetNode', '1861',
-            widget_0=WIDGET_0_15,
-            BOOLEAN=primitiveboolean,
-        )
-
-        subgraph_63e8c999 = raw_call('63e8c999-0a69-4f62-af3f-8b77f0095971', '1920',
-            audio=reroute.out(0),
-        )
-
-        setnode_22 = raw_call('SetNode', '1930',
-            widget_0=WIDGET_0_21,
-            BOOLEAN=primitiveboolean_2,
-        )
+        setnode_11 = raw_call('SetNode', '1577', widget_0=WIDGET_0_6, FLOAT=primitivefloat)
+        setnode_19 = raw_call('SetNode', '1861', widget_0=WIDGET_0_15, BOOLEAN=primitiveboolean)
+        subgraph_63e8c999 = raw_call('63e8c999-0a69-4f62-af3f-8b77f0095971', '1920', audio=reroute.out(0))
+        setnode_22 = raw_call('SetNode', '1930', widget_0=WIDGET_0_21, BOOLEAN=primitiveboolean_2)
 
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
             width=getnode_10.out(0),
@@ -302,12 +270,7 @@ def build() -> VibeWorkflow:
         modelsamplingsd3_2 = ModelSamplingSD3(shift=13, model=getnode_27.out(0))
         trimaudioduration = TrimAudioDuration(widget_0=0, widget_1=15, audio=loadaudio)
         setnode_3 = raw_call('SetNode', '650', widget_0=WIDGET_0_10, IMAGE=image_image)
-
-        setnode_12 = raw_call('SetNode', '1578',
-            widget_0=WIDGET_0_5,
-            _extras={'*': subgraph_63e8c999.out(0)},
-        )
-
+        setnode_12 = raw_call('SetNode', '1578', widget_0=WIDGET_0_5, _extras={'*': subgraph_63e8c999.out(0)})
         setnode_17 = raw_call('SetNode', '1840', widget_0=WIDGET_0_16, MODEL=ltx2_nag)
         setnode_21 = raw_call('SetNode', '1918', widget_0='frames_seconds', INT=int)
 
@@ -363,10 +326,7 @@ def build() -> VibeWorkflow:
             vae=getnode.out(0),
         )
 
-        setnode_20 = raw_call('SetNode', '1891',
-            widget_0=WIDGET_0_20,
-            LATENT=setlatentnoisemask,
-        )
+        setnode_20 = raw_call('SetNode', '1891', widget_0=WIDGET_0_20, LATENT=setlatentnoisemask)
 
         subgraph_a8d7fd9f = raw_call('a8d7fd9f-52aa-447a-9766-53cb91c0ef18', '1926',
             _1=primitivestringmultiline,
@@ -399,11 +359,7 @@ def build() -> VibeWorkflow:
 
         setnode_14 = raw_call('SetNode', '1633', widget_0=WIDGET_0_9, INT=width_get)
         setnode_15 = raw_call('SetNode', '1634', widget_0=WIDGET_0_8, INT=height_get)
-
-        setnode_18 = raw_call('SetNode', '1860',
-            widget_0=WIDGET_0_19,
-            LATENT=ltxvconcatavlatent,
-        )
+        setnode_18 = raw_call('SetNode', '1860', widget_0=WIDGET_0_19, LATENT=ltxvconcatavlatent)
 
         audionormalizelufs = raw_call('AudioNormalizeLUFS', '1916',
             widget_0=-20,
@@ -468,25 +424,10 @@ def build() -> VibeWorkflow:
             video_latent=ltxvimgtovideoinplace_2,
         )
 
-        setnode = raw_call('SetNode', '645',
-            widget_0=WIDGET_0_14,
-            CONDITIONING=positive,
-        )
-
-        setnode_2 = raw_call('SetNode', '646',
-            widget_0=WIDGET_0_13,
-            CONDITIONING=negative,
-        )
-
-        setnode_13 = raw_call('SetNode', '1617',
-            widget_0=WIDGET_0_17,
-            MODEL=power_lora_loader__rgthree_.out('MODEL'),
-        )
-
-        setnode_16 = raw_call('SetNode', '1758',
-            widget_0=WIDGET_0_7,
-            AUDIO=audioenhancementnode.out(0),
-        )
+        setnode = raw_call('SetNode', '645', widget_0=WIDGET_0_14, CONDITIONING=positive)
+        setnode_2 = raw_call('SetNode', '646', widget_0=WIDGET_0_13, CONDITIONING=negative)
+        setnode_13 = raw_call('SetNode', '1617', widget_0=WIDGET_0_17, MODEL=power_lora_loader__rgthree_.out('MODEL'))
+        setnode_16 = raw_call('SetNode', '1758', widget_0=WIDGET_0_7, AUDIO=audioenhancementnode.out(0))
 
         # Sampling
         output_sampler, denoised_output_sampler = SamplerCustomAdvanced(

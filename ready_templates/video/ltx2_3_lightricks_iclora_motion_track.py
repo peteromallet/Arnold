@@ -9,6 +9,7 @@ from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLT
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMAudioVAELoader, LowVRAMCheckpointLoader
 
 
+CONTROL_AFTER_GENERATE = 'fixed'
 DEFAULT_FPS = 8
 DEFAULT_FRAMES = 5
 DEFAULT_PROMPT = 'Man on a small bycicle being chased by a police car. The sirens are blaring and the crowd of bystanders is cheering loudly. As he is pedaling away on the bike, he looks back at the police car and shouts in a taunting tone: "you can\'t catch me!" and waving his fist in the air. He then pedals away on his bike.'
@@ -64,7 +65,7 @@ def build() -> VibeWorkflow:
 
         randomnoise = RandomNoise(
             noise_seed=DEFAULT_SEED,
-            control_after_generate='fixed',
+            control_after_generate=CONTROL_AFTER_GENERATE,
         )
 
         # Inputs
@@ -82,7 +83,7 @@ def build() -> VibeWorkflow:
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
 
-        primitiveint = raw_call('PrimitiveInt', '5044', value=5, widget_1='fixed')
+        primitiveint = raw_call('PrimitiveInt', '5044', value=5, control_after_generate=CONTROL_AFTER_GENERATE)
         primitivefloat = raw_call('PrimitiveFloat', '5045', value=8)
 
         # Conditioning

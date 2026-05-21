@@ -93,7 +93,7 @@ def build() -> VibeWorkflow:
 
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
         primitiveboolean = raw_call('PrimitiveBoolean', '4987', value=True)
-        primitiveint = raw_call('PrimitiveInt', '4988', value=5, widget_1='fixed')
+        primitiveint = raw_call('PrimitiveInt', '4988', value=5, control_after_generate=CONTROL_AFTER_GENERATE)
         primitivefloat = raw_call('PrimitiveFloat', '4989', value=8)
 
         # Conditioning

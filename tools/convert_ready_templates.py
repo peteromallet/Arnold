@@ -121,6 +121,44 @@ def _load_override(path: Path) -> dict | None:
     return None
 
 
+def _source_workflow_path(metadata: dict[str, Any]) -> Path | None:
+    source = metadata.get("source_workflow")
+    provenance = metadata.get("provenance")
+    if not source and isinstance(provenance, dict):
+        source = provenance.get("source_workflow")
+    if not isinstance(source, str) or not source:
+        return None
+    path = Path(source)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path if path.exists() else None
+
+
+def _load_source_workflow(metadata: dict[str, Any]) -> dict | None:
+    path = _source_workflow_path(metadata)
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logging.warning("source workflow parse failed for %s: %s", path, exc)
+        return None
+
+
+def _subgraph_definition_count(raw_workflow: dict | None) -> int:
+    if not isinstance(raw_workflow, dict):
+        return 0
+    definitions = raw_workflow.get("definitions")
+    if not isinstance(definitions, dict):
+        return 0
+    subgraphs = definitions.get("subgraphs")
+    if isinstance(subgraphs, dict):
+        return len(subgraphs)
+    if isinstance(subgraphs, list):
+        return len(subgraphs)
+    return 0
+
+
 def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row, str | None, dict | None]:
     """Process one template. Returns (row, emitted_text or None, original_compiled_api)."""
     template_id = _template_id_for_path(path)
@@ -195,6 +233,23 @@ def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row,
             and descriptor.field in original_workflow.nodes[str(descriptor.node_id)].inputs
         }
 
+    raw_workflow = _load_source_workflow(metadata)
+    if _subgraph_definition_count(raw_workflow) == 1:
+        try:
+            from vibecomfy.ingest.normalize import convert_to_vibe_format, normalize_to_api
+
+            source_path = _source_workflow_path(metadata)
+            api = normalize_to_api(raw_workflow, use_comfy_converter=False)
+            wf = convert_to_vibe_format(
+                api,
+                source_path=str(source_path or path),
+                workflow_id=template_id,
+            )
+        except Exception as exc:
+            row.note = "; ".join(
+                part for part in (row.note, f"source_workflow_rebuild_failed: {type(exc).__name__}: {exc}") if part
+            )
+
     # Apply override if present.
     override = _load_override(path)
 
@@ -206,6 +261,7 @@ def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row,
             template_id=tid,
             registered_inputs=reg_inputs,
             apply_overrides=override,
+            raw_workflow=raw_workflow,
         )
         row.build = "ok"
     except Exception as exc:

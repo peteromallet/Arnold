@@ -53,7 +53,7 @@ def image_edit_flux2_klein_9b(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
+    prompt: str,
     image,
 ):
     """Image Edit (Flux.2 Klein 9B) - single-image variant.
@@ -78,17 +78,10 @@ def image_edit_flux2_klein_9b(
     )
 
     negative = CLIPTextEncode(text='', clip=cliploader)
-    cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
+    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
     vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-
-    flux2scheduler = Flux2Scheduler(
-        widget_1=1024,
-        widget_2=1024,
-        height=height,
-        width=width,
-    )
-
+    flux2scheduler = Flux2Scheduler(width=width, height=height)
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
     referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
     referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
@@ -118,9 +111,9 @@ def image_edit_flux2_klein_9b_dual(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
-    image,
-    image_1,
+    prompt: str,
+    reference_image1,
+    reference_image2,
 ):
     """Image Edit (Flux.2 Klein 9B) - two-image variant.
 
@@ -130,7 +123,7 @@ def image_edit_flux2_klein_9b_dual(
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
         upscale_method='lanczos',
-        image=image_1,
+        image=reference_image2,
     )
 
     ksamplerselect = KSamplerSelect(sampler_name='euler')
@@ -145,24 +138,17 @@ def image_edit_flux2_klein_9b_dual(
 
     imagescaletototalpixels_2 = ImageScaleToTotalPixels(
         upscale_method='lanczos',
-        image=image,
+        image=reference_image1,
     )
 
     cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
     negative = CLIPTextEncode(text='', clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels_2)
-    cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
+    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
     vaeencode = VAEEncode(pixels=imagescaletototalpixels_2, vae=vaeloader)
     vaeencode_2 = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
-
-    flux2scheduler = Flux2Scheduler(
-        widget_1=1024,
-        widget_2=1024,
-        height=height,
-        width=width,
-    )
-
+    flux2scheduler = Flux2Scheduler(width=width, height=height)
     referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
     referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
 
@@ -261,13 +247,7 @@ def build() -> VibeWorkflow:
         vaeencode_3 = VAEEncode(pixels=imagescaletototalpixels_2, vae=vaeloader_2)
 
         # Sampling
-        flux2scheduler = Flux2Scheduler(
-            widget_1=1024,
-            widget_2=1024,
-            height=height,
-            width=width,
-        )
-
+        flux2scheduler = Flux2Scheduler(width=width, height=height)
         emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
         referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
 
@@ -281,13 +261,7 @@ def build() -> VibeWorkflow:
             height=height_get,
         )
 
-        flux2scheduler_2 = Flux2Scheduler(
-            widget_1=1024,
-            widget_2=1024,
-            height=height_get,
-            width=width_get,
-        )
-
+        flux2scheduler_2 = Flux2Scheduler(width=width_get, height=height_get)
         referencelatent_3 = ReferenceLatent(conditioning=negative_2, latent=vaeencode_2)
 
         referencelatent_4 = ReferenceLatent(

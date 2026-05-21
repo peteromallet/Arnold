@@ -46,7 +46,7 @@ def image_edit_flux2_klein_4b_distilled(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
+    prompt: str,
     image,
 ):
     """Image Edit (Flux.2 Klein 4B Distilled) - single-image variant.
@@ -70,18 +70,10 @@ def image_edit_flux2_klein_4b_distilled(
         image=image,
     )
 
-    cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
+    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
     vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-
-    flux2scheduler = Flux2Scheduler(
-        steps=4,
-        widget_1=1024,
-        widget_2=1024,
-        height=height,
-        width=width,
-    )
-
+    flux2scheduler = Flux2Scheduler(steps=4, width=width, height=height)
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
     conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
     referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
@@ -113,8 +105,8 @@ def image_edit_flux2_klein_4b_distilled(
 
 def reference_conditioning(
     *,
-    conditioning,
-    conditioning_1,
+    positive,
+    negative,
     pixels,
     vae,
 ):
@@ -125,16 +117,16 @@ def reference_conditioning(
     """
 
     vaeencode = VAEEncode(pixels=pixels, vae=vae)
-    referencelatent = ReferenceLatent(conditioning=conditioning_1, latent=vaeencode)
-    referencelatent_2 = ReferenceLatent(conditioning=conditioning, latent=vaeencode)
+    referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
+    referencelatent_2 = ReferenceLatent(conditioning=positive, latent=vaeencode)
 
     return referencelatent_2, referencelatent
 
 
 def reference_conditioning_93041a64(
     *,
-    conditioning,
-    conditioning_1,
+    positive,
+    negative,
     pixels,
     vae,
 ):
@@ -145,8 +137,8 @@ def reference_conditioning_93041a64(
     """
 
     vaeencode = VAEEncode(pixels=pixels, vae=vae)
-    referencelatent = ReferenceLatent(conditioning=conditioning_1, latent=vaeencode)
-    referencelatent_2 = ReferenceLatent(conditioning=conditioning, latent=vaeencode)
+    referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
+    referencelatent_2 = ReferenceLatent(conditioning=positive, latent=vaeencode)
 
     return referencelatent_2, referencelatent
 
@@ -156,9 +148,9 @@ def image_edit_flux2_klein_4b_distilled_dual(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
-    image,
-    image_1,
+    prompt: str,
+    reference_image1,
+    reference_image2,
 ):
     """Image Edit (Flux.2 Klein 4B Distilled) - two-image variant.
 
@@ -168,7 +160,7 @@ def image_edit_flux2_klein_4b_distilled_dual(
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
         upscale_method='nearest-exact',
-        image=image_1,
+        image=reference_image2,
     )
 
     ksamplerselect = KSamplerSelect(sampler_name='euler')
@@ -184,31 +176,23 @@ def image_edit_flux2_klein_4b_distilled_dual(
 
     imagescaletototalpixels_2 = ImageScaleToTotalPixels(
         upscale_method='nearest-exact',
-        image=image,
+        image=reference_image1,
     )
 
-    cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
+    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels_2)
     conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
-
-    flux2scheduler = Flux2Scheduler(
-        steps=4,
-        widget_1=1024,
-        widget_2=1024,
-        height=height,
-        width=width,
-    )
-
+    flux2scheduler = Flux2Scheduler(steps=4, width=width, height=height)
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
     conditioning, conditioning_1 = reference_conditioning(
-        conditioning=cliptextencode,
-        conditioning_1=conditioningzeroout,
+        positive=cliptextencode,
+        negative=conditioningzeroout,
         pixels=imagescaletototalpixels_2,
         vae=vaeloader,
     )
     conditioning_2, conditioning_1_2 = reference_conditioning_93041a64(
-        conditioning=conditioning,
-        conditioning_1=conditioning_1,
+        positive=conditioning,
+        negative=conditioning_1,
         pixels=imagescaletototalpixels,
         vae=vaeloader,
     )
@@ -265,7 +249,7 @@ def build() -> VibeWorkflow:
         vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
 
         # Sampling
-        flux2scheduler = Flux2Scheduler(steps=4, height=height, width=width)
+        flux2scheduler = Flux2Scheduler(steps=4, width=width, height=height)
         emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
 
         referencelatent = ReferenceLatent(

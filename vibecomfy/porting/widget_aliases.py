@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.widget_schema import WIDGET_SCHEMA, WIDGET_SEMANTIC_NAMES
 
 
 COMPILE_WIDGET_ALIAS_CLASS_TYPES: frozenset[str] = frozenset(
@@ -97,6 +97,11 @@ def resolve_widget_name(class_type: str, idx: int) -> str | None:
     names = WIDGET_SCHEMA.get(class_type)
     if names is not None and 0 <= idx < len(names):
         return names[idx]
+    semantic_names = WIDGET_SEMANTIC_NAMES.get(class_type)
+    if semantic_names is not None:
+        semantic = semantic_names.get(f"widget_{idx}")
+        if semantic is not None:
+            return semantic
     return f"widget_{idx}"
 
 

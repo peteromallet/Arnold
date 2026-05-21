@@ -51,7 +51,7 @@ def qwen_image_edit(
     clip_name: str,
     vae_name: str,
     lora_name: str,
-    value: bool,
+    enable_turbo_mode: bool,
 ):
     """Qwen-Image-Edit - single-image variant.
 
@@ -67,11 +67,20 @@ def qwen_image_edit(
         widget_0='You can test and find the best setting by yourself. The following table is for reference.\n\n| Model            | Steps | CFG |\n|---------------------|---------------|---------------|\n| Offical             | 50               | 4.0               \n| comfy             | 20                | 2.5               |\n| fp8_e4m3fn + 4steps LoRA    | 4               | 1.0               |\n',
     )
 
-    primitiveint = raw_call('PrimitiveInt', '103', value=4, widget_1='fixed')
+    primitiveint = raw_call('PrimitiveInt', '103',
+        value=4,
+        control_after_generate='fixed',
+    )
+
     primitivefloat = raw_call('PrimitiveFloat', '105', value=1)
-    primitiveint_2 = raw_call('PrimitiveInt', '106', value=20, widget_1='fixed')
+
+    primitiveint_2 = raw_call('PrimitiveInt', '106',
+        value=20,
+        control_after_generate='fixed',
+    )
+
     primitivefloat_2 = raw_call('PrimitiveFloat', '107', value=2.5)
-    primitiveboolean = raw_call('PrimitiveBoolean', '111', value=value)
+    primitiveboolean = raw_call('PrimitiveBoolean', '111', value=enable_turbo_mode)
 
     textencodeqwenimageedit = TextEncodeQwenImageEdit(
         prompt=prompt,

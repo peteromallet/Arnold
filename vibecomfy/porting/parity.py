@@ -115,6 +115,8 @@ def class_type_counter(api: dict) -> Counter[str]:
 def _is_runtime_ignored_input(key: str, value: Any) -> bool:
     if value is None:
         return True
+    if key == "control_after_generate":
+        return True
     if key == "add_noise_to_samples" and value == "":
         return True
     if key.startswith("unused_"):

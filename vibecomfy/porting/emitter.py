@@ -91,6 +91,7 @@ class _PublicInputSpec:
 class _SubgraphPort:
     name: str
     type: str | None = None
+    source_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1110,13 +1111,62 @@ def slugify_subgraph_name(name: str, fallback_uuid: str) -> str:
     return slug
 
 
-def _safe_kwarg_name(name: str, *, fallback: str) -> str:
-    candidate = str(name or fallback)
-    candidate = re.sub(r"\W+", "_", candidate).strip("_")
-    if not candidate or candidate[0].isdigit():
-        candidate = f"arg_{candidate}" if candidate else fallback
+_GENERIC_SUBGRAPH_LABELS: frozenset[str] = frozenset(
+    {
+        "arg",
+        "argument",
+        "input",
+        "inputs",
+        "output",
+        "outputs",
+        "parameter",
+        "param",
+        "value",
+    }
+)
+
+
+def _slugify_identifier(value: str) -> str:
+    candidate = str(value or "").lower()
+    candidate = re.sub(r"[^a-z0-9_]+", "_", candidate)
+    candidate = re.sub(r"_+", "_", candidate).strip("_")
     if keyword.iskeyword(candidate):
         candidate = f"{candidate}_"
+    return candidate
+
+
+def _safe_kwarg_name(name: str, *, fallback: str) -> str:
+    candidate = _slugify_identifier(str(name or ""))
+    if not candidate or candidate[0].isdigit():
+        candidate = _slugify_identifier(fallback)
+    if not candidate or candidate[0].isdigit():
+        candidate = "arg"
+    return candidate
+
+
+def _subgraph_input_kwarg_name(item: Mapping[str, Any], *, fallback: str) -> str:
+    raw_name = str(item.get("name") or "")
+    name_slug = _safe_kwarg_name(raw_name, fallback=fallback)
+    label_raw = str(item.get("label") or "")
+    label_slug = _slugify_identifier(label_raw)
+    if (
+        label_raw
+        and label_slug
+        and not label_slug[0].isdigit()
+        and label_slug != name_slug
+        and label_slug not in _GENERIC_SUBGRAPH_LABELS
+    ):
+        return label_slug
+    return name_slug
+
+
+def _unique_port_name(base: str, used: set[str]) -> str:
+    candidate = base
+    index = 2
+    while candidate in used:
+        candidate = f"{base}_{index}"
+        index += 1
+    used.add(candidate)
     return candidate
 
 
@@ -1173,22 +1223,43 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
     from vibecomfy.workflow import VibeEdge as _Edge, VibeNode as _Node
 
     subgraph_id = str(raw["id"])
-    inputs = tuple(
-        _SubgraphPort(
-            _safe_kwarg_name(str(item.get("name") or f"input_{index}"), fallback=f"input_{index}"),
-            str(item.get("type") or "") or None,
+    used_input_names: set[str] = set()
+    input_ports: list[_SubgraphPort] = []
+    for index, item in enumerate(raw.get("inputs") or ()):
+        if not isinstance(item, Mapping):
+            continue
+        source_name = str(item.get("name") or f"input_{index}")
+        emitted_name = _unique_port_name(
+            _subgraph_input_kwarg_name(item, fallback=f"input_{index}"),
+            used_input_names,
         )
-        for index, item in enumerate(raw.get("inputs") or ())
-        if isinstance(item, Mapping)
-    )
-    outputs = tuple(
-        _SubgraphPort(
-            _safe_kwarg_name(str(item.get("name") or f"output_{index}").lower(), fallback=f"output_{index}"),
-            str(item.get("type") or "") or None,
+        input_ports.append(
+            _SubgraphPort(
+                emitted_name,
+                str(item.get("type") or "") or None,
+                source_name=source_name,
+            )
         )
-        for index, item in enumerate(raw.get("outputs") or ())
-        if isinstance(item, Mapping)
-    )
+    inputs = tuple(input_ports)
+
+    used_output_names: set[str] = set()
+    output_ports: list[_SubgraphPort] = []
+    for index, item in enumerate(raw.get("outputs") or ()):
+        if not isinstance(item, Mapping):
+            continue
+        source_name = str(item.get("name") or f"output_{index}")
+        emitted_name = _unique_port_name(
+            _safe_kwarg_name(source_name, fallback=f"output_{index}"),
+            used_output_names,
+        )
+        output_ports.append(
+            _SubgraphPort(
+                emitted_name,
+                str(item.get("type") or "") or None,
+                source_name=source_name,
+            )
+        )
+    outputs = tuple(output_ports)
 
     api = normalize_to_api({"nodes": list(raw.get("nodes") or ()), "links": list(raw.get("links") or ())}, use_comfy_converter=False)
     nodes: dict[str, Any] = {}
@@ -1712,7 +1783,8 @@ def _emit_build_function(
                     )
                 )
 
-            if len(all_args) > 3 or len(single_line) > 88:
+            prefer_single_line_raw_call = not use_wrapper and len(all_args) <= 2 and len(single_line) <= 120
+            if not prefer_single_line_raw_call and (len(all_args) > 3 or len(single_line) > 88):
                 # v2.6.4 Fix 8 (refines Fix 2): multi-line statements are
                 # SURROUNDED by blank lines (one before, one after) for
                 # consistent vertical rhythm — including when followed by
@@ -1990,8 +2062,13 @@ def _subgraph_call_kwargs(
     widget_values = _subgraph_instance_widget_values(node)
     kwargs: list[tuple[str, str]] = []
     for port in subgraph.inputs:
-        if port.name in incoming:
-            src, slot = incoming[port.name]
+        candidate_names = (port.name, port.source_name or port.name)
+        incoming_name = next((name for name in candidate_names if name in incoming), None)
+        widget_name = next((name for name in candidate_names if name in widget_values), None)
+        static_name = next((name for name in candidate_names if name in static), None)
+        default_name = next((name for name in candidate_names if name in subgraph.default_args), None)
+        if incoming_name is not None:
+            src, slot = incoming[incoming_name]
             kwargs.append(
                 (
                     port.name,
@@ -2004,16 +2081,16 @@ def _subgraph_call_kwargs(
                         bare_single_output_refs=True,
                         diagnostics=diagnostics,
                         target_node=node,
-                        target_input=port.name,
+                        target_input=incoming_name,
                     ),
                 )
             )
-        elif port.name in widget_values:
-            kwargs.append((port.name, _format_value(widget_values[port.name])))
-        elif port.name in static and not _is_link(static[port.name]):
-            kwargs.append((port.name, _format_value(static[port.name])))
-        elif port.name in subgraph.default_args:
-            kwargs.append((port.name, _format_value(subgraph.default_args[port.name])))
+        elif widget_name is not None:
+            kwargs.append((port.name, _format_value(widget_values[widget_name])))
+        elif static_name is not None and not _is_link(static[static_name]):
+            kwargs.append((port.name, _format_value(static[static_name])))
+        elif default_name is not None:
+            kwargs.append((port.name, _format_value(subgraph.default_args[default_name])))
         else:
             kwargs.append((port.name, "None"))
             if diagnostics is not None:

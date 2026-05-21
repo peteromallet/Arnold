@@ -229,12 +229,32 @@ def test_subgraph_call_site_uses_widget_fed_literals() -> None:
     assert "edited = text_to_image_flux2_klein_9b(" in text
     assert "raw_call('7b34ab90" not in text
     call = text[text.index("edited = text_to_image_flux2_klein_9b("):text.index("saveimage = SaveImage(")]
-    assert "value=1024" in call
-    assert "value_1=1024" in call
+    assert "width=1024" in call
+    assert "height=1024" in call
     assert "unet_name='flux-2-klein-base-9b-fp8.safetensors'" in call
     assert "clip_name='qwen_3_8b_fp8mixed.safetensors'" in call
     assert "vae_name='full_encoder_small_decoder.safetensors'" in call
-    assert "text=''" in call
+    assert "prompt=''" in call
+
+
+def test_subgraph_signature_prefers_meaningful_labels_and_cleans_widgets() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
+        "image/flux2_klein_9b_t2i",
+    )
+
+    body = text[text.index("def text_to_image_flux2_klein_9b("):text.index("def build()")]
+    signature = body[:body.index("):") + 2]
+    assert "width: int" in signature
+    assert "height: int" in signature
+    assert "prompt: str" in signature
+    assert "value: int" not in signature
+    assert "value_1: int" not in signature
+    assert "value=width" in body
+    assert "value=height" in body
+    assert "control_after_generate='fixed'" in body
+    assert "widget_1=" not in body
+    assert "widget_2=" not in body
 
 
 def test_subgraph_call_site_uses_instance_widget_values_and_warns_when_unbound() -> None:

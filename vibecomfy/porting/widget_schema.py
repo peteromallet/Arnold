@@ -8,6 +8,14 @@ link inputs.
 
 from __future__ import annotations
 
+WIDGET_SEMANTIC_NAMES: dict[str, dict[str, str]] = {
+    "PrimitiveInt": {"widget_0": "value", "widget_1": "control_after_generate"},
+    "PrimitiveString": {"widget_0": "value"},
+    "PrimitiveStringMultiline": {"widget_0": "value"},
+    "PrimitiveFloat": {"widget_0": "value", "widget_1": "control_after_generate"},
+    "PrimitiveBoolean": {"widget_0": "value"},
+}
+
 WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "BasicScheduler": ["scheduler", "steps", "denoise"],
     "CFGGuider": ["cfg"],
@@ -25,7 +33,7 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "EmptyLTXVLatentVideo": ["width", "height", "length", "batch_size"],
     "EmptySD3LatentImage": ["width", "height", "batch_size"],
     "FluxGuidance": ["guidance"],
-    "Flux2Scheduler": ["steps"],
+    "Flux2Scheduler": ["steps", "width", "height"],
     "GetImageSize": [],
     "ImageResize": ["resize_mode", "resolutions", "interpolation", "aspect_ratio_tolerance"],
     "ImageScale": ["upscale_method", "width", "height", "crop"],

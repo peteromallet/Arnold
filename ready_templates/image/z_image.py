@@ -48,7 +48,7 @@ def text_to_image_z_image_base(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
+    prompt: str,
     steps: int,
     cfg: float,
 ):
@@ -67,7 +67,7 @@ def text_to_image_z_image_base(
         widget_0='- Steps: 30～50\n- cfg:  3～5',
     )
 
-    positive = CLIPTextEncode(text=text, clip=cliploader)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
     modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
     negative = CLIPTextEncode(text='', clip=cliploader)
 

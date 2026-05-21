@@ -69,16 +69,8 @@ def build() -> VibeWorkflow:
         clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_4)
         wanvideoloraselect = WanVideoLoraSelect(lora=MODEL_NAME_5, merge_loras=False)
         primitivenode = raw_call('PrimitiveNode', '85', widget_0=81, widget_1=WIDGET_1)
-
-        primitivenode_2 = raw_call('PrimitiveNode', '86',
-            widget_0=640,
-            widget_1=WIDGET_1,
-        )
-
-        primitivenode_3 = raw_call('PrimitiveNode', '87',
-            widget_0=640,
-            widget_1=WIDGET_1,
-        )
+        primitivenode_2 = raw_call('PrimitiveNode', '86', widget_0=640, widget_1=WIDGET_1)
+        primitivenode_3 = raw_call('PrimitiveNode', '87', widget_0=640, widget_1=WIDGET_1)
 
         wanvideotextencode = WanVideoTextEncode(
             positive_prompt='video of an old man',

@@ -49,7 +49,7 @@ def text_to_image_flux2_klein_4b(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
+    prompt: str,
 ):
     """Text to Image (Flux.2 Klein 4B).
 
@@ -58,19 +58,13 @@ def text_to_image_flux2_klein_4b(
     """
 
     ksamplerselect = KSamplerSelect(sampler_name='euler')
-    primitiveint = raw_call('PrimitiveInt', '68', widget_1='fixed', value=value)
-    primitiveint_2 = raw_call('PrimitiveInt', '69', widget_1='fixed', value=value_1)
+    primitiveint = raw_call('PrimitiveInt', '68', control_after_generate='fixed', value=value)
+    primitiveint_2 = raw_call('PrimitiveInt', '69', control_after_generate='fixed', value=value_1)
     unetloader = UNETLoader(unet_name=unet_name)
     cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
     vaeloader = VAELoader(vae_name=vae_name)
     randomnoise = RandomNoise(control_after_generate='randomize')
-
-    flux2scheduler = Flux2Scheduler(
-        widget_1=1024,
-        widget_2=1024,
-        height=primitiveint_2,
-        width=primitiveint,
-    )
+    flux2scheduler = Flux2Scheduler(width=primitiveint, height=primitiveint_2)
 
     emptyflux2latentimage = EmptyFlux2LatentImage(
         width=primitiveint,
@@ -78,7 +72,7 @@ def text_to_image_flux2_klein_4b(
     )
 
     negative = CLIPTextEncode(text='', clip=cliploader)
-    positive = CLIPTextEncode(text=text, clip=cliploader)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
 
     cfgguider = CFGGuider(
         cfg=5,
@@ -107,7 +101,7 @@ def text_to_image_flux2_klein_4b_distilled(
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    text: str,
+    prompt: str,
 ):
     """Text to Image (Flux.2 Klein 4B Distilled).
 
@@ -116,8 +110,8 @@ def text_to_image_flux2_klein_4b_distilled(
     """
 
     ksamplerselect = KSamplerSelect(sampler_name='euler')
-    primitiveint = raw_call('PrimitiveInt', '68', widget_1='fixed', value=value)
-    primitiveint_2 = raw_call('PrimitiveInt', '69', widget_1='fixed', value=value_1)
+    primitiveint = raw_call('PrimitiveInt', '68', control_after_generate='fixed', value=value)
+    primitiveint_2 = raw_call('PrimitiveInt', '69', control_after_generate='fixed', value=value_1)
     unetloader = UNETLoader(unet_name=unet_name)
     cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
     vaeloader = VAELoader(vae_name=vae_name)
@@ -127,20 +121,14 @@ def text_to_image_flux2_klein_4b_distilled(
         control_after_generate='randomize',
     )
 
-    flux2scheduler = Flux2Scheduler(
-        steps=4,
-        widget_1=1024,
-        widget_2=1024,
-        height=primitiveint_2,
-        width=primitiveint,
-    )
+    flux2scheduler = Flux2Scheduler(steps=4, width=primitiveint, height=primitiveint_2)
 
     emptyflux2latentimage = EmptyFlux2LatentImage(
         width=primitiveint,
         height=primitiveint_2,
     )
 
-    positive = CLIPTextEncode(text=text, clip=cliploader)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
     conditioningzeroout = ConditioningZeroOut(conditioning=positive)
 
     cfgguider = CFGGuider(
@@ -184,7 +172,7 @@ def build() -> VibeWorkflow:
         primitiveint_2 = raw_call('PrimitiveInt', '75:69', value=1024)
 
         # Sampling
-        flux2scheduler = Flux2Scheduler(height=primitiveint_2, width=primitiveint)
+        flux2scheduler = Flux2Scheduler(width=primitiveint, height=primitiveint_2)
 
         emptyflux2latentimage = EmptyFlux2LatentImage(
             width=primitiveint,
