@@ -102,7 +102,12 @@ from megaplan.blocker_recovery import (
     command_blocker_details,
     evaluate_blocker_recovery,
 )
-from megaplan.orchestration.phase_result import BlockedTask, read_phase_result
+from megaplan.orchestration.phase_result import (
+    BlockedTask,
+    ExitKind,
+    _emit_phase_result,
+    read_phase_result,
+)
 from megaplan.quality_resolutions import VALID_RESOLUTIONS as QUALITY_VALID_RESOLUTIONS
 
 _PROGRESS_PHASE_COMMANDS = {
@@ -2874,6 +2879,13 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
         if _has_user_fields(existing_fb) and not force:
             state["current_state"] = STATE_DONE
             save_state(plan_dir, state)
+            _emit_phase_result(
+                "feedback",
+                state,
+                plan_dir,
+                exit_kind=ExitKind.success.value,
+                artifacts_written=(str(path),),
+            )
             return {
                 "success": True,
                 "step": "feedback",
@@ -2912,6 +2924,13 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
 
         state["current_state"] = STATE_DONE
         save_state(plan_dir, state)
+        _emit_phase_result(
+            "feedback",
+            state,
+            plan_dir,
+            exit_kind=ExitKind.success.value,
+            artifacts_written=(str(path),),
+        )
 
         return {
             "success": True,
