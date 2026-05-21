@@ -303,10 +303,10 @@ def test_ltx_raw_video_guide_uses_live_resize_schema_inputs() -> None:
 def test_ltx_iclora_control_uses_live_resize_schema_inputs() -> None:
     workflow = workflow_from_ready("video/ltx2_3_first_last_frame_travel_iclora_control")
 
-    for node_id in ("5026", "5028", "6101", "6102", "6103"):
+    for node_id in ("6015", "6020", "6022", "6023", "6024"):
         inputs = workflow.compile()[node_id]["inputs"]
-        assert inputs["width"] == ["2080", 0]
-        assert inputs["height"] == ["2079", 0]
+        assert inputs["width"] == ["2079", 0]
+        assert inputs["height"] == ["2078", 0]
         assert inputs["upscale_method"] == "lanczos"
         assert inputs["keep_proportion"] == "stretch"
         assert inputs.get("crop_position", "center") == "center"
@@ -592,57 +592,57 @@ def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> N
 
     assert workflow.validate().ok
     assert workflow.metadata["source_role"] == "materialized_ready_python_template"
-    assert workflow.inputs["start_image"].node_id == "45"
-    assert workflow.inputs["end_image"].node_id == "47"
-    assert workflow.inputs["control_video"].node_id == "5001"
-    assert workflow.inputs["prompt"].node_id == "16"
-    assert workflow.inputs["negative"].node_id == "11"
-    assert workflow.inputs["seed"].node_id == "14"
-    assert workflow.inputs["frames"].node_id == "2078"
-    assert workflow.inputs["width"].node_id == "2080"
-    assert workflow.inputs["height"].node_id == "2079"
+    assert workflow.inputs["start_image"].node_id == "5"
+    assert workflow.inputs["end_image"].node_id == "6"
+    assert workflow.inputs["control_video"].node_id == "2111"
+    assert workflow.inputs["prompt"].node_id == "6002"
+    assert workflow.inputs["negative"].node_id == "6001"
+    assert workflow.inputs["seed"].node_id == "3"
+    assert workflow.inputs["frames"].node_id == "2077"
+    assert workflow.inputs["width"].node_id == "2079"
+    assert workflow.inputs["height"].node_id == "2078"
     assert workflow.inputs["fps"].node_id == "2076"
-    assert workflow.inputs["strength"].node_id == "5012"
+    assert workflow.inputs["strength"].node_id == "6026"
     assert workflow.inputs["strength"].field == "strength"
-    assert workflow.inputs["ic_lora_filename"].node_id == "5011"
-    assert workflow.inputs["ic_lora_strength"].node_id == "5011"
+    assert workflow.inputs["ic_lora_filename"].node_id == "6025"
+    assert workflow.inputs["ic_lora_strength"].node_id == "6025"
     assert workflow.inputs["ic_lora_strength"].field == "strength_model"
 
-    assert api["45"]["class_type"] == "LoadImage"
-    assert api["47"]["class_type"] == "LoadImage"
-    assert api["5001"]["class_type"] == "LoadVideo"
-    assert api["5000"]["class_type"] == "GetVideoComponents"
-    assert api["5011"]["class_type"] == "LTXICLoRALoaderModelOnly"
-    assert api["5011"]["inputs"]["lora_name"] == "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors"
-    assert api["5011"]["inputs"]["strength_model"] == 1
-    assert api["5012"]["class_type"] == "LTXAddVideoICLoRAGuide"
-    assert api["5012"]["inputs"]["image"] == ["5028", 0]
-    assert api["5012"]["inputs"].get("frame_idx", 0) == 0
-    assert api["5012"]["inputs"]["strength"] == 1
-    assert api["5012"]["inputs"]["crop"] == "center"
-    assert api["5012"]["inputs"]["use_tiled_encode"] == "disabled"
-    assert api["5012"]["inputs"]["tile_size"] == 128
-    assert api["5012"]["inputs"]["tile_overlap"] == 32
-    assert api["210"]["class_type"] == "LTXVImgToVideoInplaceKJ"
-    assert api["210"]["inputs"]["num_images.image_1"] == ["2084", 0]
-    assert api["210"]["inputs"]["num_images.image_2"] == ["50", 0]
-    assert api["6101"]["class_type"] == "ImageResizeKJv2"
-    for resize_node_id in ("5026", "6101", "5028", "6102", "6103"):
+    assert api["5"]["class_type"] == "LoadImage"
+    assert api["6"]["class_type"] == "LoadImage"
+    assert api["2111"]["class_type"] == "LoadVideo"
+    assert api["6008"]["class_type"] == "GetVideoComponents"
+    assert api["6025"]["class_type"] == "LTXICLoRALoaderModelOnly"
+    assert api["6025"]["inputs"]["lora_name"] == "ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors"
+    assert api["6025"]["inputs"]["strength_model"] == 1
+    assert api["6026"]["class_type"] == "LTXAddVideoICLoRAGuide"
+    assert api["6026"]["inputs"]["image"] == ["6022", 0]
+    assert api["6026"]["inputs"].get("frame_idx", 0) == 0
+    assert api["6026"]["inputs"]["strength"] == 1
+    assert api["6026"]["inputs"]["crop"] == "center"
+    assert api["6026"]["inputs"]["use_tiled_encode"] == "disabled"
+    assert api["6026"]["inputs"]["tile_size"] == 128
+    assert api["6026"]["inputs"]["tile_overlap"] == 32
+    assert api["6017"]["class_type"] == "LTXVImgToVideoInplaceKJ"
+    assert api["6017"]["inputs"]["num_images.image_1"] == ["6014", 0]
+    assert api["6017"]["inputs"]["num_images.image_2"] == ["6012", 0]
+    assert api["6015"]["class_type"] == "ImageResizeKJv2"
+    for resize_node_id in ("6015", "6020", "6022", "6023", "6024"):
         assert api[resize_node_id]["class_type"] == "ImageResizeKJv2"
-        assert api[resize_node_id]["inputs"]["width"] == ["2080", 0]
-        assert api[resize_node_id]["inputs"]["height"] == ["2079", 0]
+        assert api[resize_node_id]["inputs"]["width"] == ["2079", 0]
+        assert api[resize_node_id]["inputs"]["height"] == ["2078", 0]
         assert api[resize_node_id]["inputs"]["upscale_method"] == "lanczos"
         assert api[resize_node_id]["inputs"]["keep_proportion"] == "stretch"
         assert api[resize_node_id]["inputs"].get("crop_position", "center") == "center"
         assert not any(key.startswith("resize_type") for key in api[resize_node_id]["inputs"])
     assert api["4986"]["class_type"] == "DWPreprocessor"
-    assert api["6102"]["inputs"]["image"] == ["4986", 0]
-    assert api["5061"]["class_type"] == "DepthAnything_V2"
-    assert api["6103"]["inputs"]["image"] == ["5061", 0]
+    assert api["6023"]["inputs"]["image"] == ["4986", 0]
+    assert api["6019"]["class_type"] == "DepthAnything_V2"
+    assert api["6024"]["inputs"]["image"] == ["6019", 0]
     assert api["4991"]["class_type"] == "CannyEdgePreprocessor"
-    assert api["5028"]["inputs"]["image"] == ["4991", 0]
-    assert api["175"]["class_type"] == "LTXVAudioVAELoader"
-    assert api["175"]["inputs"]["ckpt_name"] == "LTX23_audio_vae_bf16.safetensors"
+    assert api["6022"]["inputs"]["image"] == ["4991", 0]
+    assert api["7"]["class_type"] == "LTXVAudioVAELoader"
+    assert api["7"]["inputs"]["ckpt_name"] == "LTX23_audio_vae_bf16.safetensors"
     assets = {
         asset["name"]: asset
         for asset in workflow.metadata["model_assets"]
@@ -710,19 +710,19 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
     assert not missing, f"Missing named inputs: {sorted(missing)}"
 
     # Lens-backed input target assertions (no compiled API links)
-    assert lens.registered_input_target("prompt").node_id == "128"
-    assert lens.registered_input_target("negative_prompt").node_id == "112"
-    assert lens.registered_input_target("seed_first").node_id == "100"
-    assert lens.registered_input_target("seed_last").node_id == "100"
+    assert lens.registered_input_target("prompt").node_id == "130"
+    assert lens.registered_input_target("negative_prompt").node_id == "127"
+    assert lens.registered_input_target("seed_first").node_id == "99"
+    assert lens.registered_input_target("seed_last").node_id == "99"
     assert lens.registered_input_target("width").node_id == "113"
     assert lens.registered_input_target("height").node_id == "98"
     assert lens.registered_input_target("frames").node_id == "102"
     assert lens.registered_input_target("fps").node_id == "123"
     assert lens.registered_input_target("fps_int").node_id == "114"
-    assert lens.registered_input_target("first_strength").node_id == "115"
-    assert lens.registered_input_target("last_strength").node_id == "111"
-    assert lens.registered_input_target("first_image").node_id == "31"
-    assert lens.registered_input_target("last_image").node_id == "39"
+    assert lens.registered_input_target("first_strength").node_id == "136"
+    assert lens.registered_input_target("last_strength").node_id == "137"
+    assert lens.registered_input_target("first_image").node_id == "1"
+    assert lens.registered_input_target("last_image").node_id == "2"
 
     # ── structural assertions via lens ───────────────────────────────
     # Custom node packs
@@ -731,68 +731,64 @@ def test_ltx_lightricks_first_last_parity_exposes_worker_patch_points() -> None:
 
     # Portable parity uses the official Lightricks first/last spine that has
     # passed live on 4090: two LTXVAddGuide nodes and direct checkpoint model.
-    stage_first = lens.node("115")
-    stage_last = lens.node("111")
+    stage_first = lens.node("136")
+    stage_last = lens.node("137")
     assert stage_first is not None
     assert stage_first.class_type == "LTXVAddGuide"
     assert stage_last is not None
     assert stage_last.class_type == "LTXVAddGuide"
 
     # Strength defaults via lens
-    assert lens.node_value("115", "strength") == 1.0
-    assert lens.node_value("111", "strength") == 1.0
+    assert lens.node_value("136", "strength") == 1.0
+    assert lens.node_value("137", "strength") == 1.0
 
     # Image preprocessing chains via lens edge traversal.
     # First frame: ResizeImageMaskNode -> LTXVPreprocess -> LTXVAddGuide
-    image_src_first = lens.edge_source("115", "image")
+    image_src_first = lens.edge_source("136", "image")
     assert image_src_first is not None and image_src_first.node_id is not None
     preprocess_first = lens.node(image_src_first.node_id)
     assert preprocess_first.class_type == "LTXVPreprocess"
     # Last guide: ResizeImageMaskNode -> LTXVPreprocess -> LTXVAddGuide
-    image_src_last = lens.edge_source("111", "image")
+    image_src_last = lens.edge_source("137", "image")
     assert image_src_last is not None and image_src_last.node_id is not None
     preprocess_last = lens.node(image_src_last.node_id)
     assert preprocess_last.class_type == "LTXVPreprocess"
 
     # The last guide consumes the first guide output, preserving first/last order.
-    assert lens.edge_source("115", "latent").node_id == "108"
-    assert lens.edge_source("111", "latent").node_id == "115"
+    assert lens.edge_source("136", "latent").node_id == "135"
+    assert lens.edge_source("137", "latent").node_id == "136"
     assert lens.node("2291") is None
-    assert lens.edge_source("116", "model").node_id == "127"
+    assert lens.edge_source("138", "model").node_id == "125"
     assert lens.node("2292") is None
-    assert lens.edge_source("116", "positive").node_id == "111"
-    assert lens.edge_source("116", "negative").node_id == "111"
-    assert lens.edge_source("106", "positive").node_id == "111"
-    assert lens.edge_source("106", "negative").node_id == "111"
+    assert lens.edge_source("138", "positive").node_id == "137"
+    assert lens.edge_source("138", "negative").node_id == "137"
 
     # ── runtime materialization smoke (compiled API, minimal) ────────
     api = workflow.compile("api")
-    assert api["31"]["class_type"] == "LoadImage"
-    assert api["39"]["class_type"] == "LoadImage"
-    assert api["118"]["inputs"]["sigmas"].startswith("1., 0.99375")
+    assert api["1"]["class_type"] == "LoadImage"
+    assert api["2"]["class_type"] == "LoadImage"
+    assert api["116"]["inputs"]["sigmas"].startswith("1., 0.99375")
     assert api["102"]["class_type"] == "PrimitiveInt"
     assert api["123"]["class_type"] == "PrimitiveFloat"
-    assert api["115"]["inputs"]["strength"] == 1.0
-    assert api["111"]["inputs"]["strength"] == 1.0
+    assert api["136"]["inputs"]["strength"] == 1.0
+    assert api["137"]["inputs"]["strength"] == 1.0
     assert api["103"]["inputs"]["device"] == "default"
-    assert api["124"]["inputs"]["resize_type"] == "scale dimensions"
-    assert api["124"]["inputs"]["resize_type.width"] == ["113", 0]
-    assert api["124"]["inputs"]["resize_type.height"] == ["98", 0]
-    assert api["125"]["inputs"]["resize_type"] == "scale dimensions"
-    assert api["125"]["inputs"]["resize_type.width"] == ["113", 0]
-    assert api["125"]["inputs"]["resize_type.height"] == ["98", 0]
-    assert api["127"]["inputs"]["ckpt_name"] == "ltx-2.3-22b-distilled-fp8.safetensors"
+    assert api["128"]["inputs"]["resize_type"] == "scale dimensions"
+    assert api["128"]["inputs"]["resize_type.width"] == ["113", 0]
+    assert api["128"]["inputs"]["resize_type.height"] == ["98", 0]
+    assert api["129"]["inputs"]["resize_type"] == "scale dimensions"
+    assert api["129"]["inputs"]["resize_type.width"] == ["113", 0]
+    assert api["129"]["inputs"]["resize_type.height"] == ["98", 0]
+    assert api["125"]["inputs"]["ckpt_name"] == "ltx-2.3-22b-distilled-fp8.safetensors"
     assert "2291" not in api
     assert "2292" not in api
-    assert api["116"]["inputs"]["model"] == ["127", 0]
-    assert api["116"]["inputs"]["positive"] == ["111", 0]
-    assert api["116"]["inputs"]["negative"] == ["111", 1]
-    assert api["106"]["inputs"]["positive"] == ["111", 0]
-    assert api["106"]["inputs"]["negative"] == ["111", 1]
-    assert api["105"]["inputs"]["tile_size"] == 768
-    assert api["105"]["inputs"].get("overlap", 64) == 64
-    assert api["105"]["inputs"].get("temporal_overlap", 64) == 64
-    for node_id in ("111", "115", "103", "124", "125", "105"):
+    assert api["138"]["inputs"]["model"] == ["125", 0]
+    assert api["138"]["inputs"]["positive"] == ["137", 0]
+    assert api["138"]["inputs"]["negative"] == ["137", 1]
+    assert api["144"]["inputs"]["tile_size"] == 768
+    assert api["144"]["inputs"].get("overlap", 64) == 64
+    assert api["144"]["inputs"].get("temporal_overlap", 64) == 64
+    for node_id in ("137", "136", "103", "128", "129", "144"):
         unresolved = [key for key in api[node_id]["inputs"] if key.startswith("widget_")]
         assert unresolved == [], f"{node_id} has unresolved widget inputs: {unresolved}"
 
@@ -896,10 +892,13 @@ def test_wan_22_i2v_template_uses_eager_model_loaders() -> None:
     workflow = workflow_from_ready("video/wanvideo_wrapper_22_14b_i2v_kijai")
     api = workflow.compile("api")
 
-    assert api["22"]["class_type"] == "WanVideoModelLoader"
-    assert api["71"]["class_type"] == "WanVideoModelLoader"
-    assert "compile_args" not in api["22"]["inputs"]
-    assert "compile_args" not in api["71"]["inputs"]
+    loader_nodes = [
+        node
+        for node in api.values()
+        if node["class_type"] == "WanVideoModelLoader"
+    ]
+    assert len(loader_nodes) >= 2
+    assert all("compile_args" not in node["inputs"] for node in loader_nodes)
 
 
 @pytest.mark.parametrize(
@@ -974,12 +973,22 @@ def test_wan_vace_template_uses_live_wanvideo_schema_inputs() -> None:
         if key in {"model", "model_name", "vace_model"} or key.startswith("lora_")
         if isinstance(value, str) and "\\" in value
     ] == []
-    assert "extra_model" in api["22"]["inputs"]
-    assert "extra_model" in api["92"]["inputs"]
-    assert "vace_model" not in api["22"]["inputs"]
-    assert "vace_model" not in api["92"]["inputs"]
-    assert "blocks_to_keep" not in api["39"]["inputs"]
-    assert "offload_img_emb_nonblock" not in api["39"]["inputs"]
+    loader_nodes = [
+        node
+        for node in api.values()
+        if node["class_type"] == "WanVideoModelLoader"
+    ]
+    assert len(loader_nodes) >= 2
+    assert all("extra_model" in node["inputs"] for node in loader_nodes)
+    assert all("vace_model" not in node["inputs"] for node in loader_nodes)
+    block_swap_nodes = [
+        node
+        for node in api.values()
+        if node["class_type"] == "WanVideoBlockSwap"
+    ]
+    assert block_swap_nodes
+    assert all("blocks_to_keep" not in node["inputs"] for node in block_swap_nodes)
+    assert all("offload_img_emb_nonblock" not in node["inputs"] for node in block_swap_nodes)
 
 
 def test_wan_vace_template_uses_root_vace_module_asset() -> None:

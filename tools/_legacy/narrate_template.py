@@ -474,11 +474,14 @@ def parse_template(source: str) -> ParseResult:
         #   _node(wf, class_type, id, ...)
         #   node(wf, class_type, id, ...)
         #   _at(wf, ID["role"], class_type, ...)
-        if len(value.args) < 3:
+        if len(value.args) < 3 and helper_name == "raw_call":
+            class_arg = value.args[0] if len(value.args) >= 1 else None
+            id_arg = value.args[1] if len(value.args) >= 2 else None
+        elif len(value.args) < 3:
             raise SystemExit(
                 f"error: unexpected {helper_name} call at line {stmt.lineno}: needs >=3 positional args"
             )
-        if helper_name == _AT_HELPER_NAME:
+        elif helper_name == _AT_HELPER_NAME:
             id_arg = value.args[1]
             class_arg = value.args[2]
         else:

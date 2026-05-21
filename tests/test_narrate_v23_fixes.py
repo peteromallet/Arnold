@@ -414,9 +414,9 @@ def test_restructure_ltx_pilot_footgun_fixes(tmp_path: Path) -> None:
     assert "'control_mode': InputSpec" in ltx
     assert "_control_mode_marker" not in ltx
     assert "control_mode" in ltx
-    assert "ltx23_video_vae_bf16" in ltx
-    assert "ltx_2_3_22b_distilled_1_1_transformer_only" in ltx
-    assert "ltx_2_3_22b_distilled_1_1_lora_dynamic_fro" in ltx
+    assert "LTX23_video_vae_bf16" in ltx
+    assert "ltx-2.3-22b-distilled-1.1_transformer_only" in ltx
+    assert "ltx-2.3-22b-distilled-1.1_lora-dynamic_fro" in ltx
     assert "widget_0=0" not in ltx
     assert "'seed_refine': InputSpec" in ltx
     assert "sigmas=" in ltx

@@ -36,7 +36,15 @@ OVERRIDES_EXCLUDE: set[str] = set()
 
 
 def _workflow_queue_failure_message(workflow: VibeWorkflow, exc: Exception) -> str:
-    return f"Workflow queue failed: {exc}; id_map={workflow.id_map()}"
+    mapping = workflow.id_map()
+    metadata_id_map = workflow.metadata.get("id_map")
+    if isinstance(metadata_id_map, dict):
+        mapping.update({str(key): str(value) for key, value in metadata_id_map.items()})
+    for node_id, node in workflow.nodes.items():
+        source_id = node.metadata.get("source_id")
+        if source_id is not None:
+            mapping[str(source_id)] = str(node_id)
+    return f"Workflow queue failed: {exc}; id_map={mapping}"
 
 
 def _schema_warn_only(config: SessionConfig | None = None) -> bool:

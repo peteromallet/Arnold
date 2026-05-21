@@ -76,6 +76,7 @@ def test_load_registry_roundtrip_sample(tmp_path: Path) -> None:
 
 
 def test_registry_rejects_legacy_gated_magic_literals(tmp_path: Path) -> None:
+    entries = load_registry(_sample_registry(tmp_path / "sample_models.yaml"))
     registry = _write_registry(
         tmp_path / "models.yaml",
         """

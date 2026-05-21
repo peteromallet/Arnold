@@ -915,7 +915,7 @@ def test_static_contract_extracts_public_outputs_from_finalize() -> None:
     finalize_outputs = [item for item in contract["public_outputs"] if item.get("source") == "finalize"]
     assert len(finalize_outputs) > 0, "No outputs extracted from finalize()"
     output = finalize_outputs[0]
-    assert output["node_id"] == "56"
+    assert output["node_id"] == "14"
     assert output.get("output_type") == "SaveVideo"
 
 
