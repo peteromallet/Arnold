@@ -98,6 +98,7 @@ def get_sandbox_cwd() -> Path | None:
 
 _wrappers_installed = False
 _wrappers_lock = threading.Lock()
+_wrapped_originals: dict[str, object] = {}
 
 
 def _ensure_wrappers_installed():
@@ -126,12 +127,13 @@ def _ensure_wrappers_installed():
             entry = _registry._tools.get(name)
             if entry is None:
                 continue
-            original = entry.handler
-            # Only wrap if not already wrapped (check for our marker)
-            if getattr(entry, "_sandbox_wrapped", False):
+            # ToolEntry uses __slots__; track wrapped handlers externally
+            # instead of mutating the entry with marker attributes.
+            if name in _wrapped_originals:
                 continue
+            original = entry.handler
             entry.handler = wrapper_factory(original)
-            entry._sandbox_wrapped = True
+            _wrapped_originals[name] = original
         _wrappers_installed = True
 
 
@@ -148,17 +150,16 @@ def _unwrap_all_for_tests():
         from tools.registry import registry as _registry  # type: ignore
     except Exception:
         _wrappers_installed = False
+        _wrapped_originals.clear()
         return
     for name in _WRAPPERS:
         entry = _registry._tools.get(name)
         if entry is None:
             continue
-        original = getattr(entry, "_sandbox_original", None)
+        original = _wrapped_originals.get(name)
         if original is not None:
             entry.handler = original
-            delattr(entry, "_sandbox_original")
-        if getattr(entry, "_sandbox_wrapped", False):
-            delattr(entry, "_sandbox_wrapped")
+    _wrapped_originals.clear()
     _wrappers_installed = False
 
 
