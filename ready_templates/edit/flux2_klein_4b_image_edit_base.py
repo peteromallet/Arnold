@@ -76,6 +76,7 @@ def image_edit_flux2_klein_4b(
         upscale_method='nearest-exact',
         image=image,
     )
+
     negative = CLIPTextEncode(text='', clip=cliploader)
     cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
@@ -87,6 +88,7 @@ def image_edit_flux2_klein_4b(
         height=height,
         width=width,
     )
+
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
     referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
     referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
@@ -105,6 +107,7 @@ def image_edit_flux2_klein_4b(
         sampler=ksamplerselect,
         sigmas=flux2scheduler,
     )
+
     vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
@@ -129,12 +132,14 @@ def image_edit_flux2_klein_9b(
         upscale_method='nearest-exact',
         image=image_1,
     )
+
     ksamplerselect = KSamplerSelect(sampler_name='euler')
 
     randomnoise = RandomNoise(
         noise_seed=133932424540642,
         control_after_generate='randomize',
     )
+
     unetloader = UNETLoader(unet_name=unet_name)
     vaeloader = VAELoader(vae_name=vae_name)
 
@@ -142,6 +147,7 @@ def image_edit_flux2_klein_9b(
         upscale_method='nearest-exact',
         image=image,
     )
+
     cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
     negative = CLIPTextEncode(text='', clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels_2)
@@ -156,6 +162,7 @@ def image_edit_flux2_klein_9b(
         height=height,
         width=width,
     )
+
     referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
     referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
 
@@ -183,6 +190,7 @@ def image_edit_flux2_klein_9b(
         sampler=ksamplerselect,
         sigmas=flux2scheduler,
     )
+
     vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
@@ -239,6 +247,7 @@ def build() -> VibeWorkflow:
             upscale_method=UPSCALE_METHOD,
             image=image,
         )
+
         negative_2 = CLIPTextEncode(text=TEXT, clip=cliploader_2)
         cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader_2)
         width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
@@ -247,6 +256,7 @@ def build() -> VibeWorkflow:
         width_get, height_get, batch_size_get = GetImageSize(
             image=imagescaletototalpixels_3,
         )
+
         vaeencode_2 = VAEEncode(pixels=imagescaletototalpixels_3, vae=vaeloader_2)
         vaeencode_3 = VAEEncode(pixels=imagescaletototalpixels_2, vae=vaeloader_2)
 
@@ -257,6 +267,7 @@ def build() -> VibeWorkflow:
             height=height,
             width=width,
         )
+
         emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
         referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
 
@@ -276,6 +287,7 @@ def build() -> VibeWorkflow:
             height=height_get,
             width=width_get,
         )
+
         referencelatent_3 = ReferenceLatent(conditioning=negative_2, latent=vaeencode_2)
 
         referencelatent_4 = ReferenceLatent(

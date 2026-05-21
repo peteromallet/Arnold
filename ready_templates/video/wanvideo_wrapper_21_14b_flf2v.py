@@ -136,6 +136,7 @@ def build() -> VibeWorkflow:
             device=DEVICE,
             image=image_load,
         )
+
         setnode = raw_call('SetNode', '91', widget_0=WIDGET_0, IMAGE=image_image)
 
         wanvideotextencode = WanVideoTextEncode(
@@ -167,6 +168,7 @@ def build() -> VibeWorkflow:
             height=height,
             image=image,
         )
+
         setnode_2 = raw_call('SetNode', '92', widget_0=WIDGET_0_2, IMAGE=image_image_2)
 
         wanvideoclipvisionencode = WanVideoClipVisionEncode(

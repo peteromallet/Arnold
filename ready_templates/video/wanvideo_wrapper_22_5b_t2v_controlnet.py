@@ -62,6 +62,7 @@ def build() -> VibeWorkflow:
             widget_8=True,
             widget_9=0,
         )
+
         wanvideoslg = WanVideoSLG(widget_0='7,8,9', widget_1=0.1, widget_2=0.7)
 
         wanvideoeasycache = WanVideoEasyCache(
@@ -83,6 +84,7 @@ def build() -> VibeWorkflow:
             widget_1=0,
             widget_2=1,
         )
+
         intconstant = INTConstant(value=121)
         intconstant_2 = INTConstant(value=704)
         intconstant_3 = INTConstant(value=1280)
@@ -141,6 +143,7 @@ def build() -> VibeWorkflow:
             controlnet=wanvideocontrolnetloader,
             model=wanvideomodelloader,
         )
+
         previewanimation = PreviewAnimation(widget_0=24, images=image_image_2)
 
         wanvideotextencode = WanVideoTextEncode(

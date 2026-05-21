@@ -65,6 +65,7 @@ def build() -> VibeWorkflow:
             positive_prompt=DEFAULT_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE,
         )
+
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
 
         wanvideoblockswap = WanVideoBlockSwap(
@@ -87,6 +88,7 @@ def build() -> VibeWorkflow:
             lora_0=MODEL_NAME_3,
             merge_loras=False,
         )
+
         image_load, mask_load = LoadImage(image='vace_end.png')
 
         image_load_2, frame_count, audio, video_info = VHS_LoadVideo(
@@ -97,6 +99,7 @@ def build() -> VibeWorkflow:
             video='vace_control.mp4',
             **{'choose video to upload': 'image'},
         )
+
         wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=MODEL_NAME_4)
 
         wanvideomodelloader = WanVideoModelLoader(

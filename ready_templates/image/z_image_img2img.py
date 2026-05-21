@@ -67,6 +67,7 @@ def build() -> VibeWorkflow:
             crop='center',
             image=image,
         )
+
         vaeencode = VAEEncode(pixels=imagescale, vae=vaeloader)
 
         # Sampling

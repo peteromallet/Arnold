@@ -63,6 +63,7 @@ def build() -> VibeWorkflow:
             widget_8=True,
             widget_9=0,
         )
+
         wanvideoslg = WanVideoSLG(widget_0='7,8,9', widget_1=0.1, widget_2=0.7)
 
         wanvideoeasycache = WanVideoEasyCache(
@@ -84,6 +85,7 @@ def build() -> VibeWorkflow:
             widget_1=0,
             widget_2=1,
         )
+
         intconstant = INTConstant(value=121)
         intconstant_2 = INTConstant(value=1280)
         intconstant_3 = INTConstant(value=704)
@@ -163,6 +165,7 @@ def build() -> VibeWorkflow:
             height=intconstant_3,
             width=intconstant_2,
         )
+
         previewanimation = PreviewAnimation(widget_0=24, images=image_image_2)
 
         wanvideotextencode = WanVideoTextEncode(
@@ -194,6 +197,7 @@ def build() -> VibeWorkflow:
             samples=samples,
             vae=wanvideovaeloader,
         )
+
         vhs_videocombine = VHS_VideoCombine(images=wanvideodecode)
 
         return wf.finalize(PUBLIC_INPUTS, output_node=previewimage, output_type='PreviewImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')

@@ -128,6 +128,7 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
         # Inputs
@@ -143,6 +144,7 @@ def build() -> VibeWorkflow:
             model=MODEL_NAME_7,
             precision='fp32',
         )
+
         primitivestring = raw_call('PrimitiveString', '6000', value='canny')
 
         # Conditioning
@@ -181,6 +183,7 @@ def build() -> VibeWorkflow:
             strength_model=GUIDE_STRENGTH,
             model=unetloader,
         )
+
         ltx2_nag = LTX2_NAG(model=unetloader)
         images, audio, fps = GetVideoComponents(video=loadvideo)
         ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
@@ -196,12 +199,14 @@ def build() -> VibeWorkflow:
             negative=cliptextencode,
             positive=cliptextencode_2,
         )
+
         ltxvpreprocess = LTXVPreprocess(img_compression=18, image=image_image_2)
 
         pathchsageattentionkj = PathchSageAttentionKJ(
             sage_attention='disabled',
             model=loraloadermodelonly,
         )
+
         ltxvpreprocess_2 = LTXVPreprocess(img_compression=18, image=image_image)
 
         image_image_3, width_image_2, height_image_2, mask_image_3 = ImageResizeKJv2(
@@ -246,6 +251,7 @@ def build() -> VibeWorkflow:
             vae=vaeloader_2,
             **{'num_images.index_1': 0, 'num_images.index_2': -1, 'num_images.image_1': ltxvpreprocess_2, 'num_images.image_2': ltxvpreprocess, 'num_images.strength_1': primitivefloat_3, 'num_images.strength_2': primitivefloat_2},
         )
+
         ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
 
         depthanything_v2 = DepthAnything_V2(
@@ -338,6 +344,7 @@ def build() -> VibeWorkflow:
             sampler=ksamplerselect,
             sigmas=manualsigmas,
         )
+
         video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
         ltxvconcatavlatent_2 = LTXVConcatAVLatent(

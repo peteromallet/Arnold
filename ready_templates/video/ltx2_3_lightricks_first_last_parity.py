@@ -77,6 +77,7 @@ def build() -> VibeWorkflow:
             ckpt_name=MODEL_NAME_2,
             device='default',
         )
+
         primitiveint_3 = raw_call('PrimitiveInt', '113', value=832)
         primitiveint_4 = raw_call('PrimitiveInt', '114', value=16)
         samplereulerancestral = SamplerEulerAncestral(eta=0)
@@ -84,6 +85,7 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+
         primitivefloat = raw_call('PrimitiveFloat', '123', value=16)
         ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME_2)
 
@@ -120,6 +122,7 @@ def build() -> VibeWorkflow:
             text=DEFAULT_PROMPT,
             clip=ltxavtextencoderloader,
         )
+
         ltxvpreprocess = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_2)
         ltxvpreprocess_2 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode)
 
@@ -128,6 +131,7 @@ def build() -> VibeWorkflow:
             negative=cliptextencode,
             positive=cliptextencode_2,
         )
+
         width, height, batch_size = GetImageSize(image=resizeimagemasknode)
 
         # Sampling
@@ -177,6 +181,7 @@ def build() -> VibeWorkflow:
             sampler=samplereulerancestral,
             sigmas=manualsigmas,
         )
+
         video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
 
         positive_ltxv_3, negative_ltxv_3, latent_ltxv_2 = LTXVCropGuides(

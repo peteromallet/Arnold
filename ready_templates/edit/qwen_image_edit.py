@@ -66,6 +66,7 @@ def qwen_image_edit(
     markdownnote = raw_call('MarkdownNote', '97',
         widget_0='You can test and find the best setting by yourself. The following table is for reference.\n\n| Model            | Steps | CFG |\n|---------------------|---------------|---------------|\n| Offical             | 50               | 4.0               \n| comfy             | 20                | 2.5               |\n| fp8_e4m3fn + 4steps LoRA    | 4               | 1.0               |\n',
     )
+
     primitiveint = raw_call('PrimitiveInt', '103', value=4, widget_1='fixed')
     primitivefloat = raw_call('PrimitiveFloat', '105', value=1)
     primitiveint_2 = raw_call('PrimitiveInt', '106', value=20, widget_1='fixed')
@@ -85,6 +86,7 @@ def qwen_image_edit(
         image=image,
         vae=vaeloader,
     )
+
     vaeencode = VAEEncode(pixels=image, vae=vaeloader)
     loraloadermodelonly = LoraLoaderModelOnly(lora_name=lora_name, model=unetloader)
 
@@ -108,6 +110,7 @@ def qwen_image_edit(
         on_true=loraloadermodelonly,
         switch=primitiveboolean,
     )
+
     modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=comfyswitchnode)
     cfgnorm = CFGNorm(widget_0=1, model=modelsamplingauraflow)
 
@@ -124,6 +127,7 @@ def qwen_image_edit(
         negative=textencodeqwenimageedit_2,
         positive=textencodeqwenimageedit,
     )
+
     vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
 
     return vaedecode
@@ -166,6 +170,7 @@ def build() -> VibeWorkflow:
             image=image,
             vae=vaeloader,
         )
+
         vaeencode = VAEEncode(pixels=image, vae=vaeloader)
 
         loraloadermodelonly = LoraLoaderModelOnly(
@@ -190,6 +195,7 @@ def build() -> VibeWorkflow:
             on_true=loraloadermodelonly,
             switch=primitiveboolean,
         )
+
         modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=comfyswitchnode_3)
         cfgnorm = CFGNorm(model=modelsamplingauraflow)
 

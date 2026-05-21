@@ -55,6 +55,7 @@ def build() -> VibeWorkflow:
             base_precision='fp16',
             quantization='fp8_e4m3fn_scaled',
         )
+
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
 
         wanvideoemptyembeds = WanVideoEmptyEmbeds(
@@ -65,6 +66,7 @@ def build() -> VibeWorkflow:
             widget_2=5,
             width=256,
         )
+
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
         wanvideoblockswap = WanVideoBlockSwap()
 

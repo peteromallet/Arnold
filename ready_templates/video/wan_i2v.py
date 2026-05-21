@@ -77,6 +77,7 @@ def build() -> VibeWorkflow:
             clip_vision=clipvisionloader,
             image=image,
         )
+
         modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
 
         positive, negative, latent = WanImageToVideo(

@@ -72,6 +72,7 @@ def build() -> VibeWorkflow:
             widget_7=20,
             widget_8=True,
         )
+
         wanvideoslg = WanVideoSLG(widget_0='7,8,9', widget_1=0.1, widget_2=0.7)
 
         wanvideoeasycache = WanVideoEasyCache(

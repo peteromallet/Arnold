@@ -96,6 +96,7 @@ def build() -> VibeWorkflow:
             type_='ltxv',
             device='default',
         )
+
         ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME_5)
         vaeloader_2 = VAELoader(vae_name=MODEL_NAME_6)
         unetloader = UNETLoader(unet_name=MODEL_NAME_7)
@@ -106,6 +107,7 @@ def build() -> VibeWorkflow:
             clip_name2=MODEL_NAME_4,
             type_='sdxl',
         )
+
         intconstant = INTConstant(value=10)
 
         # Inputs
@@ -118,6 +120,7 @@ def build() -> VibeWorkflow:
         primitivestringmultiline = PrimitiveStringMultiline(
             value="A video from a TV broadcast with a male and a female news achor. They both stay in frame all the time.\n\nThe dialog from the male and female is as follows:\n\nSpaker_1 is the woman, and Speaker_2 is the man.\n\n[speaker_1][confused]: This is awkward! I guess the prompter ran out of ideas, and put us in this odd situation.\n[speaker_2][embarrassed] : But hey,  just because we are here, in a new video, doesn't mean our voices change. \n[speaker_1][excited]: Aber ich möchte mit dir schlafen.\n[speaker_2][happy]: I still have no idea what she said! Might be for the best [laughing]\n\nThe dialog with perfect lip-sync to the audio\n\n\nThey both smile at the end.\n\n\n",
         )
+
         getnode_4 = raw_call('GetNode', '1628', widget_0=WIDGET_0_3)
         getnode_5 = raw_call('GetNode', '1629', widget_0=WIDGET_0_4)
         getnode_6 = raw_call('GetNode', '1635', widget_0=WIDGET_0_5)
@@ -144,6 +147,7 @@ def build() -> VibeWorkflow:
             noise_seed=DEFAULT_SEED,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
+
         getnode_25 = raw_call('GetNode', '1833', widget_0=WIDGET_0_18)
         getnode_26 = raw_call('GetNode', '1834', widget_0=WIDGET_0_17)
         getnode_27 = raw_call('GetNode', '1835', widget_0=WIDGET_0_16)
@@ -153,6 +157,7 @@ def build() -> VibeWorkflow:
             noise_seed=DEFAULT_SEED_2,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
+
         getnode_29 = raw_call('GetNode', '1843', widget_0=WIDGET_0_13)
         manualsigmas = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
@@ -164,6 +169,7 @@ def build() -> VibeWorkflow:
         manualsigmas_2 = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+
         primitiveboolean = raw_call('PrimitiveBoolean', '1862', value=False)
         reroute = raw_call('Reroute', '1865')
         getnode_31 = raw_call('GetNode', '1878', widget_0=WIDGET_0_16)
@@ -179,6 +185,7 @@ def build() -> VibeWorkflow:
         melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937',
             widget_0=MODEL_NAME_10,
         )
+
         primitivestringmultiline_2 = PrimitiveStringMultiline(value='')
         loadaudio = LoadAudio(audio='d1b26d5a32db420183fa17af9c699278.mp3')
 
@@ -195,12 +202,14 @@ def build() -> VibeWorkflow:
             widget_0=WIDGET_0_11,
             VAE=ltxvaudiovaeloader,
         )
+
         setnode_6 = raw_call('SetNode', '1557', widget_0=WIDGET_0, VAE=vaeloader)
 
         setnode_7 = raw_call('SetNode', '1558',
             widget_0=WIDGET_0_2,
             CLIP=dualcliploader,
         )
+
         setnode_8 = raw_call('SetNode', '1568', widget_0=WIDGET_0_18, VAE=vaeloader_2)
         setnode_9 = raw_call('SetNode', '1575', widget_0=WIDGET_0_4, INT=intconstant_2)
         setnode_10 = raw_call('SetNode', '1576', widget_0=WIDGET_0_3, INT=intconstant_3)
@@ -238,6 +247,7 @@ def build() -> VibeWorkflow:
             height=getnode_5.out(0),
             image=image,
         )
+
         ltxvpreprocess = LTXVPreprocess(img_compression=18, image=getnode_11.out(0))
 
         loraloadermodelonly = LoraLoaderModelOnly(
@@ -268,6 +278,7 @@ def build() -> VibeWorkflow:
             negative=getnode_22.out(0),
             positive=getnode_23.out(0),
         )
+
         modelsamplingsd3 = ModelSamplingSD3(shift=13, model=getnode_31.out(0))
 
         solidmask = SolidMask(
@@ -287,6 +298,7 @@ def build() -> VibeWorkflow:
             expression='((round((a * b -1) / 8)) * 8) + 1 ',
             **{'variables.a': intconstant, 'variables.b': getnode_36.out(0)},
         )
+
         modelsamplingsd3_2 = ModelSamplingSD3(shift=13, model=getnode_27.out(0))
         trimaudioduration = TrimAudioDuration(widget_0=0, widget_1=15, audio=loadaudio)
         setnode_3 = raw_call('SetNode', '650', widget_0=WIDGET_0_10, IMAGE=image_image)
@@ -295,6 +307,7 @@ def build() -> VibeWorkflow:
             widget_0=WIDGET_0_5,
             _extras={'*': subgraph_63e8c999.out(0)},
         )
+
         setnode_17 = raw_call('SetNode', '1840', widget_0=WIDGET_0_16, MODEL=ltx2_nag)
         setnode_21 = raw_call('SetNode', '1918', widget_0='frames_seconds', INT=int)
 
@@ -365,6 +378,7 @@ def build() -> VibeWorkflow:
             audio_latent=getnode_35.out(0),
             video_latent=ltxvimgtovideoinplace,
         )
+
         ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
         width_get, height_get, batch_size = GetImageSize(image=resizeimagemasknode)
         video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
@@ -382,6 +396,7 @@ def build() -> VibeWorkflow:
             reference_text=primitivestringmultiline_2,
             target_text=primitivestringmultiline_3,
         )
+
         setnode_14 = raw_call('SetNode', '1633', widget_0=WIDGET_0_9, INT=width_get)
         setnode_15 = raw_call('SetNode', '1634', widget_0=WIDGET_0_8, INT=height_get)
 
@@ -481,6 +496,7 @@ def build() -> VibeWorkflow:
             sampler=ksamplerselect,
             sigmas=manualsigmas,
         )
+
         previewaudio = PreviewAudio(audio=audioenhancementnode.out(0))
 
         video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(

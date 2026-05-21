@@ -52,6 +52,7 @@ def build() -> VibeWorkflow:
             model=MODEL_NAME_2,
             base_precision='fp16',
         )
+
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3, widget_2=False)
 
@@ -186,6 +187,7 @@ def build() -> VibeWorkflow:
             images=wanvideodecode,
             tracks=tracks,
         )
+
         vhs_videocombine_2 = VHS_VideoCombine(images=wanvideowandrawwanmovetracks_2)
 
         return wf.finalize(PUBLIC_INPUTS, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')

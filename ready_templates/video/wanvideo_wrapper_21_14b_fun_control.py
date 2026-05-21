@@ -85,6 +85,7 @@ def build() -> VibeWorkflow:
         downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
             widget_0=MODEL_NAME_6,
         )
+
         reroute = raw_call('Reroute', '79')
         reroute_2 = raw_call('Reroute', '80')
         getnode = raw_call('GetNode', '84', widget_0=WIDGET_0)
@@ -98,6 +99,7 @@ def build() -> VibeWorkflow:
             widget_2=False,
             widget_3=0,
         )
+
         setnode = raw_call('SetNode', '83', widget_0=WIDGET_0, WANVAE=wanvideovaeloader)
 
         wanvideotextencode = WanVideoTextEncode(
@@ -148,6 +150,7 @@ def build() -> VibeWorkflow:
             widget_0=WIDGET_0_2,
             IMAGE=depthanything_v2,
         )
+
         wanvideodecode = WanVideoDecode(samples=samples, vae=getnode_3.out(0))
 
         image_get, width_get, height_get, count = GetImageSizeAndCount(
@@ -188,6 +191,7 @@ def build() -> VibeWorkflow:
             image_1=getnode_4.out(0),
             image_2=wanvideodecode,
         )
+
         vhs_videocombine_2 = VHS_VideoCombine(images=imageconcatmulti)
 
         wanvideoclipvisionencode = WanVideoClipVisionEncode(

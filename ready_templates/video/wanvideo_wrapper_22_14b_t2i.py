@@ -69,6 +69,7 @@ def build() -> VibeWorkflow:
             quantization=QUANTIZATION,
             widget_1='fp16',
         )
+
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
         wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
 

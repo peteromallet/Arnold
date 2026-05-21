@@ -87,6 +87,7 @@ def build() -> VibeWorkflow:
             widget_6=1.25,
             widget_7=20,
         )
+
         intconstant = INTConstant(value=81)
         setnode = raw_call('SetNode', '83', widget_0=WIDGET_0, WANVAE=wanvideovaeloader)
 
@@ -116,6 +117,7 @@ def build() -> VibeWorkflow:
             widget_2=40,
             frame_length=intconstant,
         )
+
         setnode_2 = raw_call('SetNode', '98', widget_0=WIDGET_0_2, IMAGE=image_image)
 
         samples, denoised_samples = WanVideoSampler(
@@ -156,6 +158,7 @@ def build() -> VibeWorkflow:
             poses=ade_cameraposebasic.out(0),
             width=width,
         )
+
         wanvideodecode = WanVideoDecode(samples=samples, vae=getnode_2.out(0))
 
         wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
@@ -181,6 +184,7 @@ def build() -> VibeWorkflow:
             image_2=getnode_3.out(0),
             image_3=cameraposevisualizer,
         )
+
         vhs_videocombine = VHS_VideoCombine(images=imageconcatmulti)
 
         return wf.finalize(PUBLIC_INPUTS, output_node=previewimage, output_type='PreviewImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')

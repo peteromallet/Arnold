@@ -72,6 +72,7 @@ def build() -> VibeWorkflow:
             base_precision=BASE_PRECISION,
             quantization=QUANTIZATION,
         )
+
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
         wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
 
@@ -92,6 +93,7 @@ def build() -> VibeWorkflow:
             base_precision=BASE_PRECISION,
             quantization=QUANTIZATION,
         )
+
         intconstant = INTConstant(value=3)
         intconstant_2 = INTConstant(value=6)
         wanvideoloraselect_2 = WanVideoLoraSelect(lora=MODEL_NAME_5, merge_loras=False)

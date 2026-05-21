@@ -73,6 +73,7 @@ def build() -> VibeWorkflow:
             noise_seed=DEFAULT_SEED_2,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
+
         ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
 
         # Inputs
@@ -89,6 +90,7 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
         primitiveboolean = raw_call('PrimitiveBoolean', '4987', value=True)
         primitiveint = raw_call('PrimitiveInt', '4988', value=5, widget_1='fixed')
@@ -142,6 +144,7 @@ def build() -> VibeWorkflow:
             scale_method='lanczos',
             input=image,
         )
+
         ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
 
         positive, negative = LTXVConditioning(
@@ -150,6 +153,7 @@ def build() -> VibeWorkflow:
             negative=cliptextencode_2,
             positive=cliptextencode,
         )
+
         ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagemasknode)
 
         ltxvemptylatentaudio = LTXVEmptyLatentAudio(
@@ -197,6 +201,7 @@ def build() -> VibeWorkflow:
             sampler=ksamplerselect,
             sigmas=manualsigmas,
         )
+
         video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
         ltxvimgtovideoconditiononly_2 = LTXVImgToVideoConditionOnly(

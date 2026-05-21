@@ -66,6 +66,7 @@ def text_to_image_z_image_base(
     markdownnote = raw_call('MarkdownNote', '76',
         widget_0='- Steps: 30～50\n- cfg:  3～5',
     )
+
     positive = CLIPTextEncode(text=text, clip=cliploader)
     modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
     negative = CLIPTextEncode(text='', clip=cliploader)
@@ -83,6 +84,7 @@ def text_to_image_z_image_base(
         negative=negative,
         positive=positive,
     )
+
     vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
 
     return vaedecode

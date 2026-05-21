@@ -31,6 +31,7 @@ def build() -> VibeWorkflow:
         image, frame_count, audio, video_info = VHS_LoadVideo(
             video='video_enhance_input.mp4',
         )
+
         imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
 
         vhs_videocombine = VHS_VideoCombine(

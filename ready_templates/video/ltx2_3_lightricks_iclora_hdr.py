@@ -71,6 +71,7 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+
         loadvideo = LoadVideo(file='ltx_smoke_guide.mp4', video='ltx_smoke_guide.mp4')
 
         # Conditioning
@@ -96,6 +97,7 @@ def build() -> VibeWorkflow:
             widget_3=MODEL_NAME,
             api_key=primitivestring,
         )
+
         images, audio, fps = GetVideoComponents(video=loadvideo)
 
         model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
@@ -127,6 +129,7 @@ def build() -> VibeWorkflow:
             input=images,
             **{'resize_type.multiple': simplemath_.out('INT')},
         )
+
         width, height, batch_size = GetImageSize(image=resizeimagemasknode)
 
         # Sampling

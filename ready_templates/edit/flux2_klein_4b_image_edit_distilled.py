@@ -69,6 +69,7 @@ def image_edit_flux2_klein_4b_distilled(
         upscale_method='nearest-exact',
         image=image,
     )
+
     cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
     vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
@@ -80,6 +81,7 @@ def image_edit_flux2_klein_4b_distilled(
         height=height,
         width=width,
     )
+
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
     conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
     referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
@@ -103,6 +105,7 @@ def image_edit_flux2_klein_4b_distilled(
         sampler=ksamplerselect,
         sigmas=flux2scheduler,
     )
+
     vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
@@ -167,12 +170,14 @@ def image_edit_flux2_klein_4b_distilled_dual(
         upscale_method='nearest-exact',
         image=image_1,
     )
+
     ksamplerselect = KSamplerSelect(sampler_name='euler')
 
     randomnoise = RandomNoise(
         noise_seed=786795143695419,
         control_after_generate='randomize',
     )
+
     unetloader = UNETLoader(unet_name=unet_name)
     cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
     vaeloader = VAELoader(vae_name=vae_name)
@@ -181,6 +186,7 @@ def image_edit_flux2_klein_4b_distilled_dual(
         upscale_method='nearest-exact',
         image=image,
     )
+
     cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
     width, height, batch_size = GetImageSize(image=imagescaletototalpixels_2)
     conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
@@ -192,6 +198,7 @@ def image_edit_flux2_klein_4b_distilled_dual(
         height=height,
         width=width,
     )
+
     emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
     conditioning, conditioning_1 = reference_conditioning(
         conditioning=cliptextencode,
@@ -220,6 +227,7 @@ def image_edit_flux2_klein_4b_distilled_dual(
         sampler=ksamplerselect,
         sigmas=flux2scheduler,
     )
+
     vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
@@ -251,6 +259,7 @@ def build() -> VibeWorkflow:
             upscale_method='nearest-exact',
             image=image,
         )
+
         conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
         width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
         vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)

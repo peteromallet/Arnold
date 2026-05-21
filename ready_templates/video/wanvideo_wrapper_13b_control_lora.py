@@ -52,11 +52,13 @@ def build() -> VibeWorkflow:
             widget_3='offload_device',
             widget_4='true',
         )
+
         wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
 
         image, frame_count, audio, video_info = VHS_LoadVideo(
             video='wolf_interpolated.mp4',
         )
+
         wanvideoloraselect = WanVideoLoraSelect(lora=MODEL_NAME_3)
 
         wanvideotextencode = WanVideoTextEncode(
@@ -70,6 +72,7 @@ def build() -> VibeWorkflow:
             base_precision='fp16',
             lora=wanvideoloraselect,
         )
+
         imageblur = ImageBlur(widget_0=4, widget_1=1, image=image)
 
         wanvideoencode = WanVideoEncode(
@@ -99,6 +102,7 @@ def build() -> VibeWorkflow:
             model=wanvideomodelloader,
             text_embeds=wanvideotextencode,
         )
+
         wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
 
         imageconcatmulti = ImageConcatMulti(

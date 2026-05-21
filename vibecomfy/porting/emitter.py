@@ -1713,10 +1713,12 @@ def _emit_build_function(
                 )
 
             if len(all_args) > 3 or len(single_line) > 88:
-                # v2.6.4 Fix 2: ensure blank line BEFORE multi-line statements
-                # (not after) for consistent vertical rhythm regardless of what
-                # came before. Single-line statements pack together. Section
-                # comments stay attached to the statement they introduce.
+                # v2.6.4 Fix 8 (refines Fix 2): multi-line statements are
+                # SURROUNDED by blank lines (one before, one after) for
+                # consistent vertical rhythm — including when followed by
+                # single-line statements. Single-line statements still pack
+                # together. Section comments stay attached to the first
+                # multi-line that follows (no blank between).
                 prev = out_lines[-1] if out_lines else ""
                 is_section_comment = prev.lstrip().startswith("# ")
                 if out_lines and prev != "" and not is_section_comment:
@@ -1733,6 +1735,7 @@ def _emit_build_function(
                         lines.append(f"{continuation_indent}{key}={expr},")
                 lines.append(f"{body_indent})")
                 out_lines.extend(lines)
+                out_lines.append("")
             else:
                 out_lines.append(single_line)
         else:

@@ -65,6 +65,7 @@ def build() -> VibeWorkflow:
             negative_prompt=DEFAULT_NEGATIVE,
             use_disk_cache=False,
         )
+
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
 
         ovimmaudiovaeloader = OviMMAudioVAELoader(
@@ -72,6 +73,7 @@ def build() -> VibeWorkflow:
             widget_1=MODEL_NAME_5,
             widget_2='fp32',
         )
+
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
         wanvideoslg = WanVideoSLG(widget_0='11', widget_1=0, widget_2=1)
 
@@ -89,6 +91,7 @@ def build() -> VibeWorkflow:
             widget_2=-1,
             widget_3='offload_device',
         )
+
         wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents(widget_0=157)
 
         wanvideomodelloader = WanVideoModelLoader(
@@ -169,6 +172,7 @@ def build() -> VibeWorkflow:
             audio=wanvideodecodeoviaudio,
             images=wanvideodecode,
         )
+
         previewaudio = PreviewAudio(audio=wanvideodecodeoviaudio)
 
         return wf.finalize(PUBLIC_INPUTS, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')

@@ -81,6 +81,7 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+
         primitiveint = raw_call('PrimitiveInt', '5044', value=5, widget_1='fixed')
         primitivefloat = raw_call('PrimitiveFloat', '5045', value=8)
 
@@ -122,6 +123,7 @@ def build() -> VibeWorkflow:
             scale_method=SCALE_METHOD,
             input=image,
         )
+
         ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
 
         positive, negative = LTXVConditioning(
@@ -166,6 +168,7 @@ def build() -> VibeWorkflow:
             image=resizeimagemasknode_2,
             points_to_sample=primitiveint,
         )
+
         width, height, batch_size = GetImageSize(image=resizeimagemasknode_2)
 
         ltxvdrawtracks = raw_call('LTXVDrawTracks', '5034',
@@ -192,6 +195,7 @@ def build() -> VibeWorkflow:
             latent=emptyltxvlatentvideo,
             vae=vae,
         )
+
         createvideo = CreateVideo(widget_0=8, fps=primitivefloat, images=ltxvdrawtracks)
 
         positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
@@ -231,6 +235,7 @@ def build() -> VibeWorkflow:
             sampler=ksamplerselect,
             sigmas=manualsigmas,
         )
+
         video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(

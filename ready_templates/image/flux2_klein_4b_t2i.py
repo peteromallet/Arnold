@@ -76,6 +76,7 @@ def text_to_image_flux2_klein_4b(
         width=primitiveint,
         height=primitiveint_2,
     )
+
     negative = CLIPTextEncode(text='', clip=cliploader)
     positive = CLIPTextEncode(text=text, clip=cliploader)
 
@@ -93,6 +94,7 @@ def text_to_image_flux2_klein_4b(
         sampler=ksamplerselect,
         sigmas=flux2scheduler,
     )
+
     vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
@@ -137,6 +139,7 @@ def text_to_image_flux2_klein_4b_distilled(
         width=primitiveint,
         height=primitiveint_2,
     )
+
     positive = CLIPTextEncode(text=text, clip=cliploader)
     conditioningzeroout = ConditioningZeroOut(conditioning=positive)
 
@@ -154,6 +157,7 @@ def text_to_image_flux2_klein_4b_distilled(
         sampler=ksamplerselect,
         sigmas=flux2scheduler,
     )
+
     vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
