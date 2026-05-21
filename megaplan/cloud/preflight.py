@@ -156,7 +156,14 @@ def resolve_cloud_chain_runtime_dependencies(
             }
         )
 
-    return {
+    # Policy fields from the chain spec
+    policy = {
+        "prerequisite_policy": chain_spec.prerequisite_policy,
+        "validation_policy": chain_spec.validation_policy,
+        "review_policy": dict(chain_spec.review_policy or {}),
+    }
+
+    result: dict[str, Any] = {
         "base_branch": chain_spec.base_branch,
         "cloud_default_agent": cloud_default_agent,
         "warning": AGENTS_DEFAULT_WARNING,
@@ -165,4 +172,29 @@ def resolve_cloud_chain_runtime_dependencies(
         "runtime_commands": sorted(runtime_commands),
         "env_hints": sorted(env_hints),
         "provider_requirements": provider_requirements,
+        "policy": policy,
     }
+
+    # When validation_policy is 'required', report a validation_environment
+    # section with capability requirements so cloud launchers know what
+    # tooling must be present.
+    if chain_spec.validation_policy == "required":
+        validation_commands: set[str] = set()
+        # Collect validation-specific commands (any agent could run validation)
+        for agent in required_agents:
+            for command in _COMMANDS_BY_AGENT.get(agent, ()):
+                validation_commands.add(command)
+        result["validation_environment"] = {
+            "required_commands": sorted(validation_commands),
+            "env_hints": (
+                sorted(env_hints)  # reuse the resolved env hints
+                if env_hints
+                else []
+            ),
+            "note": (
+                "validation_policy='required' — the cloud environment must "
+                "provide these commands and env vars for validation phases."
+            ),
+        }
+
+    return result

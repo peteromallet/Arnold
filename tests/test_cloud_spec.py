@@ -252,3 +252,106 @@ def test_cloud_spec_accepts_shannon_agent() -> None:
     """Cloud specs accept 'shannon' as a valid agent."""
     from megaplan.types import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
+
+
+# ---------------------------------------------------------------------------
+# T4: CloudSpec parsing of extra_repos and chain_session
+# ---------------------------------------------------------------------------
+
+
+def test_load_spec_parses_extra_repos_and_chain_session(tmp_path: Path) -> None:
+    """Spec with mapped extra_repos and chain.chain_session parses correctly."""
+    payload = _base_spec(mode="chain")
+    payload["extra_repos"] = [
+        {"url": "https://github.com/example/lib.git", "workspace": "/workspace/lib"},
+        {"url": "https://github.com/example/shared.git", "workspace": "/workspace/shared"},
+    ]
+    payload["chain"]["chain_session"] = "my-session"  # type: ignore[index]
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert [repo.workspace for repo in spec.extra_repos] == ["/workspace/lib", "/workspace/shared"]
+    assert spec.chain is not None
+    assert spec.chain.chain_session == "my-session"
+
+
+def test_load_spec_parses_extra_repos_empty_when_omitted(tmp_path: Path) -> None:
+    """Older spec without extra_repos field loads with empty list default."""
+    payload = _base_spec(mode="chain")
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.extra_repos == ()
+
+
+def test_load_spec_parses_chain_session_none_when_omitted(tmp_path: Path) -> None:
+    """Older spec without chain.chain_session loads with None default."""
+    payload = _base_spec(mode="chain")
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.chain is not None
+    assert spec.chain.chain_session is None
+
+
+def test_load_spec_parses_extra_repos_empty_list(tmp_path: Path) -> None:
+    """Spec with extra_repos: [] parses as empty list."""
+    payload = _base_spec(mode="chain")
+    payload["extra_repos"] = []
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.extra_repos == ()
+
+
+def test_load_spec_rejects_extra_repos_not_a_list(tmp_path: Path) -> None:
+    """Malformed extra_repos (not a list) raises validation error."""
+    payload = _base_spec(mode="chain")
+    payload["extra_repos"] = "not-a-list"
+    with pytest.raises(CliError, match="extra_repos.*must be a list"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_rejects_extra_repos_contains_non_mapping(tmp_path: Path) -> None:
+    """Malformed extra_repos (contains non-mapping element) raises validation error."""
+    payload = _base_spec(mode="chain")
+    payload["extra_repos"] = [
+        {"url": "https://github.com/example/lib.git", "workspace": "/workspace/lib"},
+        42,
+    ]
+    with pytest.raises(CliError, match="extra_repos\\[1\\].*mapping"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_rejects_extra_repos_contains_empty_workspace(tmp_path: Path) -> None:
+    """Malformed extra_repos (contains empty workspace) raises validation error."""
+    payload = _base_spec(mode="chain")
+    payload["extra_repos"] = [
+        {"url": "https://github.com/example/lib.git", "workspace": "/workspace/lib"},
+        {"url": "https://github.com/example/shared.git", "workspace": ""},
+    ]
+    with pytest.raises(CliError, match="extra_repos\\[1\\].workspace"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_rejects_chain_session_empty_string(tmp_path: Path) -> None:
+    """Empty chain.chain_session raises validation error."""
+    payload = _base_spec(mode="chain")
+    payload["chain"]["chain_session"] = ""  # type: ignore[index]
+    with pytest.raises(CliError, match="chain.chain_session.*non-empty string"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_rejects_chain_session_whitespace_only(tmp_path: Path) -> None:
+    """Whitespace-only chain.chain_session raises validation error."""
+    payload = _base_spec(mode="chain")
+    payload["chain"]["chain_session"] = "   "  # type: ignore[index]
+    with pytest.raises(CliError, match="chain.chain_session.*non-empty string"):
+        load_spec(_write_spec(tmp_path, payload))
+
+
+def test_load_spec_old_spec_without_new_fields_loads_unchanged(tmp_path: Path) -> None:
+    """Older specs without extra_repos or chain_session load unchanged with
+    all existing fields preserved."""
+    payload = _base_spec(mode="chain")
+    spec = load_spec(_write_spec(tmp_path, payload))
+    assert spec.extra_repos == ()
+    assert spec.chain is not None
+    assert spec.chain.chain_session is None
+    # Existing fields are unchanged
+    assert spec.provider == "railway"
+    assert spec.repo.workspace == "/workspace/app"
+    assert spec.chain.spec == "/workspace/chain.yaml"
+    assert spec.mode == "chain"

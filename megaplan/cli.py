@@ -89,8 +89,30 @@ from megaplan.profiles import (
 )
 from megaplan.execute.step_edit import handle_step
 from megaplan.resolutions import SUPPORTED_USER_ACTION_RESOLUTION_STATES
+from megaplan.user_actions import (
+    FALLBACK,
+    OMIT,
+)
+from megaplan.blocker_recovery import (
+    PREREQUISITE,
+    QUALITY,
+    build_prerequisite_scopes,
+    command_blocker_details,
+    evaluate_blocker_recovery,
+)
+from megaplan.orchestration.phase_result import BlockedTask, read_phase_result
+from megaplan.quality_resolutions import VALID_RESOLUTIONS as QUALITY_VALID_RESOLUTIONS
 
-_PROGRESS_PHASE_COMMANDS = {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
+_PROGRESS_PHASE_COMMANDS = {
+    "plan",
+    "prep",
+    "critique",
+    "revise",
+    "gate",
+    "finalize",
+    "execute",
+    "review",
+}
 
 
 def render_response(response: StepResponse, *, exit_code: int = 0) -> int:
@@ -169,17 +191,25 @@ def _emit_response_progress(command: str, response: StepResponse, emitter: Any) 
         next_step=response.get("next_step"),
     )
     if state == "done":
-        emitter.plan_done(summary=str(response.get("summary") or "Plan complete"), phase=step)
+        emitter.plan_done(
+            summary=str(response.get("summary") or "Plan complete"), phase=step
+        )
     elif state == "failed":
-        emitter.plan_failed(summary=str(response.get("summary") or "Plan failed"), phase=step)
+        emitter.plan_failed(
+            summary=str(response.get("summary") or "Plan failed"), phase=step
+        )
     elif state == "blocked":
-        emitter.execution_blocked(summary=str(response.get("summary") or "Execution blocked"), phase=step)
+        emitter.execution_blocked(
+            summary=str(response.get("summary") or "Execution blocked"), phase=step
+        )
 
 
 def _emit_error_progress(command: str, error: CliError, emitter: Any) -> None:
     if command not in _PROGRESS_PHASE_COMMANDS:
         return
-    emitter.phase_end(command, success=False, error_code=error.code, message=error.message)
+    emitter.phase_end(
+        command, success=False, error_code=error.code, message=error.message
+    )
 
 
 def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
@@ -350,6 +380,259 @@ def _compute_user_action_blockers(
     }
 
 
+def _batch_status_overlay(plan_dir: Path) -> dict[str, str]:
+    batch_status_overlay: dict[str, str] = {}
+    for batch_path in list_batch_artifacts(plan_dir):
+        try:
+            batch_data = read_json(batch_path)
+        except Exception:
+            continue
+        for update in batch_data.get("task_updates", []) or []:
+            if not isinstance(update, dict):
+                continue
+            task_id = update.get("task_id")
+            status = update.get("status")
+            if isinstance(task_id, str) and isinstance(status, str) and status:
+                batch_status_overlay[task_id] = status
+    return batch_status_overlay
+
+
+def _tasks_by_id(finalize_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    tasks = finalize_data.get("tasks", [])
+    if not isinstance(tasks, list):
+        return {}
+    return {
+        task["id"]: task
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
+
+
+def _phase_result_recovery_inputs(
+    plan_dir: Path,
+) -> tuple[tuple[BlockedTask, ...], tuple[Any, ...]]:
+    try:
+        phase_result = read_phase_result(plan_dir)
+    except Exception:
+        return (), ()
+    if phase_result is None:
+        return (), ()
+    return phase_result.blocked_tasks, phase_result.deviations
+
+
+def _synthetic_prerequisite_blocked_tasks(
+    finalize_data: dict[str, Any],
+    phase_blocked_tasks: tuple[BlockedTask, ...],
+) -> tuple[BlockedTask, ...]:
+    phase_task_ids = {blocked.task_id for blocked in phase_blocked_tasks}
+    blocked: list[BlockedTask] = []
+    for scope in build_prerequisite_scopes(finalize_data).values():
+        if scope.malformed_reason is not None:
+            continue
+        for task_id in scope.effective_task_ids:
+            if task_id in phase_task_ids:
+                continue
+            blocked.append(
+                BlockedTask(
+                    task_id=task_id,
+                    reason=f"blocked by user action {scope.action_id}",
+                    blocking_action_ids=(scope.action_id,),
+                    blocker_kind=PREREQUISITE,
+                )
+            )
+    return tuple(blocked)
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    return sorted({value for value in values if value})
+
+
+def _build_blocker_recovery_context(
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
+    prereq_blocked_tasks = phase_blocked_tasks + _synthetic_prerequisite_blocked_tasks(
+        finalize_data,
+        phase_blocked_tasks,
+    )
+    evaluation = evaluate_blocker_recovery(
+        finalize_data,
+        state,
+        blocked_tasks=prereq_blocked_tasks,
+        deviations=deviations,
+    )
+    blockers = command_blocker_details(evaluation)
+    suggested_commands = _unique_strings(
+        [
+            command
+            for blocker in blockers
+            for command in blocker.get("suggested_commands", [])
+            if isinstance(command, str)
+        ]
+    )
+    if state.get("current_state") == "blocked" and blockers:
+        plan_name = state.get("name")
+        if isinstance(plan_name, str) and plan_name:
+            suggested_commands.append(
+                f"override recover-blocked --plan {plan_name} --reason <reason>"
+            )
+            suggested_commands = _unique_strings(suggested_commands)
+    return {
+        "can_continue": evaluation.can_continue,
+        "has_terminal_blockers": evaluation.has_terminal_blockers,
+        "requires_rerun": evaluation.requires_rerun,
+        "blockers": blockers,
+        "prerequisite_blockers": [
+            blocker
+            for blocker in blockers
+            if blocker.get("blocker_kind") == PREREQUISITE
+        ],
+        "quality_blockers": [
+            blocker for blocker in blockers if blocker.get("blocker_kind") == QUALITY
+        ],
+        "suggested_commands": suggested_commands,
+    }
+
+
+def _build_blocked_tasks_context(
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build legacy-compatible blocked task status from shared recovery data."""
+    blocker_recovery = _build_blocker_recovery_context(plan_dir, finalize_data, state)
+    prereq_blockers = blocker_recovery.get("prerequisite_blockers", [])
+    if not prereq_blockers:
+        return []
+
+    tasks_by_id = _tasks_by_id(finalize_data)
+    batch_status_overlay = _batch_status_overlay(plan_dir)
+    blockers_by_task: dict[str, list[dict[str, Any]]] = {}
+    for blocker in prereq_blockers:
+        task_id = blocker.get("task_id")
+        if isinstance(task_id, str):
+            blockers_by_task.setdefault(task_id, []).append(blocker)
+
+    blocked_tasks: list[dict[str, Any]] = []
+    for task_id in sorted(blockers_by_task):
+        task = tasks_by_id.get(task_id)
+        if not task:
+            continue
+        task_status = batch_status_overlay.get(task_id, task.get("status", "pending"))
+        blockers = sorted(
+            blockers_by_task[task_id],
+            key=lambda item: str(item.get("blocker_id", "")),
+        )
+        blocking_info: list[dict[str, Any]] = []
+        all_behaviors: list[str] = []
+        blocking_action_ids: list[str] = []
+        effective_task_ids: list[str] = []
+        protected_task_ids: list[str] = []
+        suggested_commands: list[str] = []
+        synthetic_gate_task_ids: list[str] = []
+        for blocker in blockers:
+            action_ids = [
+                action_id
+                for action_id in blocker.get("blocking_action_ids", [])
+                if isinstance(action_id, str)
+            ]
+            blocking_action_ids.extend(action_ids)
+            effective_task_ids.extend(
+                task_id
+                for task_id in blocker.get("effective_task_ids", [])
+                if isinstance(task_id, str)
+            )
+            protected_task_ids.extend(
+                task_id
+                for task_id in blocker.get("protected_task_ids", [])
+                if isinstance(task_id, str)
+            )
+            suggested_commands.extend(
+                command
+                for command in blocker.get("suggested_commands", [])
+                if isinstance(command, str)
+            )
+            synthetic_gate_task_id = blocker.get("synthetic_gate_task_id")
+            if isinstance(synthetic_gate_task_id, str):
+                synthetic_gate_task_ids.append(synthetic_gate_task_id)
+            behavior = str(blocker.get("resolution_behavior", "hard_block"))
+            info: dict[str, Any] = {
+                "action_id": action_ids[0] if action_ids else "unknown",
+                "blocker_id": blocker.get("blocker_id"),
+                "blocker_kind": blocker.get("blocker_kind"),
+                "resolution_state": blocker.get("resolution_state", "unresolved"),
+                "behavior": behavior,
+                "is_non_terminal": blocker.get("is_non_terminal", False),
+                "is_terminal": blocker.get("is_terminal", True),
+                "suggested_commands": blocker.get("suggested_commands", []),
+            }
+            for field_name in (
+                "fallback_mode",
+                "instructions",
+                "reason",
+                "phase",
+                "evidence",
+                "debt_note",
+                "malformed_reason",
+            ):
+                if field_name in blocker:
+                    info[field_name] = blocker[field_name]
+            blocking_info.append(info)
+            all_behaviors.append(behavior)
+
+        resolved_behaviors = {FALLBACK, OMIT}
+        all_resolved = all(b in resolved_behaviors for b in all_behaviors)
+        has_rejected = any(
+            info.get("resolution_state") == "rejected" for info in blocking_info
+        )
+        if task_status == "blocked":
+            if all_resolved:
+                recommended_action = "rerun execute"
+            elif has_rejected:
+                recommended_action = "revise or abort"
+            else:
+                recommended_action = "record resolution"
+        else:
+            recommended_action = None
+        blocked_tasks.append(
+            {
+                "task_id": task_id,
+                "status": task_status,
+                "blocking_action_ids": _unique_strings(blocking_action_ids),
+                "resolutions": blocking_info,
+                "effective_behavior": "fallback" if all_resolved else "hard_block",
+                "recommended_action": recommended_action,
+                "blocker_ids": _unique_strings(
+                    [
+                        str(blocker.get("blocker_id"))
+                        for blocker in blockers
+                        if blocker.get("blocker_id") is not None
+                    ]
+                ),
+                "blocker_kinds": _unique_strings(
+                    [
+                        str(blocker.get("blocker_kind"))
+                        for blocker in blockers
+                        if blocker.get("blocker_kind") is not None
+                    ]
+                ),
+                "blockers": blockers,
+                "effective_task_ids": _unique_strings(effective_task_ids),
+                "uses_synthetic_gate_scope": bool(synthetic_gate_task_ids),
+                "synthetic_gate_task_id": (
+                    _unique_strings(synthetic_gate_task_ids)[0]
+                    if synthetic_gate_task_ids
+                    else None
+                ),
+                "protected_task_ids": _unique_strings(protected_task_ids),
+                "suggested_commands": _unique_strings(suggested_commands),
+            }
+        )
+    return blocked_tasks
+
+
 def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
     finalize_path = plan_dir / "finalize.json"
     if not finalize_path.exists():
@@ -409,7 +692,9 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
     tasks_blocked = sum(1 for t in tasks if t.get("status") == "blocked")
     tasks_total = len(tasks)
     completed_ids = {
-        t["id"] for t in tasks if t.get("status") in {"done", "skipped"} and isinstance(t.get("id"), str)
+        t["id"]
+        for t in tasks
+        if t.get("status") in {"done", "skipped"} and isinstance(t.get("id"), str)
     }
     batches_completed = sum(
         1
@@ -425,16 +710,46 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         for t in tasks
     ]
     if progress_source == "execution_batch_*.json":
-        granularity_note = (
-            "Progress reflects per-batch artifacts (latest execution_batch_*.json overlay)."
-        )
+        granularity_note = "Progress reflects per-batch artifacts (latest execution_batch_*.json overlay)."
     else:
-        granularity_note = (
-            "Progress reflects the last finalize.json write (between-batch granularity)."
+        granularity_note = "Progress reflects the last finalize.json write (between-batch granularity)."
+    # Build compact resolution context for the progress payload
+    blocked_tasks = _build_blocked_tasks_context(plan_dir, finalize_data, state)
+    blocker_recovery = _build_blocker_recovery_context(plan_dir, finalize_data, state)
+    blocked_task_resolution_summary = ""
+    blocking_action_ids_map: dict[str, list[str]] = {}
+    blocker_ids_map: dict[str, list[str]] = {}
+    if blocked_tasks:
+        resolved_count = sum(
+            1 for bt in blocked_tasks if bt.get("recommended_action") == "rerun execute"
         )
-    # Compute user-action blocker details
+        unresolved_count = len(blocked_tasks) - resolved_count
+        parts = []
+        if unresolved_count:
+            parts.append(
+                f"{unresolved_count} task(s) with unresolved/rejected blocking actions"
+            )
+        if resolved_count:
+            parts.append(
+                f"{resolved_count} task(s) with resolved actions ready for rerun"
+            )
+        blocked_task_resolution_summary = (
+            "; ".join(parts) if parts else "all blocked actions resolved"
+        )
+        for bt in blocked_tasks:
+            blocking_action_ids_map[bt["task_id"]] = bt["blocking_action_ids"]
+            blocker_ids_map[bt["task_id"]] = bt.get("blocker_ids", [])
     ua_blockers = _compute_user_action_blockers(plan_dir, finalize_data, tasks)
-    return {
+    # Augment task_status_list with blocking_action_ids
+    task_status_with_resolution = [
+        {
+            **ts,
+            "blocking_action_ids": blocking_action_ids_map.get(ts["id"], []),
+            "blocker_ids": blocker_ids_map.get(ts["id"], []),
+        }
+        for ts in task_status_list
+    ]
+    payload = {
         "summary": (
             f"Execution progress: {tasks_done + tasks_skipped}/{tasks_total} tasks tracked, "
             f"{batches_completed}/{len(global_batches)} batches completed. "
@@ -447,11 +762,17 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         "tasks_blocked": tasks_blocked,
         "batches_total": len(global_batches),
         "batches_completed": batches_completed,
-        "tasks": task_status_list,
+        "tasks": task_status_with_resolution,
         "blocked_tasks_detail": ua_blockers["blocked_tasks_detail"],
         "user_action_resolution_summary": ua_blockers["user_action_resolution_summary"],
         "recommended_action": ua_blockers["recommended_action"],
+        "blocked_task_resolution_summary": blocked_task_resolution_summary,
     }
+    if blocker_recovery["blockers"]:
+        payload["blocker_recovery"] = blocker_recovery
+        payload["quality_blockers"] = blocker_recovery["quality_blockers"]
+        payload["suggested_recovery_commands"] = blocker_recovery["suggested_commands"]
+    return payload
 
 
 def _build_last_step(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -477,7 +798,9 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
     step = details.get("step")
     if not isinstance(step, str) or not step:
         return details
-    configured_timeout_seconds = int(get_effective("execution", "worker_timeout_seconds"))
+    configured_timeout_seconds = int(
+        get_effective("execution", "worker_timeout_seconds")
+    )
     lock_held = plan_lock_is_held(plan_dir)
     raw_worker_pid = details.get("worker_pid")
     worker_pid: int | None
@@ -487,7 +810,9 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
         worker_pid = None
     started_at = _parse_utc_timestamp(details.get("started_at"))
     if started_at is not None:
-        age_seconds = max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
+        age_seconds = max(
+            0, int((datetime.now(timezone.utc) - started_at).total_seconds())
+        )
         details.update(
             build_phase_observability(
                 step,
@@ -499,13 +824,23 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
         )
         last_activity_at = _parse_utc_timestamp(details.get("last_activity_at"))
         if last_activity_at is not None:
-            idle_seconds = max(0, int((datetime.now(timezone.utc) - last_activity_at).total_seconds()))
+            idle_seconds = max(
+                0, int((datetime.now(timezone.utc) - last_activity_at).total_seconds())
+            )
             details["idle_seconds"] = idle_seconds
-            hard_idle_seconds = int(details.get("timeout_budget_seconds") or details.get("escalation_threshold_seconds") or 0)
+            hard_idle_seconds = int(
+                details.get("timeout_budget_seconds")
+                or details.get("escalation_threshold_seconds")
+                or 0
+            )
             if hard_idle_seconds > 0 and idle_seconds >= hard_idle_seconds:
                 details["idle_stale"] = True
                 details["health"] = "idle_stale" if lock_held else "stale"
-                details["recommended_action"] = "terminate_idle_step" if lock_held else details.get("recommended_action", "rerun_same_step")
+                details["recommended_action"] = (
+                    "terminate_idle_step"
+                    if lock_held
+                    else details.get("recommended_action", "rerun_same_step")
+                )
                 details["recommended_action_reason"] = (
                     f"The active step has produced no observed output or artifact activity for "
                     f"{humanize_seconds(idle_seconds)}."
@@ -528,7 +863,9 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                         "The active step is stale and no process holds the plan lock. "
                         "Safe next action: rerun the same step on the same agent before escalating."
                     )
-        max_seconds = int(details.get("expected_duration_seconds", {}).get("max", 0) or 0)
+        max_seconds = int(
+            details.get("expected_duration_seconds", {}).get("max", 0) or 0
+        )
         elapsed_label = humanize_seconds(age_seconds)
         if details.get("stale"):
             details["phase_progress_summary"] = (
@@ -545,7 +882,9 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
                 f"{humanize_seconds(max_seconds)})."
             )
             if max_seconds > 0:
-                details["progress_pct"] = min(95, int((age_seconds / max_seconds) * 100))
+                details["progress_pct"] = min(
+                    95, int((age_seconds / max_seconds) * 100)
+                )
     else:
         details.update(
             build_phase_observability(
@@ -590,7 +929,9 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     last_step = _build_last_step(state)
     plan_mode = state.get("config", {}).get("mode", "code")
     plan_output_path = state.get("config", {}).get("output_path")
-    summary = f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
+    summary = (
+        f"Plan '{state['name']}' is currently in state '{state['current_state']}'."
+    )
     if is_prose_mode(state):
         summary += f" Mode: {plan_mode}. Output: {plan_output_path}."
     if active_step:
@@ -632,17 +973,58 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             if isinstance(value, dict)
         ],
     }
+    # Add blocked_tasks resolution context when finalize.json exists
+    finalize_path = plan_dir / "finalize.json"
+    if finalize_path.exists():
+        finalize_data = read_json(finalize_path)
+        blocked_tasks = _build_blocked_tasks_context(plan_dir, finalize_data, state)
+        blocker_recovery = _build_blocker_recovery_context(
+            plan_dir,
+            finalize_data,
+            state,
+        )
+        if blocked_tasks:
+            response["blocked_tasks"] = blocked_tasks
+        if blocker_recovery["blockers"]:
+            response["blocker_recovery"] = blocker_recovery
+            response["quality_blockers"] = blocker_recovery["quality_blockers"]
+            response["suggested_recovery_commands"] = blocker_recovery[
+                "suggested_commands"
+            ]
     runtime = build_next_step_runtime(
         response.get("next_step"),
-        configured_timeout_seconds=int(get_effective("execution", "worker_timeout_seconds")),
+        configured_timeout_seconds=int(
+            get_effective("execution", "worker_timeout_seconds")
+        ),
     )
     if runtime is not None:
         response["next_step_runtime"] = runtime
-    progress = _build_progress_payload(plan_dir, state) if (plan_dir / "finalize.json").exists() else None
+    progress = (
+        _build_progress_payload(plan_dir, state)
+        if (plan_dir / "finalize.json").exists()
+        else None
+    )
     if progress is not None:
         response["progress"] = progress
         response["summary"] = response["summary"] + " " + progress["summary"]
     return response
+
+
+def _parse_user_action_evidence(raw: Any) -> list[str] | None:
+    if raw is None:
+        return None
+    values: list[str] = []
+    if isinstance(raw, str):
+        raw_items = [raw]
+    elif isinstance(raw, list):
+        raw_items = raw
+    else:
+        return None
+    for item in raw_items:
+        if not isinstance(item, str):
+            continue
+        values.extend(part.strip() for part in item.split(",") if part.strip())
+    return values or None
 
 
 def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -694,7 +1076,9 @@ def handle_watch(root: Path, args: argparse.Namespace) -> StepResponse:
     return response
 
 
-def _collect_megaplan_roots(root: Path, *, tree: bool = False, all_system: bool = False) -> list[Path]:
+def _collect_megaplan_roots(
+    root: Path, *, tree: bool = False, all_system: bool = False
+) -> list[Path]:
     """Collect .megaplan root directories based on search mode."""
     roots: list[Path] = [root]
 
@@ -720,7 +1104,10 @@ def _collect_megaplan_roots(root: Path, *, tree: bool = False, all_system: bool 
         for megaplan_dir in sorted(root.rglob(".megaplan")):
             if megaplan_dir.is_dir():
                 candidate = megaplan_dir.parent
-                if has_any_plan_root(candidate) and candidate.resolve() != root.resolve():
+                if (
+                    has_any_plan_root(candidate)
+                    and candidate.resolve() != root.resolve()
+                ):
                     roots.append(candidate)
 
     return roots
@@ -783,7 +1170,9 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
                 except ValueError:
                     try:
                         resolved_root.relative_to(resolved_search)
-                        entry["location"] = os.path.relpath(resolved_search, resolved_root)
+                        entry["location"] = os.path.relpath(
+                            resolved_search, resolved_root
+                        )
                         entry["direction"] = "parent"
                     except ValueError:
                         entry["location"] = str(resolved_search)
@@ -811,7 +1200,9 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
     hidden_done = total_scanned - len(items) if filter_active else 0
     hints: list[str] = []
     if hidden_done > 0:
-        hints.append(f"{hidden_done} terminal plans hidden (use --include-done to show)")
+        hints.append(
+            f"{hidden_done} terminal plans hidden (use --include-done to show)"
+        )
     if not search_all:
         hints.append("Use --all to search all plans system-wide")
     if hints:
@@ -827,7 +1218,11 @@ def handle_debt(root: Path, args: argparse.Namespace) -> StepResponse:
     default_plan_id = getattr(args, "plan", None) or "manual"
 
     if action == "list":
-        entries = registry["entries"] if args.all else [entry for entry in registry["entries"] if not entry["resolved"]]
+        entries = (
+            registry["entries"]
+            if args.all
+            else [entry for entry in registry["entries"] if not entry["resolved"]]
+        )
         grouped: dict[str, list[dict[str, Any]]] = {}
         for entry in entries:
             grouped.setdefault(entry["subsystem"], []).append(entry)
@@ -839,9 +1234,15 @@ def handle_debt(root: Path, args: argparse.Namespace) -> StepResponse:
             {
                 "subsystem": subsystem,
                 "escalated": subsystem in escalated,
-                "total_occurrences": subsystem_occurrence_total(entries_for_subsystem)
-                if not args.all
-                else sum(entry["occurrence_count"] for entry in entries_for_subsystem if not entry["resolved"]),
+                "total_occurrences": (
+                    subsystem_occurrence_total(entries_for_subsystem)
+                    if not args.all
+                    else sum(
+                        entry["occurrence_count"]
+                        for entry in entries_for_subsystem
+                        if not entry["resolved"]
+                    )
+                ),
                 "entries": entries_for_subsystem,
             }
             for subsystem, entries_for_subsystem in sorted(grouped.items())
@@ -1040,8 +1441,13 @@ def handle_user_action(root: Path, args: argparse.Namespace) -> StepResponse:
 # Setup and config
 # ---------------------------------------------------------------------------
 
+
 def _canonical_instructions() -> str:
-    return resources.files("megaplan").joinpath("data", "instructions.md").read_text(encoding="utf-8")
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "instructions.md")
+        .read_text(encoding="utf-8")
+    )
 
 
 _SKILL_HEADER = """\
@@ -1066,7 +1472,11 @@ def bundled_agents_md() -> str:
 
 
 def _subagent_appendix(filename: str) -> str:
-    content = resources.files("megaplan").joinpath("data", filename).read_text(encoding="utf-8")
+    content = (
+        resources.files("megaplan")
+        .joinpath("data", filename)
+        .read_text(encoding="utf-8")
+    )
     content = content.replace(
         "{max_execute_no_progress}",
         str(get_effective("execution", "max_execute_no_progress")),
@@ -1087,19 +1497,35 @@ def _codex_subagent_appendix() -> str:
 
 
 def _canonical_tickets_skill() -> str:
-    return resources.files("megaplan").joinpath("data", "tickets_skill.md").read_text(encoding="utf-8")
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "tickets_skill.md")
+        .read_text(encoding="utf-8")
+    )
 
 
 def _canonical_decision_skill() -> str:
-    return resources.files("megaplan").joinpath("data", "decision_skill.md").read_text(encoding="utf-8")
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "decision_skill.md")
+        .read_text(encoding="utf-8")
+    )
 
 
 def _canonical_epic_skill() -> str:
-    return resources.files("megaplan").joinpath("data", "epic_skill.md").read_text(encoding="utf-8")
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "epic_skill.md")
+        .read_text(encoding="utf-8")
+    )
 
 
 def _canonical_observe_skill() -> str:
-    return resources.files("megaplan").joinpath("data", "observe_skill.md").read_text(encoding="utf-8")
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "observe_skill.md")
+        .read_text(encoding="utf-8")
+    )
 
 
 def _canonical_cloud_skill() -> str:
@@ -1111,7 +1537,11 @@ def _canonical_bakeoff_skill() -> str:
 
 
 def _canonical_composed(name: str) -> str:
-    return resources.files("megaplan").joinpath("data", "_composed", name).read_text(encoding="utf-8")
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "_composed", name)
+        .read_text(encoding="utf-8")
+    )
 
 
 def bundled_global_file(name: str) -> str:
@@ -1179,14 +1609,21 @@ _GLOBAL_TARGETS = [
 ]
 
 
-def _install_owned_file(path: Path, content: str, *, force: bool = False) -> dict[str, bool | str]:
+def _install_owned_file(
+    path: Path, content: str, *, force: bool = False
+) -> dict[str, bool | str]:
     existed = path.exists()
     if existed and not force:
         # If the target is a symlink pointing at the canonical source, leave it
         # alone. Replacing a symlink with a regular-file copy would reintroduce
         # the shadow-doc problem.
         if path.is_symlink():
-            return {"path": str(path), "skipped": True, "existed": True, "reason": "symlinked"}
+            return {
+                "path": str(path),
+                "skipped": True,
+                "existed": True,
+                "reason": "symlinked",
+            }
         if path.read_text(encoding="utf-8") == content:
             return {"path": str(path), "skipped": True, "existed": True}
     if path.is_symlink() or path.exists():
@@ -1195,7 +1632,9 @@ def _install_owned_file(path: Path, content: str, *, force: bool = False) -> dic
     return {"path": str(path), "skipped": False, "existed": existed}
 
 
-def _install_owned_symlink(path: Path, target_path: Path, *, force: bool = False) -> dict[str, bool | str]:
+def _install_owned_symlink(
+    path: Path, target_path: Path, *, force: bool = False
+) -> dict[str, bool | str]:
     """Install a symlink at `path` pointing at the canonical `target_path`.
 
     Replaces existing regular files or stale symlinks so the install code can
@@ -1206,19 +1645,36 @@ def _install_owned_symlink(path: Path, target_path: Path, *, force: bool = False
     try:
         canonical = target_path.resolve(strict=True)
     except (FileNotFoundError, OSError) as exc:
-        return {"path": str(path), "skipped": True, "existed": path.exists() or path.is_symlink(), "reason": f"canonical missing: {exc}"}
+        return {
+            "path": str(path),
+            "skipped": True,
+            "existed": path.exists() or path.is_symlink(),
+            "reason": f"canonical missing: {exc}",
+        }
     existed = path.exists() or path.is_symlink()
     if existed and not force and path.is_symlink():
         try:
             if path.resolve(strict=True) == canonical:
-                return {"path": str(path), "target": str(canonical), "skipped": True, "existed": True, "symlink": True}
+                return {
+                    "path": str(path),
+                    "target": str(canonical),
+                    "skipped": True,
+                    "existed": True,
+                    "symlink": True,
+                }
         except (FileNotFoundError, OSError):
             pass  # stale symlink — fall through and replace
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() or path.is_symlink():
         path.unlink()
     path.symlink_to(canonical)
-    return {"path": str(path), "target": str(canonical), "skipped": False, "existed": existed, "symlink": True}
+    return {
+        "path": str(path),
+        "target": str(canonical),
+        "skipped": False,
+        "existed": existed,
+        "symlink": True,
+    }
 
 
 def _install_owned_dir_symlink(path: Path, target_dir: Path, *, force: bool = False) -> dict[str, bool | str]:
@@ -1268,8 +1724,14 @@ def handle_regen_composed() -> dict[str, Any]:
     """
     instructions = _canonical_instructions()
     targets = {
-        "claude_skill.md": _SKILL_HEADER + instructions + "\n\n" + _claude_subagent_appendix(),
-        "codex_skill.md": _SKILL_HEADER + instructions + "\n\n" + _codex_subagent_appendix(),
+        "claude_skill.md": _SKILL_HEADER
+        + instructions
+        + "\n\n"
+        + _claude_subagent_appendix(),
+        "codex_skill.md": _SKILL_HEADER
+        + instructions
+        + "\n\n"
+        + _codex_subagent_appendix(),
         "cursor_rule.mdc": _CURSOR_HEADER + instructions,
     }
     codex_skill_dirs = {
@@ -1286,7 +1748,9 @@ def handle_regen_composed() -> dict[str, Any]:
     changed: list[str] = []
     for name, computed in targets.items():
         target_path = Path(str(composed_dir)) / name
-        current = target_path.read_text(encoding="utf-8") if target_path.is_file() else ""
+        current = (
+            target_path.read_text(encoding="utf-8") if target_path.is_file() else ""
+        )
         if current != computed:
             atomic_write_text(target_path, computed)
             changed.append(name)
@@ -1315,7 +1779,14 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
     for target in _GLOBAL_TARGETS:
         agent_dir = home / target["detect"]
         if not agent_dir.is_dir():
-            installed.append({"agent": target["agent"], "path": str(home / target["path"]), "skipped": True, "reason": "not installed"})
+            installed.append(
+                {
+                    "agent": target["agent"],
+                    "path": str(home / target["path"]),
+                    "skipped": True,
+                    "reason": "not installed",
+                }
+            )
             continue
         detected_count += 1
         mode = target.get("install", "copy")
@@ -1341,7 +1812,9 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
         installed.append(result)
     if detected_count == 0:
         return {
-            "success": False, "step": "setup", "mode": "global",
+            "success": False,
+            "step": "setup",
+            "mode": "global",
             "summary": "No supported agents detected. Create one of ~/.claude/, ~/.codex/, or ~/.cursor/ and re-run.",
             "installed": installed,
         }
@@ -1349,7 +1822,10 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
     config_path = None
     routing = None
     if available:
-        agents_config = {step: (default if default in available else available[0]) for step, default in DEFAULT_AGENT_ROUTING.items()}
+        agents_config = {
+            step: (default if default in available else available[0])
+            for step, default in DEFAULT_AGENT_ROUTING.items()
+        }
         config = load_config(home)
         config["agents"] = agents_config
         config_path = save_config(config, home)
@@ -1361,8 +1837,16 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
         elif rec["skipped"]:
             lines.append(f"  {rec['agent']}: up to date")
         else:
-            lines.append(f"  {rec['agent']}: {'overwrote' if rec['existed'] else 'created'} {rec['path']}")
-    result_data: dict[str, Any] = {"success": True, "step": "setup", "mode": "global", "summary": "Global setup complete:\n" + "\n".join(lines), "installed": installed}
+            lines.append(
+                f"  {rec['agent']}: {'overwrote' if rec['existed'] else 'created'} {rec['path']}"
+            )
+    result_data: dict[str, Any] = {
+        "success": True,
+        "step": "setup",
+        "mode": "global",
+        "summary": "Global setup complete:\n" + "\n".join(lines),
+        "installed": installed,
+    }
     if config_path is not None:
         result_data["config_path"] = str(config_path)
         result_data["routing"] = routing
@@ -1381,18 +1865,36 @@ def handle_setup(args: argparse.Namespace) -> StepResponse:
     if target.exists() and not args.force:
         existing = target.read_text(encoding="utf-8")
         if "megaplan" in existing.lower():
-            return {"success": True, "step": "setup", "summary": f"AGENTS.md already contains megaplan instructions at {target}", "skipped": True}
+            return {
+                "success": True,
+                "step": "setup",
+                "summary": f"AGENTS.md already contains megaplan instructions at {target}",
+                "skipped": True,
+            }
         atomic_write_text(target, existing + "\n\n" + content)
-        return {"success": True, "step": "setup", "summary": f"Appended megaplan instructions to existing {target}", "file": str(target)}
+        return {
+            "success": True,
+            "step": "setup",
+            "summary": f"Appended megaplan instructions to existing {target}",
+            "file": str(target),
+        }
     atomic_write_text(target, content)
-    return {"success": True, "step": "setup", "summary": f"Created {target}", "file": str(target)}
+    return {
+        "success": True,
+        "step": "setup",
+        "summary": f"Created {target}",
+        "file": str(target),
+    }
 
 
 def handle_config(args: argparse.Namespace) -> StepResponse:
     action = args.config_action
     if action == "show":
         config = load_config()
-        effective_routing = {step: config.get("agents", {}).get(step, default) for step, default in DEFAULT_AGENT_ROUTING.items()}
+        effective_routing = {
+            step: config.get("agents", {}).get(step, default)
+            for step, default in DEFAULT_AGENT_ROUTING.items()
+        }
         effective_settings = {
             dot_key: get_effective(section, setting)
             for dot_key in sorted(DEFAULTS)
@@ -1427,13 +1929,21 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
         normalized_value = value.strip().lower()
         if section == "agents":
             if setting not in DEFAULT_AGENT_ROUTING:
-                raise CliError("invalid_args", f"Unknown step '{setting}'. Valid steps: {', '.join(DEFAULT_AGENT_ROUTING)}")
+                raise CliError(
+                    "invalid_args",
+                    f"Unknown step '{setting}'. Valid steps: {', '.join(DEFAULT_AGENT_ROUTING)}",
+                )
             if value not in KNOWN_AGENTS:
-                raise CliError("invalid_args", f"Unknown agent '{value}'. Valid agents: {', '.join(KNOWN_AGENTS)}")
+                raise CliError(
+                    "invalid_args",
+                    f"Unknown agent '{value}'. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                )
             config.setdefault("agents", {})[setting] = value
         elif key == "orchestration.mode":
             if value not in {"inline", "subagent"}:
-                raise CliError("invalid_args", "orchestration.mode must be 'inline' or 'subagent'")
+                raise CliError(
+                    "invalid_args", "orchestration.mode must be 'inline' or 'subagent'"
+                )
             config.setdefault("orchestration", {})["mode"] = value
         elif key in _SETTABLE_BOOL:
             if normalized_value in {"true", "1", "yes", "on"}:
@@ -1458,7 +1968,9 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
             try:
                 parsed_value = int(value)
             except ValueError as exc:
-                raise CliError("invalid_args", f"{key} must be an integer, got '{value}'") from exc
+                raise CliError(
+                    "invalid_args", f"{key} must be an integer, got '{value}'"
+                ) from exc
             config.setdefault(section, {})[setting] = parsed_value
         else:
             raise CliError(
@@ -1466,7 +1978,13 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
                 f"Unknown config key '{key}'. Valid keys: {', '.join(valid_keys)}",
             )
         save_config(config)
-        return {"success": True, "step": "config", "action": "set", "key": key, "value": config[section][setting]}
+        return {
+            "success": True,
+            "step": "config",
+            "action": "set",
+            "key": key,
+            "value": config[section][setting],
+        }
     if action == "profiles":
         project_dir = Path.cwd()
         profiles_action = args.profiles_action
@@ -1477,7 +1995,9 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
                     "name": profile_name,
                     "phases": phase_map,
                 }
-                for source_label, profile_name, phase_map in load_profile_sources(project_dir=project_dir)
+                for source_label, profile_name, phase_map in load_profile_sources(
+                    project_dir=project_dir
+                )
             ]
             return {
                 "success": True,
@@ -1530,7 +2050,12 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
         path = config_dir() / "config.json"
         if path.exists():
             path.unlink()
-        return {"success": True, "step": "config", "action": "reset", "summary": "Config file removed. Using defaults."}
+        return {
+            "success": True,
+            "step": "config",
+            "action": "reset",
+            "summary": "Config file removed. Using defaults.",
+        }
     raise CliError("invalid_args", f"Unknown config action: {action}")
 
 
@@ -1538,11 +2063,18 @@ def handle_config(args: argparse.Namespace) -> StepResponse:
 # Store factory
 # ---------------------------------------------------------------------------
 
+
 def build_store(args: argparse.Namespace):
     """Return a DBStore configured for writes, or None for the file backend."""
     backend = getattr(args, "backend", None) or os.environ.get("MEGAPLAN_BACKEND")
     if backend == "db":
-        from megaplan.store import DBStore, require_actor_id, resolve_actor_id, validate_actor_exists
+        from megaplan.store import (
+            DBStore,
+            require_actor_id,
+            resolve_actor_id,
+            validate_actor_exists,
+        )
+
         actor_id = require_actor_id(resolve_actor_id(args))
         store = DBStore(actor_id=actor_id)
         validate_actor_exists(store, actor_id)
@@ -1582,13 +2114,17 @@ def _snapshot_payload(store: Any, epic_id: str) -> dict[str, Any]:
     return {
         "epic": _jsonable_model(entities["epic"]),
         "body": store.load_body(epic_id),
-        "checklist_items": [_jsonable_model(row) for row in entities["checklist_items"]],
+        "checklist_items": [
+            _jsonable_model(row) for row in entities["checklist_items"]
+        ],
         "sprints": [_jsonable_model(row) for row in entities["sprints"]],
         "sprint_items": [_jsonable_model(row) for row in entities["sprint_items"]],
         "plans": [_jsonable_model(row) for row in entities["plans"]],
         "plan_artifacts_by_plan": plan_artifacts,
         "images": [_jsonable_model(row) for row in entities["images"]],
-        "second_opinions": [_jsonable_model(row) for row in entities["second_opinions"]],
+        "second_opinions": [
+            _jsonable_model(row) for row in entities["second_opinions"]
+        ],
         "feedback": [_jsonable_model(row) for row in entities["feedback"]],
         "code_artifacts": [_jsonable_model(row) for row in entities["code_artifacts"]],
         "epic_events": [_jsonable_model(row) for row in entities["epic_events"]],
@@ -1596,7 +2132,13 @@ def _snapshot_payload(store: Any, epic_id: str) -> dict[str, Any]:
 
 
 def _snapshot_dir(epic_id: str) -> Path:
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z").replace(":", "-")
+    timestamp = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+        .replace(":", "-")
+    )
     return Path.home() / ".megaplan" / "snapshots" / f"{epic_id}-{timestamp}"
 
 
@@ -1652,14 +2194,23 @@ def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
             warnings = store.warn_incomplete_migrations()
             if args.resume:
                 if args.epic_id:
-                    raise CliError("invalid_args", "epic migrate --resume does not accept an epic id")
+                    raise CliError(
+                        "invalid_args",
+                        "epic migrate --resume does not accept an epic id",
+                    )
                 run = store.resume_migration(args.resume, ttl_seconds=args.ttl)
                 migration_action = "resume"
             else:
                 if not args.epic_id:
-                    raise CliError("invalid_args", "epic migrate requires an epic id unless --resume is used")
+                    raise CliError(
+                        "invalid_args",
+                        "epic migrate requires an epic id unless --resume is used",
+                    )
                 if not args.to:
-                    raise CliError("invalid_args", "epic migrate requires --to file|db unless --resume is used")
+                    raise CliError(
+                        "invalid_args",
+                        "epic migrate requires --to file|db unless --resume is used",
+                    )
                 run = store.migrate_epic(args.epic_id, to=args.to, ttl_seconds=args.ttl)
                 migration_action = "migrate"
         finally:
@@ -1698,7 +2249,9 @@ def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
                     f"Epic {args.epic_id!r} export has missing or corrupt blobs",
                     extra={"errors": collected["errors"]},
                 )
-            output = write_epic_export_tar(collected, args.output, gzip_output=bool(args.gzip))
+            output = write_epic_export_tar(
+                collected, args.output, gzip_output=bool(args.gzip)
+            )
         finally:
             close = getattr(store, "close", None)
             if callable(close):
@@ -1741,13 +2294,22 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
     # When present, enter the human-gate resume flow consuming --choice.
     # When absent, fall through to existing state.json::resume_cursor recovery.
     from megaplan._core.io import find_plan_dir
+
     plan_dir = find_plan_dir(root, args.plan)
     if plan_dir is not None and (plan_dir / "awaiting_user.json").exists():
         return _resume_yaml_human_gate(root, plan_dir, args)
 
     store = None
-    if getattr(args, "actor", None) or getattr(args, "backend", None) == "db" or os.environ.get("MEGAPLAN_ACTOR_ID"):
-        store = build_epic_store(root, actor_id=getattr(args, "actor", None) or os.environ.get("MEGAPLAN_ACTOR_ID"))
+    if (
+        getattr(args, "actor", None)
+        or getattr(args, "backend", None) == "db"
+        or os.environ.get("MEGAPLAN_ACTOR_ID")
+    ):
+        store = build_epic_store(
+            root,
+            actor_id=getattr(args, "actor", None)
+            or os.environ.get("MEGAPLAN_ACTOR_ID"),
+        )
     try:
         return resume_plan(root, args.plan, store=store)
     finally:
@@ -1756,7 +2318,9 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
             close()
 
 
-def _resume_yaml_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> dict[str, Any]:
+def _resume_yaml_human_gate(
+    root: Path, plan_dir: Path, args: argparse.Namespace
+) -> dict[str, Any]:
     """Resume a YAML pipeline paused at a human_gate stage.
 
     Re-reads ``awaiting_user.json``, validates the ``--choice`` argument,
@@ -1767,26 +2331,31 @@ def _resume_yaml_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace
     try:
         data = json.loads(awaiting_path.read_text())
     except (json.JSONDecodeError, OSError) as exc:
-        raise CliError("bad_awaiting_user",
-                       f"Cannot read awaiting_user.json: {exc}") from exc
+        raise CliError(
+            "bad_awaiting_user", f"Cannot read awaiting_user.json: {exc}"
+        ) from exc
 
     pipeline_name = data.get("pipeline")
     if not pipeline_name:
-        raise CliError("bad_awaiting_user",
-                       "awaiting_user.json is missing 'pipeline' field")
+        raise CliError(
+            "bad_awaiting_user", "awaiting_user.json is missing 'pipeline' field"
+        )
 
     choices = data.get("choices", [])
     choice = getattr(args, "choice", None)
     if not choice:
-        raise CliError("missing_choice",
-                       f"Pipeline '{pipeline_name}' is paused at human_gate stage "
-                       f"'{data.get('stage', '?')}'. "
-                       f"Use --choice with one of: {', '.join(choices)}")
+        raise CliError(
+            "missing_choice",
+            f"Pipeline '{pipeline_name}' is paused at human_gate stage "
+            f"'{data.get('stage', '?')}'. "
+            f"Use --choice with one of: {', '.join(choices)}",
+        )
 
     if choice not in choices:
-        raise CliError("invalid_choice",
-                       f"Invalid choice '{choice}'. "
-                       f"Valid choices: {', '.join(choices)}")
+        raise CliError(
+            "invalid_choice",
+            f"Invalid choice '{choice}'. " f"Valid choices: {', '.join(choices)}",
+        )
 
     from megaplan._pipeline.loader import load_pipeline
     from megaplan._pipeline.compiler import compile_pipeline, inject_pipeline_context
@@ -1860,7 +2429,9 @@ def _collect_feedback_rows(
     seen: set[tuple[str, str]] = set()
 
     # --- File backend: walk known megaplan project roots and read feedback.md
-    for search_root in _collect_megaplan_roots(root, tree=not all_system, all_system=all_system):
+    for search_root in _collect_megaplan_roots(
+        root, tree=not all_system, all_system=all_system
+    ):
         for plan_dir in active_plan_dirs(search_root):
             fb = load_feedback(plan_dir)
             if fb is None or fb.is_empty():
@@ -1874,19 +2445,27 @@ def _collect_feedback_rows(
             repo = config.get("project_dir") if isinstance(config, dict) else None
             key = (state.get("name", plan_dir.name), str(repo or search_root))
             seen.add(key)
-            rows.append({
-                "plan": state.get("name", plan_dir.name),
-                "profile": profile,
-                "repo": repo or str(search_root),
-                "state": state.get("current_state"),
-                "backend": "file",
-                "feedback_path": str(feedback_path(plan_dir)),
-                "feedback": fb.to_dict(),
-            })
+            rows.append(
+                {
+                    "plan": state.get("name", plan_dir.name),
+                    "profile": profile,
+                    "repo": repo or str(search_root),
+                    "state": state.get("current_state"),
+                    "backend": "file",
+                    "feedback_path": str(feedback_path(plan_dir)),
+                    "feedback": fb.to_dict(),
+                }
+            )
 
     # --- DB backend: if an actor is configured, pull rows with non-empty feedback
-    if include_db and (os.environ.get("MEGAPLAN_ACTOR_ID") or getattr(_collect_feedback_rows, "_actor_override", None)):
-        actor_id = getattr(_collect_feedback_rows, "_actor_override", None) or os.environ["MEGAPLAN_ACTOR_ID"]
+    if include_db and (
+        os.environ.get("MEGAPLAN_ACTOR_ID")
+        or getattr(_collect_feedback_rows, "_actor_override", None)
+    ):
+        actor_id = (
+            getattr(_collect_feedback_rows, "_actor_override", None)
+            or os.environ["MEGAPLAN_ACTOR_ID"]
+        )
         try:
             store = build_epic_store(root, actor_id=actor_id)
         except Exception:
@@ -1898,21 +2477,27 @@ def _collect_feedback_rows(
                     if not fb_dict:
                         continue
                     config = plan.config or {}
-                    profile = config.get("profile") if isinstance(config, dict) else None
-                    repo = config.get("project_dir") if isinstance(config, dict) else None
+                    profile = (
+                        config.get("profile") if isinstance(config, dict) else None
+                    )
+                    repo = (
+                        config.get("project_dir") if isinstance(config, dict) else None
+                    )
                     key = (plan.name, str(repo or ""))
                     if key in seen:
                         continue
                     seen.add(key)
-                    rows.append({
-                        "plan": plan.name,
-                        "profile": profile,
-                        "repo": repo,
-                        "state": plan.current_state,
-                        "backend": "db",
-                        "plan_id": plan.id,
-                        "feedback": fb_dict,
-                    })
+                    rows.append(
+                        {
+                            "plan": plan.name,
+                            "profile": profile,
+                            "repo": repo,
+                            "state": plan.current_state,
+                            "backend": "db",
+                            "plan_id": plan.id,
+                            "feedback": fb_dict,
+                        }
+                    )
             finally:
                 close = getattr(store, "close", None)
                 if callable(close):
@@ -1920,7 +2505,9 @@ def _collect_feedback_rows(
     return rows
 
 
-def _filter_feedback_rows(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict[str, Any]]:
+def _filter_feedback_rows(
+    rows: list[dict[str, Any]], args: argparse.Namespace
+) -> list[dict[str, Any]]:
     profile = (getattr(args, "profile", None) or "").lower() or None
     repo = (getattr(args, "repo", None) or "").lower() or None
     min_rating = getattr(args, "min_rating", None)
@@ -1934,7 +2521,7 @@ def _filter_feedback_rows(rows: list[dict[str, Any]], args: argparse.Namespace) 
         if repo and repo not in (str(row.get("repo") or "")).lower():
             return False
         fb = row.get("feedback") or {}
-        overall = (fb.get("overall") or {})
+        overall = fb.get("overall") or {}
         rating = overall.get("rating")
         if rating is None:
             rating = overall.get("ai_rating")
@@ -1943,7 +2530,9 @@ def _filter_feedback_rows(rows: list[dict[str, Any]], args: argparse.Namespace) 
         if max_rating is not None and (rating is None or rating > max_rating):
             return False
         if has_comment:
-            comment = (overall.get("comment") or "").strip() or (overall.get("ai_comment") or "").strip()
+            comment = (overall.get("comment") or "").strip() or (
+                overall.get("ai_comment") or ""
+            ).strip()
             if not comment:
                 return False
         if stage:
@@ -1969,7 +2558,7 @@ def _render_feedback_table(rows: list[dict[str, Any]]) -> str:
     lines.append("-" * len(header))
     for row in rows:
         fb = row.get("feedback") or {}
-        overall = (fb.get("overall") or {})
+        overall = fb.get("overall") or {}
         rating = overall.get("rating")
         ai_only = rating is None
         if rating is None:
@@ -2064,7 +2653,9 @@ def _merge_feedback(existing: Any, ai_fb: Any) -> Any:
 
     merged = PlanFeedback()
 
-    def _merge_stage(user_sf: StageFeedback | None, ai_sf: StageFeedback | None) -> StageFeedback:
+    def _merge_stage(
+        user_sf: StageFeedback | None, ai_sf: StageFeedback | None
+    ) -> StageFeedback:
         rating = user_sf.rating if user_sf else None
         comment = user_sf.comment if user_sf else None
         if ai_sf is not None and ai_sf.ai_rating is not None:
@@ -2080,8 +2671,10 @@ def _merge_feedback(existing: Any, ai_fb: Any) -> Any:
         else:
             ai_comment = None
         return StageFeedback(
-            rating=rating, comment=comment,
-            ai_rating=ai_rating, ai_comment=ai_comment,
+            rating=rating,
+            comment=comment,
+            ai_rating=ai_rating,
+            ai_comment=ai_comment,
         )
 
     user_overall = existing.overall if existing else None
@@ -2101,22 +2694,31 @@ def _merge_feedback(existing: Any, ai_fb: Any) -> Any:
     return merged
 
 
-def _push_feedback_to_db(root: Path, *, plan_name: str, feedback_dict: dict[str, Any]) -> dict[str, Any]:
+def _push_feedback_to_db(
+    root: Path, *, plan_name: str, feedback_dict: dict[str, Any]
+) -> dict[str, Any]:
     """Push a parsed feedback dict to the DB plan row, if a DB actor is configured.
 
     Returns a small status dict describing what happened. A missing actor or
     missing DB row is a soft skip — file-mode users shouldn't need a DB at all.
     """
 
-    actor_id = getattr(_push_feedback_to_db, "_actor_override", None) or os.environ.get("MEGAPLAN_ACTOR_ID")
+    actor_id = getattr(_push_feedback_to_db, "_actor_override", None) or os.environ.get(
+        "MEGAPLAN_ACTOR_ID"
+    )
     if not actor_id:
         return {"db_synced": False, "reason": "no actor configured"}
     store = build_epic_store(root, actor_id=actor_id)
     try:
-        match = next((p for p in store.list_plans(include_orphans=True) if p.name == plan_name), None)
+        match = next(
+            (p for p in store.list_plans(include_orphans=True) if p.name == plan_name),
+            None,
+        )
         if match is None:
             return {"db_synced": False, "reason": f"no DB plan named {plan_name!r}"}
-        store.update_plan(match.id, expected_revision=match.revision, feedback=feedback_dict)
+        store.update_plan(
+            match.id, expected_revision=match.revision, feedback=feedback_dict
+        )
         return {"db_synced": True, "plan_id": match.id}
     finally:
         close = getattr(store, "close", None)
@@ -2138,7 +2740,6 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
     from megaplan.orchestration.feedback import (
         FEEDBACK_FILENAME,
         PlanFeedback,
-        StageFeedback,
         feedback_path,
         format_summary,
         load_feedback,
@@ -2182,7 +2783,9 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
 
     # edit / show both require --plan
     if not getattr(args, "plan", None):
-        raise CliError("invalid_args", "feedback edit/show/workflow require --plan <name>")
+        raise CliError(
+            "invalid_args", "feedback edit/show/workflow require --plan <name>"
+        )
 
     plan_dir, state = load_plan(root, args.plan)
     path = feedback_path(plan_dir)
@@ -2197,7 +2800,9 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
                 f"but plan is in {current_state!r}",
             )
 
-        existing_fb: PlanFeedback | None = load_feedback(plan_dir) if path.exists() else None
+        existing_fb: PlanFeedback | None = (
+            load_feedback(plan_dir) if path.exists() else None
+        )
         force = bool(getattr(args, "force", False))
 
         def _has_user_fields(fb: PlanFeedback | None) -> bool:
@@ -2236,11 +2841,17 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
             )
             ai_fb = _parse_ai_feedback(worker.payload, worker.raw_output)
             ai_filled = ai_fb is not None
-        except Exception as exc:  # noqa: BLE001 — feedback failure must not sink the plan
-            sys.stderr.write(f"[feedback] worker failed, scaffolding empty template: {exc}\n")
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 — feedback failure must not sink the plan
+            sys.stderr.write(
+                f"[feedback] worker failed, scaffolding empty template: {exc}\n"
+            )
 
         merged = _merge_feedback(existing_fb, ai_fb)
-        template = render_template(state["name"], idea=state.get("idea"), prefilled=merged)
+        template = render_template(
+            state["name"], idea=state.get("idea"), prefilled=merged
+        )
         atomic_write_text(path, template)
 
         state["current_state"] = STATE_DONE
@@ -2306,8 +2917,12 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
     db_status = {"db_synced": False, "reason": "no edits to push"}
     if fb is not None and not fb.is_empty():
         try:
-            db_status = _push_feedback_to_db(root, plan_name=state["name"], feedback_dict=fb.to_dict())
-        except Exception as exc:  # noqa: BLE001 — surface failure but don't break editor flow
+            db_status = _push_feedback_to_db(
+                root, plan_name=state["name"], feedback_dict=fb.to_dict()
+            )
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 — surface failure but don't break editor flow
             db_status = {"db_synced": False, "reason": f"db push failed: {exc}"}
 
     msg_parts: list[str] = []
@@ -2350,78 +2965,102 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
         choices=["claude", "codex"],
         default=None,
         help="Pick the premium vendor for tier-2-through-4 profile slots. "
-             "Swaps claude:X <-> codex:X at the same effort tier; hermes specs "
-             "untouched. Defaults to ~/.config/megaplan/config.toml "
-             "[defaults].vendor (or 'claude'). Silently ignored when the "
-             "active profile is vendor_locked = true.",
+        "Swaps claude:X <-> codex:X at the same effort tier; hermes specs "
+        "untouched. Defaults to ~/.config/megaplan/config.toml "
+        "[defaults].vendor (or 'claude'). Silently ignored when the "
+        "active profile is vendor_locked = true.",
     )
     parser.add_argument(
         "--depth",
         choices=["minimal", "low", "medium", "high", "xhigh", "max"],
         default=None,
         help="Set author-phase thinking depth (plan / revise / loop_plan / "
-             "tiebreaker_researcher / tiebreaker_challenger). Rewrites the "
-             "effort suffix on claude:X / codex:X slots; critic and "
-             "mechanical phases are not touched (asymmetry principle). "
-             "hermes specs and profiles with no premium author slots are a "
-             "silent no-op. Defaults to whatever depth the profile already "
-             "sets (usually :low). Honored on vendor_locked profiles.",
+        "tiebreaker_researcher / tiebreaker_challenger). Rewrites the "
+        "effort suffix on claude:X / codex:X slots; critic and "
+        "mechanical phases are not touched (asymmetry principle). "
+        "hermes specs and profiles with no premium author slots are a "
+        "silent no-op. Defaults to whatever depth the profile already "
+        "sets (usually :low). Honored on vendor_locked profiles.",
     )
     parser.add_argument(
         "--critic",
         choices=["kimi", "cross"],
         default=None,
         help="Override the critique+review pair (the critique == review "
-             "invariant — same mind pre- and post-execution). 'kimi' swaps "
-             "in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other "
-             "premium vendor relative to --vendor. Silently ignored on "
-             "vendor_locked profiles.",
+        "invariant — same mind pre- and post-execution). 'kimi' swaps "
+        "in Kimi (Fireworks-hosted kimi-k2p6) for both phases; 'cross' swaps to the other "
+        "premium vendor relative to --vendor. Silently ignored on "
+        "vendor_locked profiles.",
     )
     parser.add_argument(
         "--deepseek-provider",
         choices=["fireworks", "direct"],
         default=None,
         help="Choose the provider for canonical DeepSeek v4-pro profile slots. "
-             "'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; "
-             "'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. "
-             "Defaults to 'direct'. Non-DeepSeek slots are untouched.",
+        "'fireworks' uses hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro; "
+        "'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. "
+        "Defaults to 'direct'. Non-DeepSeek slots are untouched.",
     )
     parser.add_argument(
         "--with-prep",
         action="store_true",
         default=False,
         help="Force the visible prep phase into the workflow regardless of "
-             "--robustness. By default, prep only runs at --robustness "
-             "thorough|extreme; this flag adds prep to full / light / "
-             "bare so the planner can do explicit research before committing "
-             "to a plan. Useful for unfamiliar libraries, novel external "
-             "APIs, research-heavy briefs, or ambiguous requirements. "
-             "Redundant on --robustness thorough|extreme (no-op).",
+        "--robustness. By default, prep only runs at --robustness "
+        "thorough|extreme; this flag adds prep to full / light / "
+        "bare so the planner can do explicit research before committing "
+        "to a plan. Useful for unfamiliar libraries, novel external "
+        "APIs, research-heavy briefs, or ambiguous requirements. "
+        "Redundant on --robustness thorough|extreme (no-op).",
     )
     parser.add_argument(
         "--with-feedback",
         action="store_true",
         default=False,
         help="Force the visible feedback phase into the workflow regardless "
-             "of --robustness. By default no feedback step runs; this flag "
-             "adds a feedback step between review and done that scaffolds "
-             "feedback.md (a per-stage ratings template) for the user to "
-             "fill in afterward. Runs non-interactively under megaplan auto "
-             "\u2014 never blocks on human input.",
+        "of --robustness. By default no feedback step runs; this flag "
+        "adds a feedback step between review and done that scaffolds "
+        "feedback.md (a per-stage ratings template) for the user to "
+        "fill in afterward. Runs non-interactively under megaplan auto "
+        "\u2014 never blocks on human input.",
     )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Megaplan orchestration CLI")
-    parser.add_argument("--actor", default=None, metavar="ID", help="Actor ID for DB writes (also MEGAPLAN_ACTOR_ID)")
-    parser.add_argument("--backend", choices=["file", "db"], default=None, help="Storage backend (also MEGAPLAN_BACKEND)")
+    parser.add_argument(
+        "--actor",
+        default=None,
+        metavar="ID",
+        help="Actor ID for DB writes (also MEGAPLAN_ACTOR_ID)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["file", "db"],
+        default=None,
+        help="Storage backend (also MEGAPLAN_BACKEND)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    setup_parser = subparsers.add_parser("setup", help="Install megaplan into agent configs (global by default)")
-    setup_parser.add_argument("--local", action="store_true", help="Install AGENTS.md into a project instead of global agent configs")
-    setup_parser.add_argument("--target-dir", help="Directory to install into (default: cwd, implies --local)")
-    setup_parser.add_argument("--force", action="store_true", help="Overwrite existing files")
-    setup_parser.add_argument("--regen-composed", action="store_true", help="Regenerate composed skill bundles from source files")
+    setup_parser = subparsers.add_parser(
+        "setup", help="Install megaplan into agent configs (global by default)"
+    )
+    setup_parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Install AGENTS.md into a project instead of global agent configs",
+    )
+    setup_parser.add_argument(
+        "--target-dir", help="Directory to install into (default: cwd, implies --local)"
+    )
+    setup_parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing files"
+    )
+    setup_parser.add_argument(
+        "--regen-composed",
+        action="store_true",
+        help="Regenerate composed skill bundles from source files",
+    )
 
     init_parser = subparsers.add_parser("init")
     # --project-dir is normally required; the special case is --in-worktree,
@@ -2433,31 +3072,31 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="NAME",
         help="Create a new git worktree at ~/Documents/.megaplan-worktrees/<name>/ "
-             "on a new branch and initialize the plan inside it. Name must match "
-             "^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir.",
+        "on a new branch and initialize the plan inside it. Name must match "
+        "^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir.",
     )
     init_parser.add_argument(
         "--worktree-from",
         default=None,
         metavar="GITREF",
         help="Base ref for the new worktree (default: current HEAD of the repo "
-             "where `megaplan init` was invoked). Only valid with --in-worktree.",
+        "where `megaplan init` was invoked). Only valid with --in-worktree.",
     )
     init_parser.add_argument(
         "--clean-worktree",
         action="store_true",
         default=False,
         help="With --in-worktree: fork from a clean base ref and leave any "
-             "uncommitted state behind in the source repo (no carry).",
+        "uncommitted state behind in the source repo (no carry).",
     )
     init_parser.add_argument(
         "--carry-dirty",
         action="store_true",
         default=False,
         help="With --in-worktree: explicitly opt into carrying uncommitted "
-             "state from the source repo into the new worktree (this is the "
-             "default already when the source is dirty; the flag exists for "
-             "test/script clarity). Mutually exclusive with --clean-worktree.",
+        "state from the source repo into the new worktree (this is the "
+        "default already when the source is dirty; the flag exists for "
+        "test/script clarity). Mutually exclusive with --clean-worktree.",
     )
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
@@ -2472,29 +3111,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Accept canonical names plus legacy aliases (tiny|standard|robust|superrobust);
     # ``normalize_robustness`` collapses them downstream.
-    init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None)
-    init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke", "creative"], default=None,
-                             help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
-                                  "(design/spec artifact — 'metaplan' is an alias for 'doc'), or "
-                                  "'joke' (film scene script; requires --output), or "
-                                  "'creative' (creative work; requires --form and --output). "
-                                  "Defaults to 'code' unless the idea strongly suggests a design document, "
-                                  "in which case --mode must be passed explicitly.")
-    init_parser.add_argument("--form", choices=available_form_ids(), default=None,
-                             help="Creative form to use with --mode creative.")
-    init_parser.add_argument("--output", default=None,
-                             help="Relative path where the prose artifact will be written. "
-                                  "Required with --mode doc, --mode joke, or --mode creative; rejected with --mode code.")
+    init_parser.add_argument(
+        "--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None
+    )
+    init_parser.add_argument(
+        "--mode",
+        choices=["code", "doc", "metaplan", "joke", "creative"],
+        default=None,
+        help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
+        "(design/spec artifact — 'metaplan' is an alias for 'doc'), or "
+        "'joke' (film scene script; requires --output), or "
+        "'creative' (creative work; requires --form and --output). "
+        "Defaults to 'code' unless the idea strongly suggests a design document, "
+        "in which case --mode must be passed explicitly.",
+    )
+    init_parser.add_argument(
+        "--form",
+        choices=available_form_ids(),
+        default=None,
+        help="Creative form to use with --mode creative.",
+    )
+    init_parser.add_argument(
+        "--output",
+        default=None,
+        help="Relative path where the prose artifact will be written. "
+        "Required with --mode doc, --mode joke, or --mode creative; rejected with --mode code.",
+    )
     init_parser.add_argument(
         "--primary-criterion",
         default=None,
         help="Declare the creative-work primary criterion (for example: 'weirdest coherent'). "
-             "Valid only with --mode joke or --mode creative.",
+        "Valid only with --mode joke or --mode creative.",
     )
-    init_parser.add_argument("--from-doc", default=None,
-                             help="Relative path to a prior doc-mode artifact whose ## Settled "
-                                  "Decisions section should be imported. Valid with --mode "
-                                  "code, --mode doc, --mode joke, or --mode creative.")
+    init_parser.add_argument(
+        "--from-doc",
+        default=None,
+        help="Relative path to a prior doc-mode artifact whose ## Settled "
+        "Decisions section should be imported. Valid with --mode "
+        "code, --mode doc, --mode joke, or --mode creative.",
+    )
     init_parser.add_argument(
         "--idea-file",
         default=None,
@@ -2505,21 +3160,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Immediately run the in-process auto driver after initializing the plan.",
     )
-    init_parser.add_argument("--hermes", nargs="?", const="", default=None,
-                             help="Use Hermes agent for all phases. Optional: specify default model")
-    init_parser.add_argument("--phase-model", action="append", default=[],
-                             help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
-    init_parser.add_argument("--profile", default=None,
-                             help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    init_parser.add_argument(
+        "--hermes",
+        nargs="?",
+        const="",
+        default=None,
+        help="Use Hermes agent for all phases. Optional: specify default model",
+    )
+    init_parser.add_argument(
+        "--phase-model",
+        action="append",
+        default=[],
+        help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5",
+    )
+    init_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
+    )
     _add_vendor_critic_args(init_parser)
     init_parser.add_argument(
         "--prep-direction",
         default=None,
         metavar="TEXT",
         help="Steering text shown to the prep worker as 'User direction for prep'. "
-             "Use to point prep at specific files, subsystems, or questions to explore "
-             "(e.g. 'focus on the worker shutdown path; ignore CLI plumbing'). "
-             "Only effective when prep runs (robustness thorough|extreme, or --with-prep).",
+        "Use to point prep at specific files, subsystems, or questions to explore "
+        "(e.g. 'focus on the worker shutdown path; ignore CLI plumbing'). "
+        "Only effective when prep runs (robustness thorough|extreme, or --with-prep).",
     )
     init_parser.add_argument(
         "--from-arnold-epic",
@@ -2530,23 +3197,39 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("idea", nargs="?")
 
     list_parser = subparsers.add_parser("list")
-    list_parser.add_argument("--all", action="store_true",
-                             help="Search all .megaplan directories system-wide (~)")
-    list_parser.add_argument("--no-tree", action="store_true",
-                             help="Only show plans from the current directory (default includes parent + child)")
-    list_parser.add_argument("--include-done", action="store_true",
-                             help="Include terminal plans; excluded by default")
-    list_parser.add_argument("--status", dest="filter_status",
-                             help="Filter by state (e.g. 'done', 'finalized', 'executed', or comma-separated 'planned,critiqued')")
-    list_parser.add_argument("--summary", action="store_true",
-                             help="Show count breakdown by state")
     list_parser.add_argument(
-        "list_target", nargs="?",
+        "--all",
+        action="store_true",
+        help="Search all .megaplan directories system-wide (~)",
+    )
+    list_parser.add_argument(
+        "--no-tree",
+        action="store_true",
+        help="Only show plans from the current directory (default includes parent + child)",
+    )
+    list_parser.add_argument(
+        "--include-done",
+        action="store_true",
+        help="Include terminal plans; excluded by default",
+    )
+    list_parser.add_argument(
+        "--status",
+        dest="filter_status",
+        help="Filter by state (e.g. 'done', 'finalized', 'executed', or comma-separated 'planned,critiqued')",
+    )
+    list_parser.add_argument(
+        "--summary", action="store_true", help="Show count breakdown by state"
+    )
+    list_parser.add_argument(
+        "list_target",
+        nargs="?",
         choices=["pipelines"],
         help="List pipelines instead of plans (use 'pipelines')",
     )
     list_parser.add_argument(
-        "--verbose", "-v", action="store_true",
+        "--verbose",
+        "-v",
+        action="store_true",
         help="Show verbose pipeline listing (description, version, profile)",
     )
 
@@ -2562,17 +3245,25 @@ def build_parser() -> argparse.ArgumentParser:
     epic_parser = subparsers.add_parser("epic", help="Inspect or migrate Arnold epics")
     epic_parser.add_argument("--project-dir", default=None)
     epic_subparsers = epic_parser.add_subparsers(dest="epic_action", required=True)
-    epic_snapshot_parser = epic_subparsers.add_parser("snapshot", help="Write an offline JSON snapshot for an epic")
+    epic_snapshot_parser = epic_subparsers.add_parser(
+        "snapshot", help="Write an offline JSON snapshot for an epic"
+    )
     epic_snapshot_parser.add_argument("epic_id")
     epic_snapshot_parser.add_argument("--project-dir", default=None)
-    epic_migrate_parser = epic_subparsers.add_parser("migrate", help="Promote or demote an epic between backends")
+    epic_migrate_parser = epic_subparsers.add_parser(
+        "migrate", help="Promote or demote an epic between backends"
+    )
     epic_migrate_parser.add_argument("epic_id", nargs="?")
     epic_migrate_parser.add_argument("--to", choices=["file", "db"], default=None)
     epic_migrate_parser.add_argument("--resume", metavar="MIGRATION_ID", default=None)
-    epic_migrate_parser.add_argument("--actor", default=None, metavar="ID", help="Actor ID for migration writes")
+    epic_migrate_parser.add_argument(
+        "--actor", default=None, metavar="ID", help="Actor ID for migration writes"
+    )
     epic_migrate_parser.add_argument("--ttl", type=int, default=300)
     epic_migrate_parser.add_argument("--project-dir", default=None)
-    epic_export_parser = epic_subparsers.add_parser("export", help="Write a deterministic tar backup for an epic")
+    epic_export_parser = epic_subparsers.add_parser(
+        "export", help="Write a deterministic tar backup for an epic"
+    )
     epic_export_parser.add_argument("epic_id")
     epic_export_parser.add_argument("--output", required=True)
     epic_export_parser.add_argument("--gzip", action="store_true")
@@ -2580,28 +3271,44 @@ def build_parser() -> argparse.ArgumentParser:
     epic_export_parser.add_argument("--project-dir", default=None)
 
     # --- ticket subcommand group ---
-    ticket_parser = subparsers.add_parser("ticket", help="Manage repo-scoped issue/problem tickets")
+    ticket_parser = subparsers.add_parser(
+        "ticket", help="Manage repo-scoped issue/problem tickets"
+    )
     ticket_sub = ticket_parser.add_subparsers(dest="ticket_action", required=True)
 
     # ticket new
     ticket_new_parser = ticket_sub.add_parser("new", help="Create a new ticket")
     ticket_new_parser.add_argument("title", help="Ticket title")
-    ticket_new_body_group = ticket_new_parser.add_mutually_exclusive_group(required=True)
-    ticket_new_body_group.add_argument("-b", dest="body", default=None, metavar="BODY", help="Body text")
-    ticket_new_body_group.add_argument("--edit", action="store_true", help="Open $EDITOR for body")
-    ticket_new_body_group.add_argument("-", dest="stdin_body", action="store_true", help="Read body from stdin")
+    ticket_new_body_group = ticket_new_parser.add_mutually_exclusive_group(
+        required=True
+    )
+    ticket_new_body_group.add_argument(
+        "-b", dest="body", default=None, metavar="BODY", help="Body text"
+    )
+    ticket_new_body_group.add_argument(
+        "--edit", action="store_true", help="Open $EDITOR for body"
+    )
+    ticket_new_body_group.add_argument(
+        "-", dest="stdin_body", action="store_true", help="Read body from stdin"
+    )
     ticket_new_parser.add_argument("--tags", default=None, help="Comma-separated tags")
 
     # ticket list
     ticket_list_parser = ticket_sub.add_parser("list", help="List tickets")
     ticket_list_parser.add_argument("--status", default=None, help="Filter by status")
-    ticket_list_parser.add_argument("--tags", default=None, help="Filter by tags (comma-separated)")
-    ticket_list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    ticket_list_parser.add_argument(
+        "--tags", default=None, help="Filter by tags (comma-separated)"
+    )
+    ticket_list_parser.add_argument(
+        "--json", action="store_true", help="Output as JSON"
+    )
 
     # ticket show
     ticket_show_parser = ticket_sub.add_parser("show", help="Show a single ticket")
     ticket_show_parser.add_argument("ticket_id", help="Ticket ULID")
-    ticket_show_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    ticket_show_parser.add_argument(
+        "--json", action="store_true", help="Output as JSON"
+    )
 
     # ticket edit
     ticket_edit_parser = ticket_sub.add_parser("edit", help="Edit a ticket")
@@ -2616,22 +3323,30 @@ def build_parser() -> argparse.ArgumentParser:
     ticket_link_parser = ticket_sub.add_parser("link", help="Link a ticket to an epic")
     ticket_link_parser.add_argument("ticket_id", help="Ticket ULID")
     ticket_link_parser.add_argument("epic_id", help="Epic ID")
-    ticket_link_parser.add_argument("--resolves", action="store_true", help="Epic completion resolves this ticket")
+    ticket_link_parser.add_argument(
+        "--resolves", action="store_true", help="Epic completion resolves this ticket"
+    )
 
     # ticket unlink
-    ticket_unlink_parser = ticket_sub.add_parser("unlink", help="Unlink a ticket from an epic")
+    ticket_unlink_parser = ticket_sub.add_parser(
+        "unlink", help="Unlink a ticket from an epic"
+    )
     ticket_unlink_parser.add_argument("ticket_id", help="Ticket ULID")
     ticket_unlink_parser.add_argument("epic_id", help="Epic ID")
 
     # ticket addressed
-    ticket_addressed_parser = ticket_sub.add_parser("addressed", help="Mark ticket as addressed")
+    ticket_addressed_parser = ticket_sub.add_parser(
+        "addressed", help="Mark ticket as addressed"
+    )
     ticket_addressed_parser.add_argument("ticket_id", help="Ticket ULID")
     ticket_addressed_parser.add_argument("--note", default=None, help="Resolution note")
 
     # ticket dismiss
     ticket_dismiss_parser = ticket_sub.add_parser("dismiss", help="Dismiss a ticket")
     ticket_dismiss_parser.add_argument("ticket_id", help="Ticket ULID")
-    ticket_dismiss_parser.add_argument("--reason", default=None, help="Reason for dismissal")
+    ticket_dismiss_parser.add_argument(
+        "--reason", default=None, help="Reason for dismissal"
+    )
 
     # ticket reopen
     ticket_reopen_parser = ticket_sub.add_parser("reopen", help="Reopen a ticket")
@@ -2666,7 +3381,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search every known repo (local) or every codebase (cloud).",
     )
     ticket_search_parser.add_argument("--status", default=None, help="Filter by status")
-    ticket_search_parser.add_argument("--tags", default=None, help="Filter by tags (comma-separated)")
+    ticket_search_parser.add_argument(
+        "--tags", default=None, help="Filter by tags (comma-separated)"
+    )
     ticket_search_parser.add_argument(
         "--sort",
         choices=["created", "edited", "length", "title"],
@@ -2678,8 +3395,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ascending order (default: descending)",
     )
-    ticket_search_parser.add_argument("--limit", type=int, default=None, help="Limit number of results")
-    ticket_search_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    ticket_search_parser.add_argument(
+        "--limit", type=int, default=None, help="Limit number of results"
+    )
+    ticket_search_parser.add_argument(
+        "--json", action="store_true", help="Output as JSON"
+    )
     ticket_search_parser.add_argument(
         "--no-snippet",
         dest="snippet",
@@ -2688,20 +3409,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hide snippet column in human output",
     )
 
-    migrate_local_parser = subparsers.add_parser("migrate-local-plans", help="Import legacy ~/.megaplan/<project>/plans trees")
+    migrate_local_parser = subparsers.add_parser(
+        "migrate-local-plans", help="Import legacy ~/.megaplan/<project>/plans trees"
+    )
     migrate_local_parser.add_argument("--source-home", default=str(Path.home()))
     migrate_local_parser.add_argument("--source-project", default=None)
     migrate_local_parser.add_argument("--all-projects", action="store_true")
     migrate_local_parser.add_argument("--target-project-dir", required=True)
-    migrate_local_parser.add_argument("--mode", choices=["orphan", "legacy-epic"], default="orphan")
+    migrate_local_parser.add_argument(
+        "--mode", choices=["orphan", "legacy-epic"], default="orphan"
+    )
     migrate_local_parser.add_argument("--dry-run", action="store_true")
 
     for name in ["status", "progress", "watch"]:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--plan")
         if name == "status":
-            step_parser.add_argument("--pending-human", action="store_true",
-                                     help="List plans awaiting human verification")
+            step_parser.add_argument(
+                "--pending-human",
+                action="store_true",
+                help="List plans awaiting human verification",
+            )
 
     feedback_parser = subparsers.add_parser(
         "feedback",
@@ -2714,7 +3442,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["edit", "show", "search", "workflow"],
         help="edit (default): scaffold/open feedback.md. show: print parsed summary. search: query feedback across plans",
     )
-    feedback_parser.add_argument("--plan", required=False, help="Plan name (required for edit/show)")
+    feedback_parser.add_argument(
+        "--plan", required=False, help="Plan name (required for edit/show)"
+    )
     feedback_parser.add_argument(
         "--show",
         action="store_true",
@@ -2729,26 +3459,68 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="workflow: re-run the AI rating pass even if feedback.md already has user fields. "
-             "Overwrites ai_rating/ai_comment only; never touches user rating:/comment:.",
+        "Overwrites ai_rating/ai_comment only; never touches user rating:/comment:.",
     )
-    feedback_parser.add_argument("--profile", default=None, help="search: substring match on plan profile (e.g. 'claude', 'apex')")
-    feedback_parser.add_argument("--repo", default=None, help="search: substring match on plan project_dir / repo path")
-    feedback_parser.add_argument("--min-rating", type=int, default=None, help="search: only show plans with Overall rating >= N")
-    feedback_parser.add_argument("--max-rating", type=int, default=None, help="search: only show plans with Overall rating <= N")
-    feedback_parser.add_argument("--stage", default=None, help="search: only show plans that have a rating for this stage")
-    feedback_parser.add_argument("--has-comment", action="store_true", help="search: only show plans whose Overall comment is non-empty")
-    feedback_parser.add_argument("--all", action="store_true", help="search: scan all megaplan project roots on this machine, not just the current tree")
-    feedback_parser.add_argument("--json", dest="emit_json", action="store_true", help="search: emit raw JSON instead of a table")
+    feedback_parser.add_argument(
+        "--profile",
+        default=None,
+        help="search: substring match on plan profile (e.g. 'claude', 'apex')",
+    )
+    feedback_parser.add_argument(
+        "--repo",
+        default=None,
+        help="search: substring match on plan project_dir / repo path",
+    )
+    feedback_parser.add_argument(
+        "--min-rating",
+        type=int,
+        default=None,
+        help="search: only show plans with Overall rating >= N",
+    )
+    feedback_parser.add_argument(
+        "--max-rating",
+        type=int,
+        default=None,
+        help="search: only show plans with Overall rating <= N",
+    )
+    feedback_parser.add_argument(
+        "--stage",
+        default=None,
+        help="search: only show plans that have a rating for this stage",
+    )
+    feedback_parser.add_argument(
+        "--has-comment",
+        action="store_true",
+        help="search: only show plans whose Overall comment is non-empty",
+    )
+    feedback_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="search: scan all megaplan project roots on this machine, not just the current tree",
+    )
+    feedback_parser.add_argument(
+        "--json",
+        dest="emit_json",
+        action="store_true",
+        help="search: emit raw JSON instead of a table",
+    )
 
-    resume_parser = subparsers.add_parser("resume", help="Resume a failed or blocked plan from its stored cursor")
+    resume_parser = subparsers.add_parser(
+        "resume", help="Resume a failed or blocked plan from its stored cursor"
+    )
     resume_parser.add_argument("--plan", required=True)
-    resume_parser.add_argument("--choice", default=None,
-                               help="For YAML pipelines paused at human_gate: the choice to resume with (e.g. continue, stop)")
+    resume_parser.add_argument(
+        "--choice",
+        default=None,
+        help="For YAML pipelines paused at human_gate: the choice to resume with (e.g. continue, stop)",
+    )
 
     audit_parser = subparsers.add_parser("audit")
     audit_parser.add_argument("--plan")
     audit_sub = audit_parser.add_subparsers(dest="audit_action", required=False)
-    audit_query_parser = audit_sub.add_parser("query", help="Query step receipts across plans")
+    audit_query_parser = audit_sub.add_parser(
+        "query", help="Query step receipts across plans"
+    )
     audit_query_parser.add_argument("--model")
     audit_query_parser.add_argument("--phase")
     audit_query_parser.add_argument("--profile")
@@ -2757,24 +3529,48 @@ def build_parser() -> argparse.ArgumentParser:
     audit_query_parser.add_argument("--json", action="store_true")
     audit_query_parser.add_argument("--audit-dir", default=None)
 
-    for name in ["plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"]:
+    for name in [
+        "plan",
+        "prep",
+        "critique",
+        "revise",
+        "gate",
+        "finalize",
+        "execute",
+        "review",
+    ]:
         step_parser = subparsers.add_parser(name)
         step_parser.add_argument("--plan")
         step_parser.add_argument("--agent", choices=KNOWN_AGENTS)
-        step_parser.add_argument("--hermes", nargs="?", const="", default=None,
-                                 help="Use Hermes agent for all phases. Optional: specify default model (e.g. --hermes anthropic/claude-sonnet-4.6)")
-        step_parser.add_argument("--phase-model", action="append", default=[],
-                                 help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5")
-        step_parser.add_argument("--profile", default=None,
-                                 help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+        step_parser.add_argument(
+            "--hermes",
+            nargs="?",
+            const="",
+            default=None,
+            help="Use Hermes agent for all phases. Optional: specify default model (e.g. --hermes anthropic/claude-sonnet-4.6)",
+        )
+        step_parser.add_argument(
+            "--phase-model",
+            action="append",
+            default=[],
+            help="Per-phase model override: --phase-model critique=hermes:openai/gpt-5",
+        )
+        step_parser.add_argument(
+            "--profile",
+            default=None,
+            help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
+        )
         _add_vendor_critic_args(step_parser)
         step_parser.add_argument("--fresh", action="store_true")
         step_parser.add_argument("--persist", action="store_true")
         step_parser.add_argument("--ephemeral", action="store_true")
-        step_parser.add_argument("--work-dir", default=None,
-                                 help="Override the source-code working directory passed to subprocess workers "
-                                      "(--add-dir / -C). Defaults to the current working directory. Use this to "
-                                      "force a specific path (e.g. a git worktree) regardless of where the plan was created.")
+        step_parser.add_argument(
+            "--work-dir",
+            default=None,
+            help="Override the source-code working directory passed to subprocess workers "
+            "(--add-dir / -C). Defaults to the current working directory. Use this to "
+            "force a specific path (e.g. a git worktree) regardless of where the plan was created.",
+        )
         if name == "prep":
             step_parser.add_argument(
                 "--direction",
@@ -2782,13 +3578,18 @@ def build_parser() -> argparse.ArgumentParser:
                 default=None,
                 metavar="TEXT",
                 help="Set or replace the prep direction (state.config.prep_direction) "
-                     "before the prep worker runs. Same semantics as `init --prep-direction`, "
-                     "but applied at prep time so you can steer prep without re-initializing.",
+                "before the prep worker runs. Same semantics as `init --prep-direction`, "
+                "but applied at prep time so you can steer prep without re-initializing.",
             )
         if name == "execute":
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")
-            step_parser.add_argument("--batch", type=int, default=None, help="Execute a specific global batch number (1-indexed)")
+            step_parser.add_argument(
+                "--batch",
+                type=int,
+                default=None,
+                help="Execute a specific global batch number (1-indexed)",
+            )
             step_parser.add_argument(
                 "--retry-blocked-tasks",
                 action="store_true",
@@ -2802,21 +3603,28 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "review":
             step_parser.add_argument("--confirm-self-review", action="store_true")
 
-    config_parser = subparsers.add_parser("config", help="View or edit megaplan configuration")
+    config_parser = subparsers.add_parser(
+        "config", help="View or edit megaplan configuration"
+    )
     config_sub = config_parser.add_subparsers(dest="config_action", required=True)
     config_sub.add_parser("show")
     set_parser = config_sub.add_parser("set")
     set_parser.add_argument("key")
     set_parser.add_argument("value")
     config_sub.add_parser("reset")
-    profiles_parser = config_sub.add_parser("profiles", help="Inspect model profiles from built-in, user, and project layers")
+    profiles_parser = config_sub.add_parser(
+        "profiles",
+        help="Inspect model profiles from built-in, user, and project layers",
+    )
     profiles_sub = profiles_parser.add_subparsers(dest="profiles_action", required=True)
     profiles_sub.add_parser(
         "list",
         help="List profiles from all layers",
         description="List profiles from all layers. Project-layer profiles are only visible when run from that project directory.",
     )
-    profiles_show_parser = profiles_sub.add_parser("show", help="Show the fully resolved phase map for one profile")
+    profiles_show_parser = profiles_sub.add_parser(
+        "show", help="Show the fully resolved phase map for one profile"
+    )
     profiles_show_parser.add_argument("name")
     use_profile_parser = config_sub.add_parser(
         "use-profile",
@@ -2828,31 +3636,54 @@ def build_parser() -> argparse.ArgumentParser:
             "agent specs with model qualifiers (e.g. 'hermes:glm-5.1') the same way profiles do."
         ),
     )
-    use_profile_parser.add_argument("name", help="Profile name (see 'megaplan config profiles list')")
+    use_profile_parser.add_argument(
+        "name", help="Profile name (see 'megaplan config profiles list')"
+    )
 
-    step_parser = subparsers.add_parser("step", help="Edit plan step sections without hand-editing markdown")
+    step_parser = subparsers.add_parser(
+        "step", help="Edit plan step sections without hand-editing markdown"
+    )
     step_subparsers = step_parser.add_subparsers(dest="step_action", required=True)
 
-    step_add_parser = step_subparsers.add_parser("add", help="Insert a new step after an existing step")
+    step_add_parser = step_subparsers.add_parser(
+        "add", help="Insert a new step after an existing step"
+    )
     step_add_parser.add_argument("--plan")
     step_add_parser.add_argument("--after")
     step_add_parser.add_argument("description")
 
-    step_remove_parser = step_subparsers.add_parser("remove", help="Remove a step and renumber the plan")
+    step_remove_parser = step_subparsers.add_parser(
+        "remove", help="Remove a step and renumber the plan"
+    )
     step_remove_parser.add_argument("--plan")
     step_remove_parser.add_argument("step_id")
 
-    step_move_parser = step_subparsers.add_parser("move", help="Move a step after another step and renumber")
+    step_move_parser = step_subparsers.add_parser(
+        "move", help="Move a step after another step and renumber"
+    )
     step_move_parser.add_argument("--plan")
     step_move_parser.add_argument("step_id")
     step_move_parser.add_argument("--after", required=True)
 
     override_parser = subparsers.add_parser("override")
-    override_parser.add_argument("override_action", choices=["abort", "force-proceed", "add-note", "replan", "set-robustness", "set-profile"])
+    override_parser.add_argument(
+        "override_action",
+        choices=[
+            "abort",
+            "force-proceed",
+            "add-note",
+            "replan",
+            "recover-blocked",
+            "set-robustness",
+            "set-profile",
+        ],
+    )
     override_parser.add_argument("--plan")
     override_parser.add_argument("--reason", default="")
     override_parser.add_argument("--note")
-    override_parser.add_argument("--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None)
+    override_parser.add_argument(
+        "--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None
+    )
     override_parser.add_argument("--profile", default=None)
     # strict-notes plumbing. Only meaningful for specific override_action values, but
     # the override parser is flat (single positional + flags), so the flags live here.
@@ -2868,57 +3699,166 @@ def build_parser() -> argparse.ArgumentParser:
         help="(force-proceed) Acknowledge a strict-notes ESCALATE before forcing proceed.",
     )
 
-    verify_human_parser = subparsers.add_parser("verify-human", help="Record human verification for a criterion")
+    user_action_parser = subparsers.add_parser(
+        "user-action",
+        help="Resolve user action prerequisites",
+    )
+    ua_subparsers = user_action_parser.add_subparsers(
+        dest="user_action_action", required=True
+    )
+
+    from megaplan.user_actions import VALID_RESOLUTIONS as _UA_VALID_RESOLUTIONS
+
+    ua_resolve_parser = ua_subparsers.add_parser(
+        "resolve",
+        help="Record a resolution for a user action prerequisite",
+    )
+    ua_resolve_parser.add_argument("--plan")
+    ua_resolve_parser.add_argument(
+        "--action-id",
+        required=True,
+        help="User action ID (from finalize.json)",
+    )
+    ua_resolve_parser.add_argument(
+        "--resolution",
+        required=True,
+        choices=list(_UA_VALID_RESOLUTIONS),
+        help="Resolution to record",
+    )
+    ua_resolve_parser.add_argument(
+        "--fallback-mode",
+        default=None,
+        help="Fallback execution mode (for accepted_blocked / waived)",
+    )
+    ua_resolve_parser.add_argument(
+        "--tasks",
+        default=None,
+        help="Comma-separated task IDs this resolution applies to",
+    )
+    ua_resolve_parser.add_argument(
+        "--instructions",
+        default=None,
+        help="Fallback instructions for the executor",
+    )
+    ua_resolve_parser.add_argument(
+        "--reason",
+        default=None,
+        help="Human-readable reason for the resolution",
+    )
+    ua_resolve_parser.add_argument(
+        "--phase",
+        default=None,
+        help="Phase where this resolution was recorded",
+    )
+    ua_resolve_parser.add_argument(
+        "--evidence",
+        action="append",
+        default=None,
+        help="Evidence for the resolution; repeat or comma-separate values",
+    )
+    ua_resolve_parser.add_argument(
+        "--debt-note",
+        default=None,
+        help="Debt note to carry with the resolution",
+    )
+
+    quality_gate_parser = subparsers.add_parser(
+        "quality-gate",
+        help="Resolve quality gate blockers",
+    )
+    qg_subparsers = quality_gate_parser.add_subparsers(
+        dest="quality_gate_action", required=True
+    )
+    qg_resolve_parser = qg_subparsers.add_parser(
+        "resolve",
+        help="Record a resolution for a quality gate blocker",
+    )
+    qg_resolve_parser.add_argument("--plan")
+    qg_resolve_parser.add_argument(
+        "--blocker-id",
+        required=True,
+        help="Quality blocker ID from phase_result/status output",
+    )
+    qg_resolve_parser.add_argument(
+        "--resolution",
+        required=True,
+        choices=list(QUALITY_VALID_RESOLUTIONS),
+        help="Resolution to record",
+    )
+    qg_resolve_parser.add_argument(
+        "--phase",
+        default=None,
+        help="Phase where this resolution was recorded",
+    )
+    qg_resolve_parser.add_argument(
+        "--evidence",
+        action="append",
+        default=None,
+        help="Evidence for the resolution; repeat or comma-separate values",
+    )
+    qg_resolve_parser.add_argument(
+        "--debt-note",
+        default=None,
+        help="Debt note for accepted_with_debt resolutions",
+    )
+    qg_resolve_parser.add_argument(
+        "--fallback-mode",
+        default=None,
+        help="Fallback execution mode associated with this quality resolution",
+    )
+
+    verify_human_parser = subparsers.add_parser(
+        "verify-human", help="Record human verification for a criterion"
+    )
     verify_human_parser.add_argument("--plan")
-    verify_human_parser.add_argument("--criterion", required=True, help="Criterion name or index")
-    vh_group = verify_human_parser.add_mutually_exclusive_group(required=True)
+    verify_human_parser.add_argument(
+        "--criterion", required=False, default=None, help="Criterion name or index"
+    )
+    vh_group = verify_human_parser.add_mutually_exclusive_group(required=False)
     vh_group.add_argument("--pass", dest="pass_flag", action="store_true")
     vh_group.add_argument("--fail", dest="fail_flag", action="store_true")
-    verify_human_parser.add_argument("--evidence", required=True, help="Evidence supporting the verdict")
+    verify_human_parser.add_argument(
+        "--evidence", required=False, default=None, help="Evidence supporting the verdict"
+    )
+    verify_human_parser.add_argument(
+        "--list", dest="list_flag", action="store_true", help="List verification status for all criteria"
+    )
+    verify_human_parser.add_argument(
+        "--json", dest="json_flag", action="store_true", help="Output machine-readable JSON"
+    )
 
-    audit_verifiability_parser = subparsers.add_parser("audit-verifiability", help="Audit criteria verifiability")
+    audit_verifiability_parser = subparsers.add_parser(
+        "audit-verifiability", help="Audit criteria verifiability"
+    )
     audit_verifiability_parser.add_argument("--plan")
 
-    debt_parser = subparsers.add_parser("debt", help="Inspect or manage persistent tech debt entries")
+    debt_parser = subparsers.add_parser(
+        "debt", help="Inspect or manage persistent tech debt entries"
+    )
     debt_subparsers = debt_parser.add_subparsers(dest="debt_action", required=True)
 
     debt_list_parser = debt_subparsers.add_parser("list", help="List debt entries")
-    debt_list_parser.add_argument("--all", action="store_true", help="Include resolved entries")
+    debt_list_parser.add_argument(
+        "--all", action="store_true", help="Include resolved entries"
+    )
 
-    debt_add_parser = debt_subparsers.add_parser("add", help="Add or increment a debt entry")
+    debt_add_parser = debt_subparsers.add_parser(
+        "add", help="Add or increment a debt entry"
+    )
     debt_add_parser.add_argument("--subsystem", required=True)
     debt_add_parser.add_argument("--concern", required=True)
     debt_add_parser.add_argument("--flag-ids", default="")
     debt_add_parser.add_argument("--plan")
 
-    debt_resolve_parser = debt_subparsers.add_parser("resolve", help="Resolve a debt entry")
+    debt_resolve_parser = debt_subparsers.add_parser(
+        "resolve", help="Resolve a debt entry"
+    )
     debt_resolve_parser.add_argument("debt_id")
     debt_resolve_parser.add_argument("--plan")
 
-    # --- user-action subcommand group ---
-    user_action_parser = subparsers.add_parser("user-action", help="Manage user action resolutions")
-    ua_subparsers = user_action_parser.add_subparsers(dest="user_action_action", required=True)
-
-    ua_resolve_parser = ua_subparsers.add_parser("resolve", help="Set a resolution for a user action")
-    ua_resolve_parser.add_argument("--plan", required=True, help="Plan name")
-    ua_resolve_parser.add_argument("--action", required=True, help="User action ID (from finalize.json user_actions)")
-    ua_resolve_parser.add_argument(
-        "--state",
-        required=True,
-        choices=sorted(SUPPORTED_USER_ACTION_RESOLUTION_STATES),
-        help="Resolution state",
+    loop_init_parser = subparsers.add_parser(
+        "loop-init", help="Initialize a MegaLoop workflow"
     )
-    ua_resolve_parser.add_argument("--reason", default="", help="Human-readable explanation")
-    ua_resolve_parser.add_argument("--fallback-mode", default="", help="Fallback mode (e.g. skip, mock, use_dummy)")
-    ua_resolve_parser.add_argument(
-        "--applies-to-task-ids",
-        default="",
-        help="Comma-separated task IDs this resolution applies to",
-    )
-    ua_resolve_parser.add_argument("--instructions", default="", help="Concrete fallback instructions")
-    ua_resolve_parser.add_argument("--created-by", default="cli", help="Actor identifier")
-
-    loop_init_parser = subparsers.add_parser("loop-init", help="Initialize a MegaLoop workflow")
     loop_init_parser.add_argument("--project-dir", required=True)
     loop_init_parser.add_argument("--command", required=True)
     loop_init_parser.add_argument("--goal", dest="goal_option")
@@ -2928,55 +3868,94 @@ def build_parser() -> argparse.ArgumentParser:
     loop_init_parser.add_argument("--observe-interval", type=int)
     loop_init_parser.add_argument("--observe-break-patterns")
     loop_init_parser.add_argument("--agent", choices=KNOWN_AGENTS)
-    loop_init_parser.add_argument("--hermes", nargs="?", const="", default=None,
-                                  help="Use Hermes agent for loop phases. Optional: specify default model")
-    loop_init_parser.add_argument("--phase-model", action="append", default=[],
-                                  help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5")
-    loop_init_parser.add_argument("--profile", default=None,
-                                  help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    loop_init_parser.add_argument(
+        "--hermes",
+        nargs="?",
+        const="",
+        default=None,
+        help="Use Hermes agent for loop phases. Optional: specify default model",
+    )
+    loop_init_parser.add_argument(
+        "--phase-model",
+        action="append",
+        default=[],
+        help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5",
+    )
+    loop_init_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
+    )
     _add_vendor_critic_args(loop_init_parser)
     loop_init_parser.add_argument("--fresh", action="store_true")
     loop_init_parser.add_argument("--persist", action="store_true")
     loop_init_parser.add_argument("--ephemeral", action="store_true")
-    loop_init_parser.add_argument("--work-dir", default=None,
-                                  help="Override the source-code working directory for subprocess workers (default: CWD)")
+    loop_init_parser.add_argument(
+        "--work-dir",
+        default=None,
+        help="Override the source-code working directory for subprocess workers (default: CWD)",
+    )
     loop_init_parser.add_argument("goal", nargs="?")
 
-    loop_run_parser = subparsers.add_parser("loop-run", help="Run an existing MegaLoop workflow")
+    loop_run_parser = subparsers.add_parser(
+        "loop-run", help="Run an existing MegaLoop workflow"
+    )
     loop_run_parser.add_argument("name")
     loop_run_parser.add_argument("--project-dir")
     loop_run_parser.add_argument("--iterations", type=int)
     loop_run_parser.add_argument("--time-budget", type=int)
     loop_run_parser.add_argument("--agent", choices=KNOWN_AGENTS)
-    loop_run_parser.add_argument("--hermes", nargs="?", const="", default=None,
-                                 help="Use Hermes agent for loop phases. Optional: specify default model")
-    loop_run_parser.add_argument("--phase-model", action="append", default=[],
-                                 help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5")
-    loop_run_parser.add_argument("--profile", default=None,
-                                 help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    loop_run_parser.add_argument(
+        "--hermes",
+        nargs="?",
+        const="",
+        default=None,
+        help="Use Hermes agent for loop phases. Optional: specify default model",
+    )
+    loop_run_parser.add_argument(
+        "--phase-model",
+        action="append",
+        default=[],
+        help="Per-phase model override: --phase-model loop_execute=hermes:openai/gpt-5",
+    )
+    loop_run_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
+    )
     _add_vendor_critic_args(loop_run_parser)
     loop_run_parser.add_argument("--fresh", action="store_true")
     loop_run_parser.add_argument("--persist", action="store_true")
     loop_run_parser.add_argument("--ephemeral", action="store_true")
-    loop_run_parser.add_argument("--work-dir", default=None,
-                                 help="Override the source-code working directory for subprocess workers (default: CWD)")
+    loop_run_parser.add_argument(
+        "--work-dir",
+        default=None,
+        help="Override the source-code working directory for subprocess workers (default: CWD)",
+    )
 
-    loop_status_parser = subparsers.add_parser("loop-status", help="Show MegaLoop state")
+    loop_status_parser = subparsers.add_parser(
+        "loop-status", help="Show MegaLoop state"
+    )
     loop_status_parser.add_argument("name")
     loop_status_parser.add_argument("--project-dir")
 
-    loop_pause_parser = subparsers.add_parser("loop-pause", help="Pause a MegaLoop workflow")
+    loop_pause_parser = subparsers.add_parser(
+        "loop-pause", help="Pause a MegaLoop workflow"
+    )
     loop_pause_parser.add_argument("name")
     loop_pause_parser.add_argument("--project-dir")
     loop_pause_parser.add_argument("--reason", default="")
 
     from megaplan.auto import build_auto_parser
+
     build_auto_parser(subparsers)
 
     from megaplan._pipeline.run_cli import build_run_parser
+
     build_run_parser(subparsers)
 
     from megaplan.chain import build_chain_parser
+
     build_chain_parser(subparsers)
 
     cloud_parser = subparsers.add_parser(
@@ -3001,6 +3980,7 @@ def build_parser() -> argparse.ArgumentParser:
     bakeoff_parser.add_argument("bakeoff_args", nargs=argparse.REMAINDER)
 
     from megaplan.prompts.tiebreaker_orchestrator import build_tiebreaker_parser
+
     build_tiebreaker_parser(subparsers)
 
     # tiebreaker-run is a top-level command because auto.py:_phase_command
@@ -3013,14 +3993,286 @@ def build_parser() -> argparse.ArgumentParser:
     tb_run_parser.add_argument("--agent", choices=KNOWN_AGENTS, default=None)
     tb_run_parser.add_argument("--hermes", nargs="?", const="", default=None)
     tb_run_parser.add_argument("--phase-model", action="append", default=[])
-    tb_run_parser.add_argument("--profile", default=None,
-                               help="Named preset from profiles.toml; see 'megaplan config profiles list'.")
+    tb_run_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
+    )
     _add_vendor_critic_args(tb_run_parser)
     tb_run_parser.add_argument("--fresh", action="store_true")
     tb_run_parser.add_argument("--persist", action="store_true")
     tb_run_parser.add_argument("--ephemeral", action="store_true")
 
     return parser
+
+
+def handle_user_action(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Handle ``megaplan user-action resolve`` — record a resolution event.
+
+    Validates that *action_id* exists in ``finalize.json.user_actions``,
+    validates ``--tasks`` against known task IDs, builds a resolution event
+    via :func:`megaplan.user_actions.build_resolution_event`, appends it to
+    ``state.meta.user_action_resolutions``, and persists with
+    :func:`save_state_merge_meta`.
+    """
+    from megaplan._core.state import save_state_merge_meta
+    from megaplan.blocker_recovery import build_prerequisite_scopes
+    from megaplan.handlers.shared import _append_to_meta
+    from megaplan.user_actions import VALID_RESOLUTIONS, build_resolution_event
+
+    sub_action = getattr(args, "user_action_action", None)
+    if sub_action != "resolve":
+        raise CliError(
+            "invalid_args",
+            f"Unknown user-action sub-command: {sub_action!r}. " "Expected 'resolve'.",
+        )
+
+    plan_dir, state = load_plan(root, args.plan)
+    action_id: str = getattr(args, "action_id", None) or getattr(args, "action", None)
+    resolution: str = getattr(args, "resolution", None) or getattr(args, "state", None)
+
+    # --- validate resolution value -------------------------------------------
+    if resolution not in VALID_RESOLUTIONS:
+        raise CliError(
+            "invalid_args",
+            f"Unsupported resolution state {resolution!r}. "
+            f"Must be one of: {', '.join(VALID_RESOLUTIONS)}.",
+        )
+
+    # --- validate action_id exists in finalize.json --------------------------
+    finalize_path = plan_dir / "finalize.json"
+    if not finalize_path.exists():
+        raise CliError(
+            "invalid_state",
+            "No finalize.json — plan has not been finalized yet.",
+        )
+    finalize_data = read_json(finalize_path)
+    user_actions: list[dict[str, Any]] = finalize_data.get("user_actions", [])
+    if not isinstance(user_actions, list):
+        user_actions = []
+
+    valid_action_ids = [
+        a.get("id")
+        for a in user_actions
+        if isinstance(a, dict) and isinstance(a.get("id"), str)
+    ]
+    if action_id not in valid_action_ids:
+        raise CliError(
+            "invalid_args",
+            f"Unknown user action {action_id!r}. "
+            f"Valid action IDs in finalize.json: "
+            f"{', '.join(valid_action_ids) or '(none)'}.",
+        )
+
+    # --- validate --tasks against known task IDs AND effective action scope ---
+    tasks_arg: str | None = getattr(args, "tasks", None) or getattr(
+        args, "applies_to_task_ids", None
+    )
+    task_list: list[str] | None = None
+    selected_scope = build_prerequisite_scopes(finalize_data).get(action_id)
+    if tasks_arg is not None:
+        raw_task_parts = tasks_arg.split(",") if tasks_arg else []
+        if any(not part.strip() for part in raw_task_parts):
+            raise CliError(
+                "invalid_args",
+                "--tasks / --applies-to-task-ids contains empty or malformed task IDs",
+            )
+        task_list = [t.strip() for t in raw_task_parts]
+    if task_list:
+        all_tasks: list[dict[str, Any]] = finalize_data.get("tasks", [])
+        if not isinstance(all_tasks, list):
+            all_tasks = []
+        known_task_ids = [
+            t.get("id")
+            for t in all_tasks
+            if isinstance(t, dict) and isinstance(t.get("id"), str)
+        ]
+        unknown_task_ids = [tid for tid in task_list if tid not in known_task_ids]
+        if unknown_task_ids:
+            raise CliError(
+                "invalid_args",
+                "Unknown task ID(s) in --tasks: "
+                + ", ".join(repr(tid) for tid in unknown_task_ids),
+                extra={
+                    "requested_task_ids": task_list,
+                    "unknown_task_ids": unknown_task_ids,
+                    "known_task_ids": known_task_ids,
+                },
+            )
+
+        allowed_task_ids = (
+            list(selected_scope.effective_task_ids)
+            if selected_scope is not None
+            else []
+        )
+        invalid_scope_task_ids = [
+            tid for tid in task_list if tid not in set(allowed_task_ids)
+        ]
+        if invalid_scope_task_ids:
+            extra = {
+                "action_id": action_id,
+                "requested_task_ids": task_list,
+                "invalid_task_ids": invalid_scope_task_ids,
+                "allowed_task_ids": allowed_task_ids,
+            }
+            if selected_scope is not None:
+                extra["effective_scope"] = selected_scope.to_dict()
+            raise CliError(
+                "invalid_args",
+                f"Task(s) {', '.join(invalid_scope_task_ids)} are not in "
+                f"action {action_id!r}'s effective task scope.",
+                extra=extra,
+            )
+
+    # --- determine created_by (MEGAPLAN_ACTOR_ID → USER → operator) ----------
+    created_by: str = (
+        os.environ.get("MEGAPLAN_ACTOR_ID") or os.environ.get("USER") or "operator"
+    )
+
+    # --- build and persist resolution event ----------------------------------
+    event = build_resolution_event(
+        action_id=action_id,
+        resolution=resolution,
+        fallback_mode=getattr(args, "fallback_mode", None) or None,
+        tasks=task_list,
+        instructions=getattr(args, "instructions", None) or None,
+        reason=getattr(args, "reason", None) or None,
+        phase=getattr(args, "phase", None) or None,
+        evidence=_parse_user_action_evidence(getattr(args, "evidence", None)),
+        debt_note=getattr(args, "debt_note", None) or None,
+        created_by=created_by,
+    )
+    _append_to_meta(state, "user_action_resolutions", event)
+    from megaplan.resolutions import upsert_user_action_resolution
+
+    upsert_user_action_resolution(
+        plan_dir,
+        action_id,
+        resolution,
+        reason=getattr(args, "reason", None) or "",
+        fallback_mode=getattr(args, "fallback_mode", None) or "",
+        applies_to_task_ids=task_list or [],
+        instructions=getattr(args, "instructions", None) or "",
+        created_by=getattr(args, "created_by", None) or created_by,
+    )
+    save_state_merge_meta(plan_dir, state)
+
+    return {
+        "success": True,
+        "step": "user-action-resolve",
+        "action": "resolve",
+        "summary": (
+            f"Resolution {resolution!r} recorded for action "
+            f"{action_id!r} by {created_by}."
+        ),
+        "action_id": action_id,
+        "resolution": resolution,
+        "created_by": created_by,
+        "timestamp": event["timestamp"],
+        "phase": event.get("phase"),
+        "evidence": event.get("evidence", []),
+        "debt_note": event.get("debt_note"),
+    }
+
+
+def handle_quality_gate(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Handle ``megaplan quality-gate resolve`` — record a quality resolution."""
+    from megaplan._core.state import save_state_merge_meta
+    from megaplan.blocker_recovery import (
+        command_blocker_details,
+        evaluate_blocker_recovery,
+    )
+    from megaplan.handlers.shared import _append_to_meta
+    from megaplan.orchestration.phase_result import read_phase_result
+    from megaplan.quality_resolutions import (
+        VALID_RESOLUTIONS,
+        build_quality_resolution_event,
+    )
+
+    sub_action = getattr(args, "quality_gate_action", None)
+    if sub_action != "resolve":
+        raise CliError(
+            "invalid_args",
+            f"Unknown quality-gate sub-command: {sub_action!r}. Expected 'resolve'.",
+        )
+
+    plan_dir, state = load_plan(root, args.plan)
+    blocker_id: str = args.blocker_id
+    resolution: str = args.resolution
+
+    if resolution not in VALID_RESOLUTIONS:
+        raise CliError(
+            "invalid_args",
+            f"Invalid resolution {resolution!r}. "
+            f"Must be one of: {', '.join(VALID_RESOLUTIONS)}.",
+        )
+
+    finalize_data = (
+        read_json(plan_dir / "finalize.json")
+        if (plan_dir / "finalize.json").exists()
+        else {}
+    )
+    phase_result = read_phase_result(plan_dir)
+    deviations = phase_result.deviations if phase_result is not None else ()
+    evaluation = evaluate_blocker_recovery(
+        finalize_data,
+        state,
+        deviations=deviations,
+    )
+    known_blockers = evaluation.by_id()
+    if known_blockers and blocker_id not in known_blockers:
+        raise CliError(
+            "invalid_args",
+            f"Unknown quality blocker_id {blocker_id!r}.",
+            extra={
+                "requested_blocker_id": blocker_id,
+                "known_blocker_ids": sorted(known_blockers),
+                "blockers": command_blocker_details(evaluation),
+            },
+        )
+    if not known_blockers and not blocker_id.startswith("quality:"):
+        raise CliError(
+            "invalid_args",
+            "quality-gate resolve requires a quality blocker ID",
+            extra={"requested_blocker_id": blocker_id},
+        )
+
+    created_by: str = (
+        os.environ.get("MEGAPLAN_ACTOR_ID") or os.environ.get("USER") or "operator"
+    )
+    event = build_quality_resolution_event(
+        blocker_id=blocker_id,
+        resolution=resolution,
+        phase=getattr(args, "phase", None) or None,
+        evidence=_parse_user_action_evidence(getattr(args, "evidence", None)),
+        debt_note=getattr(args, "debt_note", None) or None,
+        fallback_mode=getattr(args, "fallback_mode", None) or None,
+        created_by=created_by,
+    )
+    _append_to_meta(state, "quality_gate_resolutions", event)
+    save_state_merge_meta(plan_dir, state)
+
+    return {
+        "success": True,
+        "step": "quality-gate-resolve",
+        "summary": (
+            f"Resolution {resolution!r} recorded for quality blocker "
+            f"{blocker_id!r} by {created_by}."
+        ),
+        "blocker_id": blocker_id,
+        "resolution": resolution,
+        "created_by": created_by,
+        "timestamp": event["timestamp"],
+        "phase": event.get("phase"),
+        "evidence": event.get("evidence", []),
+        "debt_note": event.get("debt_note"),
+        "fallback_mode": event.get("fallback_mode"),
+        "blocker": (
+            known_blockers[blocker_id].to_dict()
+            if blocker_id in known_blockers
+            else None
+        ),
+    }
 
 
 COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
@@ -3054,6 +4306,8 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "verify-human": handle_verify_human,
     "audit-verifiability": handle_audit_verifiability,
     "tiebreaker-run": handle_tiebreaker_run,
+    "user-action": handle_user_action,
+    "quality-gate": handle_quality_gate,
 }
 
 
@@ -3230,6 +4484,7 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
     }
     # Update work-dir override so subprocess workers run in the worktree.
     from megaplan.workers import set_work_dir_override
+
     set_work_dir_override(target)
 
     print(
@@ -3283,12 +4538,14 @@ def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
         entry: dict[str, Any] = {"name": name, "kind": kind}
         if verbose and name in yaml_names:
             from megaplan._pipeline.loader import describe_pipeline
+
             desc = describe_pipeline(name)
             # Extract first line of description
             first_line = desc.split("\n")[0] if desc else ""
             entry["description"] = first_line
             # Get profile info
             from megaplan._pipeline.loader import load_pipeline
+
             lp = load_pipeline(name)
             entry["version"] = lp.spec.version
             entry["default_profile"] = lp.spec.default_profile
@@ -3371,7 +4628,10 @@ def main(argv: list[str] | None = None) -> int:
         except CliError as error:
             return error_response(error, root=root)
     if argv and argv[0] == "resident":
-        from megaplan.resident.cli import _register_resident_subcommands, run_resident_cli
+        from megaplan.resident.cli import (
+            _register_resident_subcommands,
+            run_resident_cli,
+        )
 
         resident_parser = argparse.ArgumentParser(prog="megaplan resident")
         _register_resident_subcommands(resident_parser)
@@ -3402,7 +4662,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "setup":
             result = handle_setup(args)
-            if getattr(args, "regen_composed", False) and not result.get("success", True):
+            if getattr(args, "regen_composed", False) and not result.get(
+                "success", True
+            ):
                 print(json_dump(result))
                 return 1
             return render_response(result)
@@ -3419,6 +4681,7 @@ def main(argv: list[str] | None = None) -> int:
     # which breaks cross-subrepo writes — see resolve_work_dir for the
     # precedence rules.
     from megaplan.workers import set_work_dir_override
+
     work_dir_override = getattr(args, "work_dir", None)
     set_work_dir_override(Path(work_dir_override) if work_dir_override else None)
 
@@ -3432,10 +4695,12 @@ def main(argv: list[str] | None = None) -> int:
         except CliError as error:
             return error_response(error)
         if not getattr(args, "project_dir", None):
-            return error_response(CliError(
-                "invalid_args",
-                "megaplan init requires --project-dir or --in-worktree",
-            ))
+            return error_response(
+                CliError(
+                    "invalid_args",
+                    "megaplan init requires --project-dir or --in-worktree",
+                )
+            )
 
     try:
         root = _resolve_project_root(args)
@@ -3445,6 +4710,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "auto":
         from megaplan.auto import run_auto
+
         try:
             return run_auto(root, args)
         except CliError as error:
@@ -3452,6 +4718,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         from megaplan._pipeline.run_cli import cli_run
+
         try:
             return cli_run(args)
         except CliError as error:
@@ -3466,6 +4733,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "chain":
         from megaplan.chain import run_chain_cli
+
         try:
             return run_chain_cli(root, args)
         except CliError as error:
@@ -3473,6 +4741,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "tiebreaker":
         from megaplan.prompts.tiebreaker_orchestrator import run_tiebreaker_cli
+
         try:
             return run_tiebreaker_cli(root, args)
         except CliError as error:
@@ -3486,6 +4755,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "ticket":
             return handler(args)
         from megaplan.orchestration.progress import ProgressEmitter
+
         args.progress_emitter = ProgressEmitter.from_env()
         if args.command == "override" and remaining:
             if not args.note:
@@ -3493,14 +4763,62 @@ def main(argv: list[str] | None = None) -> int:
             remaining = []
         if remaining:
             parser.error(f"unrecognized arguments: {' '.join(remaining)}")
-        if args.command == "override" and args.override_action == "add-note" and not args.note:
+        if (
+            args.command == "override"
+            and args.override_action == "add-note"
+            and not args.note
+        ):
             raise CliError("invalid_args", "override add-note requires a note")
-        if args.command == "override" and args.override_action == "set-robustness" and not args.robustness:
-            raise CliError("invalid_args", f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_ACCEPTED)}")
-        if args.command == "override" and args.override_action == "set-profile" and not args.profile:
-            raise CliError("invalid_args", "override set-profile requires --profile NAME")
+        if (
+            args.command == "override"
+            and args.override_action == "recover-blocked"
+            and not args.reason
+        ):
+            raise CliError("invalid_args", "override recover-blocked requires --reason")
+        if (
+            args.command == "override"
+            and args.override_action == "set-robustness"
+            and not args.robustness
+        ):
+            raise CliError(
+                "invalid_args",
+                f"override set-robustness requires --robustness {'|'.join(ROBUSTNESS_ACCEPTED)}",
+            )
+        if (
+            args.command == "override"
+            and args.override_action == "set-profile"
+            and not args.profile
+        ):
+            raise CliError(
+                "invalid_args", "override set-profile requires --profile NAME"
+            )
+        if (
+            args.command == "user-action"
+            and getattr(args, "user_action_action", None) == "resolve"
+        ):
+            if not getattr(args, "action_id", None):
+                raise CliError(
+                    "invalid_args", "user-action resolve requires --action-id"
+                )
+            if not getattr(args, "resolution", None):
+                raise CliError(
+                    "invalid_args", "user-action resolve requires --resolution"
+                )
+        if (
+            args.command == "quality-gate"
+            and getattr(args, "quality_gate_action", None) == "resolve"
+        ):
+            if not getattr(args, "blocker_id", None):
+                raise CliError(
+                    "invalid_args", "quality-gate resolve requires --blocker-id"
+                )
+            if not getattr(args, "resolution", None):
+                raise CliError(
+                    "invalid_args", "quality-gate resolve requires --resolution"
+                )
         if args.command == "init" and getattr(args, "from_arnold_epic", None):
             from megaplan.store import DBStore
+
             epic_id = args.from_arnold_epic
             store = DBStore(actor_id=None)  # read-only path
             try:
@@ -3521,13 +4839,17 @@ def main(argv: list[str] | None = None) -> int:
                 parts.append(epic.body)
             args.idea = "\n\n".join(parts)
         if args.command in _PROGRESS_PHASE_COMMANDS:
-            args.progress_emitter.phase_start(args.command, plan=getattr(args, "plan", None))
+            args.progress_emitter.phase_start(
+                args.command, plan=getattr(args, "plan", None)
+            )
         response = handler(root, args)
         _emit_response_progress(args.command, response, args.progress_emitter)
         return render_response(response)
     except CliError as error:
         if "args" in locals() and hasattr(args, "progress_emitter"):
-            _emit_error_progress(getattr(args, "command", ""), error, args.progress_emitter)
+            _emit_error_progress(
+                getattr(args, "command", ""), error, args.progress_emitter
+            )
         return error_response(error, root=root)
 
 

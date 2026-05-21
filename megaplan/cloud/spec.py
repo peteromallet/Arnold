@@ -47,6 +47,7 @@ class AutoSpec:
 @dataclass(frozen=True)
 class ChainSubSpec:
     spec: str
+    chain_session: str | None = None
 
 
 @dataclass(frozen=True)
@@ -373,12 +374,15 @@ def load_spec(path: Path) -> CloudSpec:
         chain_raw = _mapping(raw.get("chain"), "chain")
         chain_spec = ChainSubSpec(
             spec=_absolute_posix(chain_raw.get("spec"), "chain.spec"),
+            chain_session=_optional_string(
+                chain_raw.get("chain_session"), "chain.chain_session"
+            ),
         )
 
     chain_session = _string(
         raw.get("chain_session"),
         "chain_session",
-        default="megaplan-chain",
+        default=chain_spec.chain_session if chain_spec and chain_spec.chain_session else "megaplan-chain",
     )
 
     return CloudSpec(

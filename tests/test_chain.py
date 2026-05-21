@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from megaplan.auto import DriverOutcome
+from megaplan import chain as chain_module
 from megaplan.chain import (
     ChainState,
     MilestoneSpec,
@@ -189,6 +190,126 @@ def test_load_spec_rejects_bad_merge_policy(tmp_path: Path) -> None:
     with pytest.raises(CliError) as excinfo:
         load_spec(spec_path)
     assert "merge_policy" in excinfo.value.message
+
+
+# ---------------------------------------------------------------------------
+# T2: Chain-level policy parsing (prerequisite_policy, validation_policy,
+#     review_policy.clean_milestone_pr)
+# ---------------------------------------------------------------------------
+
+
+def test_load_spec_defaults_policy_fields(tmp_path: Path) -> None:
+    """Existing YAML without policy fields parses with conservative defaults."""
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(tmp_path, {"milestones": [{"label": "m1", "idea": str(idea)}]})
+    spec = load_spec(spec_path)
+    assert spec.prerequisite_policy == "none"
+    assert spec.validation_policy == "none"
+    assert spec.review_policy == {"clean_milestone_pr": "auto"}
+    # merge_policy must also still default correctly
+    assert spec.merge_policy == "auto"
+
+
+def test_load_spec_parses_explicit_prerequisite_policy(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "prerequisite_policy": "required",
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.prerequisite_policy == "required"
+    assert spec.validation_policy == "none"  # still default
+    assert spec.review_policy == {"clean_milestone_pr": "auto"}  # still default
+
+
+def test_load_spec_parses_explicit_validation_policy(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "validation_policy": "required",
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.validation_policy == "required"
+
+
+def test_load_spec_parses_nested_review_policy(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "review_policy": {"clean_milestone_pr": "manual"},
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.review_policy == {"clean_milestone_pr": "manual"}
+
+
+def test_load_spec_parses_all_policies_together(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "prerequisite_policy": "required",
+            "validation_policy": "required",
+            "review_policy": {"clean_milestone_pr": "manual"},
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.prerequisite_policy == "required"
+    assert spec.validation_policy == "required"
+    assert spec.review_policy == {"clean_milestone_pr": "manual"}
+
+
+def test_load_spec_rejects_invalid_prerequisite_policy(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"prerequisite_policy": "sometimes", "milestones": []},
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "prerequisite_policy" in excinfo.value.message
+
+
+def test_load_spec_rejects_invalid_validation_policy(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"validation_policy": "maybe", "milestones": []},
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "validation_policy" in excinfo.value.message
+
+
+def test_load_spec_rejects_invalid_clean_milestone_pr(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"review_policy": {"clean_milestone_pr": "never"}, "milestones": []},
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "clean_milestone_pr" in excinfo.value.message
+
+
+def test_load_spec_rejects_non_mapping_review_policy(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"review_policy": "auto", "milestones": []},
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "review_policy" in excinfo.value.message
 
 
 def test_load_spec_rejects_missing_label(tmp_path: Path) -> None:
@@ -652,6 +773,67 @@ def test_load_chain_state_reads_legacy_sibling_state(tmp_path: Path) -> None:
     assert loaded.last_state == "done"
 
 
+# ---------------------------------------------------------------------------
+# T5: Backward-compatible ChainState deserialization (new sync fields)
+# ---------------------------------------------------------------------------
+
+
+def test_chain_state_from_dict_handles_old_json_missing_sync_fields() -> None:
+    """Older state JSON (no branch_head, pr_head, etc.) loads with
+    defaults: None/False for sync fields."""
+    raw = {
+        "current_milestone_index": 3,
+        "current_plan_name": "old-plan",
+        "last_state": "done",
+        "pr_number": 42,
+        "pr_state": "OPEN",
+        "completed": [{"label": "m1", "status": "done"}],
+    }
+    state = ChainState.from_dict(raw)
+    assert state.current_milestone_index == 3
+    assert state.current_plan_name == "old-plan"
+    assert state.last_state == "done"
+    assert state.pr_number == 42
+    assert state.pr_state == "OPEN"
+    assert len(state.completed) == 1
+    # New fields default cleanly.
+    assert state.branch_head is None
+    assert state.pr_head is None
+    assert state.last_pushed_commit is None
+    assert state.dirty_flag is False
+    assert state.sync_state is None
+
+
+def test_chain_state_to_dict_and_from_dict_roundtrip_with_sync() -> None:
+    """Full round-trip with sync fields populated."""
+    state = ChainState(
+        current_milestone_index=0,
+        current_plan_name="plan-1",
+        last_state="executed",
+        pr_number=99,
+        pr_state="OPEN",
+        completed=[],
+        branch_head="abc123",
+        pr_head="def456",
+        last_pushed_commit="abc123",
+        dirty_flag=False,
+        sync_state="clean",
+    )
+    raw = state.to_dict()
+    assert raw["branch_head"] == "abc123"
+    assert raw["pr_head"] == "def456"
+    assert raw["last_pushed_commit"] == "abc123"
+    assert raw["dirty_flag"] is False
+    assert raw["sync_state"] == "clean"
+
+    reloaded = ChainState.from_dict(raw)
+    assert reloaded.branch_head == "abc123"
+    assert reloaded.pr_head == "def456"
+    assert reloaded.last_pushed_commit == "abc123"
+    assert reloaded.dirty_flag is False
+    assert reloaded.sync_state == "clean"
+
+
 def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     spec_path = _setup_three_milestones(tmp_path, seed_plan="seed-plan-20260421")
     spec = load_spec(spec_path)
@@ -664,19 +846,27 @@ def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixtur
     save_chain_state(spec_path, state)
 
     summary = format_chain_status(spec, state)
-    assert summary == {
-        "current_milestone": {"label": "m2", "index": 1},
-        "completed": [{"label": "m1", "index": 0}],
-        "remaining": [{"label": "m2", "index": 1}, {"label": "m3", "index": 2}],
-        "per_milestone": [
-            {"label": "m1", "index": 0, "status": "completed"},
-            {"label": "m2", "index": 1, "status": "in_progress"},
-            {"label": "m3", "index": 2, "status": "pending"},
-        ],
-        "seed_plan": "seed-plan-20260421",
-        "base_branch": "main",
-        "current_plan_name": "plan-for-m2",
-        "last_state": "done",
+    # Verify existing keys are all present (backward-compatible).
+    assert summary["current_milestone"] == {"label": "m2", "index": 1}
+    assert summary["completed"] == [{"label": "m1", "index": 0}]
+    assert summary["remaining"] == [{"label": "m2", "index": 1}, {"label": "m3", "index": 2}]
+    assert summary["per_milestone"] == [
+        {"label": "m1", "index": 0, "status": "completed"},
+        {"label": "m2", "index": 1, "status": "in_progress"},
+        {"label": "m3", "index": 2, "status": "pending"},
+    ]
+    assert summary["seed_plan"] == "seed-plan-20260421"
+    assert summary["base_branch"] == "main"
+    assert summary["current_plan_name"] == "plan-for-m2"
+    assert summary["last_state"] == "done"
+    # New sync section (additive, all defaulting None/False).
+    assert "sync" in summary
+    assert summary["sync"] == {
+        "branch_head": None,
+        "pr_head": None,
+        "last_pushed_commit": None,
+        "dirty_flag": False,
+        "sync_state": None,
     }
 
     args = argparse.Namespace(chain_action="status", spec=str(spec_path), no_git_refresh=False)
@@ -1706,3 +1896,234 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 2
     assert [item["label"] for item in saved.completed] == ["m1", "m2"]
+
+
+# ---------------------------------------------------------------------------
+# T4: chain override subcommand (runtime policy artifacts)
+# ---------------------------------------------------------------------------
+
+
+def test_chain_override_no_setter_flags_fails_with_cli_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bare `chain override --spec ...` with no setter flags must fail before writing."""
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(tmp_path, "m1.txt"))}]},
+    )
+    args = argparse.Namespace(
+        chain_action="override",
+        spec=str(spec_path),
+        set_prerequisite_policy=None,
+        set_validation_policy=None,
+        set_review_clean_milestone_pr=None,
+    )
+    rc = run_chain_cli(tmp_path, args, writer=lambda _m: None)
+    assert rc != 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is False
+    assert "invalid_spec" in payload.get("error", "")
+    assert "At least one --set-* flag" in payload.get("message", "")
+
+
+def test_chain_override_sets_prerequisite_policy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """override with --set-prerequisite-policy required persists artifact."""
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(tmp_path, "m1.txt"))}]},
+    )
+    args = argparse.Namespace(
+        chain_action="override",
+        spec=str(spec_path),
+        set_prerequisite_policy="required",
+        set_validation_policy=None,
+        set_review_clean_milestone_pr=None,
+    )
+    rc = run_chain_cli(tmp_path, args, writer=lambda _m: None)
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True
+    assert payload["effective_policy"]["prerequisite_policy"] == "required"
+    assert payload["effective_policy"]["source"] == "runtime_override"
+
+    # Verify the runtime artifact was written (never chain.yaml).
+    runtime_path = chain_module._runtime_policy_path_for(spec_path)
+    assert runtime_path.exists()
+    saved = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert saved["prerequisite_policy"] == "required"
+
+    # Chain status reports effective policy.
+    status_args = argparse.Namespace(chain_action="status", spec=str(spec_path))
+    rc2 = run_chain_cli(tmp_path, status_args, writer=lambda _m: None)
+    assert rc2 == 0
+    status_payload = json.loads(capsys.readouterr().out)
+    assert status_payload["policy"]["prerequisite_policy"] == "required"
+
+
+def test_chain_override_sets_validation_policy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """override with --set-validation-policy required persists artifact."""
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(tmp_path, "m1.txt"))}]},
+    )
+    args = argparse.Namespace(
+        chain_action="override",
+        spec=str(spec_path),
+        set_prerequisite_policy=None,
+        set_validation_policy="required",
+        set_review_clean_milestone_pr=None,
+    )
+    rc = run_chain_cli(tmp_path, args, writer=lambda _m: None)
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["effective_policy"]["validation_policy"] == "required"
+
+
+def test_chain_override_sets_review_clean_milestone_pr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """override with --set-review-clean-milestone-pr manual persists artifact."""
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(tmp_path, "m1.txt"))}]},
+    )
+    args = argparse.Namespace(
+        chain_action="override",
+        spec=str(spec_path),
+        set_prerequisite_policy=None,
+        set_validation_policy=None,
+        set_review_clean_milestone_pr="manual",
+    )
+    rc = run_chain_cli(tmp_path, args, writer=lambda _m: None)
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["effective_policy"]["review_policy"]["clean_milestone_pr"] == "manual"
+
+
+def test_chain_override_accumulates_multiple_setters(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Setting multiple policies in one call merges into a single artifact."""
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(_touch_idea(tmp_path, "m1.txt"))}]},
+    )
+    args = argparse.Namespace(
+        chain_action="override",
+        spec=str(spec_path),
+        set_prerequisite_policy="required",
+        set_validation_policy="required",
+        set_review_clean_milestone_pr="manual",
+    )
+    rc = run_chain_cli(tmp_path, args, writer=lambda _m: None)
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["effective_policy"]["prerequisite_policy"] == "required"
+    assert payload["effective_policy"]["validation_policy"] == "required"
+    assert payload["effective_policy"]["review_policy"]["clean_milestone_pr"] == "manual"
+    # Verify artifact.
+    runtime_path = chain_module._runtime_policy_path_for(spec_path)
+    saved = json.loads(runtime_path.read_text(encoding="utf-8"))
+    assert saved["prerequisite_policy"] == "required"
+    assert saved["review_policy"]["clean_milestone_pr"] == "manual"
+
+
+# ---------------------------------------------------------------------------
+# T7: chain policy propagation into plan metadata
+# ---------------------------------------------------------------------------
+
+
+def test_initialized_plan_receives_chain_policy_metadata(
+    tmp_path: Path,
+) -> None:
+    """After _init_plan returns, the plan's state.json must contain meta.chain_policy."""
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "prerequisite_policy": "required",
+            "validation_policy": "required",
+            "review_policy": {"clean_milestone_pr": "manual"},
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    # Create a stub plan directory so resolve_plan_dir succeeds.
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-stub-20260520"
+    plan_dir.mkdir(parents=True)
+    stub_state = {
+        "current_state": "initialized",
+        "meta": {},
+        "idea": str(idea),
+    }
+    (plan_dir / "state.json").write_text(json.dumps(stub_state), encoding="utf-8")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch"), \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=1), \
+         patch("megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
+         patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="merged"):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+
+    # Verify the plan state.json now contains chain policy metadata.
+    updated_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    cp = updated_state["meta"]["chain_policy"]
+    assert cp["prerequisite_policy"] == "required"
+    assert cp["validation_policy"] == "required"
+    assert cp["review_policy"]["clean_milestone_pr"] == "manual"
+    assert cp["source"] == "chain_yaml"
+    assert cp["milestone_label"] == "m1"
+
+
+def test_initialized_plan_respects_runtime_override_source(
+    tmp_path: Path,
+) -> None:
+    """When runtime overrides exist, the plan meta must reflect runtime_override source."""
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "prerequisite_policy": "none",
+            "milestones": [{"label": "m1", "idea": str(idea)}],
+        },
+    )
+    (tmp_path / ".megaplan" / "plans").mkdir(parents=True)
+
+    # Pre-write a runtime policy override so effective_chain_policy reports it.
+    chain_module.save_runtime_policy(
+        spec_path, {"prerequisite_policy": "required"}
+    )
+
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-stub-20260520"
+    plan_dir.mkdir(parents=True)
+    stub_state = {
+        "current_state": "initialized",
+        "meta": {},
+        "idea": str(idea),
+    }
+    (plan_dir / "state.json").write_text(json.dumps(stub_state), encoding="utf-8")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._checkout_milestone_branch"), \
+         patch("megaplan.chain._ensure_milestone_pr", return_value=1), \
+         patch("megaplan.chain._init_plan", return_value="plan-stub-20260520"), \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-stub-20260520", "done")), \
+         patch("megaplan.chain._commit_and_push_phase"), \
+         patch("megaplan.chain._pr_state", return_value="merged"):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    updated_state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    cp = updated_state["meta"]["chain_policy"]
+    assert cp["prerequisite_policy"] == "required"
+    assert cp["source"] == "runtime_override"
+    assert cp["milestone_label"] == "m1"
