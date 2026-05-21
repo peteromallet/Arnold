@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,7 @@ from megaplan._core import (
     atomic_write_text,
     configured_robustness,
     is_creative_mode,
+    latest_plan_path,
     load_plan_locked,
     render_final_md,
     require_state,
@@ -20,26 +23,39 @@ from megaplan._core import (
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker, shutil, subprocess
 
-def _reconcile_validation_after_mutation(payload: dict[str, Any]) -> None:
-    """Ensure validation block is consistent with the (possibly mutated) task list.
+LOGGER = logging.getLogger(__name__)
 
-    After handler helpers may have injected tasks, update the
-    validation block so orphan_tasks includes any handler-injected tasks.
-    """
-    validation = payload.get("validation")
-    if not validation or not isinstance(validation, dict):
-        return
-    task_ids = {t["id"] for t in payload.get("tasks", []) if isinstance(t, dict)}
-    covered_ids: set[str] = set()
-    for entry in validation.get("plan_steps_covered", []):
-        if isinstance(entry, dict):
-            for tid in entry.get("finalize_item_ids", []):
-                covered_ids.add(tid)
-    orphan_ids = set(validation.get("orphan_tasks", []))
-    for tid in task_ids:
-        if tid not in covered_ids and tid not in orphan_ids:
-            orphan_ids.add(tid)
-    validation["orphan_tasks"] = sorted(orphan_ids)
+
+def _strict_finalize_validation_enabled() -> bool:
+    return os.getenv("MEGAPLAN_FINALIZE_STRICT_VALIDATION", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _task_is_test_verification(task: dict[str, Any]) -> bool:
+    if task.get("kind") == "test":
+        return True
+    description = (task.get("description") or "").lower()
+    test_keywords = (
+        "pytest",
+        "run test",
+        "run the test",
+        "test suite",
+        "run existing test",
+        "verify",
+        "verification",
+    )
+    return any(keyword in description for keyword in test_keywords)
+
+
+def _final_task_is_test_verification(tasks: list[Any]) -> bool:
+    if not tasks or not isinstance(tasks[-1], dict):
+        return False
+    return _task_is_test_verification(tasks[-1])
+
 
 def _next_task_id(tasks: list[dict[str, Any]]) -> str:
     next_num = max(
@@ -69,23 +85,95 @@ def _next_sense_check_id(sense_checks: list[dict[str, Any]]) -> str:
     ) + 1
     return f"SC{next_num}"
 
-def _append_plan_step_coverage(payload: dict[str, Any], summary: str, item_id: str) -> None:
-    validation = payload.get("validation")
-    if not isinstance(validation, dict):
+_PATH_PATTERN = re.compile(r"(?:[\w.-]+/)+[\w.-]+|[\w.-]+\.[A-Za-z0-9]{1,8}")
+_PLAN_STEP_PATTERN = re.compile(
+    r"^##\s+Step\s+\d+\s*:\s*(?P<title>.+?)\s*$"
+    r"(?P<body>.*?)(?=^##\s+Step\s+\d+\s*:|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_STOPWORDS = {
+    "add",
+    "and",
+    "change",
+    "create",
+    "for",
+    "from",
+    "implement",
+    "into",
+    "make",
+    "modify",
+    "move",
+    "update",
+    "the",
+    "this",
+    "that",
+    "with",
+}
+
+
+def _extract_plan_steps(plan_text: str) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    for match in _PLAN_STEP_PATTERN.finditer(plan_text):
+        title = " ".join(match.group("title").split())
+        step_text = f"{title}\n{match.group('body')}"
+        paths = {path.lower() for path in _PATH_PATTERN.findall(step_text)}
+        keywords = {
+            token.lower()
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_/-]{3,}", title)
+            if token.lower() not in _STOPWORDS
+        }
+        steps.append({"summary": title, "paths": paths, "keywords": keywords})
+    return steps
+
+
+def _task_covers_plan_step(task: dict[str, Any], step: dict[str, Any]) -> bool:
+    description = (task.get("description") or "").lower()
+    if any(path in description for path in step["paths"]):
+        return True
+    return any(keyword in description for keyword in step["keywords"])
+
+
+def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state: PlanState) -> None:
+    if not state.get("plan_versions"):
+        payload["validation"] = {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "No plan steps found for programmatic coverage.",
+            "coverage_complete": True,
+        }
         return
-    plan_steps_covered = validation.get("plan_steps_covered")
-    if not isinstance(plan_steps_covered, list):
-        return
-    for entry in plan_steps_covered:
-        if not isinstance(entry, dict):
-            continue
-        item_ids = entry.get("finalize_item_ids", [])
-        if isinstance(item_ids, list) and item_id in item_ids:
-            return
-    plan_steps_covered.append({
-        "plan_step_summary": summary,
-        "finalize_item_ids": [item_id],
-    })
+    plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+    steps = _extract_plan_steps(plan_text)
+    tasks = [task for task in payload.get("tasks", []) if isinstance(task, dict)]
+    covered_entries: list[dict[str, Any]] = []
+    uncovered: list[str] = []
+
+    for step in steps:
+        task_ids = [
+            task["id"]
+            for task in tasks
+            if isinstance(task.get("id"), str) and _task_covers_plan_step(task, step)
+        ]
+        if not task_ids:
+            uncovered.append(step["summary"])
+        covered_entries.append({
+            "plan_step_summary": step["summary"],
+            "finalize_item_ids": task_ids,
+        })
+
+    if uncovered:
+        notes = "; ".join(f"auto-detected uncovered step: {summary}" for summary in uncovered)
+        coverage_complete = False
+    else:
+        notes = "All detected plan steps mapped to tasks."
+        coverage_complete = True
+
+    payload["validation"] = {
+        "plan_steps_covered": covered_entries,
+        "orphan_tasks": [],
+        "completeness_notes": notes,
+        "coverage_complete": coverage_complete,
+    }
 
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
     payload = worker.payload
@@ -131,6 +219,13 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
             _reject(f"Finalize task {tid} is missing a non-empty `description`.")
         if task.get("status") != "pending":
             _reject(f"Finalize task {tid} must start with status `pending`.")
+    if (
+        state["config"].get("mode", "code") == "code"
+        and _strict_finalize_validation_enabled()
+        and not _final_task_is_test_verification(tasks)
+    ):
+        LOGGER.warning("Finalize output rejected: final task is not a test verification task.")
+        _reject("Finalize output final task must run tests or otherwise verify the change.")
     validation = payload.get("validation")
     if isinstance(validation, dict):
         for index, entry in enumerate(validation.get("plan_steps_covered", []), start=1):
@@ -166,10 +261,13 @@ def _ensure_verification_task(payload: dict, state: dict) -> None:
     if not tasks:
         return
 
-    # Check if last task is already a verification task
-    last_desc = (tasks[-1].get("description") or "").lower()
-    test_keywords = ("run test", "run the test", "verify", "verification", "pytest", "test suite", "run existing test")
-    has_verification_task = any(kw in last_desc for kw in test_keywords)
+    if _final_task_is_test_verification(tasks):
+        has_verification_task = True
+    elif _strict_finalize_validation_enabled():
+        LOGGER.warning("Finalize output missing final test verification task; strict validation is enabled.")
+        return
+    else:
+        has_verification_task = False
 
     if not has_verification_task:
         # Build the verification task
@@ -218,8 +316,6 @@ def _ensure_verification_task(payload: dict, state: dict) -> None:
             "executor_note": "",
             "verdict": "",
         })
-        _append_plan_step_coverage(payload, "Run verification tests", task_id)
-
     failures = payload.get("baseline_test_failures")
     if isinstance(failures, list) and failures:
         tasks[-1]["description"] += (
@@ -276,8 +372,6 @@ def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str,
         "executor_note": "",
         "verdict": "",
     })
-    _append_plan_step_coverage(payload, "Verify before_execute user_actions", task_id)
-
 def _ensure_user_actions_post_gate_task(payload: dict[str, Any], state: dict[str, Any]) -> None:
     if state["config"].get("mode", "code") != "code":
         return
@@ -401,7 +495,7 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_verification_task(payload, state)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
-    _reconcile_validation_after_mutation(payload)
+    _apply_programmatic_coverage(payload, plan_dir, state)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(payload))
