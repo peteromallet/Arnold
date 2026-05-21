@@ -514,6 +514,10 @@ def make_history_entry(
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
     total_tokens: int = 0,
+    # Tier routing observability fields (omitted for flat profiles).
+    batch_complexity: int | None = None,
+    tier_model_spec: str | None = None,
+    tier_model_resolved: str | None = None,
 ) -> HistoryEntry:
     entry: HistoryEntry = {
         "step": step,
@@ -550,6 +554,13 @@ def make_history_entry(
         entry["approval_mode"] = approval_mode
     if environment is not None:
         entry["environment"] = environment
+    # Tier routing observability — only present when tier routing is active.
+    if batch_complexity is not None:
+        entry["batch_complexity"] = batch_complexity
+    if tier_model_spec is not None:
+        entry["tier_model_spec"] = tier_model_spec
+    if tier_model_resolved is not None:
+        entry["tier_model_resolved"] = tier_model_resolved
     return entry
 
 

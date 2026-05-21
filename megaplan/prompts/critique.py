@@ -247,6 +247,7 @@ def _build_critique_prompt(
         - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
         - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
         - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.
         """
     ).strip()
 

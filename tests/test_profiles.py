@@ -1621,3 +1621,908 @@ def test_shannon_rejected_when_misspelled() -> None:
 def test_known_agents_includes_shannon() -> None:
     from megaplan.types import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
+
+
+# ---------------------------------------------------------------------------
+# Tier model metadata parsing, validation, and inheritance (T6)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_tier_models_nested_toml_table() -> None:
+    """Nested TOML tables are normalised to {phase: {tier: spec}}."""
+    from megaplan.profiles import _extract_tier_models
+
+    raw = {"execute": {"1": "hermes:deepseek-flash", "2": "hermes:deepseek-pro"}}
+    result = _extract_tier_models(raw)
+    assert result == {"execute": {1: "hermes:deepseek-flash", 2: "hermes:deepseek-pro"}}
+
+
+def test_extract_tier_models_flattened_dotted_keys() -> None:
+    """Already re-nested flattened keys are handled identically."""
+    from megaplan.profiles import _extract_tier_models
+
+    # Simulating what _split_profile_dict re-nests from pipeline-local
+    raw = {"execute": {"1": "hermes:deepseek-flash", "3": "hermes:deepseek-pro"}}
+    result = _extract_tier_models(raw)
+    assert result == {"execute": {1: "hermes:deepseek-flash", 3: "hermes:deepseek-pro"}}
+
+
+def test_extract_tier_models_string_tier_keys_converted_to_int() -> None:
+    """String tier keys like '1' are converted to int 1."""
+    from megaplan.profiles import _extract_tier_models
+
+    raw = {"execute": {"1": "hermes:deepseek-flash", "5": "codex:high"}}
+    result = _extract_tier_models(raw)
+    assert result == {"execute": {1: "hermes:deepseek-flash", 5: "codex:high"}}
+
+
+def test_extract_tier_models_non_dict_returns_empty() -> None:
+    """Non-dict input returns empty dict."""
+    from megaplan.profiles import _extract_tier_models
+    assert _extract_tier_models(None) == {}
+    assert _extract_tier_models("not a dict") == {}
+    assert _extract_tier_models([]) == {}
+
+
+def test_validate_tier_models_rejects_unknown_phase() -> None:
+    """Unknown phase names in tier_models are rejected."""
+    from megaplan.profiles import _validate_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="unknown phase 'bogus'"):
+        _validate_tier_models("test.toml", "test-profile", {"bogus": {1: "claude:low"}})
+
+
+def test_validate_tier_models_rejects_tier_key_out_of_range() -> None:
+    """Tier keys must be 1..5."""
+    from megaplan.profiles import _validate_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="tier key must be an integer 1..5"):
+        _validate_tier_models("test.toml", "test-profile", {"execute": {0: "claude:low"}})
+
+    with pytest.raises(CliError, match="tier key must be an integer 1..5"):
+        _validate_tier_models("test.toml", "test-profile", {"execute": {6: "claude:low"}})
+
+
+def test_validate_tier_models_rejects_non_integer_tier_key() -> None:
+    """Non-integer tier keys like 'x' are rejected by _validate_tier_models."""
+    from megaplan.profiles import _extract_tier_models, _validate_tier_models
+    from megaplan.types import CliError
+
+    raw = {"execute": {"x": "claude:low"}}
+    tier_data = _extract_tier_models(raw)
+    with pytest.raises(CliError, match="tier key must be an integer 1..5"):
+        _validate_tier_models("test.toml", "test-profile", tier_data)
+
+
+def test_validate_tier_models_rejects_unknown_agent() -> None:
+    """Unknown agents in tier specs are rejected."""
+    from megaplan.profiles import _validate_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="unknown agent 'bogus-agent'"):
+        _validate_tier_models("test.toml", "test-profile", {"execute": {1: "bogus-agent:low"}})
+
+
+def test_validate_tier_models_rejects_non_string_spec() -> None:
+    """Non-string tier specs are rejected by _validate_tier_models."""
+    from megaplan.profiles import _extract_tier_models, _validate_tier_models
+    from megaplan.types import CliError
+
+    raw = {"execute": {"1": 123}}
+    tier_data = _extract_tier_models(raw)
+    # _extract_tier_models now passes through; _validate_tier_models must reject.
+    with pytest.raises(CliError, match="expected a string agent spec"):
+        _validate_tier_models("test.toml", "test-profile", tier_data)
+
+
+def test_extract_tier_models_rejects_non_dict_tier_map_when_path_provided() -> None:
+    """Non-dict tier entries (e.g. a list) must raise CliError at profile
+    load time when path/profile_name are supplied."""
+    from megaplan.profiles import _extract_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="tier entry must be a TOML table"):
+        _extract_tier_models({"execute": [1, 2, 3]}, path="test.toml", profile_name="test")
+
+
+def test_extract_tier_models_rejects_non_str_phase_key_when_path_provided() -> None:
+    """Non-string phase keys must raise CliError at profile load time
+    when path/profile_name are supplied."""
+    from megaplan.profiles import _extract_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="phase key must be a string"):
+        _extract_tier_models({123: {"1": "claude"}}, path="test.toml", profile_name="test")
+
+
+def test_extract_tier_models_non_dict_tier_map_no_path_still_skips() -> None:
+    """Without path/profile_name, non-dict tier maps are silently skipped
+    (backward compat for already-validated data paths)."""
+    from megaplan.profiles import _extract_tier_models
+
+    result = _extract_tier_models({"execute": [1, 2, 3]})
+    assert result == {}
+
+
+def test_extract_tier_models_non_str_phase_no_path_still_skips() -> None:
+    """Without path/profile_name, non-string phase keys are silently skipped
+    (backward compat for already-validated data paths)."""
+    from megaplan.profiles import _extract_tier_models
+
+    result = _extract_tier_models({123: {"1": "claude"}})
+    assert result == {}
+
+
+def test_extract_tier_models_non_dict_with_path_raises() -> None:
+    """Non-dict input (string) with path/profile_name raises CliError."""
+    from megaplan.profiles import _extract_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="expected a TOML table for tier_models"):
+        _extract_tier_models("bad", path="test.toml", profile_name="test")
+
+
+def test_extract_tier_models_non_dict_list_with_path_raises() -> None:
+    """Non-dict input (list) with path/profile_name raises CliError."""
+    from megaplan.profiles import _extract_tier_models
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="expected a TOML table for tier_models"):
+        _extract_tier_models([1, 2, 3], path="test.toml", profile_name="test")
+
+
+def test_split_profile_dict_rejects_two_part_tier_key() -> None:
+    """Flattened key 'tier_models.execute' (2 parts, missing tier) raises CliError."""
+    from megaplan.profiles import _split_profile_dict
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="malformed tier_models key"):
+        _split_profile_dict("test.toml", "test", {"tier_models.execute": "claude"})
+
+
+def test_split_profile_dict_rejects_four_part_tier_key() -> None:
+    """Flattened key 'tier_models.execute.1.extra' (4 parts) raises CliError."""
+    from megaplan.profiles import _split_profile_dict
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError, match="malformed tier_models key"):
+        _split_profile_dict("test.toml", "test", {"tier_models.execute.1.extra": "claude"})
+
+
+def test_split_profile_dict_extracts_flattened_tier_models() -> None:
+    """Flattened tier_models.execute.1 keys are re-nested into metadata."""
+    from megaplan.profiles import _split_profile_dict
+
+    flat = {
+        "vendor_locked": True,
+        "tier_models.execute.1": "hermes:deepseek-flash",
+        "tier_models.execute.5": "claude:high",
+        "plan": "claude:low",
+    }
+    phase_map, metadata = _split_profile_dict("test.toml", "test", flat)
+    assert "tier_models" not in phase_map
+    assert "tier_models.execute.1" not in phase_map
+    assert metadata["vendor_locked"] is True
+    assert metadata["tier_models"] == {
+        "execute": {"1": "hermes:deepseek-flash", "5": "claude:high"}
+    }
+    assert phase_map == {"plan": "claude:low"}
+
+
+def test_split_profile_dict_nested_tier_models() -> None:
+    """Nested tier_models dict is placed in metadata directly."""
+    from megaplan.profiles import _split_profile_dict
+
+    nested = {
+        "vendor_locked": True,
+        "tier_models": {"execute": {"1": "hermes:deepseek-flash", "5": "claude:high"}},
+        "plan": "claude:low",
+    }
+    phase_map, metadata = _split_profile_dict("test.toml", "test", nested)
+    assert metadata["tier_models"] == {"execute": {"1": "hermes:deepseek-flash", "5": "claude:high"}}
+    assert phase_map == {"plan": "claude:low"}
+
+
+def test_resolve_tier_models_inheritance_child_overrides_parent() -> None:
+    """Child tier overrides parent for the same phase+tier."""
+    from megaplan.profiles import _resolve_tier_models_with_inheritance
+
+    system_profiles = {
+        "parent": {"plan": "claude:low"},
+        "child": {"plan": "claude:low"},
+    }
+    system_metadata = {
+        "parent": {
+            "tier_models": {"execute": {
+                1: "hermes:deepseek-flash",
+                5: "claude:high",
+            }},
+        },
+        "child": {
+            "extends": "system:parent",
+            "tier_models": {"execute": {
+                5: "codex:high",
+            }},
+        },
+    }
+    pipeline_local_profiles: dict[str, dict[str, str]] = {}
+    pipeline_local_metadata: dict[str, dict[str, Any]] = {}
+
+    result = _resolve_tier_models_with_inheritance(
+        "child",
+        system_profiles=system_profiles,
+        system_metadata=system_metadata,
+        pipeline_local_profiles=pipeline_local_profiles,
+        pipeline_local_metadata=pipeline_local_metadata,
+    )
+    assert result == {"execute": {1: "hermes:deepseek-flash", 5: "codex:high"}}
+
+
+def test_resolve_tier_models_inheritance_no_parent_tiers() -> None:
+    """Profile without extends returns its own tier_models."""
+    from megaplan.profiles import _resolve_tier_models_with_inheritance
+
+    system_profiles = {"solo": {"plan": "claude:low"}}
+    system_metadata = {
+        "solo": {
+            "tier_models": {"execute": {1: "hermes:deepseek-flash"}},
+        },
+    }
+    pipeline_local_profiles: dict[str, dict[str, str]] = {}
+    pipeline_local_metadata: dict[str, dict[str, Any]] = {}
+
+    result = _resolve_tier_models_with_inheritance(
+        "solo",
+        system_profiles=system_profiles,
+        system_metadata=system_metadata,
+        pipeline_local_profiles=pipeline_local_profiles,
+        pipeline_local_metadata=pipeline_local_metadata,
+    )
+    assert result == {"execute": {1: "hermes:deepseek-flash"}}
+
+
+# ---------------------------------------------------------------------------
+# T7/T8: Tier model rewrite tests
+# ---------------------------------------------------------------------------
+
+
+def test_vendor_rewrite_propagates_to_tier_entries() -> None:
+    """--vendor codex swaps only premium (claude/codex) tier entries; DeepSeek tiers pass through."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    tier_models = {"execute": {1: "hermes:deepseek-flash", 3: "hermes:deepseek-pro", 4: "claude:medium", 5: "claude:high"}}
+    profile = {"plan": "claude:low"}
+
+    _result = apply_vendor_rewrite(profile, "codex", tier_models=tier_models)
+
+    # DeepSeek tiers unchanged
+    assert tier_models["execute"][1] == "hermes:deepseek-flash"
+    assert tier_models["execute"][3] == "hermes:deepseek-pro"
+    # Premium tiers flipped
+    assert tier_models["execute"][4] == "codex:medium"
+    assert tier_models["execute"][5] == "codex:high"
+
+
+def test_deepseek_provider_rewrite_propagates_to_tier_entries() -> None:
+    """--deepseek-provider direct swaps canonical Fireworks DeepSeek specs in tier entries."""
+    from megaplan.profiles import apply_deepseek_provider_rewrite
+
+    FIREWORKS_DS = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+    tier_models = {"execute": {1: FIREWORKS_DS, 5: "claude:high"}}
+    profile = {"plan": FIREWORKS_DS}
+
+    _result = apply_deepseek_provider_rewrite(profile, "direct", tier_models=tier_models)
+
+    # DeepSeek tier swapped to direct
+    assert "deepseek:deepseek-v4-pro" in tier_models["execute"][1]
+    # Premium tier unchanged
+    assert tier_models["execute"][5] == "claude:high"
+
+
+def test_depth_rewrite_propagates_to_tier_entries_author_phases_only() -> None:
+    """--depth rewrites tier entries for author phases (e.g. plan) but not execute."""
+    from megaplan.profiles import apply_depth_rewrite
+
+    tier_models = {
+        "plan": {1: "claude:low", 4: "claude:medium"},
+        "execute": {1: "hermes:deepseek-flash", 4: "claude:medium"},  # execute is not author-phase
+    }
+    profile = {"plan": "claude:low", "execute": "hermes:deepseek-flash"}
+
+    _result = apply_depth_rewrite(profile, "high", tier_models=tier_models)
+
+    # Author phase tiers rewritten
+    assert tier_models["plan"][1] == "claude:high"
+    assert tier_models["plan"][4] == "claude:high"
+    # Execute phase tiers NOT touched (not an author phase)
+    assert tier_models["execute"][1] == "hermes:deepseek-flash"
+    assert tier_models["execute"][4] == "claude:medium"
+
+
+def test_named_vendor_tier_drift_raises_profile_resolution_mismatch() -> None:
+    """A variable-codex tier 4 of claude:medium must raise profile_resolution_mismatch."""
+    from megaplan.profiles import _validate_named_profile_invariants
+
+    with pytest.raises(CliError, match="expected codex"):
+        _validate_named_profile_invariants(
+            "variable-codex",
+            {"plan": "codex:low"},
+            tier_models={"execute": {4: "claude:medium"}},
+        )
+
+
+def test_named_vendor_tier_drift_passes_when_correct() -> None:
+    """A variable-codex profile with correct codex tier entries passes validation."""
+    from megaplan.profiles import _validate_named_profile_invariants
+
+    # Should not raise
+    _validate_named_profile_invariants(
+        "variable-codex",
+        {"plan": "codex:low"},
+        tier_models={"execute": {4: "codex:medium", 5: "codex:high"}},
+    )
+
+
+def test_apply_profile_expansion_attaches_tier_models_to_args(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile with tier_models metadata sets args.tier_models after expansion."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    # Write a local profile with tier_models metadata
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""
+[profiles.tier-test]
+vendor_locked = false
+plan = "claude:low"
+execute = "hermes:deepseek-flash"
+feedback = "claude:low"
+
+[profiles.tier-test.tier_models.execute]
+1 = "hermes:deepseek-flash"
+2 = "hermes:deepseek-pro"
+3 = "hermes:deepseek-pro"
+4 = "claude:medium"
+5 = "claude:high"
+""", encoding="utf-8")
+
+    args = _worker_args(profile="tier-test")
+    apply_profile_expansion(args, project_dir)
+
+    assert hasattr(args, "tier_models")
+    assert args.tier_models is not None
+    assert "execute" in args.tier_models
+    assert args.tier_models["execute"][1] == "hermes:deepseek-flash"
+    assert args.tier_models["execute"][4] == "claude:medium"
+    assert args.tier_models["execute"][5] == "claude:high"
+
+
+def test_apply_profile_expansion_cli_execute_override_strips_tier_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When CLI --phase-model execute=... is present, tier_models.execute is stripped."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""
+[profiles.tier-test]
+vendor_locked = false
+plan = "claude:low"
+execute = "hermes:deepseek-flash"
+feedback = "claude:low"
+
+[profiles.tier-test.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+""", encoding="utf-8")
+
+    args = _worker_args(profile="tier-test", phase_model=["execute=codex:high"])
+    apply_profile_expansion(args, project_dir)
+
+    # tier_models should exist but execute should be stripped
+    assert args.tier_models is None or "execute" not in (args.tier_models or {})
+
+
+def test_apply_profile_expansion_flat_profile_no_tier_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile without [tier_models] section sets args.tier_models to None."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="partnered")
+    apply_profile_expansion(args, None)
+
+    assert getattr(args, "tier_models", None) is None
+
+
+def test_vendor_rewrite_tier_entries_tier_models_none_does_not_crash() -> None:
+    """Passing tier_models=None does not crash (backward compat)."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    result = apply_vendor_rewrite({"plan": "claude:low"}, "codex")
+    assert result["plan"] == "codex:low"
+
+
+def test_deepseek_provider_rewrite_tier_models_none_does_not_crash() -> None:
+    """Passing tier_models=None does not crash (backward compat)."""
+    from megaplan.profiles import apply_deepseek_provider_rewrite
+
+    result = apply_deepseek_provider_rewrite(
+        {"plan": "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"}, "direct"
+    )
+    assert "deepseek:deepseek-v4-pro" in result["plan"]
+
+
+def test_depth_rewrite_tier_models_none_does_not_crash() -> None:
+    """Passing tier_models=None does not crash (backward compat)."""
+    from megaplan.profiles import apply_depth_rewrite
+
+    result = apply_depth_rewrite({"plan": "claude:low"}, "high")
+    assert result["plan"] == "claude:high"
+
+
+def test_validate_named_profile_invariants_tier_models_none_does_not_crash() -> None:
+    """Passing tier_models=None to _validate_named_profile_invariants does not crash."""
+    from megaplan.profiles import _validate_named_profile_invariants
+
+    # Should not raise
+    _validate_named_profile_invariants("all-codex", {"plan": "codex:low"}, tier_models=None)
+
+
+def test_validate_named_profile_invariants_empty_tier_models_does_not_crash() -> None:
+    """Empty tier_models dict is harmless."""
+    from megaplan.profiles import _validate_named_profile_invariants
+
+    # Should not raise
+    _validate_named_profile_invariants("all-codex", {"plan": "codex:low"}, tier_models={})
+
+
+def test_locked_variable_codex_ignores_vendor_flag_tier_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendor_locked=true profile ignores --vendor on tier entries just like phase entries."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""
+[profiles.locked-tier]
+vendor_locked = true
+plan = "codex:low"
+execute = "codex:medium"
+feedback = "claude:low"
+
+[profiles.locked-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "codex:medium"
+5 = "codex:high"
+""", encoding="utf-8")
+
+    args = _worker_args(profile="locked-tier", vendor="claude")
+    apply_profile_expansion(args, project_dir)
+
+    resolved = _phase_models_to_map(args.phase_model)
+    # Phase entries should still be codex (locked)
+    assert resolved["plan"] == "codex:low"
+    assert resolved["execute"] == "codex:medium"
+    # Tier entries should still be codex on premium tiers (locked)
+    if args.tier_models:
+        assert args.tier_models["execute"][4] == "codex:medium"
+        assert args.tier_models["execute"][5] == "codex:high"
+        # DeepSeek tiers unchanged
+        assert "deepseek" in args.tier_models["execute"][1]
+
+
+# ---------------------------------------------------------------------------
+# Config / provenance snapshot tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_saves_tier_models_when_present(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When args.tier_models is set, init handler persists it in state.config.tier_models."""
+    from megaplan.handlers.init import handle_init
+
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        """
+[profiles.tm-init]
+vendor_locked = false
+plan = "claude:low"
+execute = "hermes:deepseek-flash"
+feedback = "claude:low"
+
+[profiles.tm-init.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+""",
+    )
+
+    root = tmp_path / "root"
+    root.mkdir()
+    plan_root = root / ".megaplan" / "plans"
+    plan_root.mkdir(parents=True)
+
+    args = _init_args(project_dir, profile="tm-init", name="tier-state-test", mode="code",
+                       auto_approve=True, robustness="standard")
+    apply_profile_expansion(args, project_dir)
+
+    # Create the plan directory and run handle_init with a root that already exists
+    import megaplan._core.io as io_module
+    monkeypatch.setattr(io_module, "plans_root", lambda r: plan_root)
+
+    response = handle_init(root, args)
+    assert response["success"]
+
+    state_path = plan_root / "tier-state-test" / "state.json"
+    state = json.loads(state_path.read_text())
+    assert state["config"].get("tier_models") is not None
+    assert state["config"]["tier_models"]["execute"]["4"] == "claude:medium"
+
+
+def test_snapshot_cli_provenance_includes_tier_models() -> None:
+    """_snapshot_cli_provenance includes tier_models when present in config."""
+    from megaplan.handlers.shared import _snapshot_cli_provenance
+
+    state = {
+        "config": {
+            "profile": "variable",
+            "mode": "code",
+            "tier_models": {"execute": {1: "hermes:deepseek-flash", 5: "claude:high"}},
+        }
+    }
+    snap = _snapshot_cli_provenance(state)
+    assert "tier_models" in snap
+    assert snap["tier_models"]["execute"][1] == "hermes:deepseek-flash"
+
+
+def test_snapshot_cli_provenance_omits_tier_models_when_absent() -> None:
+    """_snapshot_cli_provenance does not include tier_models when not in config."""
+    from megaplan.handlers.shared import _snapshot_cli_provenance
+
+    state = {"config": {"profile": "partnered", "mode": "code"}}
+    snap = _snapshot_cli_provenance(state)
+    assert "tier_models" not in snap
+
+
+# ---------------------------------------------------------------------------
+# T10: Comprehensive profile loading, inheritance, validation, rewrite tests
+# (gap-filling beyond what T6/T7/T8 already covered above)
+# ---------------------------------------------------------------------------
+
+
+def test_partnered_byte_identical_across_independent_expansions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two independent `--profile partnered` expansions produce byte-identical
+    phase_model lists and no tier_models metadata."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args_a = _worker_args(profile="partnered")
+    apply_profile_expansion(args_a, None)
+
+    args_b = _worker_args(profile="partnered")
+    apply_profile_expansion(args_b, None)
+
+    assert args_a.phase_model == args_b.phase_model
+    assert getattr(args_a, "tier_models", None) is None
+    assert getattr(args_b, "tier_models", None) is None
+
+    # Verify expected values are present (regression guard)
+    resolved = _phase_models_to_map(args_a.phase_model)
+    for phase in ("plan", "critique", "revise", "review", "loop_plan",
+                   "tiebreaker_researcher", "tiebreaker_challenger"):
+        assert resolved[phase] == "claude:low"
+    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
+        assert resolved[phase] == DEEPSEEK_DIRECT
+
+
+def test_all_codex_byte_identical_across_independent_expansions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two independent `--profile all-codex` expansions produce byte-identical
+    phase_model lists and no tier_models metadata."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args_a = _worker_args(profile="all-codex")
+    apply_profile_expansion(args_a, None)
+
+    args_b = _worker_args(profile="all-codex")
+    apply_profile_expansion(args_b, None)
+
+    assert args_a.phase_model == args_b.phase_model
+    assert getattr(args_a, "tier_models", None) is None
+    assert getattr(args_b, "tier_models", None) is None
+
+    # Verify every non-feedback phase resolves to codex
+    resolved = _phase_models_to_map(args_a.phase_model)
+    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
+                  "execute", "loop_plan", "loop_execute", "review",
+                  "tiebreaker_researcher", "tiebreaker_challenger"):
+        agent = resolved[phase].split(":", 1)[0]
+        assert agent == "codex", f"{phase} expected codex, got {resolved[phase]!r}"
+    assert resolved["feedback"] == "claude:low"
+
+
+def test_all_codex_no_tier_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """all-codex does not gain tier_models metadata — flat profiles stay flat."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    from megaplan.profiles import load_profile_metadata
+
+    all_meta = load_profile_metadata(home=tmp_path / "home",
+                                      project_dir=tmp_path / "project")
+    meta = all_meta.get("all-codex", {})
+    assert meta.get("tier_models") is None
+
+
+def test_partnered_no_tier_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """partnered does not gain tier_models metadata — flat profiles stay flat."""
+    _isolate_user_config(tmp_path, monkeypatch)
+    from megaplan.profiles import load_profile_metadata
+
+    all_meta = load_profile_metadata(home=tmp_path / "home",
+                                      project_dir=tmp_path / "project")
+    meta = all_meta.get("partnered", {})
+    assert meta.get("tier_models") is None
+
+
+def test_pipeline_local_tier_metadata_inheritance_and_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipeline-local profile tier metadata is inherited from parent and
+    merged with child overrides, then validated."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.child-tier]
+extends = "system:partnered"
+vendor_locked = false
+plan = "claude:low"
+execute = "hermes:deepseek:deepseek-v4-flash"
+feedback = "claude:low"
+
+[profiles.child-tier.tier_models.execute]
+1 = "hermes:deepseek:deepseek-v4-flash"
+4 = "claude:medium"
+5 = "claude:high"
+""", encoding="utf-8")
+
+    from megaplan.profiles import load_profile_metadata
+
+    all_meta = load_profile_metadata(home=tmp_path / "home",
+                                      project_dir=project_dir)
+    meta = all_meta.get("child-tier", {})
+    assert meta is not None
+    tier_models = meta.get("tier_models")
+    assert tier_models is not None
+    assert tier_models["execute"][1] == "hermes:deepseek:deepseek-v4-flash"
+    assert tier_models["execute"][4] == "claude:medium"
+    assert tier_models["execute"][5] == "claude:high"
+
+
+def test_pipeline_local_tier_metadata_validation_rejects_malformed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipeline-local tier metadata with unknown agent rejects at load time."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.bad-tier]
+plan = "claude:low"
+execute = "hermes:deepseek:deepseek-v4-flash"
+feedback = "claude:low"
+
+[profiles.bad-tier.tier_models.execute]
+1 = "bogus-agent:low"
+""", encoding="utf-8")
+
+    from megaplan.profiles import load_profile_metadata
+
+    with pytest.raises(CliError, match="unknown agent"):
+        load_profile_metadata(home=tmp_path / "home",
+                               project_dir=project_dir)
+
+
+# ---------------------------------------------------------------------------
+# T16: Profile compatibility regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_variable_profile_vendor_codex_rewrites_premium_tiers_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--vendor codex --profile variable` rewrites premium tier entries
+    4 and 5 to codex but leaves DeepSeek tiers 1-3 unchanged."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "variable profile should have tier_models"
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None, "variable profile should have execute tiers"
+
+    # DeepSeek tiers 1-3 unchanged
+    assert "deepseek" in execute_tiers[1], f"tier 1 should be DeepSeek, got {execute_tiers[1]!r}"
+    assert "deepseek" in execute_tiers[2], f"tier 2 should be DeepSeek, got {execute_tiers[2]!r}"
+    assert "deepseek" in execute_tiers[3], f"tier 3 should be DeepSeek, got {execute_tiers[3]!r}"
+    # Premium tiers 4-5 flipped to codex (variable.toml has claude:low / bare claude;
+    # vendor swap preserves the effort suffix, so tier 4 → codex:low, tier 5 → codex)
+    assert execute_tiers[4].startswith("codex"), f"tier 4 should be codex, got {execute_tiers[4]!r}"
+    assert execute_tiers[5].startswith("codex"), f"tier 5 should be codex, got {execute_tiers[5]!r}"
+
+
+def test_variable_codex_locked_ignores_vendor_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--profile variable-codex --vendor claude` silently ignores the
+    vendor flip and keeps codex on premium tiers."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable-codex", vendor="claude")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None
+
+    # Premium tiers should still be codex (locked)
+    assert execute_tiers[4].startswith("codex"), (
+        f"tier 4 should be codex (locked), got {execute_tiers[4]!r}"
+    )
+    assert execute_tiers[5].startswith("codex"), (
+        f"tier 5 should be codex (locked), got {execute_tiers[5]!r}"
+    )
+    # Phase entries should also still be codex
+    resolved = _phase_models_to_map(args.phase_model)
+    assert resolved["execute"].startswith("codex"), (
+        f"execute phase should be codex (locked), got {resolved['execute']!r}"
+    )
+
+
+def test_variable_profile_loads_without_vendor_has_claude_premium_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--profile variable` without --vendor has Claude on premium tiers 4-5."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None
+
+    assert execute_tiers[4].startswith("claude"), (
+        f"tier 4 should be claude (default premium), got {execute_tiers[4]!r}"
+    )
+    assert execute_tiers[5].startswith("claude"), (
+        f"tier 5 should be claude (default premium), got {execute_tiers[5]!r}"
+    )
+
+
+def test_variable_claude_profile_has_claude_premium_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--profile variable-claude` has Claude on premium tiers 4-5 and is locked."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable-claude")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None
+
+    assert execute_tiers[4].startswith("claude"), (
+        f"tier 4 should be claude, got {execute_tiers[4]!r}"
+    )
+    assert execute_tiers[5].startswith("claude"), (
+        f"tier 5 should be claude, got {execute_tiers[5]!r}"
+    )
+
+    # Verify locked — vendor flag should be silently ignored
+    args2 = _worker_args(profile="variable-claude", vendor="codex")
+    apply_profile_expansion(args2, None)
+    tier_models2 = getattr(args2, "tier_models", None)
+    assert tier_models2 is not None
+    execute_tiers2 = tier_models2.get("execute")
+    assert execute_tiers2 is not None
+    assert execute_tiers2[4].startswith("claude"), (
+        f"locked profile should keep claude on tier 4, got {execute_tiers2[4]!r}"
+    )
+
+
+def test_variable_codex_profile_has_codex_premium_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--profile variable-codex` has codex:medium on tier 4 and codex:high on tier 5."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable-codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None
+
+    assert execute_tiers[4] == "codex:medium", (
+        f"tier 4 should be codex:medium, got {execute_tiers[4]!r}"
+    )
+    assert execute_tiers[5] == "codex:high", (
+        f"tier 5 should be codex:high, got {execute_tiers[5]!r}"
+    )
+
+
+def test_variable_codex_deepseek_tiers_match_partnered_convention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """variable-codex DeepSeek tiers use the same canonical specs as partnered."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable-codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None
+
+    # Tier 1 should be deepseek-flash
+    assert "deepseek" in execute_tiers[1]
+    assert "flash" in execute_tiers[1]
+    # Tiers 2-3 should be deepseek-pro (canonical partnered Fireworks or direct)
+    for t in (2, 3):
+        assert "deepseek" in execute_tiers[t]
+        assert "v4-pro" in execute_tiers[t]

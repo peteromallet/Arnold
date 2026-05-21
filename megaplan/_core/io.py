@@ -109,6 +109,41 @@ def compute_global_batches(finalize_data: dict[str, Any]) -> list[list[str]]:
     return compute_task_batches(tasks)
 
 
+def compute_batch_complexity(
+    finalize_data: dict[str, Any],
+    batch_task_ids: list[str],
+) -> int:
+    """Return the maximum valid task complexity for a batch of tasks.
+
+    Indexes finalize tasks by ID and returns ``max(task.complexity)``
+    for the batch.  Treats missing task IDs, missing ``complexity``,
+    non-integer complexity, and out-of-range values as **5** (fail-safe:
+    expensive model).  Returns 5 for empty or malformed batch input.
+    """
+    if not batch_task_ids:
+        return 5
+    tasks = finalize_data.get("tasks", [])
+    if not isinstance(tasks, list):
+        return 5
+    task_map: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        if isinstance(task, dict) and isinstance(task.get("id"), str):
+            task_map[task["id"]] = task
+    max_complexity = 0
+    for tid in batch_task_ids:
+        task = task_map.get(tid)
+        if not isinstance(task, dict):
+            return 5
+        complexity = task.get("complexity")
+        if not isinstance(complexity, int):
+            return 5
+        if complexity < 1 or complexity > 5:
+            return 5
+        if complexity > max_complexity:
+            max_complexity = complexity
+    return max_complexity if max_complexity > 0 else 5
+
+
 # ---------------------------------------------------------------------------
 # Atomic I/O
 # ---------------------------------------------------------------------------

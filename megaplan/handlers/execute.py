@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,26 @@ from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_pro
 
 from .shared import _emit_phase_notice, attach_agent_fallback, worker_module
 from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
+
+
+def _resolve_execute_tier_spec(
+    base_args: argparse.Namespace,
+    tier_spec: str,
+) -> tuple[str, str, str | None]:
+    """Resolve a tier spec string to (agent, mode, model) without mutating *base_args*.
+
+    Copies *base_args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
+    copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
+    user CLI override — the override guard in ``apply_profile_expansion``
+    already strips ``tier_models.execute`` when ``--phase-model execute=…``
+    is present, so this helper is only called when tier routing is active.
+    """
+    tier_args = copy.copy(base_args)
+    tier_args.phase_model = [f"execute={tier_spec}"]
+    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
+        "execute", tier_args
+    )
+    return agent, _mode, model
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""
@@ -98,6 +119,17 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # prior-context bias (poisoned environment beliefs, stale task state).
         if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):
             refreshed = True
+        # Detect tier_models.execute from profile expansion.  If present,
+        # pass the tier map down to the dispatchers so they can route
+        # per-batch by task complexity.  apply_profile_expansion already
+        # strips tier_models.execute when a CLI --phase-model execute=...
+        # override is present, so no double-check is needed here.
+        tier_models = getattr(args, "tier_models", None)
+        tier_map: dict[int, str] | None = None
+        if isinstance(tier_models, dict):
+            execute_tiers = tier_models.get("execute")
+            if isinstance(execute_tiers, dict) and execute_tiers:
+                tier_map = execute_tiers
         run_id = set_active_step(state, step="execute", agent=agent, mode=mode, model=model)
         _emit_phase_notice("execute")
         save_state_merge_meta(plan_dir, state)
@@ -116,6 +148,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         mode=mode,
                         refreshed=refreshed,
                         model=model,
+                        tier_map=tier_map,
                     )
                 else:
                     response = dispatch_execute_auto_loop(
@@ -128,6 +161,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         mode=mode,
                         refreshed=refreshed,
                         model=model,
+                        tier_map=tier_map,
                     )
         except CliError:
             clear_active_step(state, run_id=run_id)
