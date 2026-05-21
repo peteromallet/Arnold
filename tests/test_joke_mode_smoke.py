@@ -1,3 +1,22 @@
+"""Joke-mode smoke tests — LEGACY ``--auto-start`` path coverage.
+
+T14 (0.23) explicit three-way split for joke:
+
+* LEGACY ``megaplan init --mode joke --auto-start`` — this file plus
+  ``tests/test_handle_init_joke_mode.py``. Retained per USER DECISION 2:
+  ``state['config']['mode'] = 'joke'`` is preserved (NOT rewritten to
+  ``'creative'``) so the legacy planning + mode-overlay path keeps
+  reading the same shape it always has.
+* NEW ``megaplan run creative <brief> --form joke`` — covered by
+  ``tests/pipelines/test_creative_pipeline.py`` (form dispatch,
+  prompt-key routing, primary_criterion threading).
+* DEPRECATION redirect (init-time warning + state seeding) — covered
+  by ``tests/test_mode_deprecation.py``.
+
+The three files are deliberately kept separate so future maintainers
+do not collapse them into a single suite and lose either the legacy
+or new-pipeline coverage.
+"""
 from __future__ import annotations
 
 from functools import partial

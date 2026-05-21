@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,156 @@ from megaplan._core import (
 )
 
 from .shared import _append_to_meta, _attach_next_step_runtime, _validate_relative_path
+
+
+# ── T10 (0.23): --mode deprecation routing ─────────────────────────────
+#
+# The four deprecated init-time modes redirect to first-class pipelines
+# discoverable via ``megaplan run <pipeline>``. handle_init seeds
+# ``state['config']['pipeline']`` so a follow-up ``megaplan run`` (the
+# 0.23 user-facing entry point) routes correctly; the legacy
+# ``--auto-start`` path continues to run the planning + mode-overlay
+# chain in 0.23 (full integration ships in 0.24 per USER DECISION 2).
+_DEPRECATED_INIT_MODES: frozenset[str] = frozenset(
+    {"doc", "creative", "metaplan", "joke"}
+)
+
+# (explicit --mode) → pipeline name written into state['config']['pipeline'].
+# metaplan→doc and joke→creative match the pinned config-write table
+# from the plan Overview. Modes outside this map (only 'code' today)
+# leave pipeline unset.
+_PIPELINE_ROUTING: dict[str, str] = {
+    "doc": "doc",
+    "metaplan": "doc",
+    "creative": "creative",
+    "joke": "creative",
+}
+
+
+def _emit_mode_deprecation_warning(explicit_mode: str) -> None:
+    """Emit the verbatim 0.23 deprecation warning to stderr.
+
+    The text is pinned by T10 step (4); kept verbatim so downstream
+    tooling can grep for ``[deprecation] megaplan init --mode`` and
+    the release-notes/changelog tooling can cross-reference the string.
+    """
+
+    pipeline = _PIPELINE_ROUTING.get(explicit_mode, explicit_mode)
+    form_suffix = " --form …" if pipeline == "creative" else ""
+    msg = (
+        f"[deprecation] megaplan init --mode {explicit_mode} is deprecated; "
+        f"use \"megaplan run {pipeline}{form_suffix}\" instead. "
+        f"NOTE: in 0.23, --auto-start after init --mode still runs the "
+        f"LEGACY planning + mode-overlay path; the new {pipeline} pipeline "
+        f"is only reached via \"megaplan run\". Full integration ships in "
+        f"0.24. --mode will be removed in 0.24."
+    )
+    print(msg, file=sys.stderr)
+
+
+def _build_state_config(
+    args: argparse.Namespace,
+    *,
+    project_dir: Path,
+    pipeline: str | None,
+    mode: str,
+    raw_form: str | None,
+    normalized_output_path: str | None,
+    normalized_primary_criterion: str | None,
+    from_doc_rel: str | None,
+) -> tuple[dict[str, Any], bool, str, bool, bool]:
+    """Build ``state['config']`` for handle_init in one place.
+
+    T10 step (6): single helper that takes the args namespace + an
+    explicit pipeline name and assembles the config dict so the
+    deprecated-mode redirects can NOT silently drop init.py's per-key
+    normalisations. Specifically preserves:
+
+    * ``auto_approve`` fallback to
+      ``get_effective('execution', 'auto_approve')`` when --auto-approve
+      is not passed (init.py:106-110 historical lines).
+    * ``strict_notes`` auto-on for ``mode == 'doc'`` (init.py:113-119);
+      ``--strict-notes`` left unset and mode != 'doc' falls back to
+      ``get_effective('execution', 'strict_notes')``.
+    * ``prep_direction`` strip + non-empty validation (init.py:171-176)
+      — empty after strip raises ``CliError('invalid_args')``.
+
+    Returns ``(config, auto_approve, robustness, strict_notes,
+    strict_notes_explicit)`` so the caller (handle_init) can still
+    surface the normalised values in its StepResponse and apply the
+    one-off ``meta['notes']`` driver-source marker for the strict-notes
+    auto-enable on doc mode.
+
+    ``pipeline``, when not None, is written into ``config['pipeline']``
+    — the seed the future ``megaplan run`` flow consults to dispatch
+    the new first-class pipeline. ``--mode code`` passes
+    ``pipeline=None`` and ``config`` carries no ``pipeline`` key (per
+    T10 step (7)).
+    """
+
+    robustness = getattr(args, "robustness", None)
+    if robustness is None:
+        robustness = get_effective("execution", "robustness")
+    robustness = normalize_robustness(robustness)
+
+    auto_approve_value = getattr(args, "auto_approve", None)
+    if auto_approve_value is None:
+        auto_approve_value = get_effective("execution", "auto_approve")
+    auto_approve = bool(auto_approve_value)
+
+    strict_notes_arg = getattr(args, "strict_notes", None)
+    strict_notes_explicit = strict_notes_arg is not None
+    if strict_notes_arg is None:
+        if mode == "doc":
+            strict_notes_arg = True
+        else:
+            strict_notes_arg = get_effective("execution", "strict_notes")
+    strict_notes = bool(strict_notes_arg)
+
+    config: dict[str, Any] = {
+        "project_dir": str(project_dir),
+        "auto_approve": auto_approve,
+        "robustness": robustness,
+        "mode": mode,
+        "strict_notes": strict_notes,
+        "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
+    }
+    if pipeline is not None:
+        config["pipeline"] = pipeline
+    if getattr(args, "profile", None):
+        config["profile"] = args.profile
+    if getattr(args, "vendor", None):
+        config["vendor"] = args.vendor
+    if getattr(args, "critic", None):
+        config["critic"] = args.critic
+    if getattr(args, "depth", None):
+        config["depth"] = args.depth
+    if getattr(args, "deepseek_provider", None):
+        config["deepseek_provider"] = args.deepseek_provider
+    if getattr(args, "with_prep", False):
+        config["with_prep"] = True
+    if getattr(args, "with_feedback", False):
+        config["with_feedback"] = True
+    prep_direction_raw = getattr(args, "prep_direction", None)
+    if prep_direction_raw is not None:
+        prep_direction = str(prep_direction_raw).strip()
+        if not prep_direction:
+            raise CliError("invalid_args", "--prep-direction must be non-empty when provided")
+        config["prep_direction"] = prep_direction
+    if normalized_output_path is not None:
+        config["output_path"] = normalized_output_path
+    if raw_form:
+        config["form"] = str(raw_form)
+    if normalized_primary_criterion is not None:
+        config["primary_criterion"] = normalized_primary_criterion
+    if from_doc_rel is not None:
+        config["from_doc"] = from_doc_rel
+    phase_models = list(getattr(args, "phase_model", None) or [])
+    if phase_models:
+        config["phase_model"] = phase_models
+
+    return config, auto_approve, robustness, strict_notes, strict_notes_explicit
+
 
 def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     ensure_runtime_layout(root)
@@ -52,8 +203,16 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     raw_primary_criterion = getattr(args, "primary_criterion", None)
     raw_form = getattr(args, "form", None)
     mode = explicit_mode or "code"
+    # T10 step (2): preserve the metaplan→state.config.mode='doc' coercion;
+    # preserve joke→state.config.mode='joke' (do NOT rewrite to 'creative').
     if mode == "metaplan":
         mode = "doc"
+    # T10 step (3) HARD CONTRACT: --form rules. The existing init.py:60
+    # logic already rejects --form on doc|metaplan (mode != 'creative')
+    # and the creative branch requires --form; for --mode joke we
+    # preserve the historical behaviour (init.py:60 rejects an explicit
+    # --form joke) per the v11 debt note — form is implicit when joke
+    # is selected.
     if raw_primary_criterion and mode not in {"joke", "creative"}:
         raise CliError("invalid_args", "--primary-criterion is only valid with --mode joke or --mode creative")
     if raw_form and mode != "creative":
@@ -94,26 +253,33 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         imported_decisions, parse_warnings = extract_settled_decisions(
             from_doc_abs.read_text(encoding="utf-8")
         )
-    robustness = getattr(args, "robustness", None)
-    if robustness is None:
-        robustness = get_effective("execution", "robustness")
-    # Accept canonical or legacy names; normalize to canonical for storage.
-    robustness = normalize_robustness(robustness)
-    auto_approve_value = getattr(args, "auto_approve", None)
-    if auto_approve_value is None:
-        auto_approve_value = get_effective("execution", "auto_approve")
-    auto_approve = bool(auto_approve_value)
-    strict_notes_arg = getattr(args, "strict_notes", None)
-    strict_notes_explicit = strict_notes_arg is not None
-    if strict_notes_arg is None:
-        # Auto-on for design-doc / metaplan flows: in those modes a user note
-        # mid-flight almost always means "stop and reconsider" rather than
-        # "keep going." Code mode keeps the historical default (off).
-        if mode == "doc":
-            strict_notes_arg = True
-        else:
-            strict_notes_arg = get_effective("execution", "strict_notes")
-    strict_notes = bool(strict_notes_arg)
+
+    # T10 step (2)+(7): pipeline routing seed.
+    # --mode code → pipeline=None (no key written) and no warning.
+    # --mode doc|creative|metaplan|joke → seed state.config.pipeline +
+    # emit the verbatim deprecation warning to stderr.
+    pipeline_routing: str | None = None
+    if explicit_mode in _DEPRECATED_INIT_MODES:
+        pipeline_routing = _PIPELINE_ROUTING[explicit_mode]
+        _emit_mode_deprecation_warning(explicit_mode)
+
+    # Build the full state.config via the single helper so the
+    # auto_approve fallback / strict_notes auto-on / prep_direction
+    # strip+non-empty normalisations apply uniformly to every code path,
+    # including the deprecated-mode redirects.
+    config, auto_approve, robustness, strict_notes, strict_notes_explicit = (
+        _build_state_config(
+            args,
+            project_dir=project_dir,
+            pipeline=pipeline_routing,
+            mode=mode,
+            raw_form=raw_form,
+            normalized_output_path=normalized_output_path,
+            normalized_primary_criterion=normalized_primary_criterion,
+            from_doc_rel=from_doc_rel,
+        )
+    )
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     plan_name = args.name or f"{slugify(idea_text)}-{timestamp}"
     plan_dir = plans_root(root) / plan_name
@@ -127,14 +293,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         "current_state": STATE_INITIALIZED,
         "iteration": 0,
         "created_at": now_utc(),
-        "config": {
-            "project_dir": str(project_dir),
-            "auto_approve": auto_approve,
-            "robustness": robustness,
-            "mode": mode,
-            "strict_notes": strict_notes,
-            "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
-        },
+        "config": config,
         "sessions": {},
         "plan_versions": [],
         "history": [],
@@ -182,18 +341,8 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     worktree_meta = getattr(args, "_worktree_meta", None)
     if worktree_meta:
         state["meta"]["worktree"] = dict(worktree_meta)
-    if normalized_output_path is not None:
-        state["config"]["output_path"] = normalized_output_path
-    if raw_form:
-        state["config"]["form"] = str(raw_form)
-    if normalized_primary_criterion is not None:
-        state["config"]["primary_criterion"] = normalized_primary_criterion
     if from_doc_rel is not None:
-        state["config"]["from_doc"] = from_doc_rel
         state["meta"]["imported_decisions"] = imported_decisions
-    phase_models = list(getattr(args, "phase_model", None) or [])
-    if phase_models:
-        state["config"]["phase_model"] = phase_models
     if strict_notes and mode == "doc" and not strict_notes_explicit:
         # Driver-source: marks the auto-enable for transparency without
         # blocking force-proceed (driver notes don't count toward strict

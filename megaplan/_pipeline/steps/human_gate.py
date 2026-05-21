@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from megaplan._pipeline.steps.agent import _latest_artifact
+from megaplan._pipeline.step_helpers import latest_artifact
 from megaplan._pipeline.types import StepContext, StepResult
 
 
@@ -71,7 +71,7 @@ class HumanGateStep:
             )
 
         # Pause path: write awaiting_user.json
-        artifact_path = _latest_artifact(ctx.plan_dir / self._artifact_stage)
+        artifact_path = latest_artifact(ctx.plan_dir / self._artifact_stage)
         awaiting_data = {
             "pipeline": self._pipeline_name,
             "version": self._pipeline_version,

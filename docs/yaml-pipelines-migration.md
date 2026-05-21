@@ -1,5 +1,9 @@
 # YAML pipelines + per-pipeline skills — migration design
 
+> **Experiment outcome — Python composition replaced YAML. See [docs/pipelines.md](pipelines.md).**
+>
+> This document is retained as the historical record of the YAML-pipelines experiment (Sprints A/B). The YAML runtime was removed in megaplan 0.22.0; pipelines are now defined as Python modules using `Pipeline.builder(...)` and the pattern library at `megaplan/_pipeline/patterns.py`. Read `docs/pipelines.md` for the current framework.
+
 Companion to ticket `01KRVVDSGPFJQEJ2JBB81CYPTQ` (generic YAML pipelines framework). That ticket establishes **what** the runtime becomes; this doc extends it with **per-pipeline skill docs** and **pipeline-local profiles**, and lays out the work to migrate today's `planning` + mode variants + parallel critique onto the new shape.
 
 The headline shift: a pipeline becomes a **self-contained folder** — topology, prompts, models, and "how to drive me" knowledge all colocated. Drop it in `~/.megaplan/pipelines/foo/` and it shows up as a runnable sequence *and* a skill Claude knows when to invoke. Same way a ComfyUI custom node ships its definition, presets, and docs together.

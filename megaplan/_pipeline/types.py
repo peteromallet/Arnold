@@ -229,3 +229,38 @@ class Pipeline:
     stages: Mapping[str, "Stage | ParallelStage"]
     entry: str
     overlays: tuple[Overlay, ...] = ()
+
+    @classmethod
+    def builder(
+        cls,
+        name: str,
+        description: str = "",
+        *,
+        default_profile: str | None = None,
+        supported_modes: tuple[str, ...] = (),
+        pipeline_dir: Path | None = None,
+        worker: "Callable[..., str] | None" = None,
+        prompt_registry: "Callable[[str], str] | None" = None,
+        pipeline_version: int = 1,
+    ) -> "Any":
+        """Return a :class:`PipelineBuilder` for fluent construction.
+
+        Pipeline-level metadata (``description`` / ``default_profile`` /
+        ``supported_modes``) is held on the returned builder rather than
+        the frozen :class:`Pipeline` dataclass — the dataclass has only
+        ``stages / entry / overlays`` (T1.j audit). The
+        :class:`PipelineRegistry` surfaces the metadata via
+        ``PipelineRegistry.metadata`` (T9). Imported lazily to avoid an
+        import cycle (``builder`` depends on this module)."""
+        from megaplan._pipeline.builder import PipelineBuilder
+
+        return PipelineBuilder(
+            name=name,
+            description=description,
+            default_profile=default_profile,
+            supported_modes=tuple(supported_modes),
+            pipeline_dir=pipeline_dir,
+            worker=worker,
+            prompt_registry=prompt_registry,
+            pipeline_version=pipeline_version,
+        )

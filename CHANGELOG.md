@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.23.0
+
+This release lands the pipeline rationalization + dynamic primitives sprint: `doc` and `creative` graduate to first-class atomic pipelines, the legacy `--mode doc|creative|metaplan|joke` axis is deprecated on `megaplan init`, the bake-off `metaplan` alias is removed, and the pattern library gains five run-time-decided primitives.
+
+### New surface
+
+- **New `doc` pipeline** at `megaplan/pipelines/doc/`. Reachable atomically via `megaplan run doc <brief>`. Linear topology `outline → section_drafts → critique → revise → assembly` — **no gate stage, no tiebreaker**. `section_drafts` is produced by the new `dynamic_fanout` primitive: it reads `outline`'s emitted sections JSON and fans a per-section draft step across however many sections were generated, joining the results for `critique`. Pipeline-scoped prompts live under `megaplan/pipelines/doc/prompts/` and register at `doc/<key>` for the five stage keys (`outline_doc`, `execute_doc`, `critique_doc`, `revise_doc`, `assemble_doc`).
+- **New `creative` pipeline** at `megaplan/pipelines/creative/`. Reachable atomically via `megaplan run creative <brief> --form <id>`. Linear topology `prep → execute_creative → critique_creative → revise_creative → finalize`. `--form` is a first-class pipeline input validated against `megaplan.forms.available_form_ids()` — unknown forms raise `CliError('invalid_args')`. Each stage's `prompt_key` is form-specialised as `<base_key>:<form>`; both the generic `creative/<key>` slot and the `creative/<key>:<form>` slot are registered so the `PromptRegistry` resolves the form-aware variant when one exists and falls back otherwise. `--primary-criterion <text>` is a first-class creative-pipeline input that threads through to every stage's Step.
+- **Five new dynamic primitives in `megaplan/_pipeline/patterns.py`** — `panel_from_artifact`, `dynamic_fanout`, `weighted_vote`, `iterate_until_consensus`, `paired_round`. The two fan-out-shaped primitives (`panel_from_artifact`, `dynamic_fanout`) ship as `SubloopStep` subclasses because `ParallelStage.steps` is materialised at compile time (`executor.py:171/179/295/298`), so dynamism has to live below the stage level. `weighted_vote` is drop-in interchangeable with `majority_vote` as a `ParallelStage` `join`. `iterate_until_consensus` wraps a panel `Step | Stage` in a self-loop that exits on per-reviewer agreement or after `max_iters`. `paired_round` extends `alternating_turns` so each role's `StepContext` sees the prior turn's outputs from the other advocate. `_pipeline/types.py` is untouched. Documented in `docs/pipelines.md` (new "Dynamic primitives (0.23+)" section, including a ~30-LOC dynamic-prompt-generation worked example using `panel_from_artifact` + `weighted_vote`).
+- **CLI surface**: `megaplan run doc` and `megaplan run creative` are the new first-class entry points. `megaplan list pipelines` now surfaces `doc` and `creative` alongside `planning`, `writing-panel-strict`, `doc-critique`, and `judges`.
+
+### Deprecations
+
+- **`megaplan init --mode doc|creative|metaplan|joke` is deprecated** for one release. Each invocation continues to work, seeds `state['config']['pipeline']` to the target pipeline name (and `state['config']['form']` where applicable per the pinned config-write table), and prints a one-line deprecation warning to stderr:
+
+  ```
+  [deprecation] megaplan init --mode <X> is deprecated; use
+  "megaplan run <pipeline> [--form …]" instead. NOTE: in 0.23,
+  --auto-start after init --mode still runs the LEGACY planning +
+  mode-overlay path; the new <pipeline> pipeline is only reached via
+  "megaplan run". Full integration ships in 0.24. --mode will be removed
+  in 0.24.
+  ```
+
+  `--mode code` is unchanged: no warning, no `pipeline`/`form` keys written. The `--form` hard contract is preserved verbatim: `--form` on `--mode doc|metaplan` raises `CliError('invalid_args')`; missing `--form` on `--mode creative` raises `CliError('invalid_args')`; `--mode joke` implicitly sets `form='joke'`. Migration table in `docs/pipelines.md` ("`--mode` deprecation migration table (0.22 → 0.23)") enumerates every old → new invocation, **using `megaplan init --mode <X>` (NEVER `megaplan plan --mode <X>` — the plan subcommand never accepted `--mode`)**.
+- **Init-only redirect.** `handle_init` is the only handler that consults the deprecated `--mode` axis; `handle_plan` / `handle_execute` / `handle_review` are unchanged in 0.23 and continue routing every plan through the legacy planning pipeline regardless of `state['config']['pipeline']`. Full chain-handler routing for the new pipelines ships in 0.24.
+- **`megaplan/_core/modes.py` helpers** (`is_creative_mode`, `creative_form_id`, `is_prose_mode`) and `megaplan/_pipeline/planning.py::compile_pipeline_for(mode=…)`'s creative/joke branch are annotated `# TODO(0.24): remove`. They remain functional in 0.23 for ABI parity and to keep the legacy `--auto-start` planning + mode-overlay path working.
+
+### Removed
+
+- **Bake-off `metaplan` alias removed.** `megaplan/bakeoff/orchestrator.py`'s old `if mode == 'metaplan': mode = 'doc'` coercion is gone. The bake-off CLI's `--mode` choices are tightened to `{'code','doc'}`; `--mode metaplan` and `--mode joke` are now **rejected at the argparse layer** as invalid choices, and direct calls to `run_bakeoff(...,'metaplan',...)` raise `CliError('invalid_args')`.
+
+### Doc iteration-semantics drop (behavioural change)
+
+- **`megaplan run doc` is a single linear pass.** The legacy `--mode doc` path (running under the planning topology with a doc mode-overlay) exposed a critique-revise gate loop that could iterate, proceed, escalate, or tiebreaker. The new `doc` pipeline has **no gate stage, no critique↔revise iteration, no tiebreaker subpipeline** — it is linear `outline → section_drafts → critique → revise → assembly`, and `assembly` returns `next='halt'` directly. If you depend on the legacy multi-iteration behaviour you can still reach it for 0.23 via `megaplan init --mode doc --auto-start <brief>` (deprecated; routes through the retained legacy planning path), but it is removed in 0.24. The recommended migration is to re-run the new pipeline if you want a second pass.
+
+### 0.22 plan-state compatibility
+
+- **0.22 plans loaded under 0.23 run through `compile_planning_pipeline` without the creative/joke mode overlay.** The in-tree wiring that overlaid mode-specific prompts onto the planning pipeline was removed during the 0.22 cleanbreak; `compile_pipeline_for`'s creative/joke branch is retained as ABI / dead-code for one release and removed in 0.24. Net effect for users: a 0.22 plan whose `state.config.mode` is `creative` or `joke`, when phase-driven under 0.23, exercises the planning topology with the un-overlayed default prompts. To get the form-specialised behaviour on a fresh idea, use `megaplan run creative <brief> --form <id>` instead of `megaplan init --mode creative`.
+
+### Tests
+
+- Five new / updated test files: `tests/_pipeline/test_dynamic_primitives.py` (five primitives), `tests/pipelines/test_doc_pipeline.py` (doc pipeline topology + dynamic_fanout + cli_run smoke), `tests/pipelines/test_creative_pipeline.py` (form dispatch, provocations / stance wiring, invalid form, `--primary-criterion`), `tests/test_mode_deprecation.py` (pinned config-write table, verbatim deprecation warning, hard `--form` contract, `--mode code` clean), and `tests/bakeoff/test_orchestrator.py` (metaplan rejection at both parser and dispatch layers). Existing mode-specific tests are explicitly split — legacy `--auto-start` coverage is retained verbatim, new `megaplan run` coverage lives in `tests/pipelines/`, and the joke-test split is three-way (legacy / new / deprecation-redirect).
+
+## 0.22.0 (BREAKING)
+
+This release **removes the YAML pipeline runtime** and introduces a single Python composition framework for defining megaplan pipelines.
+
+### Breaking changes
+
+- **YAML pipeline runtime removed.** The YAML compiler (`megaplan/_pipeline/compiler.py`), schema (`megaplan/_pipeline/schema.py`), loader (`megaplan/_pipeline/loader.py`), and YAML-specific step glue (`megaplan/_pipeline/steps/gate.py`, the YAML wrapper modes in `steps/agent.py` / `steps/panel.py` / `steps/human_gate.py`) are gone. `megaplan/pipelines/planning/pipeline.yaml` and `megaplan/pipelines/writing-panel-strict/pipeline.yaml` have been deleted alongside their YAML-only tests (`tests/_pipeline/test_loader.py`, `tests/_pipeline/test_schema.py`, `tests/_pipeline/test_yaml_steps.py`).
+- **Pipeline discovery now scans Python modules**, not YAML files. The registry looks for sibling Python modules under `megaplan/pipelines/<name>(.py|/)` and user-installed modules under `~/.megaplan/pipelines/<name>.py`, each exposing a `build_pipeline()` factory. The hardcoded built-ins (`planning`, `doc-critique`, `judges`) continue to register through their existing builder functions; sibling-file discovery is additive.
+- **Migration note.** Any external YAML pipelines (none known) must be rewritten as Python modules that expose `build_pipeline() -> Pipeline` constructed via `Pipeline.builder(...)` and the pattern library. The internal pipelines (`planning`, `writing-panel-strict`) have already been ported.
+
+### New surface
+
+- **Python composition framework** in `megaplan._pipeline.patterns` — reusable pattern functions: `critique_revise_gate_loop`, `panel_parallel`, `alternating_turns`, `subpipeline_call`, `mode_prompts`, `iterate_until`, `escalate_if`, `majority_vote`, `phase_zero_gate`.
+- **Fluent builder** at `megaplan._pipeline.builder.PipelineBuilder`, reached via `Pipeline.builder(name, description='', *, default_profile=None, supported_modes=())` on the existing `Pipeline` dataclass. The builder exposes chained methods `.input()`, `.agent()`, `.panel()`, `.gate()`, `.human_gate()`, `.subpipeline()`, `.tiebreaker()`, `.iterate()`, `.escalate()`, `.mode()`, `.overlay()`, `.build()` over the existing `Pipeline` / `Stage` / `ParallelStage` / `Edge` primitives. Pipeline-level metadata (description, default profile, supported modes) is held on the `PipelineRegistry.metadata` surface, not on the frozen `Pipeline` dataclass.
+- **Planning tiebreaker is now first-class.** The `tiebreaker` stage in the planning pipeline runs the full researcher → challenger → synthesis child subloop via `TiebreakerStep` (the previous placeholder handler step has been replaced).
+
+### Behavior delta to surface
+
+- **Tiebreaker escalate emissions land directly on `finalize` via the new `gate`-kind `escalate → finalize` edge** and therefore do **not** exercise `run_pipeline_with_policy`'s escalate-policy resolver at `executor.py:349-355`. This matches the sibling planning gate stage, which already routes `escalate → finalize` directly. Callers that previously expected `policy.escalate.resolve()` to fire on a tiebreaker-subloop escalation will not see it. (Correctness-1 / FLAG-TIEBREAKER-ESCALATE-POLICY-BYPASS / warning #6.)
+
 ## Unreleased
 
 ### Repository organization

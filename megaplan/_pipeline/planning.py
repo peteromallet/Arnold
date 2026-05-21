@@ -30,6 +30,10 @@ from megaplan._core.workflow import (
     _with_prep_from_state,
     _with_feedback_from_state,
 )
+from megaplan._pipeline.patterns import (
+    critique_revise_gate_loop,
+    phase_zero_gate,
+)
 from megaplan._pipeline.types import (
     Edge,
     Overlay,
@@ -110,39 +114,50 @@ def compile_planning_pipeline() -> Pipeline:
     from megaplan._pipeline.stages.finalize import FinalizeStep
     from megaplan._pipeline.stages.execute import ExecuteStep
     from megaplan._pipeline.stages.review import ReviewStep
+    from megaplan._pipeline.stages.tiebreaker import TiebreakerStep
+
+    # Phase 0: prep gate via patterns.phase_zero_gate.
+    prep_stage = phase_zero_gate(
+        PrepStep(),
+        name="prep",
+        on_pass="plan",
+        on_fail="halt",
+    )
+
+    # critique → gate → revise cycle assembled via the pattern library.
+    # gate_extra_edges carry the four non-recommendation fallback/override
+    # edges that the legacy gate stage required; critique_fallback_edges
+    # carry the two label-fallback edges the existing CritiqueStep emits.
+    cycle = critique_revise_gate_loop(
+        CritiqueStep(),
+        GateStep(),
+        ReviseStep(),
+        on_proceed="finalize",
+        on_iterate="revise",
+        on_tiebreaker="tiebreaker",
+        on_escalate="finalize",
+        critique_fallback_edges=(
+            Edge(label="gate_unset:gate", target="gate"),
+            Edge(label="gate", target="gate"),
+        ),
+        gate_extra_edges=(
+            Edge(label="revise", target="revise"),
+            Edge(label="gate", target="finalize"),
+            Edge(label="override force-proceed", target="finalize"),
+            Edge(label="override abort", target="halt"),
+        ),
+        revise_target="critique",
+    )
 
     stages: dict[str, Stage] = {
-        "prep": Stage(
-            name="prep", step=PrepStep(),
-            edges=(Edge(label="plan", target="plan"),),
-        ),
+        "prep": prep_stage,
         "plan": Stage(
             name="plan", step=PlanStep(),
             edges=(Edge(label="critique", target="critique"),),
         ),
-        "critique": Stage(
-            name="critique", step=CritiqueStep(),
-            edges=(Edge(label="gate_unset:gate", target="gate"),
-                   Edge(label="gate", target="gate")),
-        ),
-        "gate": Stage(
-            name="gate", step=GateStep(),
-            edges=(
-                Edge(label="iterate", target="revise", kind="gate", recommendation="iterate"),
-                Edge(label="proceed", target="finalize", kind="gate", recommendation="proceed"),
-                Edge(label="tiebreaker", target="tiebreaker", kind="gate", recommendation="tiebreaker"),
-                Edge(label="escalate", target="finalize", kind="gate", recommendation="escalate"),
-                # Fallback for the bare next-step label GateStep emits.
-                Edge(label="revise", target="revise"),
-                Edge(label="gate", target="finalize"),
-                Edge(label="override force-proceed", target="finalize"),
-                Edge(label="override abort", target="halt"),
-            ),
-        ),
-        "revise": Stage(
-            name="revise", step=ReviseStep(),
-            edges=(Edge(label="critique", target="critique"),),
-        ),
+        "critique": cycle["critique"],
+        "gate": cycle["gate"],
+        "revise": cycle["revise"],
         "finalize": Stage(
             name="finalize", step=FinalizeStep(),
             edges=(Edge(label="execute", target="execute"),),
@@ -156,10 +171,19 @@ def compile_planning_pipeline() -> Pipeline:
             edges=(Edge(label="review", target="halt"),
                    Edge(label="halt", target="halt")),
         ),
+        # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
+        # Verdict with a typed recommendation. The three kind='gate' edges
+        # below replace the legacy label-only edges; the legacy 'escalate
+        # folds into the finalize branch' semantics are preserved via
+        # escalate→finalize (anti-scope: no new pipeline branches this
+        # sprint).
         "tiebreaker": Stage(
-            name="tiebreaker", step=_step_for("tiebreaker_pending"),
-            edges=(Edge(label="critique", target="critique"),
-                   Edge(label="tiebreaker_decide", target="critique")),
+            name="tiebreaker", step=TiebreakerStep(),
+            edges=(
+                Edge(label="", target="critique", kind="gate", recommendation="iterate"),
+                Edge(label="", target="finalize", kind="gate", recommendation="proceed"),
+                Edge(label="", target="finalize", kind="gate", recommendation="escalate"),
+            ),
         ),
     }
     return Pipeline(stages=stages, entry="prep")
@@ -270,6 +294,16 @@ def compile_pipeline_for(
     left-to-right: robustness first (which already absorbs the
     creative-mode flag), then with_prep, then with_feedback, then a
     no-op mode overlay that names the mode for downstream introspection.
+
+    NOTE (0.23): this function currently has zero in-tree callers
+    post-cleanbreak — the canonical planning entry point now flows
+    through ``compile_planning_pipeline()`` directly. It is retained
+    as ABI for downstream callers and for 0.22 plan-state
+    compatibility (0.22 plans loaded under 0.23 may still reach this
+    overlay-composition path; the new ``doc`` / ``creative`` pipelines
+    bypass it entirely). The 0.23 CHANGELOG entry calls this out so
+    users understand that 0.22 plans loaded under 0.23 receive the
+    un-overlayed planning pipeline behaviour through this surface.
     """
 
     state_payload = dict(state_payload or {})
@@ -277,6 +311,9 @@ def compile_pipeline_for(
     with_feedback = _with_feedback_from_state(state_payload)
     config = state_payload.get("config", {}) if isinstance(state_payload, Mapping) else {}
     resolved_mode = mode or (config.get("mode", "code") if isinstance(config, Mapping) else "code")
+    # TODO(0.24): remove — legacy mode-overlay carried for ABI parity,
+    # no in-tree caller post-cleanbreak. The new 0.23 doc/creative
+    # pipelines do not flow through this branch.
     creative = resolved_mode in {"creative", "joke"}
 
     pipeline = compile_planning_pipeline()
