@@ -2090,6 +2090,15 @@ def build_parser() -> argparse.ArgumentParser:
     # Accept canonical names plus legacy aliases (tiny|standard|robust|superrobust);
     # ``normalize_robustness`` collapses them downstream.
     init_parser.add_argument("--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None)
+    init_parser.add_argument(
+        "--max-tasks-per-batch",
+        type=int,
+        default=None,
+        help=(
+            "Maximum finalize tasks to send to one execute worker session. "
+            "Defaults to execution.max_tasks_per_batch."
+        ),
+    )
     init_parser.add_argument("--mode", choices=["code", "doc", "metaplan", "joke", "creative"], default=None,
                              help="Deliverable type: 'code' (source changes), 'doc' / 'metaplan' "
                                   "(design/spec artifact — 'metaplan' is an alias for 'doc'), or "
@@ -2406,6 +2415,15 @@ def build_parser() -> argparse.ArgumentParser:
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")
             step_parser.add_argument("--batch", type=int, default=None, help="Execute a specific global batch number (1-indexed)")
+            step_parser.add_argument(
+                "--max-tasks-per-batch",
+                type=int,
+                default=None,
+                help=(
+                    "Maximum finalize tasks to send to one execute worker session. "
+                    "Overrides plan/profile/global config for this run."
+                ),
+            )
             step_parser.add_argument(
                 "--retry-blocked-tasks",
                 action="store_true",

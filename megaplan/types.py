@@ -396,6 +396,7 @@ DEFAULTS = {
     "execution.max_review_rework_cycles": 3,
     "execution.max_robust_review_rework_cycles": 2,
     "execution.max_execute_no_progress": 3,
+    "execution.max_tasks_per_batch": 5,
     "orchestration.max_critique_concurrency": 5,
     "orchestration.mode": "subagent",
 }
@@ -414,6 +415,7 @@ _SETTABLE_NUMERIC = {
     "execution.max_review_rework_cycles",
     "execution.max_robust_review_rework_cycles",
     "execution.max_execute_no_progress",
+    "execution.max_tasks_per_batch",
     "orchestration.max_critique_concurrency",
 }
 
