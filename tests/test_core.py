@@ -5,6 +5,7 @@ import pytest
 from megaplan._core import (
     add_or_increment_debt,
     batch_artifact_path,
+    compute_batch_complexity,
     compute_global_batches,
     compute_task_batches,
     escalated_subsystems,
@@ -226,3 +227,121 @@ def test_escalated_subsystems_triggers_for_multiple_entries_in_same_subsystem() 
     escalated = escalated_subsystems(registry)
 
     assert escalated == [("timeout-recovery", 3, [first, second])]
+
+
+# ---------------------------------------------------------------------------
+# compute_batch_complexity tests
+# ---------------------------------------------------------------------------
+
+
+def _ctask(task_id: str, complexity: int) -> dict[str, object]:
+    return {"id": task_id, "complexity": complexity}
+
+
+def test_compute_batch_complexity_independent_batches() -> None:
+    """Batches with complexities [1], [3], [5] return 1, 3, 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask("T1", 1),
+            _ctask("T2", 3),
+            _ctask("T3", 5),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 1
+    assert compute_batch_complexity(finalize_data, ["T2"]) == 3
+    assert compute_batch_complexity(finalize_data, ["T3"]) == 5
+
+
+def test_compute_batch_complexity_multiple_tasks_returns_max() -> None:
+    """Batch with complexities [1, 3, 5] returns 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask("T1", 1),
+            _ctask("T2", 3),
+            _ctask("T3", 5),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1", "T2", "T3"]) == 5
+
+
+def test_compute_batch_complexity_mixed_dependency_batch() -> None:
+    """Batch with complexity [2, 4] returns 4."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask("T1", 2),
+            _ctask("T2", 4),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1", "T2"]) == 4
+
+
+def test_compute_batch_complexity_missing_complexity_defaults_to_5() -> None:
+    """Task without 'complexity' field defaults the batch to 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            {"id": "T1"},
+            _ctask("T2", 1),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 5
+    assert compute_batch_complexity(finalize_data, ["T1", "T2"]) == 5
+
+
+def test_compute_batch_complexity_non_integer_complexity_defaults_to_5() -> None:
+    """Non-integer complexity defaults batch to 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            {"id": "T1", "complexity": "high"},
+            _ctask("T2", 1),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 5
+    assert compute_batch_complexity(finalize_data, ["T1", "T2"]) == 5
+
+
+def test_compute_batch_complexity_out_of_range_values_default_to_5() -> None:
+    """Complexity < 1 or > 5 defaults batch to 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask("T1", 0),
+            _ctask("T2", 6),
+            _ctask("T3", 3),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1"]) == 5
+    assert compute_batch_complexity(finalize_data, ["T2"]) == 5
+    # Batch with only valid tasks still works
+    assert compute_batch_complexity(finalize_data, ["T3"]) == 3
+
+
+def test_compute_batch_complexity_missing_task_id_defaults_to_5() -> None:
+    """Unknown task ID defaults batch to 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask("T1", 2),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T9"]) == 5
+
+
+def test_compute_batch_complexity_empty_batch_returns_5() -> None:
+    """Empty batch returns 5."""
+    finalize_data: dict[str, object] = {
+        "tasks": [_ctask("T1", 2)]
+    }
+    assert compute_batch_complexity(finalize_data, []) == 5
+
+
+def test_compute_batch_complexity_all_valid_tasks_returns_correct_max() -> None:
+    """All tasks with valid complexity — standard max behavior."""
+    finalize_data: dict[str, object] = {
+        "tasks": [
+            _ctask("T1", 2),
+            _ctask("T2", 4),
+            _ctask("T3", 1),
+            _ctask("T4", 3),
+        ]
+    }
+    assert compute_batch_complexity(finalize_data, ["T1", "T3"]) == 2
+    assert compute_batch_complexity(finalize_data, ["T2", "T4"]) == 4
+    assert compute_batch_complexity(finalize_data, ["T1", "T2", "T3", "T4"]) == 4

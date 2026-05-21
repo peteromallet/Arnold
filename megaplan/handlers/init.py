@@ -164,6 +164,9 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["depth"] = args.depth
     if getattr(args, "deepseek_provider", None):
         state["config"]["deepseek_provider"] = args.deepseek_provider
+    tier_models = getattr(args, "tier_models", None)
+    if tier_models:
+        state["config"]["tier_models"] = tier_models
     if getattr(args, "with_prep", False):
         state["config"]["with_prep"] = True
     if getattr(args, "with_feedback", False):

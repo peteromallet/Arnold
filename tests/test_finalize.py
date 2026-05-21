@@ -269,6 +269,130 @@ def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
     assert "Verdict: Confirmed." in reviewed_md
 
 
+def test_finalize_normalize_complexity_missing_defaults_to_5(plan_fixture: PlanFixture) -> None:
+    """Worker response missing complexity writes 5 in finalize artifacts."""
+    from megaplan.handlers.finalize import _normalize_task_complexity
+
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Do work",
+                "depends_on": [],
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": "ok",
+    }
+    _normalize_task_complexity(payload)
+    assert payload["tasks"][0]["complexity"] == 5
+
+
+def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: PlanFixture) -> None:
+    """Non-integer and out-of-range complexity values are normalized to 5."""
+    from megaplan.handlers.finalize import _normalize_task_complexity
+
+    payload = {
+        "tasks": [
+            {"id": "T1", "complexity": "high"},
+            {"id": "T2", "complexity": 0},
+            {"id": "T3", "complexity": 6},
+            {"id": "T4", "complexity": None},
+            {"id": "T5", "complexity": 3},
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": "ok",
+    }
+    _normalize_task_complexity(payload)
+    assert payload["tasks"][0]["complexity"] == 5  # "high" → 5
+    assert payload["tasks"][1]["complexity"] == 5  # 0 → 5
+    assert payload["tasks"][2]["complexity"] == 5  # 6 → 5
+    assert payload["tasks"][3]["complexity"] == 5  # None → 5
+    assert payload["tasks"][4]["complexity"] == 3  # valid pass-through
+
+
+def test_finalize_normalize_complexity_valid_values_pass_through(plan_fixture: PlanFixture) -> None:
+    """Valid complexity values 1-5 are left unchanged."""
+    from megaplan.handlers.finalize import _normalize_task_complexity
+
+    payload = {
+        "tasks": [
+            {"id": "T1", "complexity": 1},
+            {"id": "T2", "complexity": 2},
+            {"id": "T3", "complexity": 3},
+            {"id": "T4", "complexity": 4},
+            {"id": "T5", "complexity": 5},
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": "ok",
+    }
+    _normalize_task_complexity(payload)
+    assert payload["tasks"][0]["complexity"] == 1
+    assert payload["tasks"][1]["complexity"] == 2
+    assert payload["tasks"][2]["complexity"] == 3
+    assert payload["tasks"][3]["complexity"] == 4
+    assert payload["tasks"][4]["complexity"] == 5
+
+
+def test_finalize_artifacts_include_complexity_after_normalization(plan_fixture: PlanFixture) -> None:
+    """Full artifact write path normalizes complexity in the written finalize.json."""
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["mode"] = "code"
+
+    payload = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Ship the code change",
+                "depends_on": [],
+                "status": "pending",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": "ok",
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "ok",
+            "coverage_complete": True,
+        },
+    }
+
+    _write_finalize_artifacts(plan_fixture.plan_dir, payload, state)
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    snapshot_data = read_json(plan_fixture.plan_dir / "finalize_snapshot.json")
+
+    # Both finalize.json and snapshot should have complexity=5 on the original task
+    original_tasks = [t for t in finalize_data["tasks"] if t["id"] == "T1"]
+    assert len(original_tasks) == 1
+    assert original_tasks[0]["complexity"] == 5
+
+    original_snapshot = [t for t in snapshot_data["tasks"] if t["id"] == "T1"]
+    assert len(original_snapshot) == 1
+    assert original_snapshot[0]["complexity"] == 5
+
+    # Auto-injected tasks (verification, user-action gate) should also have complexity=5
+    for task in finalize_data["tasks"]:
+        assert isinstance(task.get("complexity"), int)
+        assert 1 <= task["complexity"] <= 5
+
+
 def test_render_final_md_phase_marks_gaps_only_when_due() -> None:
     from megaplan._core import render_final_md
 

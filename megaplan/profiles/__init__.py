@@ -27,7 +27,7 @@ VALID_PHASE_KEYS = frozenset(DEFAULT_AGENT_ROUTING.keys())
 # stripped before validation so the loader doesn't complain about them,
 # and surfaced via ``ProfileSource.metadata`` for downstream consumers
 # (currently just ``--vendor`` / ``--critic`` rejection on locked profiles).
-PROFILE_METADATA_KEYS = frozenset({"vendor_locked", "default", "extends"})
+PROFILE_METADATA_KEYS = frozenset({"vendor_locked", "default", "extends", "tier_models"})
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
@@ -73,6 +73,9 @@ def _split_profile_dict(
     profile-level keys from ``PROFILE_METADATA_KEYS`` (currently just
     ``vendor_locked``). Anything else is an error — surfaced by the
     existing validator.
+
+    Flattened ``tier_models.*`` keys (from pipeline-local profiles) are
+    re-nested into ``metadata[\"tier_models\"]`` before return.
     """
     if not isinstance(raw_profile, dict):
         raise CliError(
@@ -81,11 +84,36 @@ def _split_profile_dict(
         )
     phase_map: dict[str, Any] = {}
     metadata: dict[str, Any] = {}
+    # Accumulate flattened tier_models.* keys for re-nesting
+    tier_flat: dict[str, Any] = {}
     for key, value in raw_profile.items():
         if key in PROFILE_METADATA_KEYS:
             metadata[str(key)] = value
+        elif isinstance(key, str) and key.startswith("tier_models."):
+            # Flattened dotted key from pipeline-local profiles
+            tier_flat[str(key)] = value
         else:
             phase_map[str(key)] = value
+    # Re-nest flattened tier_models.* keys into metadata["tier_models"]
+    if tier_flat:
+        nested: dict[str, Any] = {}
+        for flat_key, flat_value in tier_flat.items():
+            # flat_key is "tier_models.execute.1" → ["tier_models", "execute", "1"]
+            parts = flat_key.split(".")
+            # parts[0] = "tier_models", parts[1] = phase, parts[2] = tier_number
+            if len(parts) == 3:
+                phase = parts[1]
+                tier_key = parts[2]
+                nested.setdefault(phase, {})[tier_key] = flat_value
+            else:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    flat_key,
+                    f"malformed tier_models key: expected tier_models.<phase>.<tier>, got {flat_key!r}",
+                )
+        if nested:
+            metadata["tier_models"] = nested
     return phase_map, metadata
 
 
@@ -119,6 +147,11 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
                     f"expected a string for 'extends', got {type(value).__name__}",
                 )
             validated["extends"] = value
+        elif key == "tier_models":
+            tier_data = _extract_tier_models(value, path=path, profile_name=profile_name)
+            validated_tiers = _validate_tier_models(path, profile_name, tier_data)
+            if validated_tiers:
+                validated["tier_models"] = validated_tiers
         # Future metadata keys go here.
     return validated
 
@@ -145,6 +178,115 @@ def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dic
                 f"unknown agent '{agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
             )
         validated[str(phase)] = raw_spec
+    return validated
+
+
+def _extract_tier_models(
+    raw_tier_data: Any,
+    path: Any = None,
+    profile_name: str = "",
+) -> dict[str, dict[int, str]]:
+    """Normalise raw tier-model data into ``{phase: {tier: spec}}``.
+
+    Accepts both nested TOML tables (``{"execute": {"1": "hermes:deepseek-flash", ...}}``)
+    and pre-flattened dotted-key forms from pipeline-local loaders
+    (re-nested by ``_split_profile_dict`` into the same shape).
+    Tier keys are converted from ``str`` to ``int``.
+
+    When *path* and *profile_name* are supplied, invalid inputs (non-string
+    phase keys, non-dict tier entries) raise ``CliError`` immediately instead
+    of being silently skipped — this ensures profile-load-time rejection.
+    Callers that pass already-validated data (e.g. the inheritance resolver)
+    can omit *path*/*profile_name* to preserve the lenient passthrough.
+    """
+    if not isinstance(raw_tier_data, dict):
+        if path is not None:
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                "tier_models",
+                f"expected a TOML table for tier_models, got {type(raw_tier_data).__name__}",
+            )
+        return {}
+    result: dict[str, dict[int, str]] = {}
+    for phase, tier_map in raw_tier_data.items():
+        if not isinstance(phase, str):
+            if path is not None:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    f"tier_models.{phase!r}",
+                    f"phase key must be a string, got {type(phase).__name__}",
+                )
+            continue
+        if not isinstance(tier_map, dict):
+            if path is not None:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    f"tier_models.{phase}",
+                    f"tier entry must be a TOML table, got {type(tier_map).__name__}",
+                )
+            continue
+        tiers: dict[int, str] = {}
+        for tier_key, spec in tier_map.items():
+            # Tier keys may be ints (from TOML) or strs (from pipeline-local).
+            # Convert to int where possible; pass through unconvertible keys
+            # so _validate_tier_models can reject them with a clear error.
+            try:
+                tier_int = int(tier_key)
+            except (ValueError, TypeError):
+                tier_int = tier_key
+            # Pass through non-string specs — _validate_tier_models rejects them.
+            tiers[tier_int] = spec
+        if tiers:
+            result[phase] = tiers
+    return result
+
+
+def _validate_tier_models(
+    path: Any,
+    profile_name: str,
+    tier_models: dict[str, dict[int, str]],
+) -> dict[str, dict[int, str]]:
+    """Validate tier model entries: phase names must be known, tier keys
+    must be 1..5, and values must use valid ``agent:model`` specs."""
+    validated: dict[str, dict[int, str]] = {}
+    for phase, tiers in tier_models.items():
+        if phase not in VALID_PHASE_KEYS:
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"tier_models.{phase}",
+                f"unknown phase '{phase}' in tier_models. Valid phases: {', '.join(sorted(VALID_PHASE_KEYS))}",
+            )
+        v_tiers: dict[int, str] = {}
+        for tier_int, spec in tiers.items():
+            if not isinstance(tier_int, int) or tier_int < 1 or tier_int > 5:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    f"tier_models.{phase}.{tier_int}",
+                    f"tier key must be an integer 1..5, got {tier_int!r}",
+                )
+            if not isinstance(spec, str):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    f"tier_models.{phase}.{tier_int}",
+                    f"expected a string agent spec, got {type(spec).__name__}",
+                )
+            agent, _model = parse_agent_spec(spec)
+            if agent not in KNOWN_AGENTS:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    f"tier_models.{phase}.{tier_int}",
+                    f"unknown agent '{agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                )
+            v_tiers[tier_int] = spec
+        if v_tiers:
+            validated[phase] = v_tiers
     return validated
 
 
@@ -549,6 +691,89 @@ def _resolve_with_inheritance(
     return dict(profile)
 
 
+def _resolve_tier_models_with_inheritance(
+    profile_name: str,
+    *,
+    system_profiles: dict[str, dict[str, str]],
+    system_metadata: dict[str, dict[str, Any]],
+    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_metadata: dict[str, dict[str, Any]],
+    _visited: set[str] | None = None,
+) -> dict[str, dict[int, str]]:
+    """Walk the ``extends`` chain and merge ``tier_models`` metadata.
+
+    Parent tier maps are applied first; child entries override per-phase
+    and per-tier.  Profiles without ``tier_models`` metadata return an
+    empty dict.
+    """
+    if _visited is None:
+        _visited = set()
+
+    if profile_name in _visited:
+        raise CliError(
+            "invalid_profile",
+            f"Cycle detected in profile inheritance: "
+            f"{' -> '.join(sorted(_visited))} -> {profile_name}",
+        )
+    _visited.add(profile_name)
+
+    metadata: dict[str, Any] | None = None
+    if profile_name in pipeline_local_metadata:
+        metadata = pipeline_local_metadata.get(profile_name, {})
+    elif profile_name in system_metadata:
+        metadata = system_metadata.get(profile_name, {})
+
+    if metadata is None:
+        raise CliError(
+            "unknown_profile",
+            f"Unknown profile '{profile_name}'",
+        )
+
+    extends_ref = metadata.get("extends") if metadata else None
+    parent_tiers: dict[str, dict[int, str]] = {}
+    if extends_ref and isinstance(extends_ref, str):
+        # Resolve the extends reference to a bare profile name
+        if extends_ref.startswith("system:"):
+            parent_name = extends_ref[len("system:"):]
+        elif extends_ref.startswith("@"):
+            rest = extends_ref[1:]
+            if ":" in rest:
+                _pl_name, parent_name = rest.split(":", 1)
+            else:
+                parent_name = rest
+        else:
+            parent_name = None
+        if parent_name:
+            try:
+                parent_tiers = _resolve_tier_models_with_inheritance(
+                    parent_name,
+                    system_profiles=system_profiles,
+                    system_metadata=system_metadata,
+                    pipeline_local_profiles=pipeline_local_profiles,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                    _visited=_visited,
+                )
+            except CliError:
+                parent_tiers = {}
+
+    own_tiers: dict[str, dict[int, str]] = metadata.get("tier_models", {}) if metadata else {}
+    if not isinstance(own_tiers, dict):
+        own_tiers = {}
+
+    # Parent first, child overrides
+    merged: dict[str, dict[int, str]] = {
+        phase: dict(tiers)
+        for phase, tiers in parent_tiers.items()
+    }
+    for phase, tiers in own_tiers.items():
+        if phase in merged:
+            merged[phase].update(tiers)
+        else:
+            merged[phase] = dict(tiers)
+
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # 4-layer profile resolution for YAML pipelines
 # ---------------------------------------------------------------------------
@@ -739,17 +964,27 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
 def apply_vendor_rewrite(
     profile: dict[str, str],
     vendor: str,
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
 ) -> dict[str, str]:
     """Return a copy of ``profile`` with premium slots swapped to ``vendor``.
 
     Profiles with no claude/codex slots are a silent no-op. Caller is
     responsible for rejecting vendor-locked profiles before getting here.
+
+    When *tier_models* is provided, tier entries are also rewritten in-place
+    (mutated) using the same ``_swap_premium_spec`` logic.
     """
     if vendor not in VALID_VENDORS:
         raise CliError(
             "invalid_vendor",
             f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
         )
+    # Walk tier entries (mutates in-place so caller sees the rewrite).
+    if tier_models is not None:
+        for phase, tiers in tier_models.items():
+            for tier_int, spec in tiers.items():
+                tiers[tier_int] = _swap_premium_spec(spec, vendor)
     # feedback is locked at claude:low for cross-run comparability
     return {
         phase: _swap_premium_spec(spec, vendor)
@@ -809,6 +1044,8 @@ def apply_critic_rewrite(
 def apply_depth_rewrite(
     profile: dict[str, str],
     depth: str,
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
 ) -> dict[str, str]:
     """Return a copy of ``profile`` with author-phase effort set to ``depth``.
 
@@ -816,6 +1053,9 @@ def apply_depth_rewrite(
     :data:`DEPTH_AUTHOR_PHASES`. Critic phases plateau at their existing
     depth (asymmetry principle); hermes specs are never touched; bare
     ``claude`` (no effort suffix) becomes ``claude:<depth>``.
+
+    When *tier_models* is provided, tier entries for author phases are also
+    rewritten in-place (mutated). Tiers for non-author phases are skipped.
     """
     if depth not in VALID_DEPTH_CHOICES:
         raise CliError(
@@ -830,6 +1070,15 @@ def apply_depth_rewrite(
         if agent not in _PREMIUM_VENDORS:
             continue
         result[phase] = f"{agent}:{depth}"
+    if tier_models is not None:
+        for phase, tiers in tier_models.items():
+            if phase not in DEPTH_AUTHOR_PHASES:
+                continue
+            for tier_int, spec in tiers.items():
+                agent, _model = parse_agent_spec(spec)
+                if agent not in _PREMIUM_VENDORS:
+                    continue
+                tiers[tier_int] = f"{agent}:{depth}"
     return result
 
 
@@ -844,6 +1093,8 @@ def _swap_deepseek_provider_spec(spec: str, provider: str) -> str:
 def apply_deepseek_provider_rewrite(
     profile: dict[str, str],
     provider: str,
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
 ) -> dict[str, str]:
     """Return a copy of ``profile`` with canonical DeepSeek v4-pro provider swapped.
 
@@ -851,6 +1102,9 @@ def apply_deepseek_provider_rewrite(
     canonical DeepSeek V4 Pro specs between Fireworks-direct and DeepSeek's
     direct API. Kimi, non-DeepSeek Fireworks models, and DeepSeek Flash stay
     exactly as declared by the profile.
+
+    When *tier_models* is provided, tier entries are also rewritten in-place
+    (mutated) using the same ``_swap_deepseek_provider_spec`` logic.
     """
     if provider not in VALID_DEEPSEEK_PROVIDER_CHOICES:
         raise CliError(
@@ -858,6 +1112,10 @@ def apply_deepseek_provider_rewrite(
             f"--deepseek-provider must be one of {', '.join(VALID_DEEPSEEK_PROVIDER_CHOICES)}; "
             f"got {provider!r}",
         )
+    if tier_models is not None:
+        for phase, tiers in tier_models.items():
+            for tier_int, spec in tiers.items():
+                tiers[tier_int] = _swap_deepseek_provider_spec(spec, provider)
     return {
         phase: _swap_deepseek_provider_spec(spec, provider)
         for phase, spec in profile.items()
@@ -884,11 +1142,14 @@ def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
 #     documented `--vendor codex --profile all-claude` flip.
 #   - `all-codex` is opinionated; without locking, the silent default-vendor
 #     fallback turned `--profile all-codex` into all-claude.
-_NAMED_VENDOR_PROFILES = {"all-codex": "codex"}
+_NAMED_VENDOR_PROFILES = {"all-codex": "codex", "variable-codex": "codex"}
 
 
 def _validate_named_profile_invariants(
-    profile_name: str, resolved: dict[str, str]
+    profile_name: str,
+    resolved: dict[str, str],
+    *,
+    tier_models: dict[str, dict[int, str]] | None = None,
 ) -> None:
     expected = _NAMED_VENDOR_PROFILES.get(profile_name)
     if expected is None:
@@ -900,6 +1161,19 @@ def _validate_named_profile_invariants(
         agent, _model = parse_agent_spec(spec)
         if agent != expected:
             bad.append(f"{phase}={spec}")
+    # Also validate tier entries: a named-vendor profile must not have
+    # tier entries from the *wrong premium vendor* (claude vs codex) on any
+    # non-feedback phase.  DeepSeek / hermes entries are always allowed
+    # because they represent the cheap-fallback tiers, not a vendor choice.
+    _PREMIUM_AGENTS = frozenset({"claude", "codex"})
+    if tier_models:
+        for phase, tiers in tier_models.items():
+            if phase == "feedback":
+                continue
+            for tier_int, spec in tiers.items():
+                agent, _model = parse_agent_spec(spec)
+                if agent in _PREMIUM_AGENTS and agent != expected:
+                    bad.append(f"tier_models.{phase}.{tier_int}={spec}")
     if bad:
         raise CliError(
             "profile_resolution_mismatch",
@@ -945,6 +1219,21 @@ def apply_profile_expansion(
         profile_meta = metadata.get(profile_name, {})
         vendor_locked = bool(profile_meta.get("vendor_locked", False))
 
+        # Resolve tier_models from metadata (with inheritance).
+        tier_models: dict[str, dict[int, str]] | None = None
+        try:
+            tier_models = _resolve_tier_models_with_inheritance(
+                profile_name,
+                system_profiles=profiles,
+                system_metadata=metadata,
+                pipeline_local_profiles={},
+                pipeline_local_metadata={},
+            )
+        except CliError:
+            tier_models = None
+        if not tier_models:
+            tier_models = None
+
         # Resolve vendor + critic + depth with CLI > state > config-default precedence.
         cli_vendor = getattr(args, "vendor", None)
         cli_critic = getattr(args, "critic", None)
@@ -988,12 +1277,12 @@ def apply_profile_expansion(
                     f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
                 )
             if _profile_has_premium_slots(resolved):
-                resolved = apply_vendor_rewrite(resolved, vendor)
+                resolved = apply_vendor_rewrite(resolved, vendor, tier_models=tier_models)
             # Depth rewrite runs against the *post-vendor* state so
             # ``--vendor codex --depth high`` lands on ``codex:high`` for
             # author phases. Honored on locked profiles too (see below).
             if effective_depth_flag is not None:
-                resolved = apply_depth_rewrite(resolved, effective_depth_flag)
+                resolved = apply_depth_rewrite(resolved, effective_depth_flag, tier_models=tier_models)
             # Critic rewrite always runs against the *post-vendor* state.
             if effective_critic_flag is not None:
                 if effective_critic_flag not in VALID_CRITIC_CHOICES:
@@ -1010,11 +1299,18 @@ def apply_profile_expansion(
         elif effective_depth_flag is not None:
             # vendor_locked profile: --vendor / --critic are no-ops, but
             # --depth is still applied to author phases.
-            resolved = apply_depth_rewrite(resolved, effective_depth_flag)
+            resolved = apply_depth_rewrite(resolved, effective_depth_flag, tier_models=tier_models)
 
-        resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag)
+        resolved = apply_deepseek_provider_rewrite(resolved, effective_deepseek_provider_flag, tier_models=tier_models)
 
-        _validate_named_profile_invariants(profile_name, resolved)
+        _validate_named_profile_invariants(profile_name, resolved, tier_models=tier_models)
+
+        # Attach post-rewrite tier map to args for downstream dispatch.
+        # If CLI explicitly overrides the execute phase, strip
+        # tier_models.execute so tier routing is disabled (CLI wins).
+        if tier_models and "execute" in cli_steps:
+            tier_models.pop("execute", None)
+        args.tier_models = tier_models
 
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:

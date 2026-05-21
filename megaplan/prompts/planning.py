@@ -272,6 +272,12 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
         - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
         - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
         - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
 
         {PLAN_TEMPLATE}
         """

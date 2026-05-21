@@ -15,6 +15,12 @@ from megaplan._core import (
     latest_plan_meta_path,
     read_json,
 )
+from megaplan.resolutions import (
+    FALLBACK_STATES,
+    HARD_BLOCK_STATES,
+    load_user_action_resolutions,
+    resolution_applies_to_task,
+)
 from megaplan.types import PlanState
 
 from ._shared import _debt_watch_lines, _gate_summary_or_skipped, _render_prep_block
@@ -204,6 +210,116 @@ def _execute_approval_note(state: PlanState) -> str:
     return "Note: Review mode is enabled. Execute should only be running after explicit gate approval."
 
 
+def _format_user_action_guidance(
+    finalize_data: dict[str, Any],
+    resolutions: dict[str, dict[str, Any]],
+    relevant_task_ids: list[str],
+) -> tuple[str, str]:
+    """Build resolution-aware prerequisite and guidance blocks for *relevant_task_ids*.
+
+    Returns ``(prerequisite_block, resolution_guidance_block)`` — both are
+    ready-to-embed strings (or empty strings when there is nothing to report).
+    """
+    # Build the blocking-task → user-actions mapping from finalize.json.
+    user_actions_by_blocking_task: dict[str, list[dict[str, Any]]] = {}
+    for action in finalize_data.get("user_actions", []):
+        if not isinstance(action, dict):
+            continue
+        blocks_task_ids = action.get("blocks_task_ids", [])
+        if not isinstance(blocks_task_ids, list):
+            continue
+        for task_id in blocks_task_ids:
+            if isinstance(task_id, str):
+                user_actions_by_blocking_task.setdefault(task_id, []).append(action)
+
+    prerequisite_lines: list[str] = []
+    resolution_guidance_lines: list[str] = []
+
+    for task_id in relevant_task_ids:
+        for action in user_actions_by_blocking_task.get(task_id, []):
+            action_id = action.get("id", "unknown")
+            description = action.get("description", "")
+            resolution = resolutions.get(action_id)
+            applies = resolution_applies_to_task(resolution, task_id)
+
+            if applies and isinstance(resolution, dict):
+                state = resolution.get("state", "")
+                if state == "rejected":
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
+                        f"{description}. Resolution state is rejected. "
+                        f"This plan cannot continue. Mark this task blocked."
+                    )
+                elif state in FALLBACK_STATES:
+                    fallback_mode = resolution.get("fallback_mode", "")
+                    reason = resolution.get("reason", "")
+                    instructions = resolution.get("instructions", "")
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: User action {action_id} ({description}) "
+                        f"is resolved as {state}. FALLBACK MODE: {fallback_mode or 'proceed'}. "
+                        f"Reason: {reason or 'no reason provided'}. "
+                        f"{instructions or 'No specific fallback instructions provided.'}"
+                    )
+                    resolution_guidance_lines.append(
+                        f"Resolution guidance for {action_id} ({state}): "
+                        f"Supersedes the generic before_execute STOP — proceed with fallback."
+                    )
+                elif state == "satisfied":
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: User action {action_id} ({description}) "
+                        f"is resolved as satisfied. Verify mechanically if possible, then proceed."
+                    )
+                    resolution_guidance_lines.append(
+                        f"Resolution guidance for {action_id} (satisfied): "
+                        f"Action marked as resolved. Confirm with a quick check and continue."
+                    )
+                elif state in HARD_BLOCK_STATES or state == "manual_required":
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
+                        f"{description}. Resolution state is {state}. "
+                        f"If {action_id} is not complete, mark this task blocked with reason "
+                        f"`awaiting {action_id}` rather than attempting it."
+                    )
+                else:
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
+                        f"{description}. If {action_id} is not complete (verify if possible — grep .env, "
+                        f"curl, etc.), mark this task blocked with reason `awaiting {action_id}` rather "
+                        "than attempting it."
+                    )
+            else:
+                if isinstance(resolution, dict) and not applies:
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
+                        f"{description}. (Resolution for {action_id} is scoped to other tasks — "
+                        f"this task still requires the action to be complete.) "
+                        f"If {action_id} is not complete, mark this task blocked."
+                    )
+                else:
+                    prerequisite_lines.append(
+                        f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
+                        f"{description}. If {action_id} is not complete (verify if possible — grep .env, "
+                        f"curl, etc.), mark this task blocked with reason `awaiting {action_id}` rather "
+                        "than attempting it."
+                    )
+
+    prerequisite_block = (
+        "\n".join(prerequisite_lines)
+        if prerequisite_lines
+        else "No user_action prerequisites for this batch."
+    )
+    resolution_guidance_block = (
+        "\n".join(
+            ["Resolution guidance (supersedes before_execute STOP for accepted/waived/satisfied):"]
+            + resolution_guidance_lines
+        )
+        if resolution_guidance_lines
+        else ""
+    )
+
+    return prerequisite_block, resolution_guidance_block
+
+
 def _execute_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
@@ -220,6 +336,19 @@ def _execute_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) 
         checkpoint_path=checkpoint_path,
         output_shape=_EXECUTE_OUTPUT_SHAPE_EXAMPLE,
     )
+
+    # Build resolution-aware guidance for ALL finalize tasks (not batch-dependent).
+    all_tasks = finalize_data.get("tasks", [])
+    all_task_ids = [
+        task["id"]
+        for task in all_tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    ]
+    resolutions = load_user_action_resolutions(plan_dir)
+    prerequisite_block, resolution_guidance_block = _format_user_action_guidance(
+        finalize_data, resolutions, all_task_ids
+    )
+
     return textwrap.dedent(
         f"""
         Execute the approved plan in the repository.
@@ -249,6 +378,10 @@ def _execute_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) 
 
         {rerun_guidance}
 
+        User action prerequisites:
+        {prerequisite_block}
+        {resolution_guidance_block}
+
         {approval_note}
         Robustness level: {robustness}.
 
@@ -269,16 +402,6 @@ def _execute_batch_prompt(
     completed = set(completed_task_ids or set())
     finalize_data = read_json(plan_dir / "finalize.json")
     all_tasks = finalize_data.get("tasks", [])
-    user_actions_by_blocking_task: dict[str, list[dict[str, Any]]] = {}
-    for action in finalize_data.get("user_actions", []):
-        if not isinstance(action, dict):
-            continue
-        blocks_task_ids = action.get("blocks_task_ids", [])
-        if not isinstance(blocks_task_ids, list):
-            continue
-        for task_id in blocks_task_ids:
-            if isinstance(task_id, str):
-                user_actions_by_blocking_task.setdefault(task_id, []).append(action)
     tasks_by_id = {
         task["id"]: task
         for task in all_tasks
@@ -326,21 +449,10 @@ def _execute_batch_prompt(
                 deviations = [item for item in raw_deviations if isinstance(item, str)]
                 if deviations:
                     prior_batch_deviations = json_dump(deviations).strip()
-    prerequisite_lines: list[str] = []
-    for task_id in batch_task_ids:
-        for action in user_actions_by_blocking_task.get(task_id, []):
-            action_id = action.get("id", "unknown")
-            description = action.get("description", "")
-            prerequisite_lines.append(
-                f"PREREQUISITE for {task_id}: This task depends on user action {action_id}: "
-                f"{description}. If {action_id} is not complete (verify if possible — grep .env, "
-                f"curl, etc.), mark this task blocked with reason `awaiting {action_id}` rather "
-                "than attempting it."
-            )
-    prerequisite_block = (
-        "\n".join(prerequisite_lines)
-        if prerequisite_lines
-        else "No user_action prerequisites for this batch."
+    # Load resolutions and build resolution-aware prerequisite text.
+    resolutions = load_user_action_resolutions(plan_dir)
+    prerequisite_block, resolution_guidance_block = _format_user_action_guidance(
+        finalize_data, resolutions, batch_task_ids
     )
     approval_note = (
         "Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations."
@@ -387,6 +499,7 @@ def _execute_batch_prompt(
 
         User action prerequisites:
         {prerequisite_block}
+        {resolution_guidance_block}
 
         Batch-scoped sense checks:
         {json_dump(batch_sense_checks).strip()}

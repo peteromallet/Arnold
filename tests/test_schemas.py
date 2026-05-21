@@ -190,6 +190,7 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "depends_on",
         "status",
         "kind",
+        "complexity",
         "executor_notes",
         "files_changed",
         "commands_run",
@@ -204,6 +205,7 @@ def test_finalize_schema_tracks_structured_execution_fields() -> None:
         "description",
         "depends_on",
         "status",
+        "complexity",
         "executor_notes",
         "files_changed",
         "commands_run",
@@ -521,6 +523,7 @@ def test_strict_schema_new_tracking_objects_are_strict() -> None:
         "description",
         "depends_on",
         "status",
+        "complexity",
         "executor_notes",
         "files_changed",
         "commands_run",
@@ -602,3 +605,81 @@ def test_tiebreaker_schemas_registered() -> None:
     assert "preliminary_pick" in researcher["properties"]
     assert "counter_recommendation" in challenger["properties"]
     assert "missing_options" in challenger["properties"]
+
+
+# ---------------------------------------------------------------------------
+# Complexity field validation tests
+# ---------------------------------------------------------------------------
+
+def _make_finalize_payload_with_task(**overrides: object) -> dict:
+    """Return a minimal valid finalize.json payload with one task, overridable."""
+    return {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Test task",
+                "depends_on": [],
+                "status": "pending",
+                "complexity": 3,
+                "kind": "code",
+                "executor_notes": "",
+                "files_changed": [],
+                "commands_run": [],
+                "evidence_files": [],
+                "reviewer_verdict": "",
+                **overrides,
+            }
+        ],
+        "watch_items": [],
+        "sense_checks": [],
+        "user_actions": [],
+        "meta_commentary": "",
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "",
+            "coverage_complete": True,
+        },
+    }
+
+
+def test_complexity_valid_values_1_through_5_accepted() -> None:
+    schema = SCHEMAS["finalize.json"]
+    for val in (1, 2, 3, 4, 5):
+        payload = _make_finalize_payload_with_task(complexity=val)
+        errors = list(Draft7Validator(schema).iter_errors(payload))
+        assert errors == [], f"Complexity {val} should be accepted, got: {errors}"
+
+
+def test_complexity_below_range_rejected() -> None:
+    schema = SCHEMAS["finalize.json"]
+    payload = _make_finalize_payload_with_task(complexity=0)
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
+
+
+def test_complexity_above_range_rejected() -> None:
+    schema = SCHEMAS["finalize.json"]
+    payload = _make_finalize_payload_with_task(complexity=6)
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
+
+
+def test_complexity_wrong_type_rejected() -> None:
+    schema = SCHEMAS["finalize.json"]
+    payload = _make_finalize_payload_with_task(complexity="high")
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
+
+
+def test_complexity_missing_rejected() -> None:
+    schema = SCHEMAS["finalize.json"]
+    task_overrides = {
+        k: v for k, v in _make_finalize_payload_with_task()["tasks"][0].items()
+        if k != "complexity"
+    }
+    payload = _make_finalize_payload_with_task(**task_overrides)
+    # Remove complexity key entirely
+    del payload["tasks"][0]["complexity"]
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
