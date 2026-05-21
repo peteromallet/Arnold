@@ -597,6 +597,22 @@ class TestBuildApiKwargs:
         monkeypatch.setenv("HERMES_API_TIMEOUT", "42.5")
         assert agent._build_api_kwargs([{"role": "user", "content": "hi"}])["timeout"] == 42.5
 
+    def test_direct_deepseek_uses_longer_default_api_timeout(self, agent, monkeypatch):
+        monkeypatch.delenv("HERMES_API_TIMEOUT", raising=False)
+        monkeypatch.delenv("HERMES_DEEPSEEK_API_TIMEOUT", raising=False)
+        agent.base_url = "https://api.deepseek.com"
+        agent._base_url_lower = agent.base_url.lower()
+
+        assert agent._build_api_kwargs([{"role": "user", "content": "hi"}])["timeout"] == 1200.0
+
+    def test_direct_deepseek_timeout_env_override(self, agent, monkeypatch):
+        monkeypatch.setenv("HERMES_API_TIMEOUT", "42.5")
+        monkeypatch.setenv("HERMES_DEEPSEEK_API_TIMEOUT", "1800")
+        agent.base_url = "https://api.deepseek.com"
+        agent._base_url_lower = agent.base_url.lower()
+
+        assert agent._build_api_kwargs([{"role": "user", "content": "hi"}])["timeout"] == 1800.0
+
     def test_interruptible_api_call_has_wall_clock_timeout(self, agent, monkeypatch):
         monkeypatch.setenv("HERMES_API_TIMEOUT", "0.1")
         mock_client = MagicMock()

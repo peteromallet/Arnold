@@ -48,6 +48,74 @@ def test_force_proceed_from_critiqued_writes_override_gate(plan_fixture: PlanFix
     assert state["last_gate"] == {}
 
 
+def test_force_proceed_recovers_blocked_agent_availability_preflight(
+    plan_fixture: PlanFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["current_state"] = megaplan.STATE_BLOCKED
+    state["last_gate"] = {
+        "recommendation": "PROCEED",
+        "passed": False,
+        "preflight_results": {
+            "project_dir_exists": True,
+            "project_dir_writable": True,
+            "success_criteria_present": True,
+            "claude_available": False,
+            "codex_available": False,
+        },
+    }
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="force-proceed",
+            reason="PATH was repaired outside launchd",
+        ),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    assert response["state"] == megaplan.STATE_GATED
+    assert response["next_step"] == "finalize"
+    assert state["current_state"] == megaplan.STATE_GATED
+
+
+def test_force_proceed_from_blocked_rejects_missing_success_criteria(
+    plan_fixture: PlanFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["current_state"] = megaplan.STATE_BLOCKED
+    state["last_gate"] = {
+        "recommendation": "PROCEED",
+        "passed": False,
+        "preflight_results": {
+            "project_dir_exists": True,
+            "project_dir_writable": True,
+            "success_criteria_present": False,
+            "claude_available": False,
+            "codex_available": False,
+        },
+    }
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(megaplan.CliError) as error:
+        megaplan.handle_override(
+            plan_fixture.root,
+            plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                override_action="force-proceed",
+                reason="do not bypass hard checks",
+            ),
+        )
+
+    assert error.value.code == "invalid_transition"
+
+
 def test_force_proceed_registers_unresolved_flags_as_debt(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
@@ -173,6 +241,96 @@ def test_gate_iterate_with_empty_accepted_tradeoffs_creates_no_debt(
     assert pr is not None, "phase_result.json must be written after gate"
     assert pr.exit_kind == "success"
     assert pr.phase == "gate"
+
+
+def test_gate_proceed_agent_unavailable_routes_to_force_proceed_not_revise(
+    plan_fixture: PlanFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+
+    result, next_step, summary, blocking_unresolved_ids = megaplan.handlers._apply_gate_outcome(
+        state,
+        {
+            "recommendation": "PROCEED",
+            "rationale": "The plan is ready.",
+            "passed": False,
+            "preflight_results": {
+                "project_dir_exists": True,
+                "project_dir_writable": True,
+                "success_criteria_present": True,
+                "claude_available": False,
+                "codex_available": False,
+            },
+            "unresolved_flags": [],
+            "flag_resolutions": [],
+        },
+        robustness="standard",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert result == "blocked"
+    assert next_step == "override force-proceed"
+    assert "agent availability preflight failed" in summary
+    assert blocking_unresolved_ids == []
+    assert state["current_state"] == megaplan.STATE_CRITIQUED
+
+
+def test_gate_proceed_hard_preflight_failure_routes_to_gate_repair_not_revise(
+    plan_fixture: PlanFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+
+    result, next_step, _, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        {
+            "recommendation": "PROCEED",
+            "rationale": "The plan is ready.",
+            "passed": False,
+            "preflight_results": {
+                "project_dir_exists": True,
+                "project_dir_writable": True,
+                "success_criteria_present": False,
+                "claude_available": True,
+                "codex_available": True,
+            },
+            "unresolved_flags": [],
+            "flag_resolutions": [],
+        },
+        robustness="standard",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert result == "blocked"
+    assert next_step == "gate"
+    assert next_step != "revise"
+
+
+def test_revise_rejects_proceed_preflight_block(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["last_gate"] = {
+        "recommendation": "PROCEED",
+        "passed": False,
+        "preflight_results": {
+            "project_dir_exists": True,
+            "project_dir_writable": True,
+            "success_criteria_present": True,
+            "claude_available": False,
+            "codex_available": False,
+        },
+    }
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(megaplan.CliError) as error:
+        megaplan.handle_revise(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert error.value.code == "invalid_transition"
+    assert "ITERATE" in str(error.value)
 
 
 def test_gate_proceed_partial_resolutions_still_missing_after_reprompt_downgrades_to_iterate(

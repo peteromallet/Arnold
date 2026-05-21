@@ -183,7 +183,24 @@ _LEGACY_STATE_MACHINE_CASES = [
     ),
     (
         {"current_state": megaplan.STATE_CRITIQUED, "last_gate": {"recommendation": "PROCEED", "passed": False}},
-        ["revise", "override force-proceed", "step"],
+        ["gate", "step"],
+    ),
+    (
+        {
+            "current_state": megaplan.STATE_CRITIQUED,
+            "last_gate": {
+                "recommendation": "PROCEED",
+                "passed": False,
+                "preflight_results": {
+                    "project_dir_exists": True,
+                    "project_dir_writable": True,
+                    "success_criteria_present": True,
+                    "claude_available": False,
+                    "codex_available": False,
+                },
+            },
+        },
+        ["override force-proceed", "gate", "step"],
     ),
     ({"current_state": megaplan.STATE_GATED, "last_gate": {}}, ["finalize", "override replan", "step"]),
     ({"current_state": megaplan.STATE_FINALIZED, "last_gate": {}}, ["execute", "override replan", "step"]),

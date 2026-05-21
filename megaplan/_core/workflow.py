@@ -194,6 +194,17 @@ def _transition_matches(state: PlanState, condition: str) -> bool:
         return recommendation == "ESCALATE"
     if condition == "gate_tiebreaker":
         return recommendation == "TIEBREAKER"
+    if condition == "gate_proceed_agent_availability_blocked":
+        preflight = gate.get("preflight_results", {})
+        if not isinstance(preflight, dict):
+            preflight = {}
+        failed = {name for name, passed in preflight.items() if not passed}
+        return (
+            recommendation == "PROCEED"
+            and not gate.get("passed", False)
+            and bool(failed)
+            and failed <= {"claude_available", "codex_available"}
+        )
     if condition == "gate_proceed_blocked":
         return recommendation == "PROCEED" and not gate.get("passed", False)
     if condition == "gate_proceed":

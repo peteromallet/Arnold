@@ -38,6 +38,7 @@ from megaplan._core import (
 
 
 PLAN_STRUCTURE_REQUIRED_STEP_ISSUE = "Plan must include at least one step section (`## Step N:` or `### Step N:` under a phase)."
+AGENT_AVAILABILITY_PREFLIGHT_CHECKS = frozenset({"claude_available", "codex_available"})
 _PLAN_HEADING_RE = re.compile(r"^##\s+.+$")
 _PLAN_PHASE_HEADING_RE = re.compile(r"^###\s+.+$")
 _PLAN_STEP_RE = re.compile(r"^##\s+Step\s+(\d+):\s+.+$")
@@ -796,6 +797,15 @@ def run_gate_checks(
         "preflight_results": checks,
         "unresolved_flags": unresolved,
     }
+
+
+def failed_preflight_checks(preflight_results: dict[str, bool]) -> list[str]:
+    return [name for name, passed in preflight_results.items() if not passed]
+
+
+def only_agent_availability_preflight_failed(preflight_results: dict[str, bool]) -> bool:
+    failed = set(failed_preflight_checks(preflight_results))
+    return bool(failed) and failed <= AGENT_AVAILABILITY_PREFLIGHT_CHECKS
 
 
 def build_gate_artifact(
