@@ -216,6 +216,15 @@ Keep comments grounded in specific artifact evidence ("critique flagged X but re
 - `--json` — emit raw rows instead of a table.
 
 Default output is a compact table (plan, profile, overall rating, backend, repo, plus the first line of the Overall comment). Combine with `megaplan feedback show --plan <name>` to drill into a specific match.
+## Observability
+Plans started after this layer landed write an append-only `events.ndjson` event journal to their plan dir. Four CLI surfaces read from it; reach for them whenever a run is in flight or you need to reconstruct what happened. See the **megaplan-observe** skill for the full failure-mode catalog and worked invocation chains.
+
+- `megaplan introspect --plan <name>` — single structured-JSON snapshot. Always check this first when something looks stuck; the `active_phase.liveness` enum (`progressing | quiet | stalled | timeout-imminent`) and `block_details.recoverable_via` together tell you whether to wait, intervene, or override. Also surfaces `outstanding_flags_count`, useful when a plan is sitting on unresolved critique signals.
+- `megaplan trace --plan <name> [--follow] [--format json|pretty|narrative] [--phase <p>] [--since <duration>]` — stream events. `narrative` format is the agent-facing affordance; `--follow` tails as the plan progresses; `--phase` and `--since` filter. Prints `trace: no events.ndjson for plan <name>` cleanly when a plan predates the journal.
+- `megaplan doctor [--plan <name> | --repo]` — diagnostic. `--repo` catches rubric/binary drift (skill profile names vs `profiles list`) and editable-install dirtiness *before* `megaplan init`, so reach for it after a branch switch / pull / fresh checkout. `--plan` reports lock, phase liveness, LLM liveness, cost-vs-cap, orphan subprocesses, and outstanding flags.
+- `megaplan record-tag --plan <name> --tag <name> --note "..."` — annotate a moment in the journal so later trace/introspect calls can find it. All three args are required.
+
+Stale-timestamp inference, opaque blocked state, and "model thinking vs TCP wedged" are the three confusions this layer is designed to kill — if you find yourself running `lsof`, `ps`, or doing manual `ls -lat` time math on a plan dir, you should be running `introspect` or `trace` instead.
 ## Commands
 ```bash
 megaplan status --plan <name>
@@ -261,4 +270,8 @@ megaplan ticket dismiss <id> --reason "..."
 megaplan ticket reopen <id>
 megaplan feedback --plan <name> [--show] [--no-edit]
 megaplan feedback search [--profile <s>] [--repo <s>] [--min-rating N] [--max-rating N] [--stage <name>] [--has-comment] [--all] [--json]
+megaplan introspect --plan <name> [--json]
+megaplan trace --plan <name> [--follow] [--format json|pretty|narrative] [--phase <p>] [--since <duration>]
+megaplan doctor [--plan <name> | --repo]
+megaplan record-tag --plan <name> --tag <name> --note "..."
 ```

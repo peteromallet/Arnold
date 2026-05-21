@@ -219,12 +219,22 @@ def atomic_write_bytes(path: Path, content: bytes) -> None:
     fsync_dir(path.parent)
 
 
-def atomic_write_text(path: Path, content: str) -> None:
+def atomic_write_text(path: Path, content: str, *, _plan_dir: Path | None = None) -> None:
     atomic_write_bytes(path, content.encode("utf-8"))
+    if _plan_dir is not None:
+        try:
+            from megaplan.observability.events import emit, EventKind
+            emit(
+                EventKind.ARTIFACT_WRITTEN,
+                plan_dir=_plan_dir,
+                payload={"path": str(path), "size_bytes": len(content)},
+            )
+        except Exception:
+            pass
 
 
-def atomic_write_json(path: Path, data: Any) -> None:
-    atomic_write_text(path, json_dump(data))
+def atomic_write_json(path: Path, data: Any, *, _plan_dir: Path | None = None) -> None:
+    atomic_write_text(path, json_dump(data), _plan_dir=_plan_dir)
 
 
 def read_json(path: Path) -> Any:

@@ -1,189 +1,175 @@
 ---
 name: megaplan-observe
-description: Observe an in-flight or stuck megaplan run — status, watch, progress, drift detection. Consult when a plan is quiet, blocked, misbehaving, or burning budget faster than expected.
+description: Observe an in-flight megaplan — introspect state, trace events, diagnose blockages, detect drift. Companion to megaplan-decision. Use during and after a run, not before.
 ---
 
 # Megaplan Observe
 
-When megaplan is running and something feels off — too quiet, too expensive, or outright blocked — this skill tells you where to look and what to do next. Every question you have about a running plan starts with the same one command: `megaplan status --plan <plan>`.
+When a megaplan is running — or stuck — `megaplan introspect`, `megaplan trace`, and `megaplan doctor` tell you *what it's doing, why, since when, and how to intervene*. This skill covers the observation surface; `megaplan-decision` covers profile/robustness/depth selection before a run.
 
-## When to reach for this skill
+---
 
-- The user asks "is it still going?" or "what's it doing right now?"
-- A plan transitioned to `blocked` and you don't know why.
-- Cost is climbing faster than expected and you need to see which model is chewing tokens.
-- You suspect a binary or rubric has drifted from what the plan expects.
-- A phase has been quiet for longer than its timeout and you need to decide whether to wait or intervene.
+## 1. The four signals
 
-Do **not** use this skill for:
-- Working with the plan — that's the main `megaplan` skill.
-- Filing bugs or observations — that's `megaplan-tickets`.
-- Picking a profile or robustness level — that's `megaplan-decision`.
+`megaplan introspect --plan X` returns a single structured JSON payload. Four fields in it are the killers — each eliminates a failure mode that previously cost real sessions hours of confusion.
 
-## The four signals from `megaplan status --plan <plan>`
+### `now_utc` — the anti-stale-timestamp anchor
 
-`status` returns a JSON payload. Four fields matter more than the rest:
+Every timestamp in the introspect payload is relative. `now_utc` is the wall clock at the moment the payload was generated. **Never infer recency from JSON timestamps without cross-checking against `now_utc` from the same payload.** A `last_artifact_at` of `14:25:11Z` might look recent — but if `now_utc` is `15:45:00Z`, the artifact is 80 minutes old and the phase is likely stuck.
 
-| Signal | Source field | What it tells you | Gotcha |
-|---|---|---|---|
-| **Wall clock** | none — fetch `date -u` separately | The server's clock at status time. | **Never** infer recency from `active_step.last_activity_at` without subtracting from current `date -u`. A stale read on disk looks current. |
-| **Liveness** | `active_step.health` + `worker_pid_alive` + `idle_seconds` + `recommended_action` | The harness already computes this for you. `health: "healthy"` + `recommended_action: "wait"` means stop second-guessing it. Also surfaces `progress_pct`, `phase_progress_summary` (e.g. "revise running (14m elapsed, typically completes within 15m)"), `attempt: N/3` for retry visibility. | Don't manually re-derive these from raw timestamps — read the computed fields. Cross-check with `ps -p <pid>` only when `worker_pid_alive` itself is `False`. |
-| **Next valid actions** | `valid_next` | Ordered list of step names the harness will accept next. For `blocked` states, this is the recovery menu. | Never run an action not in this list — `megaplan override` will reject it with `invalid_transition`. |
-| **Cost so far** | `total_cost_usd` | Cumulative reported cost. | This figure has known accounting bugs (see tickets `01KRZYNK45GA4VS2KCA6JYZAXK`, `01KRZZ28CPKA2C32VQFQHDJ45S`) — persistent codex sessions and review session-id leaks cause it to over-count by 3–6×. Treat as upper bound, not truth. |
+Rule: when reading introspect output, compute every duration as `now_utc - timestamp`, not as "when I last looked."
 
-For **binary / rubric drift** (the highest-ROI check), there's no built-in command yet. Use `git -C <megaplan-repo> status` and compare your installed version with `megaplan --version`. The local rubric source-of-truth is in `~/.claude/skills/megaplan-*/SKILL.md` (each symlinked into `megaplan/megaplan/data/*_skill.md`).
+### `active_phase.liveness` — the go/no-go enum
 
-## The observation hierarchy
+One of four values; each dictates a different response:
 
-When something seems wrong, work through these in order. Each step is cheaper and safer than the next.
+| Liveness | Meaning | Action |
+|---|---|---|
+| `progressing` | Events <60s old OR in-flight LLM call exists | Wait. The system is working. |
+| `quiet` | Last event 60-300s ago, no in-flight LLM | Watch. May be between checks; check again in 30s. |
+| `stalled` | Last event >300s ago AND no unmatched `llm_call_start` | Intervene. The phase has stopped. |
+| `timeout-imminent` | Phase age > 80% of `phase_timeout` | Decide now. Extend timeout, kill phase, or accept partial results. |
 
-1. **`megaplan status --plan <plan>`** — one call, full picture. Start here every time.
-2. **`megaplan watch --plan <plan>`** — if `status` says active or quiet but you want to watch state evolve in near-real-time.
-3. **`megaplan progress --plan <plan>`** — once the plan has finalized, shows batch/task progress through `execute`. (Returns "no finalize.json yet" before finalize.)
-4. **`megaplan audit query --plan <plan>`** — query historic step receipts. Useful after the fact, when you want to know what each phase cost or how long it ran.
-5. **`ps -p <pid> -o pid,etime,stat`** + worker process listing — confirm the auto driver and any worker is alive.
-6. **Direct filesystem inspection** — last resort. If you find yourself reaching for `cat state.json`, consider filing a ticket asking for the missing `status` field. Direct state read often shows fields like `active_step.last_activity_detail` that `status` does surface, so check `status` JSON first.
+**Critical rule:** a phase with an unmatched `llm_call_start` (no matching `llm_call_end` yet) is NEVER classified as `stalled`, regardless of wall-clock age. The model is still producing — be patient.
 
-### Watching evolution
+### `block_details.recoverable_via` — the only moves the state machine will accept
 
-```bash
-megaplan watch --plan <plan>
-```
+When `state: blocked`, this field enumerates the exact recovery actions the state machine will accept. **Never try a recovery action that isn't in this list.** The `invalid_transition` error exists precisely because callers guessed — `recoverable_via` replaces guessing with the canonical transition table.
 
-`watch` prints state-transition events as they happen. Ctrl-C to exit. There's no `--follow` flag here — `watch` is the follow.
+The list is drawn from `workflow_next()` / `infer_next_steps()` — the single-source function in `megaplan/_core/workflow.py` that the override handler itself checks against. It is always consistent with what `megaplan override` will accept.
 
-For a journal-style timeline, read `state.json` directly or use `audit query`:
+### `rubric_doc.drift` — tooling/doc misalignment before it bites
 
-```bash
-megaplan audit query --plan <plan>
-```
+If `rubric_doc.drift.missing_locally` is non-empty, the megaplan-decision skill references profile names your binary doesn't expose. This is the exact failure mode that wastes hours: the skill says `--profile thoughtful`, the binary says `Unknown profile 'thoughtful'`. `drift` catches it before the invocation. Use a profile from `profiles_available_locally` whose recipe matches what the rubric describes, or pin the binary to a state that has the canonical names.
 
-## Failure-mode catalog
+---
 
-Each entry: the `status` signature you'll see, the recovery path, and context.
+## 2. The observation hierarchy
+
+When something seems wrong, investigate in this order:
+
+1. **`megaplan introspect --plan X`** — one call, full picture. Always start here. The four killer fields answer 90% of questions.
+2. **`megaplan trace --plan X --follow`** — if introspect says `progressing` but you want to watch. Stream events live; narrative format gives prose summaries of LLM calls.
+3. **`megaplan doctor --plan X`** — if introspect shows a flag or state you don't recognise. Diagnostic checks with remediation hints.
+4. **Direct filesystem inspection** — last resort. Read `state.json`, `events.ndjson`, phase artifacts manually. If you need this, file a bug — introspect should cover it.
+
+The hierarchy is deliberate: each step is a thin reader over the same `events.ndjson` journal. Jumping to the filesystem before trying the surfaces misses the structured analysis those surfaces provide (liveness computation, drift detection, recoverable_via enumeration).
+
+---
+
+## 3. Failure-mode catalog
+
+Each entry: the `introspect` signature, the recovery, and a worked example from a real session.
 
 ### Stalled critique
 
-**Signature:** `active_step.name` is in critique, multiple `critique_check_*.json` artifacts already exist, but `last_activity_at` is > 15min ago and `active_step.last_activity_detail` shows the same fragment as last poll.
+**Signature:** 4 of N checks complete, `active_phase.last_artifact_rel > 15min`, subprocess still has open network socket, `active_phase.liveness: quiet`.
 
-**Recovery:** First check if it's actually stalled vs slow — cross-check the worker PID with `ps -p <pid> -o etime`. If the worker is alive and the LLM is just slow, wait. If `last_activity_detail` ends in `⚠️  API call failed (attempt N/3): TimeoutError`, the harness is retrying — give it the full retry budget before intervening.
+**Recovery:**
+- If `last_artifact_rel < phase_timeout / 2`: wait. The model may be producing a large check artifact.
+- If `last_artifact_rel > phase_timeout / 2`: check LLM heartbeat via `trace --follow --format narrative`. If heartbeats stopped, the LLM call may be wedged — kill the phase and resume.
+- Check `block_details.outstanding_flags` — if the critique found flags it can't resolve, it may have looped without producing artifacts.
 
-If the heartbeat is truly gone (no PID, `last_activity_at` > phase_timeout) the auto driver may have died silently — same pattern as historical bug `01KRY1V1WS7SVN3FPYW29ATVNP`.
-
-**Critique perf optimization:** `full` robustness defines 5 core critique checks. Default `orchestration.max_critique_concurrency = 5` (raised from 2 to handle them in one wave; see ticket `01KS03H13JWMVSED6V4584P1P3`). If you see batched mtimes spanning ~8-9 min between batches, your local override may be lower than 5; check with `megaplan config show`.
+**Worked example:**
+> *Session:* `prompt-registry-and-reminder-bundling-v5`, critique phase. 4 of 5 checks completed, last check at 14:25:11Z. At 14:55:00Z, `introspect` shows `liveness: quiet`, `last_artifact_rel: 29m 49s ago`. Subprocess PID 58800 still has an open TCP socket to Fireworks. `trace --follow --format narrative` shows: "Token stream stopped 28m ago. 4,200 tokens emitted at 18 tok/s. Last token at 14:26:31Z — no tokens since." The model finished producing but hermes didn't close the call — likely a provider-side hang. Kill the phase, `megaplan resume` picks up from where critique left off.
 
 ### Blocked state
 
-**Signature:** `state: blocked`, `valid_next` is non-empty (typically lists `step` plus 1-2 specific recovery actions).
+**Signature:** `state: blocked`, `block_details.outstanding_flags` non-empty, `block_details.recoverable_via` populated.
 
-**Recovery:** Read `valid_next`. Pick the first applicable action. Execute it via `megaplan override --plan <plan> --action <action>` or by re-running the named phase. Verify the state transitioned away from `blocked` with a follow-up `status`. Do not paste an action not in `valid_next`.
+**Recovery:**
+1. Read `recoverable_via` — the list is the exact set of override actions the state machine will accept.
+2. Pick the first applicable option. If the flags are addressable, fix the brief and re-init. If they're acceptable tradeoffs, `override force-proceed` with a note explaining why.
+3. Never paste an override not in the list — it will return `invalid_transition`.
 
-**Context:** Blocked is not a failure — it's the harness refusing to proceed on a conflict it can't resolve alone. `valid_next` is the contract. Respect it.
+**Worked example:**
+> *Session:* Plan went `blocked` at gate with 2 outstanding flags (FLAG-V4-001: high severity invariant contradiction, FLAG-V4-002: medium severity missing coverage). `recoverable_via` shows: `["fix brief and re-init (recommended)", "override add-note + override force-proceed", "override replan (requires state ∈ {critiqued, failed, finalized, gated})"]`. FLAG-V4-001 is a genuine correctness issue — fix the brief to resolve the contradiction, re-init. FLAG-V4-002 is acceptable — the uncovered module is out of scope per the brief. Add a note documenting the scope decision, then `override force-proceed`.
 
-### Rubric / binary drift
+### Rubric/binary drift
 
-**Signature:** A skill doc references a command (`introspect`, `trace`, `doctor`) that returns `invalid choice` when run. A profile name in the doc doesn't appear in `megaplan config profiles list`. The local megaplan repo is on a different branch than when the plan was initialized.
+**Signature:** `rubric_doc.drift.missing_locally` non-empty. The decision skill references profiles the binary doesn't have.
 
-**Recovery:** Trust the binary surface (`megaplan --help`, `megaplan <cmd> --help`), not the doc. Fix the doc to match. If a profile is renamed, use `megaplan config profiles list` to find the closest current name.
+**Recovery:**
+- Use a profile from `profiles_available_locally` whose tier/recipe matches what the rubric describes.
+- OR pin the binary to the branch/commit that has the canonical names.
+- Run `megaplan doctor --repo` before `megaplan init` to catch this proactively.
 
-**Context:** Rubric drift is silent until it isn't — the skill describes a surface that doesn't ship. The first invocation that needs the missing command surfaces the drift. Check `megaplan --help | grep -E "<cmd-from-doc>"` before trusting any skill recipe.
+**Worked example:**
+> *Session:* `megaplan init --profile thoughtful` → `Unknown profile 'thoughtful'`. `introspect` (on a different plan) shows `rubric_doc.drift.missing_locally: ["basic","led","thoughtful","super-premium"]`, `profiles_available_locally: ["solo","directed","partnered","premium","apex"]`. The binary is on branch `sprint-a-base` which renamed the canonical profiles to the new 5-tier scheme. The skill doc hasn't been updated yet. Use `--profile partnered` (the tier-3 equivalent) or switch to main where the old names still exist.
 
-### Execute loop spinning
+---
 
-**Signature:** `active_step.name == "execute"`, `last_activity_at < 2min` (heartbeat fine), but `megaplan progress` shows `batches_completed` flat across multiple polls and `tasks_done` is not advancing.
+## 4. The do-not rules
 
-**Recovery:** Read `state.json`'s `execution_audit.json` artifact and look for repeated retries on the same task IDs with different worker models. If a particular batch is stalling, the task decomposition may be too fine-grained for the worker to make progress. Escalate to the user with the batch number and a recommendation to increase `execution.max_execute_no_progress` (`megaplan config set execution.max_execute_no_progress 5`) or adjust the task granularity.
+Four explicit, named rules derived from real failure modes. Violating any of these caused measurable confusion in prior sessions.
 
-**Context:** Execute loops can spin when tasks are decomposed below the model's useful atomicity threshold. The harness counts completions, not impact.
+### Rule 1: Do not infer wall time from JSON timestamps without `now_utc` cross-check
 
-### Accounting inflation
+`state.json` timestamps are snapshot values — they're only as recent as the last write. `now_utc` is the actual wall clock. Always compute recency against `now_utc`. A `last_step.timestamp` of 5 minutes ago might mean the phase is stuck, or it might mean `state.json` hasn't been flushed — `now_utc` tells you which.
 
-**Signature:** `total_cost_usd` climbs sharply during a single execute phase, or `state.json` history shows two execute entries with identical 6-decimal `cost_usd` but different `duration_ms` / `timestamp`.
+### Rule 2: Do not retry overrides that returned `invalid_transition` — read `recoverable_via` first
 
-**Recovery:** Trust the latest `step_receipt_<phase>_v<iteration>.json` cost field — not the rolled-up `total_cost_usd`. Two filed bugs underlie this: `01KRZYNK45GA4VS2KCA6JYZAXK` (persistent codex session rebills cumulative total each batch) and `01KRZZ28CPKA2C32VQFQHDJ45S` (review session-id leak copies stale token counts).
+The state machine rejects invalid transitions with a specific error. Retrying the same override without checking `recoverable_via` is the definition of a loop. `recoverable_via` is computed from the same transition table the handler enforces — it is always correct.
 
-**Context:** Real provider billing is fine — the harness double-counts in its own ledger. Don't panic at high `total_cost_usd` until the bug fixes land.
+### Rule 3: Do not stash / checkout in the megaplan source repo without user consent — editable installs make repo state load-bearing
 
-## Do-not rules
+If megaplan is installed via `pip install -e .`, any branch switch or uncommitted change in the source tree changes behavior immediately. `megaplan doctor --repo` surfaces this. Stashing, checking out, or pulling without explicit user consent can silently remove the profile a caller is about to invoke.
 
-These are hard rules derived from real failure modes. Don't break them.
+### Rule 4: Do not assume a phase is stuck before consulting `liveness`
 
-1. **Do not infer wall time from JSON timestamps without `date -u` cross-check.** A stale read looks current. Always compute the delta against current wall clock.
-2. **Do not retry actions that returned `invalid_transition` — read `valid_next` first.** The list is exhaustive. If your action isn't there, it won't work.
-3. **Do not stash / checkout in the megaplan source repo without user consent.** Editable installs make repo state load-bearing. A `git checkout` in the megaplan repo can silently change the tool the running plan is using.
-4. **Do not trust `total_cost_usd` until the accounting tickets close.** Persistent codex sessions and review session-id leaks inflate it 3–6×. Use individual step receipts.
-5. **Do not assume "the in-flight run can't benefit from a fix."** The orchestrator reads many settings (e.g. `max_critique_concurrency`) **per call**, not once at start. A `megaplan config set <key> <value>` BEFORE the next phase starts is picked up by the next invocation.
+`active_phase.liveness` is the single source of truth for whether a phase is progressing. `progressing` means there's recent activity or an in-flight LLM call — wait. `quiet` means watch. Only `stalled` or `timeout-imminent` warrant intervention. Guessing based on wall-clock intuition leads to killing phases that were about to finish.
 
-## Worked invocation chains
+---
+
+## 5. Worked invocation chains
 
 ### "Is it still going?"
 
-```bash
-megaplan status --plan <plan>   # state + active_step
-date -u                          # current wall clock to delta against last_activity_at
-ps -ef | grep megaplan | grep -v grep   # confirm worker PIDs alive
+User asks whether a long-running plan is still progressing.
+
+```
+megaplan introspect --plan prompt-registry-and-reminder-bundling-v5
 ```
 
-Narrate back:
-
-> "It's in critique, last activity 3 min ago, worker PID 18053 alive 17m. Looks healthy."
-
-If `last_activity_at` is older than ~10 min AND no worker PID, escalate to the failure-mode catalog above.
+Read `active_phase.liveness`. If `progressing`: "Yes — critique is still running. Last artifact 3 minutes ago (critique_check_scope.json). Model claude:opus-4.7 is actively producing tokens." If `quiet`: "Critique hasn't produced an artifact in 8 minutes, but the LLM call is still in-flight. Watching." If `stalled`: "Critique appears to have stopped — no events in 12 minutes and no in-flight LLM call. Check `recoverable_via`."
 
 ### "Plan went blocked, what now?"
 
-```bash
-megaplan status --plan <plan>   # read valid_next
+```
+megaplan introspect --plan my-sprint
 ```
 
-Pick the first recovery action, run it, verify:
-
-```bash
-megaplan override --plan <plan> --action <first-valid-action>
-megaplan status --plan <plan>   # confirm state is no longer blocked
-```
+Read `block_details.recoverable_via`. Execute the first applicable option. Verify the state transition succeeded with another `introspect` call. If the override was `force-proceed`, confirm `state` is now past `blocked`. If the override was `replan`, confirm the plan re-entered the planning phase.
 
 ### "Cost is climbing faster than expected"
 
-```bash
-megaplan status --plan <plan>   # total_cost_usd (treat as upper bound)
-megaplan audit query --plan <plan>   # per-step receipt costs (authoritative)
+```
+megaplan trace --plan my-sprint --format narrative --since 10m
 ```
 
-Compare the per-step receipt costs to the rolled-up total. If they diverge wildly, you're hitting one of the known accounting bugs — trust receipts.
+The narrative format groups consecutive LLM calls into prose summaries. Look for which model is being called, how frequently, and at what token volume. Cross-reference against the tier's expected cost profile from `megaplan-decision`. If the model is correct but call frequency is high, the plan may be looping — check `phase_retry` events. If the model is wrong (e.g., premium model on a solo-tier phase), check for an unintended `override set-profile`.
 
-### "The next critique is going to be slow — can I speed it up before it starts?"
+### "I switched branches and now megaplan is broken"
 
-```bash
-megaplan config set orchestration.max_critique_concurrency 5
-# verify what the orchestrator will read next:
-python -c "from megaplan._core import get_effective; print(get_effective('orchestration', 'max_critique_concurrency'))"
+```
+megaplan doctor --repo
 ```
 
-The orchestration call site reads this per invocation, so the next critique phase picks it up live — even mid-run.
+The repo-level check catches: rubric/binary drift (skill references profiles the current binary doesn't have), editable-install + dirty working tree (uncommitted changes affecting behavior), skill files out of sync with installed copies. Fix the specific WARN/ERROR lines before running any plan.
 
-## Quick reference
+### "Something's wrong but I don't know what"
 
-| You want to … | Run |
-|---|---|
-| Check if a plan is alive | `megaplan status --plan <plan>` + `date -u` |
-| Watch a plan as it runs | `megaplan watch --plan <plan>` |
-| Diagnose a blocked plan | `megaplan status --plan <plan>` → read `valid_next` |
-| See per-step costs (authoritative) | `megaplan audit query --plan <plan>` |
-| See execute batch progress | `megaplan progress --plan <plan>` |
-| Override a blocked transition | `megaplan override --plan <plan> --action <action>` (action must be in `valid_next`) |
-| Push a setting to the next phase | `megaplan config set <key> <value>` before the phase fires |
+```
+megaplan introspect --plan X
+```
 
-Start with `status`. The answer is almost always in that first payload.
+The full payload has the answer. Start at the top:
+1. `now_utc` — establish the wall-clock anchor.
+2. `active_phase.liveness` — is it progressing?
+3. `active_phase.last_artifact_rel` — how long since the last artifact?
+4. `block_details` — is it blocked? What flags? What recoveries?
+5. `rubric_doc.drift` — is there a profile-name mismatch?
+6. `binary_git` — is the binary on the expected branch? Dirty?
+7. `timeline` — scan the phase-by-phase breakdown for anomalies.
 
-## How this skill fits with the others
-
-| Skill | When to reach for it |
-|---|---|
-| `megaplan` (main) | Driving the harness — init, plan, execute, review. The operator skill. |
-| `megaplan-decision` | Before invocation — profile, robustness, depth. The pre-flight skill. |
-| `megaplan-observe` (this skill) | During or after a run — status, watch, progress, audit. The dashboard skill. |
-| `megaplan-tickets` | Capture out-of-scope problems found during observation. The note-taking skill. |
-| `megaplan-epic` | Work bigger than one sprint — chain multiple megaplan runs. The scaling skill. |
-
-The typical flow: **decide** (megaplan-decision) → **drive** (megaplan) → **observe** (this skill, whenever something feels off) → **ticket** (megaplan-tickets, for anything out-of-scope). If the work is multi-sprint, wrap it in an **epic** (megaplan-epic).
+If nothing jumps out, escalate to `trace --follow` to watch live, then `doctor --plan` for diagnostic checks.

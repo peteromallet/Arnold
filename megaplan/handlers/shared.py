@@ -390,7 +390,7 @@ def _raise_step_validation_error(
 
 
 def _write_json_artifact(plan_dir: Path, filename: str, payload: dict[str, Any]) -> str:
-    atomic_write_json(plan_dir / filename, payload)
+    atomic_write_json(plan_dir / filename, payload, _plan_dir=plan_dir)
     return sha256_file(plan_dir / filename)
 
 
@@ -448,7 +448,7 @@ def _write_plan_version(
                 "message": "revise produced byte-identical content to prior plan version - likely a session-cache replay. See ticket.",
             },
         )
-    atomic_write_text(plan_dir / resolved_plan_filename, plan_text)
+    atomic_write_text(plan_dir / resolved_plan_filename, plan_text, _plan_dir=plan_dir)
     meta = {
         "version": version,
         "timestamp": now_utc(),
@@ -456,7 +456,7 @@ def _write_plan_version(
         **meta_fields,
         "structure_warnings": structure_warnings,
     }
-    atomic_write_json(plan_dir / meta_filename, meta)
+    atomic_write_json(plan_dir / meta_filename, meta, _plan_dir=plan_dir)
     return resolved_plan_filename, meta_filename, meta
 
 

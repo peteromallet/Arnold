@@ -288,6 +288,22 @@ def _merge_resolution_tradeoffs_into_payload(gate_summary: dict[str, Any], worke
         existing_ids.add(flag_id)
     worker_payload["accepted_tradeoffs"] = merged_tradeoffs
 
+def _prior_unresolved_flag_ids(plan_dir: Path, current_iteration: int) -> set[str]:
+    """Return flag IDs from the prior gate pass (iteration-1)."""
+    if current_iteration <= 1:
+        return set()
+    prev_path = plan_dir / f"gate_signals_v{current_iteration - 1}.json"
+    try:
+        import json as _json
+        data = _json.loads(prev_path.read_text(encoding="utf-8"))
+        return {
+            f.get("id") for f in data.get("unresolved_flags", [])
+            if isinstance(f, dict) and f.get("id")
+        }
+    except Exception:
+        return set()
+
+
 def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="gate") as (plan_dir, state):
         require_state(state, "gate", {STATE_CRITIQUED})
@@ -392,6 +408,24 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
         gate_hash = _write_json_artifact(plan_dir, "gate.json", gate_summary)
+
+        # Emit flag_raised / flag_resolved based on delta vs prior gate pass
+        try:
+            from megaplan.observability.events import emit, EventKind
+            new_flag_ids = {
+                f.get("id") for f in gate_summary.get("unresolved_flags", [])
+                if isinstance(f, dict) and f.get("id")
+            }
+            old_flag_ids = _prior_unresolved_flag_ids(plan_dir, iteration)
+            raised = new_flag_ids - old_flag_ids
+            resolved = old_flag_ids - new_flag_ids
+            for fid in raised:
+                emit(EventKind.FLAG_RAISED, plan_dir=plan_dir, phase="gate", payload={"flag_id": fid})
+            for fid in resolved:
+                emit(EventKind.FLAG_RESOLVED, plan_dir=plan_dir, phase="gate", payload={"flag_id": fid})
+        except Exception:
+            pass
+
         debt_entries_added = 0
         if gate_summary["recommendation"] == "PROCEED":
             debt_entries_added = _record_gate_debt_entries(root, state, gate_summary, worker.payload)

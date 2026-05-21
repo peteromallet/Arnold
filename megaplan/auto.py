@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import find_plan_dir
+from megaplan.observability.events import emit as emit_event, EventKind
 from megaplan.orchestration.phase_result import (
     ExitKind,
     PhaseResult,
@@ -667,6 +668,8 @@ def drive(
     # reliable "forward progress" marker — each advance means a real
     # review cycle finished since we last observed the state.
     plan_dir = _resolve_plan_dir(plan, cwd)
+    if plan_dir is not None:
+        emit_event(EventKind.INIT, plan_dir=plan_dir, payload={"plan_name": plan})
     from megaplan.orchestration.progress import ProgressEmitter
     progress_emitter = ProgressEmitter.from_env(progress_env)
     last_review_marker = _get_review_marker(plan_dir)
@@ -890,6 +893,15 @@ def drive(
                 STATE_CANCELLED: "cancelled",
             }.get(state, state)
             log(f"terminal state reached: {state}")
+            # Emit plan_finished or plan_aborted
+            if plan_dir is not None:
+                try:
+                    if terminal_status == "aborted":
+                        emit_event(EventKind.PLAN_ABORTED, plan_dir=plan_dir, payload={"state": state})
+                    elif terminal_status == "done":
+                        emit_event(EventKind.PLAN_FINISHED, plan_dir=plan_dir, payload={"state": state})
+                except Exception:
+                    pass
             return _outcome(
                 terminal_status,
                 final_state=state,
@@ -1014,6 +1026,16 @@ def drive(
                 )
         else:
             stall_count = 0
+            # Emit state_transition on state change
+            if plan_dir is not None and last_state is not None and state != last_state:
+                try:
+                    emit_event(
+                        EventKind.STATE_TRANSITION,
+                        plan_dir=plan_dir,
+                        payload={"from": last_state, "to": state},
+                    )
+                except Exception:
+                    pass
             last_state = state
 
         # Escalation: no phase to run but overrides are available.
@@ -1193,6 +1215,11 @@ def drive(
             cmd = _phase_command(next_step) + ["--plan", plan]
             last_phase = next_step
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
+        if plan_dir is not None:
+            try:
+                emit_event(EventKind.PHASE_START, plan_dir=plan_dir, phase=next_step, payload={"phase": next_step})
+            except Exception:
+                pass
         code, out, err, result = _run_phase(cmd, next_step)
         if next_step == "override add-note" and last_phase == "override add-note":
             if code != 0:
@@ -1488,6 +1515,13 @@ def drive(
 
         if poll_sleep > 0:
             time.sleep(poll_sleep)
+
+        # Emit phase_end after phase completes
+        if plan_dir is not None and last_phase:
+            try:
+                emit_event(EventKind.PHASE_END, plan_dir=plan_dir, phase=last_phase, payload={"phase": last_phase})
+            except Exception:
+                pass
 
     # Hit iteration cap.
     log(f"hit max_iterations={max_iterations}")
