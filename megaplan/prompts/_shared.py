@@ -23,6 +23,53 @@ def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
 
 
 def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
+    carry_path = plan_dir / "gate_carry.json"
+    if carry_path.exists():
+        return read_json(carry_path)
+
+    gate_path = plan_dir / "gate.json"
+    if gate_path.exists():
+        gate = read_json(gate_path)
+        settled_decisions = gate.get("settled_decisions", [])
+        if isinstance(settled_decisions, list):
+            settled_decisions = [
+                {"id": f"SD{index}", "decision": item, "rationale": ""}
+                if isinstance(item, str)
+                else item
+                for index, item in enumerate(settled_decisions, start=1)
+                if isinstance(item, (str, dict))
+            ]
+        else:
+            settled_decisions = []
+        return {
+            "version": 1,
+            "verdict": gate.get("recommendation", "PROCEED"),
+            "recommendation": gate.get("recommendation", "PROCEED"),
+            "passed": gate.get("passed", True),
+            "rationale_brief": gate.get("rationale", ""),
+            "settled_decisions": settled_decisions,
+            "warnings": gate.get("warnings", []),
+            "orchestrator_guidance": gate.get("orchestrator_guidance", ""),
+            "carried_flags": [
+                {
+                    "flag_id": item.get("flag_id", ""),
+                    "concern_brief": item.get("concern", ""),
+                    "rationale_brief": item.get("rationale", ""),
+                }
+                for item in gate.get("flag_resolutions", [])
+                if isinstance(item, dict) and item.get("action") == "accept_tradeoff"
+            ],
+            "iteration": gate.get("iteration"),
+            "produced_at": gate.get("produced_at"),
+        }
+    return {
+        "summary": "No gate phase ran for this robustness level; continue from the approved plan.",
+        "recommendation": "proceed",
+        "flags": [],
+    }
+
+
+def _gate_audit_or_skipped(plan_dir: Path) -> dict[str, object]:
     gate_path = plan_dir / "gate.json"
     if gate_path.exists():
         return read_json(gate_path)

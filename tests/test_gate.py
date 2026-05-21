@@ -248,14 +248,13 @@ def test_gate_proceed_partial_resolutions_still_missing_after_reprompt_downgrade
     )
 
     response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
-    state = load_state(plan_fixture.plan_dir)
+    carry = read_json(plan_fixture.plan_dir / "gate_carry.json")
 
     assert response["recommendation"] == "ITERATE"
     assert response["reprompted"] is True
     assert response["next_step"] == "revise"
     assert "[Auto-downgraded from PROCEED:" in response["rationale"]
-    assert state["last_gate"]["recommendation"] == "ITERATE"
-    assert state["last_gate"]["reprompted"] is True
+    assert carry["recommendation"] == "ITERATE"
     assert call_counter["count"] == 2
     assert not debt_registry_path(plan_fixture.root).exists()
 
@@ -535,6 +534,145 @@ def test_gate_proceed_all_flags_resolved_no_reprompt(
     assert response["recommendation"] == "PROCEED"
     assert response["reprompted"] is False
     assert call_counter["count"] == 1
+
+
+def test_gate_writes_carry_artifact(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    worker = make_gate_worker_result(
+        recommendation="ITERATE",
+        rationale="The plan still needs targeted repair before execution. Keep the existing constraints. Recheck after revision.",
+        signals_assessment="Open blockers remain.",
+        session_id="gate-carry",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    carry_path = plan_fixture.plan_dir / "gate_carry.json"
+    carry = read_json(carry_path)
+    assert carry_path.stat().st_size <= 5_000
+    assert carry["version"] == 1
+    assert carry["verdict"] == "ITERATE"
+    assert carry["recommendation"] == "ITERATE"
+
+
+def test_carry_settled_decisions_are_dicts(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    worker = WorkerResult(
+        payload={
+            "recommendation": "ITERATE",
+            "rationale": "Revise once more.",
+            "signals_assessment": "Open blockers remain.",
+            "warnings": [],
+            "settled_decisions": [
+                {"id": "SD7", "decision": "Use ContextVar for sandbox cwd", "rationale": "It is thread-safe."}
+            ],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+        },
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="gate-carry-dicts",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    carry = read_json(plan_fixture.plan_dir / "gate_carry.json")
+
+    assert carry["settled_decisions"] == [
+        {"id": "SD7", "decision": "Use ContextVar for sandbox cwd", "rationale": "It is thread-safe."}
+    ]
+
+
+def test_legacy_string_settled_decisions_auto_promoted(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    worker = WorkerResult(
+        payload={
+            "recommendation": "ITERATE",
+            "rationale": "Revise once more.",
+            "signals_assessment": "Open blockers remain.",
+            "warnings": [],
+            "settled_decisions": ["Use ContextVar for sandbox cwd"],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+        },
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="gate-carry-legacy",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    with caplog.at_level("WARNING", logger="megaplan"):
+        megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    carry = read_json(plan_fixture.plan_dir / "gate_carry.json")
+
+    assert carry["settled_decisions"] == [
+        {"id": "SD1", "decision": "Use ContextVar for sandbox cwd", "rationale": ""}
+    ]
+    assert "auto-promoted 1 legacy string settled_decisions entry" in caplog.text
+
+
+def test_carry_excludes_dispute_flags(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flags = ensure_blocking_flags(plan_fixture.plan_dir, 3)
+    worker = make_gate_worker_result(
+        recommendation="PROCEED",
+        rationale="All blockers are explicitly resolved.",
+        signals_assessment="Proceeding with explicit coverage for every blocker.",
+        flag_resolutions=[
+            {
+                "flag_id": flags[0]["id"],
+                "action": "dispute",
+                "evidence": "plan_v1.md:1 already implements the required guard.",
+                "rationale": "",
+            },
+            {
+                "flag_id": flags[1]["id"],
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "This known limitation is isolated to a rare retry path and is intentionally deferred.",
+            },
+            {
+                "flag_id": flags[2]["id"],
+                "action": "accept_tradeoff",
+                "evidence": "",
+                "rationale": "This compatibility issue affects only legacy fixtures and is tracked as follow-up debt.",
+            },
+        ],
+        session_id="gate-carry-flags",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    carry = read_json(plan_fixture.plan_dir / "gate_carry.json")
+
+    assert [item["flag_id"] for item in carry["carried_flags"]] == [flags[1]["id"], flags[2]["id"]]
 
 
 def test_gate_debt_not_recorded_on_downgrade(
