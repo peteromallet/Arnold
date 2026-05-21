@@ -148,7 +148,10 @@ def _git_porcelain(pack_dir: Path, runner: Runner) -> str | None: return _git(pa
 def _git_head(pack_dir: Path, runner: Runner) -> str | None: return (_git(pack_dir, ["rev-parse", "HEAD"], runner) or "").strip() or None
 def _known_schema_classes(path: Path = Path("node_index.json")) -> set[str]:
     path = _resolve_node_index_path(path)
-    if not path.exists(): raise FileNotFoundError(f"node_index.json not found at {path}; run `vibecomfy sources sync`")
+    if not path.exists():
+        from vibecomfy.schema import get_authoring_schema_provider
+
+        return set(get_authoring_schema_provider(node_index_path=path).schemas())
     try: rows = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc: raise ValueError(f"node_index.json at {path} is not valid JSON: {exc}") from exc
     except OSError as exc: raise ValueError(f"failed to read node_index.json at {path}: {exc}") from exc
