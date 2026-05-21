@@ -20,7 +20,7 @@ import yaml
 
 from megaplan.cloud.providers.base import _write_redacted_output, get_provider
 from megaplan.cloud.spec import CloudSpec, RailwaySpec, apply_repo_overrides, load_spec as load_cloud_spec
-from megaplan.cloud.template import materialize_deploy_dir, render_ensure_repo_command
+from megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from megaplan.types import CliError
 
 
@@ -263,7 +263,13 @@ def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
 
 
 def _ensure_repo_command(spec: CloudSpec) -> str:
-    return render_ensure_repo_command(spec.repo)
+    # Clone the primary repo AND every declared `extra_repos` sibling. The
+    # container entrypoint clones the full set at boot, but boot only runs once
+    # per `cloud deploy`. A `cloud chain` launched against a container that
+    # pre-dates an `extra_repos` edit would otherwise silently leave siblings
+    # missing on the persistent volume, blocking any milestone that depends on
+    # them.
+    return render_ensure_repos_block(spec)
 
 
 def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> None:
@@ -271,13 +277,11 @@ def _ensure_repo_checkout(spec: CloudSpec, provider, *, relay: bool = True) -> N
     if relay:
         _relay_output(result, secret_names=spec.secrets, env=os.environ)
     if result.returncode != 0:
+        repos = [spec.repo, *spec.extra_repos]
+        targets = ", ".join(f"{r.url}@{r.branch} into {r.workspace}" for r in repos)
         raise CliError(
             "provider_failed",
-            (
-                "ensure repo checkout failed "
-                f"for {spec.repo.url}@{spec.repo.branch} into {spec.repo.workspace} "
-                f"(exit {result.returncode})"
-            ),
+            f"ensure repo checkout failed for {targets} (exit {result.returncode})",
         )
 
 
@@ -404,11 +408,11 @@ def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
     }
 
 
-def _tmux_launch_status(result) -> str:
+def _tmux_launch_status(result, *, session_name: str = "megaplan-chain") -> str:
     output = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}"
     if "already running" in output:
         return "already_running"
-    if "started megaplan-chain session" in output:
+    if f"started {session_name} session" in output:
         return "started"
     return "unknown"
 
@@ -469,8 +473,8 @@ def _cloud_chain_launch_provenance(
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
-            "session": "megaplan-chain",
-            "status": _tmux_launch_status(tmux_result),
+            "session": spec.chain_session,
+            "status": _tmux_launch_status(tmux_result, session_name=spec.chain_session),
         },
     }
 
@@ -551,20 +555,27 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
+    log_file = (
+        ".megaplan/cloud-chain.log"
+        if spec.chain_session == "megaplan-chain"
+        else f".megaplan/cloud-chain-{spec.chain_session}.log"
+    )
     chain_command = (
         f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec {shlex.quote(remote_spec_path)} "
-        ">> .megaplan/cloud-chain.log 2>&1"
+        f">> {shlex.quote(log_file)} 2>&1"
     )
+    session_name = spec.chain_session
+    quoted_session = shlex.quote(session_name)
     result = provider.ssh_exec(
         " && ".join(
             [
                 f"mkdir -p {shlex.quote(str(PurePosixPath(spec.repo.workspace) / '.megaplan'))}",
                 (
-                    "if tmux has-session -t megaplan-chain 2>/dev/null; then "
-                    "echo 'megaplan-chain session already running'; "
+                    f"if tmux has-session -t {quoted_session} 2>/dev/null; then "
+                    f"echo {shlex.quote(f'{session_name} session already running')}; "
                     "else "
-                    f"tmux new-session -d -s megaplan-chain -c {shlex.quote(spec.repo.workspace)} {shlex.quote(chain_command)}; "
-                    "echo 'started megaplan-chain session'; "
+                    f"tmux new-session -d -s {quoted_session} -c {shlex.quote(spec.repo.workspace)} {shlex.quote(chain_command)}; "
+                    f"echo {shlex.quote(f'started {session_name} session')}; "
                     "fi"
                 ),
             ]

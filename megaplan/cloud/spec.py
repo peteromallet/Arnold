@@ -106,6 +106,8 @@ class CloudSpec:
     local: LocalSpec | None = None
     ssh: SshSpec | None = None
     toolchains: list[ToolchainSpec] | None = None
+    extra_repos: tuple[RepoSpec, ...] = ()
+    chain_session: str = "megaplan-chain"
 
 
 def apply_repo_overrides(
@@ -222,6 +224,36 @@ def _secrets(raw: Any) -> list[str]:
     return list(raw)
 
 
+def _repo_from_mapping(raw: Any, label: str) -> RepoSpec:
+    mapping = _mapping(raw, label)
+    return RepoSpec(
+        url=_string(mapping.get("url"), f"{label}.url"),
+        branch=_string(mapping.get("branch"), f"{label}.branch", default="main"),
+        workspace=_absolute_posix(mapping.get("workspace"), f"{label}.workspace"),
+    )
+
+
+def _extra_repos(raw: Any, primary: RepoSpec) -> tuple[RepoSpec, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise _invalid("`extra_repos` must be a list of repo mappings")
+    seen_workspaces: dict[str, str] = {primary.workspace: "repo"}
+    repos: list[RepoSpec] = []
+    for index, item in enumerate(raw):
+        label = f"extra_repos[{index}]"
+        repo = _repo_from_mapping(item, label)
+        if repo.workspace in seen_workspaces:
+            owner = seen_workspaces[repo.workspace]
+            raise _invalid(
+                f"`{label}.workspace` collides with `{owner}.workspace` ({repo.workspace!r}); "
+                "each repo must have a distinct workspace path"
+            )
+        seen_workspaces[repo.workspace] = label
+        repos.append(repo)
+    return tuple(repos)
+
+
 def _toolchains(raw: Any) -> list[ToolchainSpec]:
     if raw is None:
         return []
@@ -264,6 +296,7 @@ def load_spec(path: Path) -> CloudSpec:
         branch=_string(repo_raw.get("branch"), "repo.branch", default="main"),
         workspace=_absolute_posix(repo_raw.get("workspace", "/workspace/app"), "repo.workspace"),
     )
+    extra_repos = _extra_repos(raw.get("extra_repos"), repo)
 
     codex_raw = _mapping(raw.get("codex"), "codex")
     codex_reasoning = _string(codex_raw.get("reasoning"), "codex.reasoning", default="high")
@@ -342,6 +375,12 @@ def load_spec(path: Path) -> CloudSpec:
             spec=_absolute_posix(chain_raw.get("spec"), "chain.spec"),
         )
 
+    chain_session = _string(
+        raw.get("chain_session"),
+        "chain_session",
+        default="megaplan-chain",
+    )
+
     return CloudSpec(
         provider=provider,
         repo=repo,
@@ -357,4 +396,6 @@ def load_spec(path: Path) -> CloudSpec:
         local=local,
         ssh=ssh,
         toolchains=_toolchains(raw.get("toolchains")),
+        extra_repos=extra_repos,
+        chain_session=chain_session,
     )

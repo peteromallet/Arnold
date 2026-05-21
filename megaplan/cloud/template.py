@@ -103,6 +103,18 @@ def render_ensure_repo_command(repo: RepoSpec) -> str:
     )
 
 
+def render_ensure_repos_block(spec: CloudSpec) -> str:
+    """Clone primary + every extra repo if missing, in declared order.
+
+    Each repo lives at its own absolute workspace path so a multi-repo or
+    multi-tenant volume can hold them as siblings on independent branches.
+    """
+    blocks = [render_ensure_repo_command(spec.repo)]
+    for extra in spec.extra_repos:
+        blocks.append(render_ensure_repo_command(extra))
+    return "\n".join(blocks)
+
+
 def _auto_command(spec: CloudSpec) -> str:
     assert spec.auto is not None
     plan_dir = f"{spec.repo.workspace}/.megaplan/plans/{spec.auto.plan_name}"
@@ -153,16 +165,105 @@ def _agent_routing_block(spec: CloudSpec) -> str:
 
 
 def _claude_auth_block() -> str:
-    # Newer claude CLI versions hang on `setup-token` waiting for OAuth/tty
-    # input even when stdin is piped. Wrap in a timeout so a hang doesn't
-    # stall the entrypoint indefinitely; claude will still pick up
-    # ANTHROPIC_API_KEY from env at call time.
-    return """if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "Authenticating claude with ANTHROPIC_API_KEY"
-  if ! timeout 15 bash -c 'printf "%s\\n" "$ANTHROPIC_API_KEY" | claude setup-token' >/dev/null 2>&1; then
-    echo "WARN: Claude token auth failed or timed out; continuing — claude CLI will use ANTHROPIC_API_KEY env var directly"
+    # Three auth modes, in priority order:
+    #
+    # 1. CLAUDE_CODE_REFRESH_TOKEN (preferred — uses Max/Pro subscription, fully
+    #    programmatic): install a `claude` shim at /usr/local/bin/claude that
+    #    refreshes the OAuth access token on every invocation, exports it as
+    #    ANTHROPIC_API_KEY, then exec's the real binary. The refresh token
+    #    rotates per use and is persisted to the volume.
+    #
+    # 2. ANTHROPIC_API_KEY (legacy / metered API): claude --bare reads it
+    #    directly; nothing to install. claude setup-token is NOT attempted
+    #    because it requires interactive browser OAuth.
+    #
+    # 3. Neither: claude will fail at first call. Warn loudly.
+    #
+    # See megaplan-cloud skill for full design rationale.
+    return r"""# ── Claude auth: refresh-token shim takes precedence ─────────────────
+CLAUDE_CREDS_DIR=/workspace/.claude-creds
+mkdir -p "$CLAUDE_CREDS_DIR"
+chmod 700 "$CLAUDE_CREDS_DIR"
+
+if [[ -n "${CLAUDE_CODE_REFRESH_TOKEN:-}" ]]; then
+  # Seed the on-volume refresh token from the env on first boot (or if missing).
+  if [[ ! -s "$CLAUDE_CREDS_DIR/refresh_token" ]]; then
+    printf '%s' "$CLAUDE_CODE_REFRESH_TOKEN" > "$CLAUDE_CREDS_DIR/refresh_token"
+    chmod 600 "$CLAUDE_CREDS_DIR/refresh_token"
   fi
-fi"""
+
+  REAL_CLAUDE=$(command -v claude || true)
+  if [[ -z "$REAL_CLAUDE" ]]; then
+    echo "WARN: claude binary not on PATH; skipping refresh-token shim install"
+  else
+    # Move the real binary aside so we can shadow it (idempotent across reboots).
+    if [[ ! -x /usr/local/bin/claude.real ]]; then
+      cp "$REAL_CLAUDE" /usr/local/bin/claude.real
+      chmod +x /usr/local/bin/claude.real
+    fi
+
+    # Refresh helper (usable standalone, and as `apiKeyHelper` via --settings).
+    cat > /usr/local/bin/claude-key-helper <<'HELPER_EOF'
+#!/usr/bin/env bash
+# Refresh the Claude Code OAuth access token if missing/expiring, then print it
+# to stdout. Refresh token rotates per use and is persisted to the volume.
+set -euo pipefail
+DIR=/workspace/.claude-creds
+mkdir -p "$DIR"
+NOW=$(date +%s)
+EXP=$(cat "$DIR/expires_at" 2>/dev/null || echo 0)
+if [[ ! -s "$DIR/access_token" ]] || [[ "$NOW" -ge $((EXP - 300)) ]]; then
+  RT=$(cat "$DIR/refresh_token" 2>/dev/null || true)
+  if [[ -z "$RT" ]]; then
+    echo "claude-key-helper: no refresh token at $DIR/refresh_token" >&2
+    exit 1
+  fi
+  CID=${CLAUDE_CODE_OAUTH_CLIENT_ID:-9d1c250a-e61b-44d9-88ed-5944d1962f5e}
+  URL=${CLAUDE_CODE_OAUTH_TOKEN_URL:-https://api.anthropic.com/v1/oauth/token}
+  RESP=$(curl -sS --max-time 15 -X POST "$URL" \
+    -H "Content-Type: application/json" \
+    -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$RT\",\"client_id\":\"$CID\"}")
+  AT=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)
+  EXPIRES_IN=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("expires_in",0))' 2>/dev/null)
+  NEW_RT=$(echo "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("refresh_token",""))' 2>/dev/null)
+  if [[ -z "$AT" ]]; then
+    echo "claude-key-helper: refresh failed: $RESP" >&2
+    exit 1
+  fi
+  printf '%s' "$AT" > "$DIR/access_token"
+  echo $((NOW + EXPIRES_IN)) > "$DIR/expires_at"
+  [[ -n "$NEW_RT" ]] && printf '%s' "$NEW_RT" > "$DIR/refresh_token"
+  chmod 600 "$DIR/access_token" "$DIR/refresh_token" "$DIR/expires_at"
+fi
+cat "$DIR/access_token"
+HELPER_EOF
+    chmod +x /usr/local/bin/claude-key-helper
+
+    # Claude shim: refresh on entry, export, exec real binary.
+    cat > /usr/local/bin/claude <<'SHIM_EOF'
+#!/usr/bin/env bash
+AT=$(/usr/local/bin/claude-key-helper) || {
+  echo "claude shim: refresh failed; falling back to ANTHROPIC_API_KEY (may be expired)" >&2
+  exec /usr/local/bin/claude.real "$@"
+}
+export ANTHROPIC_API_KEY="$AT"
+exec /usr/local/bin/claude.real "$@"
+SHIM_EOF
+    chmod +x /usr/local/bin/claude
+
+    # Prime the cache so the first phase call doesn't pay refresh latency.
+    if /usr/local/bin/claude-key-helper >/dev/null 2>&1; then
+      echo "Claude auth: refresh-token shim active (cached access token ready)"
+    else
+      echo "WARN: claude shim installed but priming refresh FAILED — see /var/log/entrypoint.log"
+    fi
+  fi
+elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "Claude auth: using ANTHROPIC_API_KEY (legacy / metered). For Max-sub usage, set CLAUDE_CODE_REFRESH_TOKEN."
+else
+  echo "WARN: no Claude auth configured (set CLAUDE_CODE_REFRESH_TOKEN or ANTHROPIC_API_KEY). Claude phases will fail."
+fi
+# ─────────────────────────────────────────────────────────────────────"""
 
 
 def render_entrypoint(spec: CloudSpec) -> str:
@@ -181,7 +282,7 @@ def render_entrypoint(spec: CloudSpec) -> str:
         "AUTO_PLAN_NAME": spec.auto.plan_name if spec.auto is not None else "idle-plan",
         "AGENT_ROUTING_BLOCK": _agent_routing_block(spec),
         "CLAUDE_AUTH_BLOCK": _claude_auth_block(),
-        "ENSURE_REPO_BLOCK": render_ensure_repo_command(spec.repo),
+        "ENSURE_REPO_BLOCK": render_ensure_repos_block(spec),
         "RUNNER_LAUNCH_BLOCK": _runner_block(spec),
     }
     rendered = _entrypoint_template().safe_substitute(values)
