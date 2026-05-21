@@ -44,6 +44,11 @@ agent = [
     "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
 ]
+# Install sisypy editable: pip install -e /Users/peteromalley/Documents/reigh-workspace/sisypy
+test-agentic = [
+    "sisypy @ file:///Users/peteromalley/Documents/reigh-workspace/sisypy",
+    "pyyaml",
+]
 
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"

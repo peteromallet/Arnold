@@ -235,6 +235,38 @@ _PATH_SCOPED_TOOLS = frozenset({"read_file", "write_file", "patch"})
 # Maximum number of concurrent worker threads for parallel tool execution.
 _MAX_TOOL_WORKERS = 8
 
+# Tools whose results are a deterministic function of their arguments and
+# read no mutable agent-local state — safe to short-circuit when the agent
+# re-issues an identical call inside the same turn. See ticket
+# 01KS06DFVBWJ55AZX374VQFH7M: an unchecked tool loop that re-loaded a 266KB
+# emit file eight times bloated the prompt past the streaming deadline and
+# burned the entire retry budget.
+_DEDUPABLE_TOOLS = frozenset({
+    "read_file",
+    "search_files",
+    "session_search",
+    "skill_view",
+    "skills_list",
+    "web_search",
+    "web_extract",
+    "honcho_context",
+    "honcho_profile",
+    "honcho_search",
+    "ha_get_state",
+    "ha_list_entities",
+    "ha_list_services",
+})
+
+# Tools whose execution may mutate filesystem or shared external state.
+# After any of these run, cached read results from before the call are
+# potentially stale, so the dedup cache must be cleared.
+_DEDUP_INVALIDATING_TOOLS = frozenset({
+    "write_file",
+    "patch",
+    "terminal",
+    "memory",
+})
+
 # Patterns that indicate a terminal command may modify/delete files.
 _DESTRUCTIVE_PATTERNS = re.compile(
     r"""(?:^|\s|&&|\|\||;|`)(?:
@@ -305,6 +337,19 @@ def _should_parallelize_tool_batch(tool_calls) -> bool:
             return False
 
     return True
+
+
+def _canonical_tool_args_json(function_args: Any) -> str | None:
+    """Return a stable JSON encoding of tool arguments for dedup comparison.
+
+    Sorts dict keys so callers that pass kwargs in different orders still
+    collide. Returns None when args aren't JSON-serialisable — those calls
+    fall through and skip dedup rather than risk a false collision.
+    """
+    try:
+        return json.dumps(function_args, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_parallel_scope_path(tool_name: str, function_args: dict) -> Path | None:
@@ -554,6 +599,20 @@ class AIAgent:
         self._delegate_depth = 0        # 0 = top-level agent, incremented for children
         self._active_children = []      # Running child AIAgents (for interrupt propagation)
         self._active_children_lock = threading.Lock()
+
+        # Per-conversation tool-call dedup cache. Maps
+        # (tool_name, canonical_args_json) → tool_call_id of the first call.
+        # Reset at the start of each run_conversation(); cleared on every
+        # mutating tool invocation. Catches pathological tool loops before
+        # they bloat the prompt past the streaming deadline.
+        self._tool_dedup_cache: dict[tuple[str, str], str] = {}
+
+        # Consecutive streaming-deadline timeouts. Increments on each
+        # TimeoutError("Streaming API call exceeded ..."); resets to 0 after
+        # any successful streaming call. _api_timeout_seconds() multiplies
+        # the base deadline by 1.5× per streak level (capped at 4×) so a
+        # slow generation on a large prompt has a real shot on the retry.
+        self._streaming_timeout_streak: int = 0
         
         # Store OpenRouter provider preferences
         self.providers_allowed = providers_allowed
@@ -3173,6 +3232,15 @@ class AIAgent:
             timeout = float(os.getenv(timeout_env, os.getenv("HERMES_API_TIMEOUT", default_timeout)))
         except (TypeError, ValueError):
             timeout = default_timeout
+        # Scale the deadline by 1.5x per consecutive streaming-timeout retry
+        # (capped at 4x the base). A slow reasoning model on a large prompt
+        # may need a longer budget than the configured default; retrying with
+        # the same deadline produces the same failure. The streak resets to 0
+        # after any successful streaming call.
+        streak = getattr(self, "_streaming_timeout_streak", 0)
+        if streak > 0:
+            scale = min(1.5 ** streak, 4.0)
+            timeout = timeout * scale
         return max(timeout, 0.1)
 
     def _abort_request_client(self, request_client_holder: dict, *, reason: str) -> None:
@@ -3812,6 +3880,9 @@ class AIAgent:
                 raise InterruptedError("Agent interrupted during streaming API call")
         if result["error"] is not None:
             raise result["error"]
+        # Successful streaming call — reset the deadline-extension streak so
+        # the next request starts from the configured base timeout.
+        self._streaming_timeout_streak = 0
         return result["response"]
 
     # ── Provider fallback ──────────────────────────────────────────────────
@@ -4653,6 +4724,54 @@ class AIAgent:
 
         return compressed, new_system_prompt
 
+    def _maybe_dedup_tool_result(
+        self,
+        function_name: str,
+        function_args: dict,
+        function_result: str,
+        tool_call_id: str,
+    ) -> str:
+        """Short-circuit identical re-issues of read-only tool calls.
+
+        When the agent re-issues a tool call with the same name and same
+        canonicalised args inside a single conversation turn, the original
+        result is still in the message history — re-injecting the full body
+        wastes context. Returns a brief pointer back to the prior result
+        instead. Also clears the cache when a mutating tool runs, so later
+        reads see fresh content.
+        """
+        if function_name in _DEDUP_INVALIDATING_TOOLS:
+            self._tool_dedup_cache.clear()
+            return function_result
+
+        if function_name not in _DEDUPABLE_TOOLS:
+            return function_result
+
+        args_json = _canonical_tool_args_json(function_args)
+        if args_json is None:
+            return function_result
+
+        key = (function_name, args_json)
+        prior_call_id = self._tool_dedup_cache.get(key)
+        if prior_call_id is None:
+            self._tool_dedup_cache[key] = tool_call_id
+            return function_result
+
+        if not self.quiet_mode:
+            short_prior = prior_call_id[:8] if isinstance(prior_call_id, str) else str(prior_call_id)
+            print(f"  ♻️  Dedup: {function_name} matched prior call {short_prior}…")
+        logger.info(
+            "Tool dedup hit: tool=%s prior_id=%s args=%s",
+            function_name, prior_call_id, args_json[:200],
+        )
+        return (
+            f"[megaplan dedup] Identical {function_name}(...) call already "
+            f"ran earlier in this turn (tool_call_id={prior_call_id}); its "
+            f"result is already in your context. Reuse those bytes instead "
+            f"of re-issuing this call. If external state may have changed, "
+            f"vary the arguments (e.g. offset/limit) to force a re-read."
+        )
+
     def _execute_tool_calls(self, assistant_message, messages: list, effective_task_id: str, api_call_count: int = 0) -> None:
         """Execute tool calls from the assistant message and append results to messages.
 
@@ -4902,6 +5021,11 @@ class AIAgent:
                     + f"\n\n[Truncated: tool response was {original_len:,} chars, "
                     f"exceeding the {MAX_TOOL_RESULT_CHARS:,} char limit]"
                 )
+
+            # Dedup identical re-issues to avoid context-bloat tool loops.
+            function_result = self._maybe_dedup_tool_result(
+                name, args, function_result, tc.id,
+            )
 
             # Append tool result message in order
             tool_msg = {
@@ -5154,6 +5278,11 @@ class AIAgent:
                     + f"\n\n[Truncated: tool response was {original_len:,} chars, "
                     f"exceeding the {MAX_TOOL_RESULT_CHARS:,} char limit]"
                 )
+
+            # Dedup identical re-issues to avoid context-bloat tool loops.
+            function_result = self._maybe_dedup_tool_result(
+                function_name, function_args, function_result, tool_call.id,
+            )
 
             tool_msg = {
                 "role": "tool",
@@ -5479,6 +5608,14 @@ class AIAgent:
         self._codex_incomplete_retries = 0
         self._last_content_with_tools = None
         self._mute_post_response = False
+        # Fresh dedup cache per turn — previous turns may have referenced
+        # state that has since changed, and the cache shouldn't bleed across
+        # otherwise-independent conversations.
+        self._tool_dedup_cache.clear()
+        # Each conversation starts with a fresh streaming-timeout streak;
+        # a prior conversation's slow phase shouldn't extend the new one's
+        # default deadline.
+        self._streaming_timeout_streak = 0
         # NOTE: _turns_since_memory and _iters_since_skill are NOT reset here.
         # They are initialized in __init__ and must persist across run_conversation
         # calls so that nudge logic accumulates correctly in CLI mode.
@@ -6353,6 +6490,33 @@ class AIAgent:
                                 f"treating as probable context overflow.",
                                 force=True,
                             )
+
+                    # Streaming-deadline timeouts almost always mean the model
+                    # was too slow to finish generation within the per-call
+                    # budget — not that the prompt is too large. Retrying the
+                    # same prompt with the same deadline produces the same
+                    # failure (see ticket 01KS06DFVBWJ55AZX374VQFH7M). Track
+                    # the consecutive streaming-timeout count on the agent;
+                    # _api_timeout_seconds() multiplies the deadline by 1.5×
+                    # per attempt so the retry has a real chance to land.
+                    # Compression is the WRONG response here — shrinking the
+                    # context window below the prompt size makes the model
+                    # return empty (observed regression). The counter resets
+                    # after any successful streaming call.
+                    is_streaming_timeout = (
+                        isinstance(api_error, TimeoutError)
+                        and "streaming api call exceeded" in error_msg
+                    )
+                    if is_streaming_timeout:
+                        self._streaming_timeout_streak += 1
+                        next_deadline = self._api_timeout_seconds()
+                        self._vprint(
+                            f"{self.log_prefix}⚠️  Streaming deadline exceeded "
+                            f"(~{approx_tokens:,} tokens, {len(api_messages)} msgs); "
+                            f"next attempt deadline scales to {next_deadline:.0f}s "
+                            f"(streak={self._streaming_timeout_streak}).",
+                            force=True,
+                        )
                     
                     if is_context_length_error:
                         compressor = self.context_compressor
