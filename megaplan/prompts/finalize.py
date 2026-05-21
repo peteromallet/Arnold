@@ -7,7 +7,7 @@ from pathlib import Path
 
 from megaplan._core import (
     configured_robustness,
-    intent_and_notes_block,
+    intent_brief_reference,
     is_prose_mode,
     json_dump,
     latest_plan_meta_path,
@@ -17,13 +17,12 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
-from ._shared import _finalize_debt_block, _gate_summary_or_skipped, _render_prep_block
+from ._shared import _finalize_debt_block, _gate_summary_or_skipped
 from .gate import _collect_critique_summaries, _flag_summary
 
 
 def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
     project_dir = Path(state["config"]["project_dir"])
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = _gate_summary_or_skipped(plan_dir)
@@ -71,11 +70,7 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Project directory:
         {project_dir}
 
-        {prep_block}
-
-        {prep_instruction}
-
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Approved plan:
         {latest_plan}

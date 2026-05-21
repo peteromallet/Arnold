@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import (
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -106,7 +106,7 @@ def _review_doc_prompt(
         Output file path:
         {output_path}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Approved plan:
         {latest_plan}

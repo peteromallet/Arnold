@@ -5,14 +5,12 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 from megaplan._core import (
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_path,
     read_json,
 )
 from megaplan.types import PlanState
-
-from ._shared import _render_prep_block
 
 
 def researcher_prompt(
@@ -23,8 +21,6 @@ def researcher_prompt(
     root: Path | None = None,
 ) -> str:
     project_dir = Path(state["config"]["project_dir"])
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
-
     plan_text = ""
     try:
         plan_path = latest_plan_path(plan_dir, state)
@@ -47,10 +43,7 @@ Do not speculate — if you cannot find evidence, say so explicitly.
 Project directory:
 {project_dir}
 
-{prep_block}
-{prep_instruction}
-
-{intent_and_notes_block(state)}
+{intent_brief_reference(state)}
 
 Current plan (if any):
 {plan_text or "(no plan yet)"}

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import (
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -113,7 +113,7 @@ def _review_joke_prompt(
         Primary criterion:
         {primary_criterion}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Approved scene canvas:
         {latest_plan}

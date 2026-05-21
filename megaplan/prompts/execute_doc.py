@@ -10,14 +10,14 @@ from megaplan._core import (
     batch_artifact_path,
     compute_task_batches,
     configured_robustness,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     read_json,
 )
 from megaplan.types import PlanState
 
-from ._shared import _debt_watch_lines, _gate_summary_or_skipped, _render_prep_block
+from ._shared import _debt_watch_lines, _gate_summary_or_skipped
 from .execute import (
     _execute_approval_note,
     _execute_nudges,
@@ -131,7 +131,6 @@ def _prior_doc_context_block(state: PlanState) -> str:
 def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
     project_dir = Path(state["config"]["project_dir"])
     output_path = state["config"].get("output_path", "output.md")
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
     checkpoint_path = str(plan_dir / "execution_checkpoint.json")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
@@ -156,11 +155,7 @@ def _execute_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = No
         Output path (write all sections here):
         {output_path}
 
-        {prep_block}
-
-        {prep_instruction}
-
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Execution tracking source of truth (`finalize.json`):
         {json_dump(finalize_data).strip()}
@@ -271,7 +266,7 @@ def _execute_doc_batch_prompt(
         Output path (write all sections here):
         {output_path}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Batch framing:
         - Execute batch {batch_number} of {batch_total}.
