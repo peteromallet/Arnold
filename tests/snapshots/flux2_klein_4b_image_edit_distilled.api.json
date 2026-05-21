@@ -1,213 +1,213 @@
 {
-  "75:61": {
+  "1": {
     "class_type": "KSamplerSelect",
     "inputs": {
       "sampler_name": "euler"
     }
   },
-  "75:70": {
+  "2": {
     "class_type": "UNETLoader",
     "inputs": {
       "unet_name": "flux-2-klein-4b-fp8.safetensors"
     }
   },
-  "75:71": {
+  "3": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_3_4b.safetensors",
       "type": "flux2"
     }
   },
-  "75:72": {
+  "4": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "flux2-vae.safetensors"
     }
   },
-  "75:73": {
+  "5": {
     "class_type": "RandomNoise",
     "inputs": {
       "noise_seed": 43301611940728
     }
   },
-  "76": {
+  "6": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "handbag_white.png"
     }
   },
-  "81": {
+  "7": {
     "class_type": "LoadImage",
     "inputs": {
       "image": "comfy_logo_blue.png"
     }
   },
-  "75:74": {
+  "8": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "Change the bag color to blue.",
       "clip": [
-        "75:71",
-        0
-      ]
-    }
-  },
-  "75:80": {
-    "class_type": "ImageScaleToTotalPixels",
-    "inputs": {
-      "upscale_method": "nearest-exact",
-      "image": [
-        "76",
-        0
-      ]
-    }
-  },
-  "75:82": {
-    "class_type": "ConditioningZeroOut",
-    "inputs": {
-      "conditioning": [
-        "75:74",
-        0
-      ]
-    }
-  },
-  "75:99": {
-    "class_type": "GetImageSize",
-    "inputs": {
-      "image": [
-        "75:80",
-        0
-      ]
-    }
-  },
-  "75:122": {
-    "class_type": "VAEEncode",
-    "inputs": {
-      "pixels": [
-        "75:80",
-        0
-      ],
-      "vae": [
-        "75:72",
-        0
-      ]
-    }
-  },
-  "75:62": {
-    "class_type": "Flux2Scheduler",
-    "inputs": {
-      "steps": 4,
-      "width": [
-        "75:99",
-        0
-      ],
-      "height": [
-        "75:99",
-        1
-      ]
-    }
-  },
-  "75:66": {
-    "class_type": "EmptyFlux2LatentImage",
-    "inputs": {
-      "width": [
-        "75:99",
-        0
-      ],
-      "height": [
-        "75:99",
-        1
-      ]
-    }
-  },
-  "75:121": {
-    "class_type": "ReferenceLatent",
-    "inputs": {
-      "conditioning": [
-        "75:82",
-        0
-      ],
-      "latent": [
-        "75:122",
-        0
-      ]
-    }
-  },
-  "75:123": {
-    "class_type": "ReferenceLatent",
-    "inputs": {
-      "conditioning": [
-        "75:74",
-        0
-      ],
-      "latent": [
-        "75:122",
-        0
-      ]
-    }
-  },
-  "75:63": {
-    "class_type": "CFGGuider",
-    "inputs": {
-      "cfg": 1,
-      "model": [
-        "75:70",
-        0
-      ],
-      "positive": [
-        "75:123",
-        0
-      ],
-      "negative": [
-        "75:121",
-        0
-      ]
-    }
-  },
-  "75:64": {
-    "class_type": "SamplerCustomAdvanced",
-    "inputs": {
-      "noise": [
-        "75:73",
-        0
-      ],
-      "guider": [
-        "75:63",
-        0
-      ],
-      "sampler": [
-        "75:61",
-        0
-      ],
-      "sigmas": [
-        "75:62",
-        0
-      ],
-      "latent_image": [
-        "75:66",
-        0
-      ]
-    }
-  },
-  "75:65": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": [
-        "75:64",
-        0
-      ],
-      "vae": [
-        "75:72",
+        "3",
         0
       ]
     }
   },
   "9": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "image": [
+        "6",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "8",
+        0
+      ]
+    }
+  },
+  "11": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "9",
+        0
+      ]
+    }
+  },
+  "12": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "9",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    }
+  },
+  "13": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 4,
+      "width": [
+        "11",
+        0
+      ],
+      "height": [
+        "11",
+        1
+      ]
+    }
+  },
+  "14": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": {
+      "width": [
+        "11",
+        0
+      ],
+      "height": [
+        "11",
+        1
+      ]
+    }
+  },
+  "15": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "10",
+        0
+      ],
+      "latent": [
+        "12",
+        0
+      ]
+    }
+  },
+  "16": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "8",
+        0
+      ],
+      "latent": [
+        "12",
+        0
+      ]
+    }
+  },
+  "17": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "2",
+        0
+      ],
+      "positive": [
+        "16",
+        0
+      ],
+      "negative": [
+        "15",
+        0
+      ]
+    }
+  },
+  "18": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "5",
+        0
+      ],
+      "guider": [
+        "17",
+        0
+      ],
+      "sampler": [
+        "1",
+        0
+      ],
+      "sigmas": [
+        "13",
+        0
+      ],
+      "latent_image": [
+        "14",
+        0
+      ]
+    }
+  },
+  "19": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "18",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    }
+  },
+  "20": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "Flux2-Klein",
       "images": [
-        "75:65",
+        "19",
         0
       ]
     }
