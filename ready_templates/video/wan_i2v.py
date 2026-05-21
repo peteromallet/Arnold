@@ -66,21 +66,19 @@ def build() -> VibeWorkflow:
         clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_4)
 
         # Inputs
-        loadimage = LoadImage(
-            image='image_to_video_wan_start_image.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
+        loadimage = LoadImage(image='image_to_video_wan_start_image.png')
 
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
         cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+
         clipvisionencode = CLIPVisionEncode(
             crop='none',
             clip_vision=clipvisionloader,
             image=loadimage.out('IMAGE'),
         )
-
         modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
+
         wanimagetovideo = WanImageToVideo(
             height=512,
             length=DEFAULT_FRAMES,
@@ -90,7 +88,6 @@ def build() -> VibeWorkflow:
             positive=cliptextencode,
             start_image=loadimage.out('IMAGE'),
             vae=vaeloader,
-            _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
 
         # Sampling

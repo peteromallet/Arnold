@@ -31,12 +31,9 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        loadimage = LoadImage(
-            image='car_interior_white.jpeg',
-            _outputs=('IMAGE', 'MASK'),
-        )
+        loadimage = LoadImage(image='car_interior_white.jpeg')
+        loadimage_2 = LoadImage(image='comfy_logo_blue.png')
 
-        loadimage_2 = LoadImage(image='comfy_logo_blue.png', _outputs=('IMAGE', 'MASK'))
         n_7b34ab90_36f9_45ba_a665_71d418f0df18 = raw_call(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
             image=loadimage.out('IMAGE'),
         )

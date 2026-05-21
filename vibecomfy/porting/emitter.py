@@ -1284,8 +1284,10 @@ def _emit_build_function(
             if use_wrapper:
                 all_args = []
                 all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
-                if outputs_expr is not None:
-                    all_args.append(("_outputs", outputs_expr))
+                # v2.6.4 Fix 3: drop _outputs= for schema-known typed wrappers.
+                # The wrapper class already knows its output names from the
+                # generated schema (vibecomfy/nodes/_generated/<pack>.py). Only
+                # raw_call (UUID fallback, no schema) needs explicit _outputs.
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))
                 call_name = str(node.class_type)
@@ -1324,6 +1326,14 @@ def _emit_build_function(
                 )
 
             if len(all_args) > 3 or len(single_line) > 88:
+                # v2.6.4 Fix 2: ensure blank line BEFORE multi-line statements
+                # (not after) for consistent vertical rhythm regardless of what
+                # came before. Single-line statements pack together. Section
+                # comments stay attached to the statement they introduce.
+                prev = out_lines[-1] if out_lines else ""
+                is_section_comment = prev.lstrip().startswith("# ")
+                if out_lines and prev != "" and not is_section_comment:
+                    out_lines.append("")
                 if use_wrapper:
                     lines = [f"{body_indent}{var} = {call_name}("]
                 else:
@@ -1335,7 +1345,6 @@ def _emit_build_function(
                         lines.append(f"{continuation_indent}{key}={expr},")
                 lines.append(f"{body_indent})")
                 out_lines.extend(lines)
-                out_lines.append("")
             else:
                 out_lines.append(single_line)
         else:

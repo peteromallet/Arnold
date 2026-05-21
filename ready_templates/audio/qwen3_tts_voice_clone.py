@@ -37,6 +37,7 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         loadaudio = LoadAudio(audio=AUDIO, widget_0='speech_smoke.wav')
+
         ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
             language='English',
             model_size='0.6B',

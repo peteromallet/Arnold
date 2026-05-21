@@ -52,6 +52,7 @@ def build() -> VibeWorkflow:
         cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='flux2')
         vaeloader = VAELoader(vae_name=MODEL_NAME_3)
         randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
+
         primitivestringmultiline = PrimitiveStringMultiline(
             value='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
         )
@@ -62,6 +63,7 @@ def build() -> VibeWorkflow:
 
         # Sampling
         flux2scheduler = Flux2Scheduler(height=primitiveint_2, width=primitiveint)
+
         emptyflux2latentimage = EmptyFlux2LatentImage(
             width=primitiveint,
             height=primitiveint_2,
@@ -70,6 +72,7 @@ def build() -> VibeWorkflow:
         # Conditioning
         negative = CLIPTextEncode(text='', clip=cliploader)
         positive = CLIPTextEncode(text=primitivestringmultiline, clip=cliploader)
+
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=unetloader,
@@ -84,7 +87,6 @@ def build() -> VibeWorkflow:
             noise=randomnoise,
             sampler=ksamplerselect,
             sigmas=flux2scheduler,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
         # Decode

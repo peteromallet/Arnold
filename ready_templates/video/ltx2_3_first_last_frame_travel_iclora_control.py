@@ -97,6 +97,7 @@ def build() -> VibeWorkflow:
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
         ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
+
         randomnoise = RandomNoise(
             noise_seed=DEFAULT_SEED,
             control_after_generate=CONTROL_AFTER_GENERATE,
@@ -108,14 +109,15 @@ def build() -> VibeWorkflow:
         )
 
         # Inputs
-        loadimage = LoadImage(image='example.png', _outputs=('IMAGE', 'MASK'))
-        loadimage_2 = LoadImage(image='egyptian_queen.png', _outputs=('IMAGE', 'MASK'))
+        loadimage = LoadImage(image='example.png')
+        loadimage_2 = LoadImage(image='egyptian_queen.png')
         ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME)
 
         # Loaders
         vaeloader = VAELoader(vae_name=MODEL_NAME_2)
         vaeloader_2 = VAELoader(vae_name=MODEL_NAME_3)
         unetloader = UNETLoader(unet_name=MODEL_NAME_4)
+
         dualcliploader = DualCLIPLoader(
             clip_name1=MODEL_NAME_5,
             clip_name2=MODEL_NAME_6,
@@ -126,7 +128,6 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
-
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
         # Inputs
@@ -137,11 +138,11 @@ def build() -> VibeWorkflow:
         primitivefloat_2 = raw_call(wf, 'PrimitiveFloat', '2108', value=0.8)
         primitivefloat_3 = raw_call(wf, 'PrimitiveFloat', '2110', value=0.8)
         loadvideo = LoadVideo(file='ltx_smoke_guide.mp4', video='ltx_smoke_guide.mp4')
+
         downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
             model=MODEL_NAME_7,
             precision='fp32',
         )
-
         primitivestring = raw_call(wf, 'PrimitiveString', '6000', value='canny')
 
         # Conditioning
@@ -163,7 +164,6 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=loadimage.out('IMAGE'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         imageresizekjv2_2 = ImageResizeKJv2(
@@ -174,7 +174,6 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=loadimage_2.out('IMAGE'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         loraloadermodelonly = LoraLoaderModelOnly(
@@ -182,14 +181,10 @@ def build() -> VibeWorkflow:
             strength_model=GUIDE_STRENGTH,
             model=unetloader,
         )
-
         ltx2_nag = LTX2_NAG(model=unetloader)
-        getvideocomponents = GetVideoComponents(
-            video=loadvideo,
-            _outputs=('IMAGES', 'AUDIO', 'FPS'),
-        )
-
+        getvideocomponents = GetVideoComponents(video=loadvideo)
         ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
+
         ltxvemptylatentaudio = LTXVEmptyLatentAudio(
             frames_number=intconstant,
             frame_rate=ltxfloattoint,
@@ -200,7 +195,6 @@ def build() -> VibeWorkflow:
             frame_rate=primitivefloat,
             negative=cliptextencode,
             positive=cliptextencode_2,
-            _outputs=('POSITIVE', 'NEGATIVE'),
         )
 
         ltxvpreprocess = LTXVPreprocess(
@@ -226,7 +220,6 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=getvideocomponents.out('IMAGES'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         dwpreprocessor = raw_call(wf, 'DWPreprocessor', '4986',
@@ -261,8 +254,8 @@ def build() -> VibeWorkflow:
             vae=vaeloader_2,
             **{'num_images.index_1': 0, 'num_images.index_2': -1, 'num_images.image_1': ltxvpreprocess_2, 'num_images.image_2': ltxvpreprocess, 'num_images.strength_1': primitivefloat_3, 'num_images.strength_2': primitivefloat_2},
         )
-
         ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
+
         depthanything_v2 = DepthAnything_V2(
             da_model=downloadandloaddepthanythingv2model,
             images=imageresizekjv2_3.out('IMAGE'),
@@ -276,7 +269,6 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=imageresizekjv2_3.out('IMAGE'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         ltx2attentiontunerpatch = LTX2AttentionTunerPatch(
@@ -292,7 +284,6 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=cannyedgepreprocessor,
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         imageresizekjv2_6 = ImageResizeKJv2(
@@ -303,7 +294,6 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=dwpreprocessor,
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         imageresizekjv2_7 = ImageResizeKJv2(
@@ -314,14 +304,12 @@ def build() -> VibeWorkflow:
             width=intconstant_3,
             height=intconstant_2,
             image=depthanything_v2,
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
         )
 
         ltxicloraloadermodelonly = LTXICLoRALoaderModelOnly(
             lora_name=MODEL_NAME_11,
             strength_model=GUIDE_STRENGTH_3,
             model=ltx2attentiontunerpatch,
-            _outputs=('MODEL', 'LATENT_DOWNSCALE_FACTOR'),
         )
 
         ltxaddvideoicloraguide = LTXAddVideoICLoRAGuide(
@@ -336,7 +324,6 @@ def build() -> VibeWorkflow:
             negative=ltxvconditioning.out('NEGATIVE'),
             positive=ltxvconditioning.out('POSITIVE'),
             vae=vaeloader_2,
-            _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
 
         cfgguider_2 = CFGGuider(
@@ -358,12 +345,10 @@ def build() -> VibeWorkflow:
             noise=randomnoise_2,
             sampler=ksamplerselect,
             sigmas=manualsigmas,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
         ltxvseparateavlatent = LTXVSeparateAVLatent(
             av_latent=samplercustomadvanced.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
         )
 
         ltxvconcatavlatent_2 = LTXVConcatAVLatent(
@@ -377,12 +362,10 @@ def build() -> VibeWorkflow:
             noise=randomnoise,
             sampler=ksamplerselect_2,
             sigmas=manualsigmas_2,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
         ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
             av_latent=samplercustomadvanced_2.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
         )
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(
@@ -394,7 +377,6 @@ def build() -> VibeWorkflow:
             latent=ltxvseparateavlatent_2.out('VIDEO_LATENT'),
             negative=ltxaddvideoicloraguide.out('NEGATIVE'),
             positive=ltxaddvideoicloraguide.out('POSITIVE'),
-            _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
 
         # Decode
