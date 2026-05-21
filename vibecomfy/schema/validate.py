@@ -68,7 +68,7 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
             continue
 
         for name, spec in raw_schema_inputs.items():
-            if getattr(spec, "required", False) and name not in provided_inputs:
+            if getattr(spec, "required", False) and name not in provided_inputs and getattr(spec, "default", None) is None:
                 issues.append(
                     ValidationIssue(
                         "missing_required_input",
