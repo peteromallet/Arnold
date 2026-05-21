@@ -3296,6 +3296,11 @@ def build_parser() -> argparse.ArgumentParser:
         "-", dest="stdin_body", action="store_true", help="Read body from stdin"
     )
     ticket_new_parser.add_argument("--tags", default=None, help="Comma-separated tags")
+    ticket_new_parser.add_argument(
+        "--project",
+        default=None,
+        help="Target project/repo for the new ticket; defaults to the current repo",
+    )
 
     # ticket list
     ticket_list_parser = ticket_sub.add_parser("list", help="List tickets")

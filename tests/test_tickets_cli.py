@@ -41,9 +41,13 @@ def _init_git_repo(repo_root: Path) -> None:
     subprocess.run(["git", "commit", "-m", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 def _run_megaplan(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     """Run megaplan as a subprocess and return the result."""
     merged_env = os.environ.copy()
+    merged_env["PYTHONPATH"] = str(REPO_ROOT)
     if env:
         merged_env.update(env)
     # Ensure local-only by unsetting MEGAPLAN_BACKEND
@@ -262,6 +266,55 @@ class TestCLIHappyPaths:
         fm = read_ticket_file(fpath)
         assert fm is not None
         assert fm["__body__"] == "Body from stdin"
+
+    def test_ticket_new_with_project_flag(self, tmp_path: Path) -> None:
+        """``megaplan ticket new --project <repo>`` files ticket in target repo from any cwd."""
+        # Set up a fixture repo (the target)
+        target_repo = tmp_path / "target"
+        _init_git_repo(target_repo)
+
+        # cwd is a non-git directory (must not be the target repo)
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+
+        proc = _run_megaplan(
+            ["ticket", "new", "Cross-repo ticket", "-b", "Body in target", "--project", str(target_repo)],
+            cwd=cwd,
+        )
+        assert proc.returncode == 0, f"stderr: {proc.stderr}"
+        ulid = proc.stdout.strip()
+        assert len(ulid) == 26
+
+        # Ticket file must exist in the target repo
+        slug = slugify("Cross-repo ticket")
+        fpath = ticket_file_path(target_repo, ulid, slug)
+        assert fpath.exists(), f"Expected ticket at {fpath}"
+
+        # NO ticket directory in cwd (megaplan framework creates .megaplan/plans etc., but
+        # the tickets/ subdir must not exist since the ticket was filed against the target)
+        cwd_tickets = cwd / ".megaplan" / "tickets"
+        assert not cwd_tickets.exists(), ".megaplan/tickets should not be created in cwd"
+
+        # Verify the target repo's identity is resolvable (codebase_id is cloud-only,
+        # but the file landing under target_repo proves correct resolution)
+        from megaplan.tickets.identity import repo_root_sha
+
+        target_sha = repo_root_sha(cwd=target_repo)
+        assert len(target_sha) == 40  # valid git SHA
+        fm = read_ticket_file(fpath)
+        assert fm is not None
+        assert fm["codebase_id"] is None  # local-only mode; codebase_id is only set in cloud mode
+
+    def test_ticket_new_bad_project(self, tmp_path: Path) -> None:
+        """``megaplan ticket new --project <nonexistent>`` errors with 'could not resolve'."""
+        _init_git_repo(tmp_path)
+
+        proc = _run_megaplan(
+            ["ticket", "new", "Bad project", "-b", "Body", "--project", "nonexistent/repo"],
+            cwd=tmp_path,
+        )
+        assert proc.returncode != 0
+        assert "could not resolve" in proc.stderr
 
 
 # ---------------------------------------------------------------------------

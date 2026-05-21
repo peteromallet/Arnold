@@ -43,8 +43,19 @@ def handle_ticket_new(args: argparse.Namespace) -> int:
     if tags:
         tags = [t.strip() for t in tags if t.strip()]
 
+    # Resolve --project if given
+    if args.project:
+        from megaplan.tickets.registry import resolve_project
+
+        cwd = resolve_project(args.project)
+        if cwd is None:
+            print(f"Error: could not resolve project {args.project!r}", file=sys.stderr)
+            return 1
+    else:
+        cwd = None
+
     try:
-        _core_new(args.title, body=body, tags=tags)
+        _core_new(args.title, body=body, tags=tags, cwd=cwd)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
