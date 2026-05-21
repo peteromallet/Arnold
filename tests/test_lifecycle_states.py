@@ -61,6 +61,27 @@ def test_status_payload_reports_lifecycle_stop_states_without_valid_next(tmp_pat
         assert f"state '{state}'" in payload["summary"]
 
 
+def test_status_payload_exposes_recovery_for_recoverable_blocked_gate(tmp_path: Path) -> None:
+    plan_dir = _write_plan(tmp_path, "recoverable-blocked", STATE_BLOCKED)
+    state = _state("recoverable-blocked", STATE_BLOCKED)
+    state["last_gate"] = {
+        "recommendation": "PROCEED",
+        "passed": False,
+        "preflight_results": {
+            "project_dir_exists": True,
+            "project_dir_writable": True,
+            "success_criteria_present": True,
+            "claude_available": False,
+            "codex_available": False,
+        },
+    }
+
+    payload = _build_status_payload(plan_dir, state)
+
+    assert payload["next_step"] == "override force-proceed"
+    assert payload["valid_next"] == ["override force-proceed", "gate"]
+
+
 def test_list_hides_terminal_lifecycle_states_but_keeps_paused_visible(tmp_path: Path) -> None:
     _write_plan(tmp_path, "planned", "planned")
     _write_plan(tmp_path, "paused", STATE_PAUSED)

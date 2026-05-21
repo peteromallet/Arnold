@@ -547,6 +547,46 @@ def test_auto_driver_stops_on_lifecycle_terminal_states_without_phase_runs(tmp_p
         assert calls == []
 
 
+def test_auto_driver_recovers_blocked_gate_agent_preflight_via_valid_next(tmp_path: Path) -> None:
+    plan = "recoverable-blocked-auto"
+    _make_plan_dir(tmp_path, plan)
+    statuses = [
+        {
+            "success": True,
+            "step": "status",
+            "plan": plan,
+            "state": "blocked",
+            "iteration": 1,
+            "summary": "Plan is in state 'blocked'.",
+            "next_step": "override force-proceed",
+            "valid_next": ["override force-proceed", "gate"],
+        },
+        _done_status(plan),
+    ]
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0) if len(statuses) > 1 else statuses[0]
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        captured_args.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=3,
+            max_iterations=3,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done"
+    assert captured_args == [["override", "force-proceed", "--plan", plan]]
+
+
 def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> None:
     outcomes = {
         "failed": 1,

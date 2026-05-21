@@ -9,6 +9,7 @@ from megaplan.types import (
     CliError,
     PlanState,
     STATE_ABORTED,
+    STATE_BLOCKED,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -35,12 +36,31 @@ from megaplan._core import (
     unresolved_significant_flags,
     workflow_next,
 )
-from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, run_gate_checks
+from megaplan.orchestration.evaluation import (
+    build_gate_artifact,
+    build_gate_signals,
+    failed_preflight_checks,
+    only_agent_availability_preflight_failed,
+    run_gate_checks,
+)
 
 from .shared import _append_to_meta, _attach_next_step_runtime
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
+
+
+def _last_gate_is_agent_availability_preflight_block(state: PlanState) -> bool:
+    last_gate = state.get("last_gate") or {}
+    if not isinstance(last_gate, dict):
+        return False
+    if last_gate.get("recommendation") != "PROCEED" or last_gate.get("passed", False):
+        return False
+    preflight_results = last_gate.get("preflight_results")
+    return (
+        isinstance(preflight_results, dict)
+        and only_agent_availability_preflight_failed(preflight_results)
+    )
 
 
 def _latest_revise_start_iso(plan_dir: Path, state: PlanState) -> str | None:
@@ -178,15 +198,36 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
             "next_step": None,
             "state": STATE_DONE,
         }
-    if state["current_state"] != STATE_CRITIQUED:
+    if state["current_state"] == STATE_BLOCKED:
+        if not _last_gate_is_agent_availability_preflight_block(state):
+            raise CliError(
+                "invalid_transition",
+                "force-proceed from blocked is only supported for PROCEED gates blocked by agent availability preflight",
+                valid_next=infer_next_steps(state),
+            )
+    elif state["current_state"] != STATE_CRITIQUED:
         raise CliError(
             "invalid_transition",
-            "force-proceed is only supported from critiqued or executed state",
+            "force-proceed is only supported from critiqued, executed, or recoverable blocked state",
             valid_next=infer_next_steps(state),
         )
     gate_checks = run_gate_checks(plan_dir, state, command_lookup=find_command)
-    if not gate_checks["preflight_results"]["project_dir_exists"] or not gate_checks["preflight_results"]["success_criteria_present"]:
-        raise CliError("unsafe_override", "force-proceed cannot bypass missing project directory or success criteria")
+    hard_failed = [
+        name
+        for name in failed_preflight_checks(gate_checks["preflight_results"])
+        if name not in {"claude_available", "codex_available"}
+    ]
+    if hard_failed:
+        labels = {
+            "project_dir_exists": "project directory",
+            "project_dir_writable": "project directory writable",
+            "success_criteria_present": "success criteria",
+        }
+        readable = [labels.get(name, name) for name in hard_failed]
+        raise CliError(
+            "unsafe_override",
+            "force-proceed cannot bypass hard preflight failures: " + ", ".join(readable),
+        )
     signals = build_gate_signals(plan_dir, state, root=root)
     merged_signals = {
         "robustness": signals["robustness"],

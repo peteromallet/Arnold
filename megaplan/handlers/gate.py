@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, is_rubber_stamp, run_gate_checks
+from megaplan.orchestration.evaluation import (
+    build_gate_artifact,
+    build_gate_signals,
+    build_orchestrator_guidance,
+    is_rubber_stamp,
+    only_agent_availability_preflight_failed,
+    run_gate_checks,
+)
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_CRITIQUED, STATE_GATED, StepResponse
 from megaplan.workers import WorkerResult
@@ -213,8 +220,18 @@ def _apply_gate_outcome(
     state["current_state"] = STATE_CRITIQUED
     if gate_summary["recommendation"] == "PROCEED":
         result = "blocked"
+        preflight_results = gate_summary.get("preflight_results", {})
+        if (
+            isinstance(preflight_results, dict)
+            and only_agent_availability_preflight_failed(preflight_results)
+        ):
+            summary = (
+                "Gate recommended PROCEED, but agent availability preflight failed. "
+                "Repair the command PATH and rerun gate, or use force-proceed."
+            )
+            return result, "override force-proceed", summary, []
         summary = "Gate recommended PROCEED, but preflight checks are still blocking execution."
-        return result, "revise", summary, []
+        return result, "gate", summary, []
     if gate_summary["recommendation"] == "ITERATE":
         return result, "revise", summary, []
     if gate_summary["recommendation"] == "ESCALATE":

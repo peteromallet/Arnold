@@ -58,8 +58,8 @@ WORKFLOW: dict[str, list[Transition]] = {
         Transition("override add-note", STATE_CRITIQUED, "gate_escalate"),
         Transition("override force-proceed", STATE_GATED, "gate_escalate"),
         Transition("override abort", STATE_ABORTED, "gate_escalate"),
-        Transition("revise", STATE_PLANNED, "gate_proceed_blocked"),
-        Transition("override force-proceed", STATE_GATED, "gate_proceed_blocked"),
+        Transition("override force-proceed", STATE_GATED, "gate_proceed_agent_availability_blocked"),
+        Transition("gate", STATE_GATED, "gate_proceed_blocked"),
         Transition("gate", STATE_GATED, "gate_proceed"),
     ],
     STATE_GATED: [

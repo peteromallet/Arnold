@@ -249,8 +249,14 @@ def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str,
             "completion using bash tools — grep .env for required keys, query the migrations "
             "table, curl the dev server, etc. Reading the file does NOT count as verification; "
             "you must run a command. For actions that genuinely cannot be verified mechanically "
-            "(manual UI checks), explicitly ask the user. If anything is incomplete or "
-            "unverifiable, mark this task blocked with reason and STOP."
+            "(manual UI checks), explicitly ask the user. "
+            "If user_action_resolutions.json exists in the plan directory, it contains "
+            "machine-readable resolution state for each action. "
+            "accepted_blocked and waived actions should proceed using their fallback instructions. "
+            "satisfied actions are resolved — confirm with a quick mechanical check. "
+            "Only unresolved, manual_required, or rejected actions remain hard stops. "
+            "If anything is incomplete or unverifiable (and not covered by a resolution), "
+            "mark this task blocked with reason and STOP."
         ),
         "depends_on": [],
         "status": "pending",
@@ -272,7 +278,12 @@ def _ensure_user_actions_pre_gate_task(payload: dict[str, Any], state: dict[str,
     sense_checks.append({
         "id": _next_sense_check_id(sense_checks),
         "task_id": task_id,
-        "question": "Were all before_execute user_actions programmatically verified before execution proceeded?",
+        "question": (
+            "Were all before_execute user_actions either programmatically verified OR "
+            "covered by an accepted_blocked/waived/satisfied resolution in "
+            "user_action_resolutions.json before execution proceeded? "
+            "Only unresolved, manual_required, or rejected actions should remain as hard stops."
+        ),
         "executor_note": "",
         "verdict": "",
     })

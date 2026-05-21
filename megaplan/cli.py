@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
 from importlib import resources
@@ -18,6 +19,7 @@ from megaplan.types import (
     KNOWN_AGENTS,
     ROBUSTNESS_ACCEPTED,
     ROBUSTNESS_LEVELS,
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_REVIEWED,
     StepResponse,
@@ -86,6 +88,7 @@ from megaplan.profiles import (
     resolve_profile,
 )
 from megaplan.execute.step_edit import handle_step
+from megaplan.resolutions import SUPPORTED_USER_ACTION_RESOLUTION_STATES
 
 _PROGRESS_PHASE_COMMANDS = {"plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"}
 
@@ -188,6 +191,165 @@ def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
         return None
 
 
+def _compute_user_action_blockers(
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute user-action blocker details for progress/status payloads.
+
+    Returns a dict with ``blocked_tasks_detail``, ``user_action_resolution_summary``,
+    and a plan-level ``recommended_action``.
+    """
+    from megaplan.resolutions import (
+        FALLBACK_STATES,
+        HARD_BLOCK_STATES,
+        load_user_action_resolutions,
+        resolution_applies_to_task,
+        resolution_recommended_action,
+    )
+
+    resolutions = load_user_action_resolutions(plan_dir)
+    user_actions = finalize_data.get("user_actions", [])
+    if not isinstance(user_actions, list):
+        user_actions = []
+
+    # Build mapping: task_id -> list of blocking user actions
+    task_id_set = {t["id"] for t in tasks if isinstance(t.get("id"), str)}
+    blocking_map: dict[str, list[dict[str, Any]]] = {}
+    before_execute_actions: list[dict[str, Any]] = []
+
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id", "unknown")
+        phase = action.get("phase", "")
+        blocks_task_ids = action.get("blocks_task_ids", [])
+
+        if phase == "before_execute":
+            before_execute_actions.append(action)
+
+        if isinstance(blocks_task_ids, list) and blocks_task_ids:
+            for task_id in blocks_task_ids:
+                if isinstance(task_id, str) and task_id in task_id_set:
+                    blocking_map.setdefault(task_id, []).append(action)
+
+    # Attach before_execute actions without explicit blocks_task_ids to all
+    # pending tasks as global pre-execute blockers.
+    global_before_execute = [
+        action
+        for action in before_execute_actions
+        if not isinstance(action.get("blocks_task_ids"), list)
+        or not action.get("blocks_task_ids")
+    ]
+    if global_before_execute:
+        for task in tasks:
+            tid = task.get("id")
+            if isinstance(tid, str) and task.get("status") == "pending":
+                blocking_map.setdefault(tid, []).extend(global_before_execute)
+
+    # Compute blocked_tasks_detail
+    blocked_tasks_detail: list[dict[str, Any]] = []
+    summary_states: dict[str, int] = {}
+    any_fallback = False
+    any_hard_block = False
+    any_rejected = False
+    any_unresolved = False
+
+    for task in tasks:
+        tid = task.get("id")
+        if not isinstance(tid, str):
+            continue
+        task_status = task.get("status", "pending")
+        blocking_actions = blocking_map.get(tid, [])
+
+        # Only include tasks that are blocked OR pending with unresolved/hard-blocking user actions
+        has_hard_block = False
+        task_resolutions: list[dict[str, Any]] = []
+
+        for action in blocking_actions:
+            action_id = action.get("id", "unknown")
+            resolution = resolutions.get(action_id)
+            applies = resolution_applies_to_task(resolution, tid)
+
+            if isinstance(resolution, dict):
+                state = resolution.get("state", "")
+                rec_action = resolution_recommended_action(resolution)
+
+                res_detail = {
+                    "action_id": action_id,
+                    "state": state,
+                    "reason": resolution.get("reason", ""),
+                    "fallback_mode": resolution.get("fallback_mode", ""),
+                    "instructions": resolution.get("instructions", ""),
+                    "applies_to_task_ids": resolution.get("applies_to_task_ids", []),
+                    "recommended_action": rec_action,
+                }
+                task_resolutions.append(res_detail)
+
+                summary_states[state] = summary_states.get(state, 0) + 1
+
+                if applies:
+                    if state == "rejected":
+                        any_rejected = True
+                        has_hard_block = True
+                    elif state in HARD_BLOCK_STATES or state == "manual_required":
+                        any_hard_block = True
+                        has_hard_block = True
+                    elif state in FALLBACK_STATES:
+                        any_fallback = True
+                else:
+                    # Resolution doesn't apply to this task — treat as unresolved
+                    any_unresolved = True
+                    has_hard_block = True
+            else:
+                # No resolution — unresolved
+                any_unresolved = True
+                has_hard_block = True
+                summary_states["unresolved"] = summary_states.get("unresolved", 0) + 1
+
+        if (
+            task_status == "blocked"
+            or (task_status == "pending" and has_hard_block)
+        ):
+            blocking_ua_ids = [
+                action.get("id", "unknown")
+                for action in blocking_actions
+                if isinstance(action, dict)
+            ]
+            blocked_tasks_detail.append({
+                "task_id": tid,
+                "task_status": task_status,
+                "blocking_user_actions": blocking_ua_ids,
+                "resolutions": task_resolutions,
+            })
+
+    # Compute plan-level recommended_action using priority hierarchy
+    if any_rejected:
+        recommended_action = "cannot_continue"
+    elif any_unresolved or any_hard_block:
+        recommended_action = "awaiting_human"
+    elif any_fallback:
+        recommended_action = "continue_with_fallback"
+    elif summary_states:
+        # All satisfied (no fallback, no hard block, no unresolved)
+        recommended_action = "retry_execute"
+    else:
+        recommended_action = "none"
+
+    # Build summary
+    user_action_resolution_summary = {
+        "total_resolutions": len(resolutions),
+        "by_state": summary_states,
+    }
+
+    return {
+        "blocked_tasks_detail": blocked_tasks_detail,
+        "user_action_resolution_summary": user_action_resolution_summary,
+        "recommended_action": recommended_action,
+    }
+
+
 def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
     finalize_path = plan_dir / "finalize.json"
     if not finalize_path.exists():
@@ -270,6 +432,8 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         granularity_note = (
             "Progress reflects the last finalize.json write (between-batch granularity)."
         )
+    # Compute user-action blocker details
+    ua_blockers = _compute_user_action_blockers(plan_dir, finalize_data, tasks)
     return {
         "summary": (
             f"Execution progress: {tasks_done + tasks_skipped}/{tasks_total} tasks tracked, "
@@ -284,6 +448,9 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         "batches_total": len(global_batches),
         "batches_completed": batches_completed,
         "tasks": task_status_list,
+        "blocked_tasks_detail": ua_blockers["blocked_tasks_detail"],
+        "user_action_resolution_summary": ua_blockers["user_action_resolution_summary"],
+        "recommended_action": ua_blockers["recommended_action"],
     }
 
 
@@ -399,6 +566,22 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
 
 def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse:
     next_steps = infer_next_steps(state)
+    if state.get("current_state") == STATE_BLOCKED:
+        last_gate = state.get("last_gate") or {}
+        preflight = last_gate.get("preflight_results") if isinstance(last_gate, dict) else None
+        failed = (
+            {name for name, passed in preflight.items() if not passed}
+            if isinstance(preflight, dict)
+            else set()
+        )
+        if (
+            isinstance(last_gate, dict)
+            and last_gate.get("recommendation") == "PROCEED"
+            and not last_gate.get("passed", False)
+            and failed
+            and failed <= {"claude_available", "codex_available"}
+        ):
+            next_steps = ["override force-proceed", "gate"]
     notes = state.get("meta", {}).get("notes", [])
     lock_path = plan_dir / ".plan.lock"
     lock_file_present = lock_path.exists()
@@ -714,6 +897,145 @@ def handle_debt(root: Path, args: argparse.Namespace) -> StepResponse:
     raise CliError("invalid_args", f"Unknown debt action: {action}")
 
 
+def handle_user_action(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Dispatch ``megaplan user-action ...`` subcommands."""
+    from megaplan.resolutions import (
+        SUPPORTED_USER_ACTION_RESOLUTION_STATES,
+        upsert_user_action_resolution,
+    )
+
+    ensure_runtime_layout(root)
+    action = args.user_action_action
+
+    if action == "resolve":
+        plan_dir, _state = load_plan(root, args.plan)
+        finalize_path = plan_dir / "finalize.json"
+        if not finalize_path.exists():
+            raise CliError(
+                "invalid_args",
+                "No finalize.json found for this plan. Run 'megaplan finalize' first.",
+            )
+        finalize_data = read_json(finalize_path)
+        user_actions = finalize_data.get("user_actions", [])
+        if not isinstance(user_actions, list):
+            raise CliError(
+                "invalid_args",
+                "finalize.json user_actions is not a list.",
+            )
+
+        # --- validate --state (before loading or writing) ---
+        state = args.state
+        if state not in SUPPORTED_USER_ACTION_RESOLUTION_STATES:
+            raise CliError(
+                "invalid_args",
+                f"Unsupported resolution state {state!r}. "
+                f"Must be one of: {', '.join(sorted(SUPPORTED_USER_ACTION_RESOLUTION_STATES))}.",
+            )
+
+        # --- validate --action matches an existing user_action ---
+        action_id = args.action
+        matched_action: dict[str, Any] | None = None
+        for ua in user_actions:
+            if isinstance(ua, dict) and ua.get("id") == action_id:
+                matched_action = ua
+                break
+        if matched_action is None:
+            raise CliError(
+                "invalid_args",
+                f"Unknown user action {action_id!r}. "
+                f"Available action IDs: {', '.join(ua['id'] for ua in user_actions if isinstance(ua, dict) and 'id' in ua) or '(none)'}.",
+            )
+
+        # --- parse and validate --applies-to-task-ids ---
+        applies_to_task_ids: list[str] = []
+        raw_task_ids = args.applies_to_task_ids or ""
+        if raw_task_ids.strip():
+            # Split first, then reject empty entries from malformed
+            # comma-separated values (e.g. "T1,,T2", ",T1", "T1,", ",").
+            raw_parts = raw_task_ids.split(",")
+            parts: list[str] = []
+            for raw_part in raw_parts:
+                part = raw_part.strip()
+                if not part:
+                    raise CliError(
+                        "invalid_args",
+                        "--applies-to-task-ids contains an empty or malformed entry.",
+                    )
+                parts.append(part)
+
+            # known task IDs from finalize.json
+            all_tasks = finalize_data.get("tasks", [])
+            known_task_ids = {
+                t["id"]
+                for t in all_tasks
+                if isinstance(t, dict) and isinstance(t.get("id"), str)
+            }
+
+            # validate each against known task IDs
+            for tid in parts:
+                if tid not in known_task_ids:
+                    raise CliError(
+                        "invalid_args",
+                        f"Unknown task ID {tid!r} in --applies-to-task-ids. "
+                        f"Known task IDs: {', '.join(sorted(known_task_ids)) or '(none)'}.",
+                    )
+
+            # validate against action's blocks_task_ids (if explicit)
+            action_phase = matched_action.get("phase", "")
+            blocks_task_ids = matched_action.get("blocks_task_ids", [])
+            if isinstance(blocks_task_ids, list) and blocks_task_ids:
+                # Explicit blockers: --applies-to-task-ids must be a subset
+                explicit_blockers = set(blocks_task_ids)
+                for tid in parts:
+                    if tid not in explicit_blockers:
+                        raise CliError(
+                            "invalid_args",
+                            f"Task ID {tid!r} is not in action {action_id!r}'s "
+                            f"explicit blocks_task_ids: {', '.join(sorted(explicit_blockers))}. "
+                            f"Use --applies-to-task-ids that are a subset of the action's blockers.",
+                        )
+            elif action_phase == "before_execute" and not blocks_task_ids:
+                # before_execute actions without explicit blockers: any known task ID is allowed
+                pass
+            else:
+                # Action has no explicit blockers and is not before_execute
+                raise CliError(
+                    "invalid_args",
+                    f"Action {action_id!r} has no blocks_task_ids and is not a before_execute action. "
+                    f"Cannot scope --applies-to-task-ids.",
+                )
+
+            applies_to_task_ids = parts
+
+        # --- persist resolution ---
+        upsert_user_action_resolution(
+            plan_dir,
+            action_id=action_id,
+            state=state,
+            reason=args.reason or "",
+            fallback_mode=args.fallback_mode or "",
+            applies_to_task_ids=applies_to_task_ids if applies_to_task_ids else None,
+            instructions=args.instructions or "",
+            created_by=args.created_by or "cli",
+        )
+
+        return {
+            "success": True,
+            "step": "user-action",
+            "action": "resolve",
+            "summary": (
+                f"Resolution for user action {action_id!r} set to {state!r}."
+            ),
+            "details": {
+                "action_id": action_id,
+                "state": state,
+                "plan": args.plan,
+            },
+        }
+
+    raise CliError("invalid_args", f"Unknown user-action action: {action}")
+
+
 # ---------------------------------------------------------------------------
 # Setup and config
 # ---------------------------------------------------------------------------
@@ -780,6 +1102,14 @@ def _canonical_observe_skill() -> str:
     return resources.files("megaplan").joinpath("data", "observe_skill.md").read_text(encoding="utf-8")
 
 
+def _canonical_cloud_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "cloud_skill.md").read_text(encoding="utf-8")
+
+
+def _canonical_bakeoff_skill() -> str:
+    return resources.files("megaplan").joinpath("data", "bakeoff_skill.md").read_text(encoding="utf-8")
+
+
 def _canonical_composed(name: str) -> str:
     return resources.files("megaplan").joinpath("data", "_composed", name).read_text(encoding="utf-8")
 
@@ -799,6 +1129,10 @@ def bundled_global_file(name: str) -> str:
         return _canonical_epic_skill()
     if name == "observe_skill.md":
         return _canonical_observe_skill()
+    if name == "cloud_skill.md":
+        return _canonical_cloud_skill()
+    if name == "bakeoff_skill.md":
+        return _canonical_bakeoff_skill()
     # Composed bundles: pre-built at commit time via --regen-composed and
     # stored under megaplan/data/_composed/. Every _GLOBAL_TARGETS entry
     # referencing these symlinks into the pre-composed file — no runtime
@@ -828,16 +1162,20 @@ def bundled_global_file(name: str) -> str:
 # `tests/test_setup_no_shadow_skills.py` asserts every target uses symlink.
 _GLOBAL_TARGETS = [
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "_composed/claude_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan/SKILL.md", "data": "_composed/codex_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan", "data": "_codex_skills/megaplan", "install": "dir_symlink"},
     {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "_composed/cursor_rule.mdc", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-bakeoff/SKILL.md", "data": "bakeoff_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-bakeoff", "data": "_codex_skills/megaplan-bakeoff", "install": "dir_symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets", "data": "_codex_skills/megaplan-tickets", "install": "dir_symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision", "data": "_codex_skills/megaplan-decision", "install": "dir_symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic", "data": "_codex_skills/megaplan-epic", "install": "dir_symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe", "data": "_codex_skills/megaplan-observe", "install": "dir_symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-cloud/SKILL.md", "data": "cloud_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-cloud", "data": "_codex_skills/megaplan-cloud", "install": "dir_symlink"},
 ]
 
 
@@ -883,6 +1221,28 @@ def _install_owned_symlink(path: Path, target_path: Path, *, force: bool = False
     return {"path": str(path), "target": str(canonical), "skipped": False, "existed": existed, "symlink": True}
 
 
+def _install_owned_dir_symlink(path: Path, target_dir: Path, *, force: bool = False) -> dict[str, bool | str]:
+    """Install a symlinked skill directory for Codex discovery."""
+    try:
+        canonical = target_dir.resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        return {"path": str(path), "skipped": True, "existed": path.exists() or path.is_symlink(), "reason": f"canonical missing: {exc}"}
+    existed = path.exists() or path.is_symlink()
+    if existed and not force and path.is_symlink():
+        try:
+            if path.resolve(strict=True) == canonical:
+                return {"path": str(path), "target": str(canonical), "skipped": True, "existed": True, "symlink": True}
+        except (FileNotFoundError, OSError):
+            pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+    path.symlink_to(canonical, target_is_directory=True)
+    return {"path": str(path), "target": str(canonical), "skipped": False, "existed": existed, "symlink": True}
+
+
 def _resolve_bundle_path(data_name: str) -> Path:
     """Resolve the absolute filesystem path of a bundled data file.
 
@@ -912,6 +1272,15 @@ def handle_regen_composed() -> dict[str, Any]:
         "codex_skill.md": _SKILL_HEADER + instructions + "\n\n" + _codex_subagent_appendix(),
         "cursor_rule.mdc": _CURSOR_HEADER + instructions,
     }
+    codex_skill_dirs = {
+        "_codex_skills/megaplan/SKILL.md": targets["codex_skill.md"],
+        "_codex_skills/megaplan-bakeoff/SKILL.md": bundled_global_file("bakeoff_skill.md"),
+        "_codex_skills/megaplan-tickets/SKILL.md": bundled_global_file("tickets_skill.md"),
+        "_codex_skills/megaplan-decision/SKILL.md": bundled_global_file("decision_skill.md"),
+        "_codex_skills/megaplan-epic/SKILL.md": bundled_global_file("epic_skill.md"),
+        "_codex_skills/megaplan-observe/SKILL.md": bundled_global_file("observe_skill.md"),
+        "_codex_skills/megaplan-cloud/SKILL.md": bundled_global_file("cloud_skill.md"),
+    }
     composed_dir = resources.files("megaplan").joinpath("data", "_composed")
     Path(str(composed_dir)).mkdir(parents=True, exist_ok=True)
     changed: list[str] = []
@@ -919,6 +1288,14 @@ def handle_regen_composed() -> dict[str, Any]:
         target_path = Path(str(composed_dir)) / name
         current = target_path.read_text(encoding="utf-8") if target_path.is_file() else ""
         if current != computed:
+            atomic_write_text(target_path, computed)
+            changed.append(name)
+    data_dir = Path(str(resources.files("megaplan").joinpath("data")))
+    for name, computed in codex_skill_dirs.items():
+        target_path = data_dir / name
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        current = target_path.read_text(encoding="utf-8") if target_path.is_file() else ""
+        if target_path.is_symlink() or current != computed:
             atomic_write_text(target_path, computed)
             changed.append(name)
     if changed:
@@ -944,6 +1321,12 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
         mode = target.get("install", "copy")
         if mode == "symlink":
             result = _install_owned_symlink(
+                home / target["path"],
+                _resolve_bundle_path(target["data"]),
+                force=force,
+            )
+        elif mode == "dir_symlink":
+            result = _install_owned_dir_symlink(
                 home / target["path"],
                 _resolve_bundle_path(target["data"]),
                 force=force,
@@ -2512,6 +2895,29 @@ def build_parser() -> argparse.ArgumentParser:
     debt_resolve_parser.add_argument("debt_id")
     debt_resolve_parser.add_argument("--plan")
 
+    # --- user-action subcommand group ---
+    user_action_parser = subparsers.add_parser("user-action", help="Manage user action resolutions")
+    ua_subparsers = user_action_parser.add_subparsers(dest="user_action_action", required=True)
+
+    ua_resolve_parser = ua_subparsers.add_parser("resolve", help="Set a resolution for a user action")
+    ua_resolve_parser.add_argument("--plan", required=True, help="Plan name")
+    ua_resolve_parser.add_argument("--action", required=True, help="User action ID (from finalize.json user_actions)")
+    ua_resolve_parser.add_argument(
+        "--state",
+        required=True,
+        choices=sorted(SUPPORTED_USER_ACTION_RESOLUTION_STATES),
+        help="Resolution state",
+    )
+    ua_resolve_parser.add_argument("--reason", default="", help="Human-readable explanation")
+    ua_resolve_parser.add_argument("--fallback-mode", default="", help="Fallback mode (e.g. skip, mock, use_dummy)")
+    ua_resolve_parser.add_argument(
+        "--applies-to-task-ids",
+        default="",
+        help="Comma-separated task IDs this resolution applies to",
+    )
+    ua_resolve_parser.add_argument("--instructions", default="", help="Concrete fallback instructions")
+    ua_resolve_parser.add_argument("--created-by", default="cli", help="Actor identifier")
+
     loop_init_parser = subparsers.add_parser("loop-init", help="Initialize a MegaLoop workflow")
     loop_init_parser.add_argument("--project-dir", required=True)
     loop_init_parser.add_argument("--command", required=True)
@@ -2639,6 +3045,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "loop-status": handle_loop_status,
     "loop-pause": handle_loop_pause,
     "debt": handle_debt,
+    "user-action": handle_user_action,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,
@@ -2925,7 +3332,25 @@ def _auto_sync_installed_skills() -> None:
             agent_dir = Path.home() / target["detect"]
             if not agent_dir.is_dir():
                 continue
-            _install_owned_file(Path.home() / target["path"], bundled_global_file(target["data"]), force=False)
+            mode = target.get("install")
+            if mode == "symlink":
+                _install_owned_symlink(
+                    Path.home() / target["path"],
+                    _resolve_bundle_path(target["data"]),
+                    force=False,
+                )
+            elif mode == "dir_symlink":
+                _install_owned_dir_symlink(
+                    Path.home() / target["path"],
+                    _resolve_bundle_path(target["data"]),
+                    force=False,
+                )
+            else:
+                _install_owned_file(
+                    Path.home() / target["path"],
+                    bundled_global_file(target["data"]),
+                    force=False,
+                )
     except Exception:
         pass
 

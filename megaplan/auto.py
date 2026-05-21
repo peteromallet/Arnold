@@ -845,7 +845,7 @@ def drive(
             continue
 
         # Terminal: plan reached a final state (or automation-terminal).
-        if state in AUTOMATION_TERMINAL_STATES:
+        if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
             if state == STATE_AWAITING_HUMAN:
                 log("plan awaiting human verification — automation stopping")
                 return _outcome(

@@ -73,6 +73,7 @@ import requests
 from hermes_constants import OPENROUTER_BASE_URL
 
 DEFAULT_API_TIMEOUT_SECONDS = 300.0
+DEFAULT_DEEPSEEK_API_TIMEOUT_SECONDS = 1200.0
 
 # Agent internals extracted to agent/ package for modularity
 from agent.prompt_builder import (
@@ -3163,10 +3164,15 @@ class AIAgent:
         return client
 
     def _api_timeout_seconds(self) -> float:
+        timeout_env = "HERMES_API_TIMEOUT"
+        default_timeout = DEFAULT_API_TIMEOUT_SECONDS
+        if "api.deepseek.com" in getattr(self, "_base_url_lower", ""):
+            timeout_env = "HERMES_DEEPSEEK_API_TIMEOUT"
+            default_timeout = DEFAULT_DEEPSEEK_API_TIMEOUT_SECONDS
         try:
-            timeout = float(os.getenv("HERMES_API_TIMEOUT", DEFAULT_API_TIMEOUT_SECONDS))
+            timeout = float(os.getenv(timeout_env, os.getenv("HERMES_API_TIMEOUT", default_timeout)))
         except (TypeError, ValueError):
-            timeout = DEFAULT_API_TIMEOUT_SECONDS
+            timeout = default_timeout
         return max(timeout, 0.1)
 
     def _abort_request_client(self, request_client_holder: dict, *, reason: str) -> None:
