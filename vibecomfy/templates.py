@@ -192,9 +192,11 @@ def _auto_resolve_node_builder(value: Any) -> Handle:
             f"{class_type} node {node.id!r} has {count} outputs ({detail}); "
             "specify .out('NAME') explicitly"
         )
-    raise ValueError(
-        f"{class_type} node {node.id!r} requires explicit .out(...) because output schema is missing"
-    )
+    # Legacy and community nodes often lack object_info output schema in local
+    # indexes. Generated templates historically treated those as single-output
+    # nodes unless they supplied _outputs explicitly, so keep that compatibility
+    # path while still rejecting known multi-output/list-output schemas above.
+    return value.out(0)
 
 
 def _at(

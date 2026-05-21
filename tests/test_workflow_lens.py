@@ -216,21 +216,21 @@ def test_lens_ltx_parity_registered_inputs_via_lens() -> None:
     l = lens(wf)
 
     required = {
-        "first_image": ("31", "image"),
-        "last_image": ("39", "image"),
-        "prompt": ("128", "text"),
-        "negative_prompt": ("112", "text"),
-        "seed": ("100", "noise_seed"),
-        "seed_first": ("100", "noise_seed"),
-        "seed_last": ("100", "noise_seed"),
+        "first_image": ("1", "image"),
+        "last_image": ("2", "image"),
+        "prompt": ("130", "text"),
+        "negative_prompt": ("127", "text"),
+        "seed": ("99", "noise_seed"),
+        "seed_first": ("99", "noise_seed"),
+        "seed_last": ("99", "noise_seed"),
         "width": ("113", "value"),
         "height": ("98", "value"),
         "frames": ("102", "value"),
         "fps": ("123", "value"),
         "fps_int": ("114", "value"),
-        "first_strength": ("115", "strength"),
-        "last_strength": ("111", "strength"),
-        "model": ("127", "ckpt_name"),
+        "first_strength": ("136", "strength"),
+        "last_strength": ("137", "strength"),
+        "model": ("125", "ckpt_name"),
     }
     for name, (node_id, field) in required.items():
         inp = l.registered_input_target(name)
@@ -249,14 +249,14 @@ def test_lens_ltx_parity_first_last_conditioning_via_lens() -> None:
     # passed live on 4090: two LTXVAddGuide nodes and direct checkpoint model.
     cond_nodes = nodes_by_class_type(wf, "LTXVAddGuide")
     cond_by_id = {n.id: n for n in cond_nodes}
-    assert "115" in cond_by_id, "first-frame guide node missing"
-    assert "111" in cond_by_id, "last-frame guide node missing"
-    first_node = l.node("115")
+    assert "136" in cond_by_id, "first-frame guide node missing"
+    assert "137" in cond_by_id, "last-frame guide node missing"
+    first_node = l.node("136")
     assert first_node is not None
     assert first_node.class_type == "LTXVAddGuide"
 
     # First frame: node 115 receives image from upstream
-    src_stage1 = l.edge_source("115", "image")
+    src_stage1 = l.edge_source("136", "image")
     assert src_stage1 is not None, "first latent replacement node has no image feed"
     upstream_stage1 = wf.nodes[src_stage1.from_node]
     assert upstream_stage1.class_type == "LTXVPreprocess", (
@@ -264,7 +264,7 @@ def test_lens_ltx_parity_first_last_conditioning_via_lens() -> None:
     )
 
     # Last frame: node 111 receives image from upstream
-    src_stage2 = l.edge_source("111", "image")
+    src_stage2 = l.edge_source("137", "image")
     assert src_stage2 is not None, "last guide node has no image feed"
     upstream_stage2 = wf.nodes[src_stage2.from_node]
     assert upstream_stage2.class_type == "LTXVPreprocess", (
@@ -272,14 +272,14 @@ def test_lens_ltx_parity_first_last_conditioning_via_lens() -> None:
     )
 
     # Verify that first LTXVPreprocess is fed by a ResizeImageMaskNode (124)
-    preproc_src = l.edge_source("104", "image")
+    preproc_src = l.edge_source("132", "image")
     assert preproc_src is not None, "LTXVPreprocess has no image feed"
-    assert preproc_src.from_node == "124"
+    assert preproc_src.from_node == "128"
 
     # Verify the last ResizeImageMaskNode (125) is fed by LoadImage (39, last_image)
-    resize_src = l.edge_source("125", "input")
+    resize_src = l.edge_source("129", "input")
     assert resize_src is not None
-    assert resize_src.from_node == "39"
+    assert resize_src.from_node == "2"
 
 
 def test_lens_ltx_parity_prompt_negative_paths_via_lens() -> None:
@@ -289,15 +289,15 @@ def test_lens_ltx_parity_prompt_negative_paths_via_lens() -> None:
     l = lens(wf)
 
     # Prompt node 128
-    prompt_val = l.node_value("128", "text")
+    prompt_val = l.node_value("130", "text")
     assert isinstance(prompt_val, str) and len(prompt_val) > 0
 
     # Negative node 112
-    neg_val = l.node_value("112", "text")
+    neg_val = l.node_value("127", "text")
     assert isinstance(neg_val, str) and len(neg_val) > 0
 
     # Both are fed by an LTXAVTextEncoderLoader (103)
-    for nid in ("128", "112"):
+    for nid in ("130", "127"):
         src = l.edge_source(nid, "clip")
         assert src is not None, f"{nid} has no clip source"
         assert wf.nodes[src.from_node].class_type == "LTXAVTextEncoderLoader"
@@ -308,9 +308,9 @@ def test_lens_ltx_parity_seeds_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    noise_class = wf.nodes["100"].class_type
+    noise_class = wf.nodes["99"].class_type
     assert noise_class == "RandomNoise"
-    assert l.node_value("100", "noise_seed") is not None
+    assert l.node_value("99", "noise_seed") is not None
 
 
 def test_lens_ltx_parity_dimensions_frames_fps_via_lens() -> None:
@@ -319,7 +319,7 @@ def test_lens_ltx_parity_dimensions_frames_fps_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    assert wf.nodes["108"].class_type == "EmptyLTXVLatentVideo"
+    assert wf.nodes["135"].class_type == "EmptyLTXVLatentVideo"
     width = l.node_value("113", "value")
     height = l.node_value("98", "value")
     assert isinstance(width, int) and width > 0
@@ -341,18 +341,16 @@ def test_lens_ltx_parity_distilled_guide_spine_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    assert l.node_value("127", "ckpt_name") == "ltx-2.3-22b-distilled-fp8.safetensors"
-    assert l.node("115").class_type == "LTXVAddGuide"
-    assert l.node("111").class_type == "LTXVAddGuide"
-    assert l.edge_source("115", "latent").node_id == "108"
-    assert l.edge_source("111", "latent").node_id == "115"
+    assert l.node_value("125", "ckpt_name") == "ltx-2.3-22b-distilled-fp8.safetensors"
+    assert l.node("136").class_type == "LTXVAddGuide"
+    assert l.node("137").class_type == "LTXVAddGuide"
+    assert l.edge_source("136", "latent").node_id == "135"
+    assert l.edge_source("137", "latent").node_id == "136"
     assert l.node("2291") is None
-    assert l.edge_source("116", "model").node_id == "127"
+    assert l.edge_source("138", "model").node_id == "125"
     assert l.node("2292") is None
-    assert l.edge_source("116", "positive").node_id == "111"
-    assert l.edge_source("116", "negative").node_id == "111"
-    assert l.edge_source("106", "positive").node_id == "111"
-    assert l.edge_source("106", "negative").node_id == "111"
+    assert l.edge_source("138", "positive").node_id == "137"
+    assert l.edge_source("138", "negative").node_id == "137"
 
 
 def test_lens_ltx_parity_sigmas_via_lens() -> None:
@@ -361,8 +359,8 @@ def test_lens_ltx_parity_sigmas_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    assert wf.nodes["118"].class_type == "ManualSigmas"
-    sigmas = l.node_value("118", "sigmas")
+    assert wf.nodes["116"].class_type == "ManualSigmas"
+    sigmas = l.node_value("116", "sigmas")
     assert sigmas == "1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0", (
         f"sigmas drifted: {sigmas!r}"
     )
@@ -373,8 +371,8 @@ def test_lens_ltx_parity_strength_defaults_via_lens() -> None:
     wf = workflow_from_ready("video/ltx2_3_lightricks_first_last_parity")
     l = lens(wf)
 
-    assert l.node_value("115", "strength") == 1.0, "first_frame_strength default != 1.0"
-    assert l.node_value("111", "strength") == 1.0, "last_frame_strength default != 1.0"
+    assert l.node_value("136", "strength") == 1.0, "first_frame_strength default != 1.0"
+    assert l.node_value("137", "strength") == 1.0, "last_frame_strength default != 1.0"
 
 
 def test_lens_ltx_parity_custom_nodes_via_lens() -> None:

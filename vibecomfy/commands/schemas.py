@@ -39,7 +39,7 @@ def _extract_class_types_from_template(template_path: str | Path) -> list[str]:
 
         func = node.func
         if isinstance(func, ast.Name) and func.id in {"_node", "node", "raw_call"}:
-            class_arg_index = 1
+            class_arg_index = 0 if func.id == "raw_call" and node.args and isinstance(node.args[0], ast.Constant) else 1
         elif isinstance(func, ast.Name) and func.id == "_at":
             class_arg_index = 2
         elif isinstance(func, ast.Attribute):

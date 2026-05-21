@@ -296,12 +296,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "audio",
+          "node_id": "2",
+          "output_type": "SaveAudioMP3",
+          "artifact_kind": "audio",
+          "mime_type": "audio/mpeg",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "audio",
+          "node_id": "2",
+          "output_type": "SaveAudioMP3",
+          "artifact_kind": "audio",
+          "mime_type": "audio/mpeg",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -351,12 +375,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "audio",
+          "node_id": "3",
+          "output_type": "SaveAudioMP3",
+          "artifact_kind": "audio",
+          "mime_type": "audio/mpeg",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "audio",
+          "node_id": "3",
+          "output_type": "SaveAudioMP3",
+          "artifact_kind": "audio",
+          "mime_type": "audio/mpeg",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -406,12 +454,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "audio",
+          "node_id": "2",
+          "output_type": "SaveAudioMP3",
+          "artifact_kind": "audio",
+          "mime_type": "audio/mpeg",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "audio",
+          "node_id": "2",
+          "output_type": "SaveAudioMP3",
+          "artifact_kind": "audio",
+          "mime_type": "audio/mpeg",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -531,9 +603,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "41",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein-4b-base",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "41",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein-4b-base",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -542,7 +638,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -664,12 +760,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "20",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "20",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -789,9 +909,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "41",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein-4b-base",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "41",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein-4b-base",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -800,7 +944,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -920,9 +1064,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "41",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "41",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -931,7 +1099,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1105,12 +1273,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "17",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "17",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1176,12 +1368,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "3",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "image-upscale",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "3",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "image-upscale",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1337,12 +1553,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "14",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "14",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1498,12 +1738,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "13",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "13",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1569,12 +1833,36 @@
           "source": "finalize_metadata"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "1",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "1",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Flux2-Klein",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1766,12 +2054,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "14",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "14",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -1927,12 +2239,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "10",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "z-image",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "10",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "z-image",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -2106,12 +2442,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "12",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "z-image-img2img",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "12",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "z-image-img2img",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -2177,12 +2537,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "2",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "vibecomfy_ready_smoke_red",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "2",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "vibecomfy_ready_smoke_red",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -2213,12 +2597,36 @@
       ],
       "model_count": 0,
       "public_inputs": [],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "3",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "video-enhance",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "3",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "video-enhance",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "missing",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -2650,12 +3058,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "6037",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "reigh_vibecomfy_ltx_control_first_last",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "6037",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "reigh_vibecomfy_ltx_control_first_last",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -3926,12 +4358,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "146",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "146",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -4432,12 +4888,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "1170",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "1170",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -4542,12 +5022,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "5122",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "5122",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -4670,9 +5174,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "5063",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "5063",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -4681,7 +5209,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -4994,12 +5522,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "5014",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "5014",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "output",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -6894,9 +7446,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": null,
+          "node_id": "1973",
+          "output_type": null,
+          "artifact_kind": null,
+          "mime_type": null,
+          "filename_prefix": null,
+          "expected_cardinality": null,
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": null,
+          "node_id": "1973",
+          "output_type": null,
+          "artifact_kind": null,
+          "mime_type": null,
+          "filename_prefix": null,
+          "expected_cardinality": null,
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -6905,7 +7481,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 6,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -7636,12 +8212,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "28",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "28",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -7851,12 +8451,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "15",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "video/Wan2.2_image_to_video",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "15",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "video/Wan2.2_image_to_video",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -8192,12 +8816,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "14",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "14",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -8479,12 +9127,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "11",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "11",
+          "output_type": "SaveVideo",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -8553,12 +9225,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "16",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "16",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -9022,12 +9718,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "113",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "113",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 4,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -9153,9 +9873,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "102",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "102",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -9164,7 +9908,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 5,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -9325,9 +10069,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "106",
+          "output_type": "PreviewImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "106",
+          "output_type": "PreviewImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -9336,7 +10104,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 4,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -9496,12 +10264,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "21",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "21",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -9624,12 +10416,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "18",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "18",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -9841,9 +10657,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "100",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "100",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -9852,7 +10692,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10012,12 +10852,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "27",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "WanVideo2_2_I2V",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "27",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "WanVideo2_2_I2V",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10121,12 +10985,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "16",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Wan-2-2-T2I",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "16",
+          "output_type": "SaveImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": "Wan-2-2-T2I",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 1,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10267,12 +11155,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "22",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "Wan-2-2-VACE",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "22",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": "Wan-2-2-VACE",
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 2,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10432,12 +11344,36 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "19",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "19",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [],
       "public_input_status": "declared",
-      "public_output_status": "missing",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10507,9 +11443,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "image",
+          "node_id": "108",
+          "output_type": "PreviewImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "image",
+          "node_id": "108",
+          "output_type": "PreviewImage",
+          "artifact_kind": "image",
+          "mime_type": "image/png",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -10518,7 +11478,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10660,9 +11620,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "21",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "21",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -10671,7 +11655,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -10741,9 +11725,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": null,
+          "node_id": "107",
+          "output_type": null,
+          "artifact_kind": null,
+          "mime_type": null,
+          "filename_prefix": null,
+          "expected_cardinality": null,
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": null,
+          "node_id": "107",
+          "output_type": null,
+          "artifact_kind": null,
+          "mime_type": null,
+          "filename_prefix": null,
+          "expected_cardinality": null,
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -10752,7 +11760,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 3,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",
@@ -11398,9 +12406,33 @@
           "source": "InputSpec"
         }
       ],
-      "public_outputs": [],
+      "public_outputs": [
+        {
+          "name": "video",
+          "node_id": "27",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
-      "artifact_expectations": [],
+      "artifact_expectations": [
+        {
+          "name": "video",
+          "node_id": "27",
+          "output_type": "VHS_VideoCombine",
+          "artifact_kind": "video",
+          "mime_type": "video/mp4",
+          "filename_prefix": null,
+          "expected_cardinality": "one",
+          "status": "static",
+          "source": "finalize"
+        }
+      ],
       "static_diagnostics": [
         {
           "code": "static_dynamic_value",
@@ -11409,7 +12441,7 @@
         }
       ],
       "public_input_status": "declared",
-      "public_output_status": "partial",
+      "public_output_status": "declared",
       "custom_node_count": 6,
       "strict_ready_diagnostic_counts": {},
       "readiness_class": "ready",

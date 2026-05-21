@@ -195,19 +195,54 @@ def _extract_finalize_outputs(
 
 def _node_assignment_ids(tree: ast.Module) -> dict[str, str]:
     ids: dict[str, str] = {}
+    runtime_ids = _node_runtime_ids(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
             continue
         if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
             continue
-        node_id = _node_call_source_id(node.value)
+        node_id = runtime_ids.get(id(node.value)) or _node_call_source_id(node.value)
         if node_id is not None:
             ids[node.targets[0].id] = node_id
     return ids
 
 
+def _node_runtime_ids(tree: ast.Module) -> dict[int, str]:
+    calls: list[ast.Call] = []
+    build_func = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "build"
+        ),
+        None,
+    )
+    search_root: ast.AST = build_func if build_func is not None else tree
+    for node in ast.walk(search_root):
+        if isinstance(node, ast.Call) and _node_call_class_type(node):
+            calls.append(node)
+    calls.sort(key=lambda node: (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)))
+    runtime_ids: dict[int, str] = {}
+    numeric_ids: set[int] = set()
+    for call in calls:
+        explicit = _node_call_source_id(call)
+        if explicit is not None:
+            runtime_ids[id(call)] = explicit
+            if explicit.isdigit():
+                numeric_ids.add(int(explicit))
+            continue
+        next_id = max(numeric_ids, default=0) + 1
+        runtime_ids[id(call)] = str(next_id)
+        numeric_ids.add(next_id)
+    return runtime_ids
+
+
 def _node_call_source_id(node: ast.Call) -> str | None:
     call_name = _call_name(node.func)
+    if call_name == "raw_call" and len(node.args) >= 2:
+        value = node.args[1]
+        if isinstance(value, ast.Constant):
+            return str(value.value)
     if call_name == "node" and len(node.args) >= 3:
         value = node.args[2]
         if isinstance(value, ast.Constant):
@@ -227,10 +262,11 @@ def _keyword_node_ref(node: ast.Call, name: str, node_assignments: dict[str, str
 
 def _single_terminal_output_id(tree: ast.Module) -> str | None:
     candidates: list[str] = []
+    runtime_ids = _node_runtime_ids(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        node_id = _node_call_source_id(node)
+        node_id = runtime_ids.get(id(node)) or _node_call_source_id(node)
         if node_id is None:
             continue
         class_type = _node_call_class_type(node)
@@ -241,10 +277,11 @@ def _single_terminal_output_id(tree: ast.Module) -> str | None:
 
 def _terminal_output_id_for_type(tree: ast.Module, output_type: str) -> str | None:
     candidates: list[str] = []
+    runtime_ids = _node_runtime_ids(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        node_id = _node_call_source_id(node)
+        node_id = runtime_ids.get(id(node)) or _node_call_source_id(node)
         if node_id is None:
             continue
         class_type = _node_call_class_type(node)
@@ -255,6 +292,8 @@ def _terminal_output_id_for_type(tree: ast.Module, output_type: str) -> str | No
 
 def _node_call_class_type(node: ast.Call) -> str | None:
     call_name = _call_name(node.func)
+    if call_name == "raw_call" and node.args and isinstance(node.args[0], ast.Constant):
+        return str(node.args[0].value)
     if call_name == "node" and len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
         return str(node.args[1].value)
     if call_name and call_name[:1].isupper():

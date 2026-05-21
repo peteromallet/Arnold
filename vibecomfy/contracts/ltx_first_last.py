@@ -38,25 +38,25 @@ _EXPECTED_INPUTS = frozenset(
 )
 
 _EXPECTED_INPUT_TARGETS = {
-    "prompt": ("128", "text"),
-    "negative_prompt": ("112", "text"),
-    "seed": ("100", "noise_seed"),
-    "seed_first": ("100", "noise_seed"),
-    "seed_last": ("100", "noise_seed"),
+    "prompt": ("130", "text"),
+    "negative_prompt": ("127", "text"),
+    "seed": ("99", "noise_seed"),
+    "seed_first": ("99", "noise_seed"),
+    "seed_last": ("99", "noise_seed"),
     "width": ("113", "value"),
     "height": ("98", "value"),
     "frames": ("102", "value"),
     "fps": ("123", "value"),
     "fps_int": ("114", "value"),
-    "first_strength": ("115", "strength"),
-    "last_strength": ("111", "strength"),
-    "first_image": ("31", "image"),
-    "last_image": ("39", "image"),
-    "model": ("127", "ckpt_name"),
+    "first_strength": ("136", "strength"),
+    "last_strength": ("137", "strength"),
+    "first_image": ("1", "image"),
+    "last_image": ("2", "image"),
+    "model": ("125", "ckpt_name"),
 }
 
-_CHECKPOINT_NODES = ("103", "126", "127")
-_GUIDE_NODES = {"first_strength": "115", "last_strength": "111"}
+_CHECKPOINT_NODES = ("103", "125")
+_GUIDE_NODES = {"first_strength": "136", "last_strength": "137"}
 _DISALLOWED_RAW_JSON_DRIFT_NODES = frozenset(
     {
         "LTXICLoRALoaderModelOnly",
@@ -155,40 +155,40 @@ class LTXFirstLastTwoStageContract:
                     detail={"node_id": node_id, "actual": strength},
                 )
 
-        first_latent = self._lens.edge_source("115", "latent")
-        if first_latent is None or first_latent.node_id != "108":
+        first_latent = self._lens.edge_source("136", "latent")
+        if first_latent is None or first_latent.node_id != "135":
             report.add(
                 "wrong_first_guide_latent_source",
                 "First LTXVAddGuide.latent must consume EmptyLTXVLatentVideo.",
-                detail={"expected_source_node_id": "108", "actual_source_node_id": getattr(first_latent, "node_id", None)},
+                detail={"expected_source_node_id": "135", "actual_source_node_id": getattr(first_latent, "node_id", None)},
             )
-        last_latent = self._lens.edge_source("111", "latent")
-        if last_latent is None or last_latent.node_id != "115":
+        last_latent = self._lens.edge_source("137", "latent")
+        if last_latent is None or last_latent.node_id != "136":
             report.add(
                 "wrong_last_guide_latent_source",
                 "Last LTXVAddGuide.latent must consume the first guide output.",
-                detail={"expected_source_node_id": "115", "actual_source_node_id": getattr(last_latent, "node_id", None)},
+                detail={"expected_source_node_id": "136", "actual_source_node_id": getattr(last_latent, "node_id", None)},
             )
 
-        guider_model = self._lens.edge_source("116", "model")
-        if guider_model is None or guider_model.node_id != "127":
+        guider_model = self._lens.edge_source("138", "model")
+        if guider_model is None or guider_model.node_id != "125":
             report.add(
                 "wrong_guider_model_source",
                 "CFGGuider.model must consume the distilled checkpoint directly in the portable parity profile.",
-                detail={"expected_source_node_id": "127", "actual_source_node_id": getattr(guider_model, "node_id", None)},
+                detail={"expected_source_node_id": "125", "actual_source_node_id": getattr(guider_model, "node_id", None)},
             )
 
-        for node_id, field in (("116", "positive"), ("116", "negative"), ("106", "positive"), ("106", "negative")):
+        for node_id, field in (("138", "positive"), ("138", "negative")):
             source = self._lens.edge_source(node_id, field)
-            if source is None or source.node_id != "111":
+            if source is None or source.node_id != "137":
                 report.add(
                     "wrong_last_guide_conditioning_consumer",
-                    f"{node_id}.{field} must consume conditioning from last guide node 111.",
+                    f"{node_id}.{field} must consume conditioning from last guide node 137.",
                     detail={"node_id": node_id, "field": field, "actual_source_node_id": getattr(source, "node_id", None)},
                 )
 
     def _check_prompt_negative_paths(self, report: ContractReport) -> None:
-        for node_id, label in [("128", "prompt"), ("112", "negative")]:
+        for node_id, label in [("130", "prompt"), ("127", "negative")]:
             node = self._lens.node(node_id)
             if node is None:
                 report.add(f"missing_{label}_encode", f"Missing {label} CLIPTextEncode node {node_id}.")
@@ -214,7 +214,7 @@ class LTXFirstLastTwoStageContract:
             ("102", "PrimitiveInt", "frames"),
             ("114", "PrimitiveInt", "fps_int"),
             ("123", "PrimitiveFloat", "fps"),
-            ("108", "EmptyLTXVLatentVideo", "latent_video"),
+            ("135", "EmptyLTXVLatentVideo", "latent_video"),
         ]:
             node = self._lens.node(node_id)
             if node is None:
@@ -226,7 +226,7 @@ class LTXFirstLastTwoStageContract:
                     detail={"node_id": node_id, "actual_class_type": node.class_type},
                 )
 
-        for resize_id in ("124", "125"):
+        for resize_id in ("128", "129"):
             node = self._lens.node(resize_id)
             if node is None:
                 report.add("missing_resize_node", f"Missing ResizeImageMaskNode {resize_id}.")
@@ -238,17 +238,17 @@ class LTXFirstLastTwoStageContract:
                 )
 
     def _check_sampler(self, report: ContractReport) -> None:
-        sampler = self._lens.node("120")
+        sampler = self._lens.node("140")
         if sampler is None:
-            report.add("missing_sampler", "Missing SamplerCustomAdvanced node 120.")
+            report.add("missing_sampler", "Missing SamplerCustomAdvanced node 140.")
         elif sampler.class_type != "SamplerCustomAdvanced":
-            report.add("wrong_sampler_class_type", f"Node 120 has class_type {sampler.class_type!r}.")
+            report.add("wrong_sampler_class_type", f"Node 140 has class_type {sampler.class_type!r}.")
 
-        sigmas = self._lens.node("118")
+        sigmas = self._lens.node("116")
         if sigmas is None:
-            report.add("missing_sigmas", "Missing ManualSigmas node 118.")
+            report.add("missing_sigmas", "Missing ManualSigmas node 116.")
             return
-        value = self._lens.node_value("118", "sigmas") or self._lens.node_value("118", "widget_0")
+        value = self._lens.node_value("116", "sigmas") or self._lens.node_value("116", "widget_0")
         if value is not None and str(value).replace(" ", "") != _SIGMAS.replace(" ", ""):
             report.add(
                 "wrong_sigmas_value",
@@ -257,19 +257,19 @@ class LTXFirstLastTwoStageContract:
                 detail={"actual": str(value), "expected": _SIGMAS},
             )
 
-        crop = self._lens.node("106")
+        crop = self._lens.node("142")
         if crop is None:
-            report.add("missing_ltx_crop_guides", "Missing LTXVCropGuides node 106 between sampled latent and video decode.")
+            report.add("missing_ltx_crop_guides", "Missing LTXVCropGuides node 142 between sampled latent and video decode.")
         elif crop.class_type != "LTXVCropGuides":
-            report.add("wrong_ltx_crop_guides_class_type", f"Node 106 has class_type {crop.class_type!r}.")
+            report.add("wrong_ltx_crop_guides_class_type", f"Node 142 has class_type {crop.class_type!r}.")
 
-        decode_samples = self._lens.edge_source("105", "samples")
-        if decode_samples is None or decode_samples.node_id != "106" or decode_samples.output_slot != 2:
+        decode_samples = self._lens.edge_source("144", "samples")
+        if decode_samples is None or decode_samples.node_id != "142" or decode_samples.output_slot != 2:
             report.add(
                 "wrong_decode_samples_source",
                 "VAEDecodeTiled.samples must consume LTXVCropGuides latent output 2.",
                 detail={
-                    "expected_source_node_id": "106",
+                    "expected_source_node_id": "142",
                     "expected_output_slot": 2,
                     "actual_source_node_id": getattr(decode_samples, "node_id", None),
                     "actual_output_slot": getattr(decode_samples, "output_slot", None),

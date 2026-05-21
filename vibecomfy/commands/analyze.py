@@ -10,6 +10,7 @@ from vibecomfy.analysis import graph
 from vibecomfy.analysis.corpus import build_corpus_snapshot
 from vibecomfy.analysis.fields import trace_public_field
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.commands.analyze_names import analyze_names
 from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.workflow import VibeWorkflow
@@ -103,6 +104,16 @@ def _cmd_tracefield(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(_format_tracefield(result))
+    return 0
+
+
+def _cmd_names(args: argparse.Namespace) -> int:
+    workflow = _load_workflow(args.workflow)
+    result = analyze_names(workflow, strategy=args.strategy)
+    if getattr(args, "json", False):
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(_format_names(result))
     return 0
 
 
@@ -300,6 +311,20 @@ def _format_tracefield(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_names(result: dict[str, Any]) -> str:
+    lines = [
+        f"Workflow: {result['workflow']}",
+        f"Strategy: {result['strategy']}",
+        f"Nodes: {result['summary']['node_count']}",
+    ]
+    for row in result["rows"]:
+        lines.append(
+            f"{row['node_id']}\t{row['class_type']}\t"
+            f"{row['current_name']} -> {row['selected_name']}\t{row['reason']}"
+        )
+    return "\n".join(lines)
+
+
 def _indent_rows(rows: Any) -> list[str]:
     if not rows:
         return ["  -"]
@@ -389,3 +414,9 @@ def register(subparsers) -> None:
     tracefield.add_argument("field", help="Public input field name to trace")
     tracefield.add_argument("--json", action="store_true")
     tracefield.set_defaults(func=_cmd_tracefield)
+
+    names = verbs.add_parser("names", help="Preview generated Python variable names.")
+    names.add_argument("workflow")
+    names.add_argument("--strategy", choices=("current", "role-based"), default="role-based")
+    names.add_argument("--json", action="store_true")
+    names.set_defaults(func=_cmd_names)
