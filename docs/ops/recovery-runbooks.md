@@ -214,6 +214,8 @@ Reproduction setup:
 - Use the cloud smoke runbook added in the cloud coverage batch for live evidence capture.
 
 Recovery steps:
+- **First, run the supervisor:** `megaplan cloud supervise --chain` to get a safe diagnosis of runner liveness, current milestone/plan state, last log activity, sync state, and next action. The supervisor may safely restart a dead `megaplan-chain` tmux session or advance past a merged PR, but it will refuse to act when a human prerequisite is required, a quality gate is failing, or a PR is still open — it will surface those refusal reasons clearly and leave manual recovery as the next step.
+- If the supervisor refused to act, proceed with the manual recovery steps below.
 - Rebuild the worker image from a clean checkout.
 - Retry with a minimal three-sprint chain spec.
 - If dispatch is missing the trusted container environment variable, stop the run and fix the wrapper before retrying.
@@ -225,6 +227,50 @@ Post-recovery validation:
 Concrete references:
 - `megaplan/cloud_chain.py` and cloud wrapper tests.
 - `megaplan/chain.py`: `chain start --spec` local entrypoint.
+
+## Cloud Supervisor Tick
+
+Evidence id: `OPS-CLOUD-SUPERVISOR`
+
+Symptoms:
+- `megaplan cloud supervise --chain` returns a refusal status (`supervisor_blocked`, `refused_reason` populated) without explanation of what the refusal means.
+- An operator does not know whether it is safe to restart a chain runner or advance past a merged PR.
+- The environment is missing the `megaplan-chain` tmux session, a quality gate is blocking, or a human prerequisite is unmet, and no safe restart path is clear.
+
+Diagnosis:
+- Run `megaplan cloud supervise --chain --cloud-yaml <yaml> [--remote-spec <path>]` to produce a one-shot tick report. The JSON stdout includes `effective_status`, `next_action`, `acted`, `refused_reason`, `runner`, `sync`, `pr`, and `logs` fields.
+- Inspect `effective_status` and `next_action` to understand the chain's classified state and the supervisor's verdict.
+- If `acted` is `false` and `refused_reason` is non-null, the supervisor detected a condition that requires human intervention (see refusal cases below).
+- Examine the `runner` section for tmux session liveness and the `logs` section for `chain_log` mtime/size to gauge recent activity.
+
+Reproduction setup:
+- A cloud provider with `ssh_exec` capability is required.
+- Chain state that triggers each refusal path: (a) a chain with a human prerequisite policy of `required` and an unmet action, (b) a chain with a validation policy of `required` and a failing quality gate, (c) a chain awaiting PR merge where `gh pr view --json state` reports `OPEN`, (d) a chain whose `megaplan-chain` tmux session is dead or missing (stale bookkeeping).
+- Local tests in `tests/test_cloud_chain_status.py` cover each classification and action path without live cloud credentials.
+
+Recovery steps:
+- **Always run the supervisor first** to get a safe diagnosis before taking manual action. The supervisor is not a destructive repair tool — it will never force-push, reset branches, delete branches, invent human approvals, or bypass quality gates.
+- **If the supervisor reports `acted: true`:** it has safely restarted a dead runner or advanced the chain past a merged PR. Re-run `megaplan cloud status --chain` and the supervisor tick to confirm the chain is now in a healthy state.
+- **If the supervisor reports `acted: false` with `refused_reason`:**
+  - *Human prerequisite blocked:* Use `megaplan user-action resolve <action-id>` or the relevant `chain override` command to satisfy the prerequisite, then re-run the supervisor.
+  - *Quality gate blocked:* Address the failing validation (fix code, update tests, or accept with documented debt), then re-run the supervisor.
+  - *PR not merged:* Wait for the PR merge or manually merge it, then re-run the supervisor; the supervisor will automatically advance past a merged PR on the next tick.
+  - *Provider lacks ssh_exec / sync unavailable:* The supervisor cannot act without a remote execution channel; verify provider configuration and credentials.
+  - *Runner alive but bookkeeping stale:* The chain state file is out of date but the runner is still active; inspect the runner directly rather than restarting.
+  - *Stale bookkeeping restart failed:* The supervisor attempted to restart the tmux session but the remote command failed; check the remote host connectivity and tmux installation.
+- **Manual approval boundary:** The supervisor will never green-light a blocked human prerequisite, waive a failing quality gate, or close/merge a PR. Those decisions remain with human operators.
+
+Post-recovery validation:
+- Re-run `megaplan cloud status --chain` and confirm `effective_status` is `running` or `complete`.
+- Re-run the supervisor tick and confirm `acted` is `false` with `next_action` of `noop` (running chain) or `done` (complete chain) — no further action needed.
+- Verify the `runner.session` is `megaplan-chain` and the `chain_log` mtime advances after one tick.
+- Run `pytest tests/test_cloud_chain_status.py tests/test_cloud_chain_wrapper.py -q`.
+
+Concrete references:
+- `megaplan/cloud/supervise.py`: `cloud_supervise_tick()`, `_tick_report()`, safe action policy constants (`READ_ONLY_STATUSES`, `BLOCKED_REFUSAL_REASONS`).
+- `megaplan/cloud/cli.py`: `_run_supervise_tick()`, `cloud_chain_status_payload()`, `_chain_start_command()`, `_tmux_chain_restart_command()`.
+- `megaplan/chain.py`: `_capture_sync_state()`, `effective_chain_policy()`.
+- `tests/test_cloud_chain_status.py`: supervisor tick test suite (test_supervise_tick_running_noop, test_supervise_tick_complete_done, test_supervise_tick_human_prerequisite_blocked, test_supervise_tick_quality_gate_blocked, test_supervise_tick_stale_dead_restart, test_supervise_tick_awaiting_pr_merged_advance, test_supervise_tick_awaiting_pr_unmerged_block).
 
 ## DB Artifact Binary Compatibility During File-To-DB Promotion
 

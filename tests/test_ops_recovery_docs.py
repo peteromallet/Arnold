@@ -25,6 +25,7 @@ REQUIRED_SCENARIOS = {
     "Failed Or Partial Legacy Local Plan Migration": "OPS-LEGACY-MIGRATION-PARTIAL",
     "Failed Export Or Unusable Backup Tar": "OPS-EXPORT-TAR-VALIDATION",
     "Cloud Chain Worker Stall": "OPS-CLOUD-CHAIN-STALL-MANUAL",
+    "Cloud Supervisor Tick": "OPS-CLOUD-SUPERVISOR",
     "DB Artifact Binary Compatibility During File-To-DB Promotion": "OPS-DB-BINARY-ARTIFACT-PROMOTION",
 }
 

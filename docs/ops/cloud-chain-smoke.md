@@ -57,6 +57,18 @@ megaplan cloud logs --cloud-yaml cloud.yaml --follow
 megaplan cloud status --cloud-yaml cloud.yaml --chain
 ```
 
+5. Run the supervisor tick after the chain has settled (or stalled):
+
+```bash
+megaplan cloud supervise --chain --cloud-yaml cloud.yaml
+```
+
+The supervisor emits a JSON report on stdout and a human-readable summary on stderr. If the chain is running it reports `noop`; if stalled with a dead runner it may restart the tmux session; if blocked on prerequisites, quality gates, or unmerged PRs it refuses to act and explains why.
+
+**Important**: The supervisor is **not** a destructive repair tool. It does not replace human approval, PR review, or quality-gate resolution. See `docs/cloud.md` for the full refusal-case table.
+
+Record the supervisor report as evidence (save stderr and stdout).
+
 ## Evidence Template
 
 Record the following:
@@ -71,6 +83,7 @@ Record the following:
 - Uploaded milestone files:
 - Final status:
 - Log excerpt proving all three sprint milestones completed or the failure reason:
+- Supervisor tick report (JSON stdout + stderr summary) from step 5:
 
 ## Local Validation
 

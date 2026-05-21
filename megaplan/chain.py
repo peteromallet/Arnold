@@ -83,6 +83,15 @@ from megaplan.types import CliError, STATE_AWAITING_PR_MERGE
 
 VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
 VALID_MERGE_POLICIES = ("auto", "review")
+
+# Chain-level policy enums — conservative values following the
+# VALID_MERGE_POLICIES module-level tuple pattern.  These are
+# operator-facing contracts; renaming later is a breaking change.
+# Validated in ChainSpec.from_dict() with CliError("invalid_spec", ...).
+VALID_PREREQUISITE_POLICIES = ("none", "required")
+VALID_VALIDATION_POLICIES = ("none", "required")
+# review_policy.clean_milestone_pr
+VALID_CLEAN_MILESTONE_PR_POLICIES = ("auto", "manual")
 TERMINAL_SKIP_STATES = ("done", "aborted", "failed")
 GH_TRANSIENT_ERROR_PATTERNS = (
     " 500",
@@ -255,6 +264,10 @@ class ChainSpec:
     on_failure: str = "stop_chain"
     on_escalate: str = "stop_chain"
     merge_policy: str = "auto"
+    # Chain-level policies — conservative defaults (see VALID_* tuples above).
+    prerequisite_policy: str = "none"
+    validation_policy: str = "none"
+    review_policy: dict[str, str] = field(default_factory=lambda: {"clean_milestone_pr": "auto"})
     # Driver knobs propagated into auto.drive for each plan.
     stall_threshold: int = DEFAULT_STALL_THRESHOLD
     max_iterations: int = DEFAULT_MAX_ITERATIONS
@@ -309,6 +322,34 @@ class ChainSpec:
                 f"merge_policy must be one of {VALID_MERGE_POLICIES}; got {merge_policy!r}",
             )
 
+        # -- chain-level policies ---------------------------------------------------
+        prerequisite_policy = raw.get("prerequisite_policy", "none")
+        if prerequisite_policy not in VALID_PREREQUISITE_POLICIES:
+            raise CliError(
+                "invalid_spec",
+                f"prerequisite_policy must be one of {VALID_PREREQUISITE_POLICIES}; got {prerequisite_policy!r}",
+            )
+        validation_policy = raw.get("validation_policy", "none")
+        if validation_policy not in VALID_VALIDATION_POLICIES:
+            raise CliError(
+                "invalid_spec",
+                f"validation_policy must be one of {VALID_VALIDATION_POLICIES}; got {validation_policy!r}",
+            )
+        # review_policy is a nested mapping: {clean_milestone_pr: auto|manual}
+        review_raw = raw.get("review_policy") or {}
+        if not isinstance(review_raw, dict):
+            raise CliError(
+                "invalid_spec",
+                "`review_policy` must be a mapping",
+            )
+        clean_milestone_pr = review_raw.get("clean_milestone_pr", "auto")
+        if clean_milestone_pr not in VALID_CLEAN_MILESTONE_PR_POLICIES:
+            raise CliError(
+                "invalid_spec",
+                f"review_policy.clean_milestone_pr must be one of {VALID_CLEAN_MILESTONE_PR_POLICIES}; got {clean_milestone_pr!r}",
+            )
+        review_policy = {"clean_milestone_pr": clean_milestone_pr}
+
         driver_raw = raw.get("driver") or {}
         if not isinstance(driver_raw, dict):
             raise CliError("invalid_spec", "`driver` must be a mapping")
@@ -335,6 +376,9 @@ class ChainSpec:
             on_failure=on_failure,
             on_escalate=on_escalate,
             merge_policy=merge_policy,
+            prerequisite_policy=prerequisite_policy,
+            validation_policy=validation_policy,
+            review_policy=review_policy,
             stall_threshold=stall,
             max_iterations=max_iter,
             poll_sleep=poll,
@@ -362,6 +406,17 @@ class ChainState:
     pr_number: int | None = None
     pr_state: str | None = None
     completed: list[dict[str, Any]] = field(default_factory=list)
+    # PR/branch sync fields (see megaplan.types SYNC_CLEAN / SYNC_STALE / SYNC_DIRTY).
+    branch_head: str | None = None
+    pr_head: str | None = None
+    last_pushed_commit: str | None = None
+    dirty_flag: bool = False
+    sync_state: str | None = None
+    # Slot-first watchdog fields.
+    extra_repos: list[str] = field(default_factory=list)
+    chain_session: str | None = None
+    resolved_workspace: str | None = None
+    extra_repo_sync: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -371,10 +426,43 @@ class ChainState:
             "pr_number": self.pr_number,
             "pr_state": self.pr_state,
             "completed": list(self.completed),
+            "branch_head": self.branch_head,
+            "pr_head": self.pr_head,
+            "last_pushed_commit": self.last_pushed_commit,
+            "dirty_flag": self.dirty_flag,
+            "sync_state": self.sync_state,
+            "extra_repos": list(self.extra_repos),
+            "chain_session": self.chain_session,
+            "resolved_workspace": self.resolved_workspace,
+            "extra_repo_sync": list(self.extra_repo_sync),
         }
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "ChainState":
+        # Shape-validate optional new fields with fallback defaults for
+        # backward compatibility with old state JSON.
+        extra_repos = raw.get("extra_repos")
+        if not isinstance(extra_repos, list) or any(
+            not isinstance(item, str) or not item for item in extra_repos
+        ):
+            extra_repos = []
+
+        chain_session = raw.get("chain_session")
+        if chain_session is not None and (
+            not isinstance(chain_session, str) or not chain_session.strip()
+        ):
+            chain_session = None
+
+        resolved_workspace = raw.get("resolved_workspace")
+        if resolved_workspace is not None and (
+            not isinstance(resolved_workspace, str) or not resolved_workspace.strip()
+        ):
+            resolved_workspace = None
+
+        extra_repo_sync = raw.get("extra_repo_sync")
+        if not isinstance(extra_repo_sync, list):
+            extra_repo_sync = []
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -382,6 +470,15 @@ class ChainState:
             pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
             pr_state=raw.get("pr_state"),
             completed=list(raw.get("completed") or []),
+            branch_head=raw.get("branch_head"),
+            pr_head=raw.get("pr_head"),
+            last_pushed_commit=raw.get("last_pushed_commit"),
+            dirty_flag=bool(raw.get("dirty_flag", False)),
+            sync_state=raw.get("sync_state"),
+            extra_repos=extra_repos,
+            chain_session=chain_session,
+            resolved_workspace=resolved_workspace,
+            extra_repo_sync=extra_repo_sync,
         )
 
 
@@ -428,6 +525,129 @@ def save_chain_state(spec_path: Path, state: ChainState) -> None:
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
     tmp.replace(state_path)
+
+
+# ---------------------------------------------------------------------------
+# Runtime policy artifact helpers
+# ---------------------------------------------------------------------------
+
+
+def _runtime_policy_path_for(spec_path: Path) -> Path:
+    """Return the path for the runtime policy override artifact.
+
+    Placed alongside the chain state file in ``.megaplan/plans/.chains/``
+    using the same stem+digest naming convention.
+    """
+    spec_resolved = spec_path.resolve()
+    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    return (
+        spec_resolved.parent
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / f"{spec_resolved.stem}-{digest}.runtime_policy.json"
+    )
+
+
+def load_runtime_policy(spec_path: Path) -> dict[str, Any]:
+    """Load the runtime policy override artifact for *spec_path*.
+
+    Returns an empty dict when no artifact exists so callers never need to
+    guard against ``None``.
+    """
+    path = _runtime_policy_path_for(spec_path)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def save_runtime_policy(spec_path: Path, overrides: dict[str, Any]) -> None:
+    """Persist *overrides* as the runtime policy override artifact.
+
+    The caller is responsible for validating keys/values before calling this.
+    This writes only the override artifact — never touches chain.yaml.
+    """
+    path = _runtime_policy_path_for(spec_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(overrides, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def effective_chain_policy(
+    spec: ChainSpec,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Merge runtime overrides with spec-level policy defaults.
+
+    Returns a plain dict suitable for serialization in status payloads,
+    plan metadata, and cloud preflight output.  Runtime overrides always
+    win over the static YAML values.
+    """
+    overrides = overrides or {}
+    prerequisite_policy = overrides.get("prerequisite_policy", spec.prerequisite_policy)
+    validation_policy = overrides.get("validation_policy", spec.validation_policy)
+    # review_policy is stored as a dict on the spec; keep it as a dict here.
+    review_from_spec = spec.review_policy or {}
+    review_from_override = overrides.get("review_policy") or {}
+    clean_milestone_pr = review_from_override.get(
+        "clean_milestone_pr",
+        review_from_spec.get("clean_milestone_pr", "auto"),
+    )
+    return {
+        "prerequisite_policy": prerequisite_policy,
+        "validation_policy": validation_policy,
+        "review_policy": {"clean_milestone_pr": clean_milestone_pr},
+        # Record whether any override was active so consumers can trace provenance.
+        "source": "runtime_override" if overrides else "chain_yaml",
+    }
+
+
+def _write_chain_policy_into_plan_meta(
+    root: Path,
+    plan_name: str,
+    spec: ChainSpec,
+    spec_path: Path,
+    milestone_label: str,
+) -> None:
+    """Record effective chain policy in the plan's ``state.json`` metadata.
+
+    Reads the plan's state.json, merges ``meta.chain_policy``, and writes
+    back atomically.  Does nothing if the plan directory cannot be resolved
+    (best-effort, non-critical).
+    """
+    from megaplan._core import atomic_write_json, read_json
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        return
+    state_path = plan_dir / "state.json"
+    if not state_path.exists():
+        return
+    try:
+        state = read_json(state_path)
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(state, dict):
+        return
+    runtime_overrides = load_runtime_policy(spec_path)
+    effective = effective_chain_policy(spec, runtime_overrides)
+    meta = state.setdefault("meta", {})
+    meta["chain_policy"] = {
+        "prerequisite_policy": effective["prerequisite_policy"],
+        "validation_policy": effective["validation_policy"],
+        "review_policy": effective["review_policy"],
+        "source": effective["source"],
+        "milestone_label": milestone_label,
+    }
+    atomic_write_json(state_path, state)
 
 
 def validate_paths(spec: ChainSpec, root: Path) -> None:
@@ -831,6 +1051,169 @@ def _reset_staged_paths(root: Path, paths: list[Path], *, writer) -> None:
         writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
 
 
+# ---------------------------------------------------------------------------
+# Git helpers for sync state classification
+# ---------------------------------------------------------------------------
+
+
+def _branch_head(root: Path) -> str | None:
+    """Return the sha of HEAD or *None* if the command fails (e.g. no repo)."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip() or None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def _remote_branch_head(root: Path, branch: str) -> str | None:
+    """Return the sha of ``origin/<branch>`` or *None* if unresolvable."""
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", branch],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            line = proc.stdout.strip().splitlines()
+            if line:
+                return line[0].split()[0] if line[0] else None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
+def _is_worktree_dirty(root: Path) -> bool:
+    """True when ``git status --porcelain`` reports unstaged/uncommitted changes."""
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return bool(proc.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+
+
+def _classify_sync_state(
+    *,
+    branch_head: str | None,
+    pr_head: str | None,
+    last_pushed_commit: str | None,
+    dirty: bool,
+) -> str:
+    """Classify sync state independently from merge_policy.
+
+    Returns one of ``SYNC_CLEAN``, ``SYNC_STALE``, ``SYNC_DIRTY`` (from
+    ``megaplan.types``).
+    """
+    from megaplan.types import SYNC_CLEAN, SYNC_DIRTY, SYNC_STALE
+
+    if dirty:
+        return SYNC_DIRTY
+    if branch_head and last_pushed_commit and branch_head != last_pushed_commit:
+        return SYNC_DIRTY  # diverged from what was last pushed
+    if pr_head and last_pushed_commit and pr_head != last_pushed_commit:
+        return SYNC_STALE  # remote/PR head moved past our last push
+    if branch_head and pr_head and branch_head != pr_head:
+        return SYNC_STALE  # local branch behind PR head
+    if branch_head and last_pushed_commit and branch_head == last_pushed_commit:
+        return SYNC_CLEAN
+    # Not enough data to classify confidently.
+    return SYNC_CLEAN
+
+
+def _capture_sync_state(
+    root: Path,
+    spec_path: Path,
+    *,
+    branch: str | None = None,
+    pr_number: int | None = None,
+    extra_repos: list[str] | None = None,
+) -> None:
+    """Update the persisted chain state with fresh sync fields.
+
+    Reads live git data, classifies sync, and saves to the chain state.
+    Does nothing if ``root`` is not a git repo (all helpers return None).
+
+    When *extra_repos* is provided each path is probed for branch head,
+    dirty flag, and sync state.  Results are stored in
+    ``ChainState.extra_repo_sync``.  Extra repo probing is best-effort and
+    never destructive (no push, reset, or delete).
+    """
+    state = load_chain_state(spec_path)
+    branch_head = _branch_head(root)
+    pr_head: str | None = None
+    if branch:
+        pr_head = _remote_branch_head(root, branch)
+    dirty = _is_worktree_dirty(root)
+    state.branch_head = branch_head
+    state.pr_head = pr_head
+    state.dirty_flag = dirty
+    state.last_pushed_commit = branch_head  # live rev-parse — best-effort push tracking
+    state.sync_state = _classify_sync_state(
+        branch_head=branch_head,
+        pr_head=pr_head,
+        last_pushed_commit=state.last_pushed_commit,
+        dirty=dirty,
+    )
+
+    # Best-effort extra repo probing (non-destructive).
+    if extra_repos:
+        extra_sync: list[dict[str, Any]] = []
+        for repo_path_str in extra_repos:
+            try:
+                repo_path = Path(repo_path_str)
+                if not repo_path.exists():
+                    extra_sync.append(
+                        {"path": repo_path_str, "status": "missing"}
+                    )
+                    continue
+                er_head = _branch_head(repo_path)
+                if er_head is None:
+                    extra_sync.append(
+                        {"path": repo_path_str, "status": "not_a_git_repo"}
+                    )
+                    continue
+                er_dirty = _is_worktree_dirty(repo_path)
+                er_sync = _classify_sync_state(
+                    branch_head=er_head,
+                    pr_head=None,
+                    last_pushed_commit=er_head,
+                    dirty=er_dirty,
+                )
+                extra_sync.append(
+                    {
+                        "path": repo_path_str,
+                        "branch_head": er_head,
+                        "dirty": er_dirty,
+                        "sync_state": er_sync,
+                    }
+                )
+            except Exception:
+                extra_sync.append(
+                    {"path": repo_path_str, "status": "error"}
+                )
+        state.extra_repo_sync = extra_sync
+
+    save_chain_state(spec_path, state)
+
+
 def _commit_and_push_phase(
     root: Path,
     branch: str,
@@ -1200,6 +1583,9 @@ def run_chain(
                     base_branch=spec.base_branch,
                     writer=writer,
                 )
+                _capture_sync_state(
+                    root, spec_path, branch=milestone.branch, pr_number=state.pr_number
+                )
                 state.pr_number = _ensure_milestone_pr(
                     root,
                     milestone,
@@ -1222,6 +1608,9 @@ def run_chain(
                     base_branch=spec.base_branch,
                     writer=writer,
                 )
+                _capture_sync_state(
+                    root, spec_path, branch=milestone.branch, pr_number=None
+                )
             plan_name = _init_plan(
                 root,
                 milestone.idea,
@@ -1238,6 +1627,11 @@ def run_chain(
                 phase_model=milestone.phase_model,
                 writer=writer,
             )
+            # Record effective chain policy in the newly initialized plan's
+            # state.json metadata so downstream consumers can introspect it.
+            _write_chain_policy_into_plan_meta(
+                root, plan_name, spec, spec_path, milestone.label
+            )
             state.current_milestone_index = idx
             state.current_plan_name = plan_name
             save_chain_state(spec_path, state)
@@ -1249,6 +1643,9 @@ def run_chain(
                     "init",
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
+                )
+                _capture_sync_state(
+                    root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
                 state.pr_number = _ensure_milestone_pr(
                     root,
@@ -1268,6 +1665,9 @@ def run_chain(
                     phase,
                     writer=writer,
                     preexisting_dirty_paths=preexisting_dirty_paths,
+                )
+                _capture_sync_state(
+                    root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
 
         outcome = _drive_plan(
@@ -1305,6 +1705,9 @@ def run_chain(
                 writer=writer,
                 preexisting_dirty_paths=preexisting_dirty_paths,
             )
+            _capture_sync_state(
+                root, spec_path, branch=milestone.branch, pr_number=state.pr_number
+            )
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
@@ -1316,6 +1719,12 @@ def run_chain(
                     state.pr_state = "awaiting_merge"
                     save_chain_state(spec_path, state)
                     log(f"PR #{state.pr_number} ready; awaiting manual merge")
+                    _capture_sync_state(
+                        root,
+                        spec_path,
+                        branch=milestone.branch,
+                        pr_number=state.pr_number,
+                    )
                     return _result(
                         STATE_AWAITING_PR_MERGE,
                         state,
@@ -1402,6 +1811,13 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         else:
             remaining.append({"label": milestone.label, "index": index})
 
+    sync: dict[str, Any] = {
+        "branch_head": state.branch_head,
+        "pr_head": state.pr_head,
+        "last_pushed_commit": state.last_pushed_commit,
+        "dirty_flag": state.dirty_flag,
+        "sync_state": state.sync_state,
+    }
     summary = {
         "current_milestone": current_milestone,
         "completed": completed,
@@ -1411,6 +1827,12 @@ def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
         "base_branch": spec.base_branch,
         "current_plan_name": state.current_plan_name,
         "last_state": state.last_state,
+        "sync": sync,
+        "policy": {
+            "prerequisite_policy": spec.prerequisite_policy,
+            "validation_policy": spec.validation_policy,
+            "review_policy": dict(spec.review_policy or {}),
+        },
     }
     if state.pr_number is not None:
         summary["pr_number"] = state.pr_number
@@ -1439,6 +1861,28 @@ def _write_chain_status_pretty(summary: dict[str, Any], *, writer) -> None:
         writer(f"Last state: {summary['last_state']}\n")
     if summary.get("pr_number"):
         writer(f"Current PR: #{summary['pr_number']} ({summary.get('pr_state') or 'unknown'})\n")
+    # Sync section (branch/PR sync state)
+    sync = summary.get("sync") or {}
+    if any(v is not None for v in sync.values()) or sync.get("dirty_flag"):
+        writer("Sync:\n")
+        if sync.get("branch_head"):
+            writer(f"  Branch head: {sync['branch_head']}\n")
+        if sync.get("pr_head"):
+            writer(f"  PR head: {sync['pr_head']}\n")
+        if sync.get("last_pushed_commit"):
+            writer(f"  Last pushed: {sync['last_pushed_commit']}\n")
+        if sync.get("dirty_flag"):
+            writer("  Dirty: yes\n")
+        if sync.get("sync_state"):
+            writer(f"  Sync state: {sync['sync_state']}\n")
+    # Policy section (chain-level policies)
+    policy = summary.get("policy") or {}
+    if policy:
+        writer("Policy:\n")
+        writer(f"  Prerequisite: {policy.get('prerequisite_policy', 'none')}\n")
+        writer(f"  Validation: {policy.get('validation_policy', 'none')}\n")
+        review_policy = policy.get("review_policy") or {}
+        writer(f"  Review (clean_milestone_pr): {review_policy.get('clean_milestone_pr', 'auto')}\n")
     writer("Per-milestone:\n")
     for item in summary.get("per_milestone") or []:
         writer(f"  - [{item['status']}] {item['label']} (index {item['index']})\n")
@@ -1513,6 +1957,29 @@ def build_chain_parser(subparsers: Any) -> None:
     )
     status_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
 
+    override_parser = chain_sub.add_parser(
+        "override", help="Set runtime policy overrides without editing chain.yaml"
+    )
+    override_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    override_parser.add_argument(
+        "--set-prerequisite-policy",
+        choices=VALID_PREREQUISITE_POLICIES,
+        default=None,
+        help="Set prerequisite policy at runtime (e.g. none, required)",
+    )
+    override_parser.add_argument(
+        "--set-validation-policy",
+        choices=VALID_VALIDATION_POLICIES,
+        default=None,
+        help="Set validation policy at runtime (e.g. none, required)",
+    )
+    override_parser.add_argument(
+        "--set-review-clean-milestone-pr",
+        choices=VALID_CLEAN_MILESTONE_PR_POLICIES,
+        default=None,
+        help="Set review clean_milestone_pr policy at runtime (e.g. auto, manual)",
+    )
+
 
 def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.write) -> int:
     action = getattr(args, "chain_action", None)
@@ -1522,12 +1989,51 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
         return 64
     spec_path = Path(spec_arg).expanduser().resolve()
 
+    if action == "override":
+        set_prereq = getattr(args, "set_prerequisite_policy", None)
+        set_valid = getattr(args, "set_validation_policy", None)
+        set_clean = getattr(args, "set_review_clean_milestone_pr", None)
+        if set_prereq is None and set_valid is None and set_clean is None:
+            return _emit_error(
+                CliError(
+                    "invalid_spec",
+                    "At least one --set-* flag is required for chain override. "
+                    "Use --set-prerequisite-policy, --set-validation-policy, "
+                    "or --set-review-clean-milestone-pr.",
+                )
+            )
+        try:
+            spec = load_spec(spec_path)
+        except CliError as exc:
+            return _emit_error(exc)
+        overrides: dict[str, Any] = load_runtime_policy(spec_path)
+        if set_prereq is not None:
+            overrides["prerequisite_policy"] = set_prereq
+        if set_valid is not None:
+            overrides["validation_policy"] = set_valid
+        if set_clean is not None:
+            review_from_overrides = overrides.get("review_policy") or {}
+            review_from_overrides["clean_milestone_pr"] = set_clean
+            overrides["review_policy"] = review_from_overrides
+        save_runtime_policy(spec_path, overrides)
+        effective = effective_chain_policy(spec, overrides)
+        payload = {
+            "success": True,
+            "spec": str(spec_path),
+            "effective_policy": effective,
+            "runtime_overrides": overrides,
+        }
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+        return 0
+
     if action == "status":
         try:
             spec = load_spec(spec_path)
             chain_state = load_chain_state(spec_path)
         except CliError as exc:
             return _emit_error(exc)
+        runtime_overrides = load_runtime_policy(spec_path)
+        effective_policy = effective_chain_policy(spec, runtime_overrides)
         summary = format_chain_status(spec, chain_state)
         _write_chain_status_pretty(summary, writer=writer)
         payload = {
@@ -1538,6 +2044,7 @@ def run_chain_cli(root: Path, args: argparse.Namespace, *, writer=sys.stderr.wri
             "base_branch": spec.base_branch,
             "chain_state": chain_state.to_dict(),
             "summary": summary,
+            "policy": effective_policy,
         }
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0

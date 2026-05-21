@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -47,6 +47,7 @@ class AutoSpec:
 @dataclass(frozen=True)
 class ChainSubSpec:
     spec: str
+    chain_session: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,7 @@ class CloudSpec:
     local: LocalSpec | None = None
     ssh: SshSpec | None = None
     toolchains: list[ToolchainSpec] | None = None
+    extra_repos: list[str] = field(default_factory=list)
 
 
 def apply_repo_overrides(
@@ -340,7 +342,23 @@ def load_spec(path: Path) -> CloudSpec:
         chain_raw = _mapping(raw.get("chain"), "chain")
         chain_spec = ChainSubSpec(
             spec=_absolute_posix(chain_raw.get("spec"), "chain.spec"),
+            chain_session=_optional_string(
+                chain_raw.get("chain_session"), "chain.chain_session"
+            ),
         )
+
+    # Parse top-level ``extra_repos`` as a list of non-empty strings.
+    extra_repos_raw = raw.get("extra_repos")
+    extra_repos: list[str] = []
+    if extra_repos_raw is not None:
+        if not isinstance(extra_repos_raw, list):
+            raise _invalid("`extra_repos` must be a list of strings")
+        for i, item in enumerate(extra_repos_raw):
+            if not isinstance(item, str) or not item.strip():
+                raise _invalid(
+                    f"`extra_repos[{i}]` must be a non-empty string"
+                )
+            extra_repos.append(item)
 
     return CloudSpec(
         provider=provider,
@@ -357,4 +375,5 @@ def load_spec(path: Path) -> CloudSpec:
         local=local,
         ssh=ssh,
         toolchains=_toolchains(raw.get("toolchains")),
+        extra_repos=extra_repos,
     )

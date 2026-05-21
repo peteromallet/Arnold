@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan.types import (
-    ROBUSTNESS_LEVELS,
     CliError,
     PlanState,
     STATE_ABORTED,
+    STATE_BLOCKED,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -16,6 +16,7 @@ from megaplan.types import (
     STATE_FAILED,
     STATE_GATED,
     STATE_PLANNED,
+    STATE_REVIEWED,
     StepResponse,
 )
 from megaplan._core import (
@@ -29,13 +30,19 @@ from megaplan._core import (
     load_flag_registry,
     load_plan,
     now_utc,
+    read_json,
     save_debt_registry,
-    save_state,
     save_state_merge_meta,
     unresolved_significant_flags,
     workflow_next,
 )
-from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, run_gate_checks
+from megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
+from megaplan.orchestration.evaluation import (
+    build_gate_artifact,
+    build_gate_signals,
+    run_gate_checks,
+)
+from megaplan.orchestration.phase_result import read_phase_result
 
 from .shared import _append_to_meta, _attach_next_step_runtime
 
@@ -103,12 +110,22 @@ def _unabsorbed_user_notes(plan_dir: Path, state: PlanState) -> list[dict]:
     return [n for n in user_notes if n["timestamp"] > cutoff]
 
 
-def _override_add_note(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+def _override_add_note(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
     note = args.note
     source = getattr(args, "source", None) or "user"
-    note_entry: dict[str, Any] = {"timestamp": now_utc(), "note": note, "source": source}
+    note_entry: dict[str, Any] = {
+        "timestamp": now_utc(),
+        "note": note,
+        "source": source,
+    }
     _append_to_meta(state, "notes", note_entry)
-    _append_to_meta(state, "overrides", {"action": "add-note", "timestamp": now_utc(), "note": note, "source": source})
+    _append_to_meta(
+        state,
+        "overrides",
+        {"action": "add-note", "timestamp": now_utc(), "note": note, "source": source},
+    )
     # Merge so a phase that saves between our load and write doesn't clobber
     # this note (and so we don't clobber any concurrent-override appends).
     save_state_merge_meta(plan_dir, state)
@@ -123,9 +140,16 @@ def _override_add_note(root: Path, plan_dir: Path, state: PlanState, args: argpa
     _attach_next_step_runtime(response)
     return response
 
-def _override_abort(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+
+def _override_abort(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
     state["current_state"] = STATE_ABORTED
-    _append_to_meta(state, "overrides", {"action": "abort", "timestamp": now_utc(), "reason": args.reason})
+    _append_to_meta(
+        state,
+        "overrides",
+        {"action": "abort", "timestamp": now_utc(), "reason": args.reason},
+    )
     save_state_merge_meta(plan_dir, state)
     return {
         "success": True,
@@ -135,7 +159,10 @@ def _override_abort(root: Path, plan_dir: Path, state: PlanState, args: argparse
         "state": STATE_ABORTED,
     }
 
-def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+
+def _override_force_proceed(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
     # Strict-notes invariants. Off by default; on for plans initialized with
     # --strict-notes (and auto-on for --mode metaplan/doc). Two checks:
     #   (1) Reject if any user-source note has been attached after the most
@@ -152,13 +179,13 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
                     "revise; run revise (or replan / step-edit) before force-proceed."
                 ),
                 extra={
-                    "unabsorbed_note_timestamps": [
-                        n["timestamp"] for n in unabsorbed
-                    ]
+                    "unabsorbed_note_timestamps": [n["timestamp"] for n in unabsorbed]
                 },
             )
         last_recommendation = (state.get("last_gate") or {}).get("recommendation")
-        if last_recommendation == "ESCALATE" and not getattr(args, "user_approved", False):
+        if last_recommendation == "ESCALATE" and not getattr(
+            args, "user_approved", False
+        ):
             raise CliError(
                 "escalate_requires_user_approval",
                 (
@@ -168,7 +195,11 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
             )
     if state["current_state"] == STATE_EXECUTED:
         # Force-proceed from review loop: mark as done despite review issues
-        _append_to_meta(state, "overrides", {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason})
+        _append_to_meta(
+            state,
+            "overrides",
+            {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
+        )
         state["current_state"] = STATE_DONE
         save_state_merge_meta(plan_dir, state)
         return {
@@ -185,8 +216,14 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
             valid_next=infer_next_steps(state),
         )
     gate_checks = run_gate_checks(plan_dir, state, command_lookup=find_command)
-    if not gate_checks["preflight_results"]["project_dir_exists"] or not gate_checks["preflight_results"]["success_criteria_present"]:
-        raise CliError("unsafe_override", "force-proceed cannot bypass missing project directory or success criteria")
+    if (
+        not gate_checks["preflight_results"]["project_dir_exists"]
+        or not gate_checks["preflight_results"]["success_criteria_present"]
+    ):
+        raise CliError(
+            "unsafe_override",
+            "force-proceed cannot bypass missing project directory or success criteria",
+        )
     signals = build_gate_signals(plan_dir, state, root=root)
     merged_signals = {
         "robustness": signals["robustness"],
@@ -223,7 +260,11 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
     state["current_state"] = STATE_GATED
     state["meta"].pop("user_approved_gate", None)
     state["last_gate"] = {}
-    _append_to_meta(state, "overrides", {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason})
+    _append_to_meta(
+        state,
+        "overrides",
+        {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
+    )
     save_state_merge_meta(plan_dir, state)
     response: StepResponse = {
         "success": True,
@@ -237,7 +278,10 @@ def _override_force_proceed(root: Path, plan_dir: Path, state: PlanState, args: 
     _attach_next_step_runtime(response)
     return response
 
-def _override_replan(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+
+def _override_replan(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
     allowed = {STATE_GATED, STATE_FINALIZED, STATE_CRITIQUED, STATE_FAILED}
     if state["current_state"] not in allowed:
         raise CliError(
@@ -249,7 +293,11 @@ def _override_replan(root: Path, plan_dir: Path, state: PlanState, args: argpars
     plan_file = latest_plan_path(plan_dir, state)
     state["current_state"] = STATE_PLANNED
     state["last_gate"] = {}
-    _append_to_meta(state, "overrides", {"action": "replan", "timestamp": now_utc(), "reason": reason})
+    _append_to_meta(
+        state,
+        "overrides",
+        {"action": "replan", "timestamp": now_utc(), "reason": reason},
+    )
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": args.note})
     save_state_merge_meta(plan_dir, state)
@@ -266,7 +314,132 @@ def _override_replan(root: Path, plan_dir: Path, state: PlanState, args: argpars
     _attach_next_step_runtime(response)
     return response
 
-def _override_set_robustness(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+
+_BLOCKED_RECOVERY_STATES: dict[str, str] = {
+    "prep": "initialized",
+    "plan": "initialized",
+    "critique": STATE_PLANNED,
+    "gate": STATE_CRITIQUED,
+    "revise": STATE_CRITIQUED,
+    "finalize": STATE_GATED,
+    "execute": STATE_FINALIZED,
+    "review": STATE_EXECUTED,
+    "feedback": STATE_REVIEWED,
+}
+
+
+def _override_recover_blocked(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    if state["current_state"] != STATE_BLOCKED:
+        raise CliError(
+            "invalid_transition",
+            f"recover-blocked requires state '{STATE_BLOCKED}', got '{state['current_state']}'",
+            valid_next=infer_next_steps(state),
+        )
+    reason = getattr(args, "reason", None)
+    if not isinstance(reason, str) or not reason.strip():
+        raise CliError("invalid_args", "override recover-blocked requires --reason")
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        raise CliError(
+            "missing_resume_cursor",
+            "recover-blocked requires a stored resume_cursor",
+        )
+    phase = resume_cursor.get("phase")
+    if not isinstance(phase, str) or not phase:
+        raise CliError(
+            "invalid_resume_cursor",
+            "recover-blocked requires resume_cursor.phase",
+            extra={"resume_cursor": resume_cursor},
+        )
+    recovered_state = _BLOCKED_RECOVERY_STATES.get(phase)
+    if recovered_state is None:
+        raise CliError(
+            "invalid_resume_cursor",
+            f"recover-blocked does not know how to resume phase {phase!r}",
+            extra={"resume_cursor": resume_cursor},
+        )
+
+    finalize_path = plan_dir / "finalize.json"
+    finalize_data = read_json(finalize_path) if finalize_path.exists() else {}
+    phase_result = read_phase_result(plan_dir)
+    if phase_result is None:
+        raise CliError(
+            "missing_phase_result",
+            "recover-blocked requires phase_result.json with current blocker details",
+            extra={"resume_cursor": resume_cursor},
+        )
+    evaluation = evaluate_blocker_recovery(
+        finalize_data,
+        state,
+        blocked_tasks=phase_result.blocked_tasks,
+        deviations=phase_result.deviations,
+    )
+    blocker_details = command_blocker_details(evaluation)
+    if not evaluation.can_continue:
+        unresolved_blockers = [
+            blocker
+            for blocker in blocker_details
+            if not blocker.get("is_non_terminal", False)
+        ]
+        raise CliError(
+            "blocked_recovery_not_resolved",
+            "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
+            extra={
+                "resume_cursor": resume_cursor,
+                "phase_result_exit_kind": phase_result.exit_kind,
+                "blocker_ids": [
+                    blocker["blocker_id"] for blocker in unresolved_blockers
+                ],
+                "unresolved_blockers": unresolved_blockers,
+                "blockers": blocker_details,
+                "can_continue": evaluation.can_continue,
+                "requires_rerun": evaluation.requires_rerun,
+            },
+        )
+
+    previous_state = state["current_state"]
+    state["current_state"] = recovered_state
+    state.pop("latest_failure", None)
+    state.pop("active_step", None)
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "recover-blocked",
+            "timestamp": now_utc(),
+            "reason": reason,
+            "from_state": previous_state,
+            "to_state": recovered_state,
+            "resume_cursor": dict(resume_cursor),
+            "blocker_ids": [blocker.blocker_id for blocker in evaluation.blockers],
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+    next_steps = infer_next_steps(state)
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "action": "recover-blocked",
+        "summary": (
+            f"Recovered blocked plan to state '{recovered_state}' for phase "
+            f"{phase!r}. Reason: {reason}"
+        ),
+        "state": recovered_state,
+        "previous_state": previous_state,
+        "phase": phase,
+        "next_step": next_steps[0] if next_steps else None,
+        "resume_cursor": resume_cursor,
+        "blockers": blocker_details,
+    }
+    _attach_next_step_runtime(response)
+    return response
+
+
+def _override_set_robustness(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
     from megaplan.types import ROBUSTNESS_ACCEPTED, normalize_robustness
 
     raw_level = getattr(args, "robustness", None)
@@ -313,8 +486,15 @@ def _override_set_robustness(root: Path, plan_dir: Path, state: PlanState, args:
     _attach_next_step_runtime(response)
     return response
 
-def _override_set_profile(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
-    from megaplan.profiles import load_profiles, resolve_profile, profile_to_phase_models
+
+def _override_set_profile(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    from megaplan.profiles import (
+        load_profiles,
+        resolve_profile,
+        profile_to_phase_models,
+    )
 
     new_profile = getattr(args, "profile", None)
     if not new_profile:
@@ -362,14 +542,19 @@ def _override_set_profile(root: Path, plan_dir: Path, state: PlanState, args: ar
     _attach_next_step_runtime(response)
     return response
 
-_OVERRIDE_ACTIONS: dict[str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]] = {
+
+_OVERRIDE_ACTIONS: dict[
+    str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]
+] = {
     "add-note": _override_add_note,
     "abort": _override_abort,
     "force-proceed": _override_force_proceed,
     "replan": _override_replan,
+    "recover-blocked": _override_recover_blocked,
     "set-robustness": _override_set_robustness,
     "set-profile": _override_set_profile,
 }
+
 
 def handle_override(root: Path, args: argparse.Namespace) -> StepResponse:
     plan_dir, state = load_plan(root, args.plan)
