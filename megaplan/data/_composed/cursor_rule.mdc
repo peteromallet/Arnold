@@ -179,31 +179,11 @@ Lifecycle:
 - `megaplan bakeoff resume --exp <id>` — resume unfinished profile runs.
 - `megaplan bakeoff abandon --exp <id>` — discard worktrees but keep audit data.
 ## Cloud Mode
-`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Suggest it for long-running plans that would outlast a local session or when the user wants an isolated persistent sandbox. Sprint 1 ships the `railway` provider only; `ssh` and `local` are planned.
-Subcommands: `init`, `build`, `deploy`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
-Typical flow: `megaplan cloud init` scaffolds `cloud.yaml`; edit it; export the secrets it lists; `megaplan cloud deploy`; then use `status`, `logs`, and `attach` to observe.
-See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), secret handling, and troubleshooting.
+`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Suggest it for long-running plans that would outlast a local session, multi-repo work, or when the user wants an isolated persistent sandbox. Sprint 1 ships the `railway` provider only; `ssh` and `local` are planned.
 
-### Cloud Operator Loop
-For long-running cloud plans, especially chain runs, do not rely on a passive `tail` or one-off `cloud exec` as the only supervision. Run the plan in one tmux session and a separate monitor/supervisor in another tmux session.
+Quick subcommand reference: `init`, `build`, `deploy`, `chain`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`. Typical flow: `megaplan cloud init` → edit `cloud.yaml` → export secrets → `megaplan cloud deploy` → `megaplan cloud chain <chain.yaml>`.
 
-Recommended check cadence:
-1. Check immediately after launch, to catch bad branches, missing secrets, bad provider config, or command syntax.
-2. Check again after 10-15 minutes, because most cloud setup and first model-call failures surface early.
-3. Check hourly after that for long execution, review, or chain progress.
-
-Use separate cloud workspaces for unrelated mutating tasks. If `/workspace/<repo>` is already running a plan, create a sibling checkout such as `/workspace/<repo>-task-foo`, use a separate branch, separate tmux session names, and separate logs. Do not launch two mutating plans in the same checkout unless the user explicitly wants them to share branch state.
-
-An operator loop may automatically handle infrastructure recovery:
-- restart a dead tmux runner when no active phase process exists;
-- rerun `megaplan auto` for states with an unambiguous valid next step;
-- recover provider quota/failure by switching to an already-approved fallback model/provider for the same phase;
-- continue a chain after a completed milestone;
-- commit and push after each completed milestone when the user asked for push-after-sprint behavior.
-
-An operator loop should not silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
-
-Today this operator loop is usually a small project-local shell script under `.megaplan/` plus tmux. Treat that as an operational shim, not the ideal abstraction. The durable Megaplan feature should be first-class cloud supervision: built-in early check, hourly tick, provider fallback policy, single-PR chain mode, and push-after-milestone support.
+For the full reference — `cloud.yaml` fields, the `extra_repos[]` + `chain_session` multi-tenancy model, the operator loop, and the gotchas that wedge fresh runs (committed `chain_state.json`, profile-alias gap, secret-upload behavior, "internal_error" masking credit failures) — see the **megaplan-cloud** skill. Read it before launching the first cloud chain in a new project; the gotchas section will save hours.
 ## Tickets
 `megaplan ticket new` creates a repo-scoped issue ticket. Use it when:
 - During epic/plan work you notice an out-of-scope problem, bug, or rough edge
