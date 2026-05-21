@@ -160,8 +160,14 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "signals_assessment": "",
                 "warnings": [],
                 "settled_decisions": [],
+                "passed": False,
+                "flag_resolutions": [],
+                "unresolved_flags": [],
+                "preflight_results": {},
+                "orchestrator_guidance": "Light robustness routes critique to one revision pass.",
             }
             atomic_write_json(plan_dir / "gate.json", minimal_gate)
+            _write_gate_carry(plan_dir, minimal_gate, iteration=iteration)
             state["last_gate"] = {"recommendation": "ITERATE"}
         scope_flags_list = scope_creep_flags(registry, statuses=FLAG_BLOCKING_STATUSES)
         open_flags_detail = [
@@ -207,7 +213,7 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="revise") as (plan_dir, state):
         require_state(state, "revise", {STATE_CRITIQUED})
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
-        has_gate, revise_transition = _resolve_revise_transition(state)
+        _has_gate, revise_transition = _resolve_revise_transition(state, plan_dir)
         previous_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
         revise_start_iso = now_utc()
         notes_consumed = [
@@ -288,7 +294,7 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             raise
         state["iteration"], state["current_state"] = version, revise_transition.next_state
         state["meta"].pop("user_approved_gate", None)
-        if has_gate:
+        if _has_gate:
             state["last_gate"] = {}
         state["plan_versions"].append({
             "version": version, "file": plan_filename,
@@ -415,5 +421,5 @@ def _validate_tiebreaker(
     return "tiebreaker_approved", "tiebreaker-run", summary_base
 
 
-from .gate import _merge_gate_worker_attempt, _next_progress_step, _remaining_significant_flags, _resolve_revise_transition
+from .gate import _merge_gate_worker_attempt, _next_progress_step, _remaining_significant_flags, _resolve_revise_transition, _write_gate_carry
 from megaplan.flags import update_flags_after_critique, update_flags_after_revise

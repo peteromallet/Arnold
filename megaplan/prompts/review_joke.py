@@ -16,6 +16,7 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
+from ._shared import _gate_summary_or_skipped
 from .review import _settled_decisions_block, _settled_decisions_instruction
 
 
@@ -51,7 +52,7 @@ def _review_joke_prompt(
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     execution = read_json(plan_dir / "execution.json")
-    gate = read_json(plan_dir / "gate.json")
+    gate = _gate_summary_or_skipped(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)

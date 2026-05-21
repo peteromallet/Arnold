@@ -133,6 +133,8 @@ class ClarificationRecord(TypedDict, total=False):
 
 
 class LastGateRecord(TypedDict, total=False):
+    """Deprecated legacy state cache; prefer plan_dir/gate_carry.json."""
+
     recommendation: str
     rationale: str
     signals_assessment: str
@@ -154,7 +156,6 @@ class PlanState(TypedDict):
     plan_versions: list[PlanVersionRecord]
     history: list[HistoryEntry]
     meta: PlanMeta
-    last_gate: LastGateRecord
     active_step: NotRequired[ActiveStep]
     clarification: NotRequired[ClarificationRecord]
     latest_failure: NotRequired[dict[str, Any] | None]

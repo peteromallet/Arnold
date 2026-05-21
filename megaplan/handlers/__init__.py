@@ -36,7 +36,7 @@ from .gate import (
     _next_progress_step,
     _remaining_significant_flags,
     _gate_response_fields,
-    _store_last_gate,
+    _write_gate_carry,
     _apply_gate_outcome,
     _merge_gate_worker_attempt,
     _merge_resolution_tradeoffs_into_payload,
