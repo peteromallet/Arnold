@@ -8,7 +8,7 @@ from typing import Any
 
 from megaplan.runtime.doc_assembly import extract_settled_decisions
 from megaplan.forms import available_form_ids
-from megaplan.profiles import apply_profile_expansion
+from megaplan.profiles import apply_profile_expansion, load_profile_metadata
 from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse, normalize_robustness
 from megaplan._core import (
     append_history,
@@ -131,12 +131,27 @@ def _build_state_config(
             strict_notes_arg = get_effective("execution", "strict_notes")
     strict_notes = bool(strict_notes_arg)
 
+    max_tasks_per_batch_arg = getattr(args, "max_tasks_per_batch", None)
+    if max_tasks_per_batch_arg is not None:
+        max_tasks_per_batch = int(max_tasks_per_batch_arg)
+    else:
+        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
+        profile_name = getattr(args, "profile", None)
+        if profile_name:
+            profile_meta = load_profile_metadata(project_dir=project_dir).get(profile_name, {})
+            profile_ceiling = profile_meta.get("max_tasks_per_batch")
+            if isinstance(profile_ceiling, int) and profile_ceiling > 0:
+                max_tasks_per_batch = profile_ceiling
+    if max_tasks_per_batch <= 0:
+        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
+
     config: dict[str, Any] = {
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
         "robustness": robustness,
         "mode": mode,
         "strict_notes": strict_notes,
+        "max_tasks_per_batch": max_tasks_per_batch,
         "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
     }
     if pipeline is not None:

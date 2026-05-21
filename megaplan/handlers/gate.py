@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ from megaplan._core import (
     load_debt_registry,
     load_flag_registry,
     load_plan_locked,
+    now_utc,
+    read_json,
     require_state,
     save_debt_registry,
     workflow_includes_step,
@@ -115,9 +118,26 @@ def _record_gate_debt_entries(
         save_debt_registry(root, debt_registry)
     return debt_entries_added
 
-def _resolve_revise_transition(state: PlanState) -> tuple[bool, Any]:
+def _gate_summary_for_transition(plan_dir: Path, state: PlanState) -> dict[str, Any]:
+    carry_path = plan_dir / "gate_carry.json"
+    if carry_path.exists():
+        carry = read_json(carry_path)
+        if isinstance(carry, dict):
+            return carry
+    gate_path = plan_dir / "gate.json"
+    if gate_path.exists():
+        gate = read_json(gate_path)
+        if isinstance(gate, dict):
+            return gate
+    legacy = state.get("last_gate", {})
+    return legacy if isinstance(legacy, dict) else {}
+
+
+def _resolve_revise_transition(state: PlanState, plan_dir: Path) -> tuple[bool, Any]:
     has_gate = workflow_includes_step(configured_robustness(state), "gate")
-    if has_gate and state["last_gate"].get("recommendation") != "ITERATE":
+    gate_summary = _gate_summary_for_transition(plan_dir, state)
+    recommendation = gate_summary.get("recommendation") or gate_summary.get("verdict")
+    if has_gate and recommendation != "ITERATE":
         raise CliError("invalid_transition", "Revise requires a gate recommendation of ITERATE", valid_next=infer_next_steps(state))
     revise_transition = workflow_transition(state, "revise")
     if revise_transition is None:
@@ -153,7 +173,99 @@ def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_e
         "debt_entries_added": debt_entries_added,
     }
 
-def _store_last_gate(state: PlanState, gate_summary: dict[str, Any]) -> None:
+def _brief_text(value: object, *, sentences: int = 3, max_chars: int = 600) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    brief = " ".join(part for part in parts[:sentences] if part).strip()
+    if len(brief) <= max_chars:
+        return brief
+    return brief[: max_chars - 1].rstrip() + "..."
+
+
+def _normalize_settled_decisions(gate_summary: dict[str, Any]) -> list[dict[str, str]]:
+    raw_decisions = gate_summary.get("settled_decisions", [])
+    if not isinstance(raw_decisions, list):
+        log.warning("gate settled_decisions was not a list; dropping invalid value")
+        gate_summary["settled_decisions"] = []
+        return []
+
+    normalized: list[dict[str, str]] = []
+    promoted_strings = 0
+    for index, item in enumerate(raw_decisions, start=1):
+        fallback_id = f"SD{index}"
+        if isinstance(item, str):
+            decision = item.strip()
+            if not decision:
+                continue
+            normalized.append({"id": fallback_id, "decision": decision, "rationale": ""})
+            promoted_strings += 1
+            continue
+        if not isinstance(item, dict):
+            log.warning("gate settled_decisions item %s had invalid type; dropping", index)
+            continue
+        decision = str(item.get("decision", "")).strip()
+        if not decision:
+            log.warning("gate settled_decisions item %s had no decision; dropping", index)
+            continue
+        decision_id = str(item.get("id") or fallback_id).strip() or fallback_id
+        rationale = str(item.get("rationale", "")).strip()
+        normalized.append({"id": decision_id, "decision": decision, "rationale": rationale})
+
+    if promoted_strings:
+        log.warning(
+            "auto-promoted %s legacy string settled_decisions entr%s to typed objects",
+            promoted_strings,
+            "y" if promoted_strings == 1 else "ies",
+        )
+    gate_summary["settled_decisions"] = normalized
+    return normalized
+
+
+def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[str, Any]:
+    unresolved_by_id = {
+        item.get("id"): item
+        for item in gate_summary.get("unresolved_flags", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    carried_flags: list[dict[str, str]] = []
+    for resolution in gate_summary.get("flag_resolutions", []):
+        if not isinstance(resolution, dict) or resolution.get("action") != "accept_tradeoff":
+            continue
+        flag_id = resolution.get("flag_id")
+        if not isinstance(flag_id, str) or not flag_id:
+            continue
+        flag = unresolved_by_id.get(flag_id, {})
+        concern = flag.get("concern", "") if isinstance(flag, dict) else ""
+        carried_flags.append(
+            {
+                "flag_id": flag_id,
+                "concern_brief": _brief_text(concern, sentences=1, max_chars=240),
+                "rationale_brief": _brief_text(resolution.get("rationale", ""), sentences=2, max_chars=360),
+            }
+        )
+    recommendation = str(gate_summary.get("recommendation", "PROCEED"))
+    return {
+        "version": 1,
+        "verdict": recommendation,
+        "recommendation": recommendation,
+        "passed": bool(gate_summary.get("passed", False)),
+        "rationale_brief": _brief_text(gate_summary.get("rationale", ""), sentences=3),
+        "settled_decisions": _normalize_settled_decisions(gate_summary),
+        "warnings": list(gate_summary.get("warnings", [])) if isinstance(gate_summary.get("warnings"), list) else [],
+        "orchestrator_guidance": str(gate_summary.get("orchestrator_guidance", "")),
+        "carried_flags": carried_flags,
+        "iteration": iteration,
+        "produced_at": now_utc(),
+    }
+
+
+def _write_gate_carry(plan_dir: Path, gate_summary: dict[str, Any], *, iteration: int) -> None:
+    atomic_write_json(plan_dir / "gate_carry.json", _build_gate_carry(gate_summary, iteration=iteration))
+
+
+def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str, Any]) -> None:
     state["last_gate"] = {
         "recommendation": gate_summary["recommendation"],
         "rationale": gate_summary["rationale"],
@@ -165,6 +277,7 @@ def _store_last_gate(state: PlanState, gate_summary: dict[str, Any]) -> None:
         "preflight_results": gate_summary["preflight_results"],
         "orchestrator_guidance": gate_summary["orchestrator_guidance"],
     }
+
 
 def _apply_gate_outcome(
     state: PlanState,
@@ -406,7 +519,9 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 result = "blocked"
                 next_step = "revise"
                 summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+        _normalize_settled_decisions(gate_summary)
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
+        _write_gate_carry(plan_dir, gate_summary, iteration=iteration)
         gate_hash = _write_json_artifact(plan_dir, "gate.json", gate_summary)
 
         # Emit flag_raised / flag_resolved based on delta vs prior gate pass
@@ -429,9 +544,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         debt_entries_added = 0
         if gate_summary["recommendation"] == "PROCEED":
             debt_entries_added = _record_gate_debt_entries(root, state, gate_summary, worker.payload)
-        # Store last_gate AFTER _apply_gate_outcome — the outcome may override
-        # the recommendation (e.g. PROCEED → ITERATE when flags are unresolved).
-        _store_last_gate(state, gate_summary)
+        _sync_legacy_last_gate_for_workflow(state, gate_summary)
         emitter = getattr(args, "progress_emitter", None)
         if emitter is not None and gate_summary["recommendation"] in {"ESCALATE", "TIEBREAKER"}:
             emitter.gate_pending(
@@ -452,7 +565,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             mode=mode,
             refreshed=refreshed,
             summary=summary,
-            artifacts=[signals_filename, "gate.json"],
+            artifacts=[signals_filename, "gate.json", "gate_carry.json"],
             output_file="gate.json",
             artifact_hash=gate_hash,
             result=result,

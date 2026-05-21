@@ -25,6 +25,7 @@ import pytest
 
 from megaplan._pipeline import (
     Edge,
+    ParallelStage,
     Pipeline,
     Stage,
     Step,
@@ -241,3 +242,209 @@ def test_prompt_key_resolution_is_runtime_not_construction(tmp_path: Path) -> No
     # Same key, mode-aware resolution returns the override.
     assert "default for mode=code" in resolve_prompt(ctx_default, "panel-rubric")
     assert "Panel-strict override" == resolve_prompt(ctx_strict, "panel-rubric")
+
+
+# -----------------------------------------------------------------------
+# T2 tests — process-hygiene guard: reject InProcessHandlerStep in
+#            ParallelStage; safe hermetic steps run concurrently in order.
+# -----------------------------------------------------------------------
+
+
+def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline(
+    tmp_path: Path,
+) -> None:
+    """run_pipeline rejects a ParallelStage containing an InProcessHandlerStep.
+
+    The rejection must happen BEFORE any handler executes (the guard fires at
+    submission time in _run_parallel_stage, before pool.submit).  The error
+    message must name the stage and the unsafe step.
+    """
+    from megaplan._pipeline.executor import run_pipeline
+    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+
+    # A handler that raises if called — proves the guard fires first.
+    def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
+        raise AssertionError("handler must not be called — guard should reject first")
+
+    unsafe = InProcessHandlerStep(
+        name="unsafe_handler",
+        kind="produce",
+        handler=_must_not_run,
+        slot="critique",
+    )
+    # A hermetic step alongside — proves the guard checks all steps.
+    hermetic = _HermeticNoOp("hermetic_ok")
+
+    parallel_stage = ParallelStage(
+        name="bad_fanout",
+        steps=(hermetic, unsafe),
+        join=_trivial_join,
+        edges=(Edge("done", "halt"),),
+    )
+    pipeline = Pipeline(
+        stages={"bad_fanout": parallel_stage},
+        entry="bad_fanout",
+    )
+    ctx = StepContext(
+        plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={},
+    )
+
+    with pytest.raises(ValueError, match="bad_fanout"):
+        run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+
+    # Confirm the rejection message names the unsafe step too.
+    with pytest.raises(ValueError, match="unsafe_handler"):
+        run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+
+    # Confirm the message mentions thread-safety / InProcessHandlerStep.
+    with pytest.raises(ValueError, match="thread-safe"):
+        run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+
+
+def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline_with_policy(
+    tmp_path: Path,
+) -> None:
+    """run_pipeline_with_policy also rejects unsafe ParallelStage before any handler runs."""
+    from megaplan._pipeline.executor import run_pipeline_with_policy
+    from megaplan._pipeline.runtime import RuntimePolicy
+    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+
+    def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
+        raise AssertionError("handler must not be called — guard should reject first")
+
+    unsafe = InProcessHandlerStep(
+        name="unsafe_handler",
+        kind="produce",
+        handler=_must_not_run,
+        slot="critique",
+    )
+    parallel_stage = ParallelStage(
+        name="bad_fanout",
+        steps=(unsafe,),
+        join=_trivial_join,
+        edges=(Edge("done", "halt"),),
+    )
+    pipeline = Pipeline(
+        stages={"bad_fanout": parallel_stage},
+        entry="bad_fanout",
+    )
+    ctx = StepContext(
+        plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={},
+    )
+    policy = RuntimePolicy(max_iterations=10)
+
+    with pytest.raises(ValueError, match="bad_fanout"):
+        run_pipeline_with_policy(
+            pipeline, ctx, artifact_root=tmp_path, policy=policy,
+        )
+
+    with pytest.raises(ValueError, match="unsafe_handler"):
+        run_pipeline_with_policy(
+            pipeline, ctx, artifact_root=tmp_path, policy=policy,
+        )
+
+
+def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration_order(
+    tmp_path: Path,
+) -> None:
+    """Hermetic steps in a ParallelStage run concurrently; outputs stay in declaration order.
+
+    Uses a pair of hermetic steps where one deliberately sleeps to prove the
+    other is not blocked.  Results are collected in declaration order, not
+    as_completed order.
+    """
+    import time as _time
+    from megaplan._pipeline.executor import run_pipeline
+
+    # Shared timeline so we can assert overlap.
+    timeline: list[tuple[str, float]] = []
+
+    @dataclass
+    class SleepyStep:
+        """Hermetic step that sleeps then records its finish time."""
+
+        name: str
+        kind: str = "produce"
+        prompt_key: str | None = None
+        slot: str | None = None
+        sleep_s: float = 0.0
+        output_label: str = "out"
+
+        def run(self, ctx: StepContext) -> StepResult:
+            _time.sleep(self.sleep_s)
+            now = _time.monotonic()
+            timeline.append((self.name, now))
+            out = ctx.plan_dir / f"{self.name}.txt"
+            out.write_text(f"done by {self.name}")
+            return StepResult(outputs={self.output_label: out}, next="done")
+
+    fast = SleepyStep(name="fast_step", sleep_s=0.0, output_label="fast")
+    slow = SleepyStep(name="slow_step", sleep_s=0.15, output_label="slow")
+
+    parallel_stage = ParallelStage(
+        name="safe_fanout",
+        steps=(slow, fast),  # slow is index 0, fast is index 1
+        join=_trivial_join,
+        edges=(Edge("done", "halt"),),
+    )
+    pipeline = Pipeline(
+        stages={"safe_fanout": parallel_stage},
+        entry="safe_fanout",
+    )
+    ctx = StepContext(
+        plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={},
+    )
+    result = run_pipeline(pipeline, ctx, artifact_root=tmp_path)
+
+    # Both steps ran (fast should finish before slow despite being index 1).
+    names = [entry[0] for entry in timeline]
+    assert "fast_step" in names
+    assert "slow_step" in names
+
+    # Concurrency check: fast_step completed before slow_step finished
+    # (since slow_step sleeps 0.15s and fast_step sleeps 0.0s).
+    fast_time = next(t for name, t in timeline if name == "fast_step")
+    slow_time = next(t for name, t in timeline if name == "slow_step")
+    assert fast_time < slow_time, (
+        f"fast_step ({fast_time}) should finish before slow_step ({slow_time}) "
+        f"— if not, steps ran sequentially"
+    )
+
+    # Declaration-order check: slow is index 0, fast is index 1.
+    # The join sees results in declaration order regardless of completion.
+    assert result["state"].get("_parallel_order") == ["slow_step", "fast_step"]
+
+
+# ── Helpers shared by T2 tests ─────────────────────────────────────────
+
+
+class _HermeticNoOp:
+    """A minimal hermetic Step that writes one file and returns next='done'."""
+
+    name: str
+    kind: str = "produce"
+    prompt_key: str | None = None
+    slot: str | None = None
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def run(self, ctx: StepContext) -> StepResult:
+        out = ctx.plan_dir / f"{self.name}.txt"
+        out.write_text(f"noop by {self.name}")
+        return StepResult(outputs={"out": out}, next="done")
+
+
+def _trivial_join(results: list[StepResult], ctx: StepContext) -> StepResult:
+    """Join that passes through the first result's next and records order."""
+    order = []
+    for r in results:
+        for p in r.outputs.values():
+            name = Path(p).stem
+            order.append(name)
+            break
+    return StepResult(
+        outputs={},
+        next=results[0].next if results else "halt",
+        state_patch={"_parallel_order": order},
+    )

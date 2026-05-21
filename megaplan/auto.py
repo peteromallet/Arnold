@@ -942,7 +942,11 @@ def drive(
                 stall_count = 0
             last_review_marker = current_review_marker
 
-            if rework_cycles_observed > max_review_rework_cycles:
+            if (
+                rework_cycles_observed > max_review_rework_cycles + 1
+                and state != "reviewed"
+                and next_step != "feedback"
+            ):
                 # Review handler has its own internal cap (see
                 # handlers.py::handle_review — force-proceeds to done when
                 # prior_rework_count hits max_review_rework_cycles). This

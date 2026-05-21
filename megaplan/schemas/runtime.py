@@ -661,8 +661,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                                 "required": ["detail", "flagged", "status"],
                             },
                         },
+                        "concerned_task_ids": {"type": "array", "items": {"type": "string"}},
                     },
-                    "required": ["id", "question", "guidance", "findings", "prior_findings"],
+                    "required": ["id", "question", "guidance", "findings", "prior_findings", "concerned_task_ids"],
                 },
             },
             "pre_check_flags": {

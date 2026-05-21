@@ -338,7 +338,9 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
         "Re-run review to complete."
     )
     assert "Duplicate task_verdict for 'T1' — last entry wins." in blocked["issues"]
-    assert after_block["tasks"][0]["reviewer_verdict"] == "Pass - final."
+    blocked_review = read_json(plan_fixture.plan_dir / "review.json")
+    assert blocked_review["task_verdicts"][-1]["reviewer_verdict"] == "Pass - final."
+    assert after_block["tasks"][0]["reviewer_verdict"] == ""
     assert after_block["tasks"][1]["reviewer_verdict"] == ""
     assert blocked_entry["result"] == "blocked"
     assert (plan_fixture.plan_dir / "review.json").exists()
@@ -355,17 +357,20 @@ def test_review_blocks_incomplete_coverage_and_allows_rerun(
     completed = megaplan.handle_review(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
     final_state = load_state(plan_fixture.plan_dir)
     final_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    final_review = read_json(plan_fixture.plan_dir / "review.json")
 
     assert completed["success"] is True
     assert completed["state"] == megaplan.STATE_DONE
     assert completed["next_step"] is None
     assert final_state["current_state"] == megaplan.STATE_DONE
-    assert final_data["tasks"][0]["reviewer_verdict"] == "Pass - rerun."
+    assert final_review["task_verdicts"][0]["reviewer_verdict"] == "Pass - rerun."
     assert (
-        final_data["tasks"][1]["reviewer_verdict"]
+        final_review["task_verdicts"][1]["reviewer_verdict"]
         == "Pass - rerun with command evidence that is substantive enough for FLAG-006 softening."
     )
-    assert all(check["verdict"] == "Confirmed on rerun." for check in final_data["sense_checks"])
+    assert all(task["reviewer_verdict"] == "" for task in final_data["tasks"])
+    assert all(check.get("verdict", "") == "" for check in final_data["sense_checks"])
+    assert all(check["verdict"] == "Confirmed on rerun." for check in final_review["sense_check_verdicts"])
     # Verify phase_result.json is written for the second review call too
     pr_completed = read_phase_result(plan_fixture.plan_dir)
     assert pr_completed is not None

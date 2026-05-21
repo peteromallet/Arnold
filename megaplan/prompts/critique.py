@@ -9,7 +9,7 @@ from typing import Any
 from megaplan.forms.provocations import select_active_checks
 from megaplan._core import (
     configured_robustness,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -20,8 +20,7 @@ from megaplan._core import (
 )
 from megaplan.types import PlanState
 
-from ._shared import _planning_debt_block, _render_prep_block
-from .planning import PLAN_TEMPLATE
+from ._shared import _planning_debt_block
 
 
 def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
@@ -44,7 +43,6 @@ def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
 
 def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = read_json(plan_dir / "gate.json")
@@ -75,10 +73,7 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         Project directory:
         {project_dir}
 
-        {prep_block}
-        {prep_instruction}
-
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Current plan (markdown):
         {latest_plan}
@@ -108,14 +103,12 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
         - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `assumptions`, `success_criteria`, and `questions`. Do not add commentary before or after the JSON object.
 
-        {PLAN_TEMPLATE}
         """
     ).strip()
 
 
 def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None) -> dict[str, Any]:
     project_dir = Path(state["config"]["project_dir"])
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     structure_warnings = latest_meta.get("structure_warnings", [])
@@ -141,8 +134,6 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
 
     return {
         "project_dir": project_dir,
-        "prep_block": prep_block,
-        "prep_instruction": prep_instruction,
         "latest_plan": latest_plan,
         "latest_meta": latest_meta,
         "structure_warnings": structure_warnings,
@@ -215,11 +206,7 @@ def _build_critique_prompt(
         Project directory:
         {context["project_dir"]}
 
-        {context["prep_block"]}
-
-        {context["prep_instruction"]}
-
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Plan:
         {context["latest_plan"]}

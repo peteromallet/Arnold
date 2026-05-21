@@ -94,6 +94,21 @@ def intent_and_notes_block(state: PlanState) -> str:
     return "\n\n".join(sections)
 
 
+def intent_brief_reference(state: PlanState) -> str:
+    """Slim reference to the original brief for post-plan phases."""
+    clarification = (state.get("clarification") or {}).get("intent_summary")
+    if clarification:
+        summary = clarification
+    else:
+        idea = (state.get("idea") or "").strip()
+        first = idea.split("\n\n", 1)[0].split(". ", 1)[0]
+        summary = first[:200] + ("..." if len(first) > 200 else "")
+    return (
+        f"Brief summary: {summary}\n"
+        "(Full brief in state.idea; success criteria in plan_v1.meta.json.)"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Transition logic
 # ---------------------------------------------------------------------------

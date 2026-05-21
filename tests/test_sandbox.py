@@ -12,11 +12,12 @@ These tests exercise the sandbox without hitting any model:
   * ``validate_terminal_command`` strips a leading ``cd <project>/...`` and
     refuses ``cd`` to anything outside the worktree.
   * ``validate_write_path`` resolves to inside ``project_dir`` or raises.
-  * ``install_sandbox`` wraps the tool registry handlers so the same
-    refusal/coercion happens when a tool dispatch comes through the agent.
+  * ``install_sandbox`` sets the ``SANDBOX_CWD`` ContextVar so that
+    permanently-installed wrappers validate/coerce paths.  Wrappers delegate
+    unchanged when the ContextVar is None.
 
 The mock-registry pattern mirrors the live ``tools.registry`` singleton —
-each tool has a ``handler`` attribute the wrapper swaps in place.
+each tool has a ``handler`` attribute the wrapper replaces permanently.
 """
 
 from __future__ import annotations
@@ -30,7 +31,11 @@ from pathlib import Path
 import pytest
 
 from megaplan.runtime.sandbox import (
+    SANDBOX_CWD,
     SandboxViolation,
+    _unwrap_all_for_tests,
+    _wrappers_installed,
+    get_sandbox_cwd,
     install_sandbox,
     validate_terminal_command,
     validate_v4a_patch,
@@ -184,6 +189,24 @@ class _FakeRegistry:
         return handler
 
 
+@pytest.fixture(autouse=True)
+def _reset_sandbox_state(monkeypatch):
+    """Reset sandbox wrapper installation state before each test.
+
+    Because wrappers are permanently installed (not restored on exit),
+    each test that uses a new fake registry must reset the module-level
+    flags so wrappers are re-installed against the current fake registry.
+    """
+    _unwrap_all_for_tests()
+    # Also reset the ContextVar (safety)
+    try:
+        SANDBOX_CWD.set(None)
+    except Exception:
+        pass
+    yield
+    _unwrap_all_for_tests()
+
+
 @pytest.fixture
 def fake_tools_registry(monkeypatch):
     """Install a fake ``tools.registry`` module so ``install_sandbox`` wraps it.
@@ -202,17 +225,32 @@ def fake_tools_registry(monkeypatch):
     return fake_registry
 
 
-def test_install_sandbox_pins_terminal_cwd(tmp_path, monkeypatch, fake_tools_registry):
+def test_install_sandbox_sets_contextvar_not_env(tmp_path, monkeypatch, fake_tools_registry):
+    """install_sandbox sets the SANDBOX_CWD ContextVar, NOT TERMINAL_CWD env."""
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
     with install_sandbox(tmp_path):
-        assert os.environ["TERMINAL_CWD"] == str(tmp_path.resolve())
+        assert get_sandbox_cwd() == tmp_path.resolve()
+        # TERMINAL_CWD should NOT be set by install_sandbox
+        assert "TERMINAL_CWD" not in os.environ
+    assert get_sandbox_cwd() is None
     assert "TERMINAL_CWD" not in os.environ
 
 
-def test_install_sandbox_restores_prior_terminal_cwd(tmp_path, monkeypatch, fake_tools_registry):
+def test_install_sandbox_contextvar_resets_on_exit(tmp_path, monkeypatch, fake_tools_registry):
+    """After the with-block exits, ContextVar returns to None."""
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+    with install_sandbox(tmp_path):
+        assert get_sandbox_cwd() is not None
+    assert get_sandbox_cwd() is None
+
+
+def test_install_sandbox_does_not_mutate_terminal_cwd_env(tmp_path, monkeypatch, fake_tools_registry):
+    """TERMINAL_CWD env var is never mutated by install_sandbox.
+    If it was set before, it remains unchanged after."""
     monkeypatch.setenv("TERMINAL_CWD", "/some/prior/value")
     with install_sandbox(tmp_path):
-        assert os.environ["TERMINAL_CWD"] == str(tmp_path.resolve())
+        # The env var should NOT be changed by install_sandbox
+        assert os.environ["TERMINAL_CWD"] == "/some/prior/value"
     assert os.environ["TERMINAL_CWD"] == "/some/prior/value"
 
 
@@ -337,14 +375,25 @@ def test_install_sandbox_does_not_lock_down_reads(tmp_path, fake_tools_registry)
     assert fake_tools_registry.calls[0][0] == "read_file"
 
 
-def test_install_sandbox_restores_handlers_on_exit(tmp_path, fake_tools_registry):
+def test_install_sandbox_wrappers_permanent_not_restored(tmp_path, fake_tools_registry):
+    """Wrappers are permanently installed — they are NOT restored to originals
+    when the with-block exits.  Instead, they delegate to the original when
+    the ContextVar is None."""
     original_terminal = fake_tools_registry._tools["terminal"].handler
 
     with install_sandbox(tmp_path):
         wrapped = fake_tools_registry._tools["terminal"].handler
         assert wrapped is not original_terminal
 
-    assert fake_tools_registry._tools["terminal"].handler is original_terminal
+    # After exit, the wrapper IS still installed (permanent).
+    after_exit = fake_tools_registry._tools["terminal"].handler
+    assert after_exit is not original_terminal
+    # And it should delegate correctly when no sandbox is active.
+    # Calling it should pass through to the original handler (which adds to calls).
+    after_exit({"command": "echo hi"})
+    assert len(fake_tools_registry.calls) == 1
+    assert fake_tools_registry.calls[0][0] == "terminal"
+    assert fake_tools_registry.calls[0][1]["command"] == "echo hi"
 
 
 def test_install_sandbox_rejects_missing_project_dir(tmp_path):
@@ -359,7 +408,7 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
     sandbox so the agent's tool calls are bounded to project_dir.
 
     We mock the agent so no model is invoked.  The test checks that:
-      * ``TERMINAL_CWD`` is set to project_dir while the agent runs, AND
+      * ``SANDBOX_CWD`` ContextVar is set to project_dir while the agent runs, AND
       * tool registry handlers are wrapped while the agent runs.
     """
     from megaplan.workers import hermes as hw
@@ -419,6 +468,9 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
     observed: dict = {}
 
     class FakeSessionDB:
+        def __init__(self, db_path=None):
+            pass
+
         def get_messages_as_conversation(self, *_a, **_kw):
             return None
 
@@ -430,8 +482,8 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
             pass
 
         def run_conversation(self, **kwargs):
-            # Snapshot env + handler identity at the moment the agent runs.
-            observed["TERMINAL_CWD"] = os.environ.get("TERMINAL_CWD")
+            # Snapshot ContextVar + handler identity at the moment the agent runs.
+            observed["sandbox_cwd"] = str(get_sandbox_cwd()) if get_sandbox_cwd() else None
             observed["terminal_handler"] = fake_tools_registry._tools["terminal"].handler
             # Return a payload the parser will accept.  For execute we
             # need files_claimed + summary.
@@ -466,7 +518,7 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
     monkeypatch.setattr(hw, "clean_parsed_payload", lambda *a, **kw: None)
 
     # Save the original terminal handler so we can confirm it was wrapped
-    # *during* the agent run, then restored after.
+    # *during* the agent run.
     original_terminal_handler = fake_tools_registry._tools["terminal"].handler
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -488,12 +540,11 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
     )
 
     # The sandbox was active while the agent ran:
-    assert observed["TERMINAL_CWD"] == str(project_dir.resolve())
+    assert observed["sandbox_cwd"] == str(project_dir.resolve())
     assert observed["terminal_handler"] is not original_terminal_handler
 
-    # And restored after:
-    assert os.environ.get("TERMINAL_CWD") is None
-    assert fake_tools_registry._tools["terminal"].handler is original_terminal_handler
+    # After the agent ran, ContextVar is reset:
+    assert get_sandbox_cwd() is None
 
 
 def test_install_sandbox_refuses_workdir_arg_escape(tmp_path, fake_tools_registry):
@@ -512,3 +563,85 @@ def test_install_sandbox_refuses_workdir_arg_escape(tmp_path, fake_tools_registr
         assert "error" in parsed
 
     assert fake_tools_registry.calls == []
+
+
+def test_install_sandbox_idempotent_nested_same_project(tmp_path, fake_tools_registry):
+    """Nesting install_sandbox with the same project_dir is safe and
+    does not corrupt ContextVar state."""
+    with install_sandbox(tmp_path):
+        assert get_sandbox_cwd() == tmp_path.resolve()
+        with install_sandbox(tmp_path):
+            # Inner block: same project_dir
+            assert get_sandbox_cwd() == tmp_path.resolve()
+        # After inner exit, outer is still active
+        assert get_sandbox_cwd() == tmp_path.resolve()
+    # After outer exit, sandbox is inactive
+    assert get_sandbox_cwd() is None
+
+
+def test_install_sandbox_concurrent_different_dirs(tmp_path, monkeypatch):
+    """Threads with different project_dirs each see their own sandbox cwd
+    via the ContextVar, without any env mutation."""
+    import threading
+    import time
+
+    class _FakeEntry:
+        def __init__(self, handler):
+            self.handler = handler
+
+    class _FakeRegistry:
+        def __init__(self, names):
+            self._tools = {
+                name: _FakeEntry(lambda *a, **kw: "ok") for name in names
+            }
+            self.calls: list = []
+
+    fake_registry = _FakeRegistry(["terminal", "write_file", "patch", "read_file"])
+    fake_module = types.ModuleType("tools.registry")
+    fake_module.registry = fake_registry
+    monkeypatch.setitem(sys.modules, "tools.registry", fake_module)
+    monkeypatch.setitem(
+        sys.modules, "tools", types.ModuleType("tools")
+    )
+
+    seen: dict[int, str] = {}
+    errors: list[str] = []
+    barrier = threading.Barrier(3, timeout=10)
+
+    def _enter_sandbox(idx: int, project_dir: Path) -> None:
+        try:
+            barrier.wait()
+            with install_sandbox(project_dir):
+                seen[idx] = str(get_sandbox_cwd()) if get_sandbox_cwd() else ""
+                time.sleep(0.1)
+        except Exception as exc:
+            errors.append(f"Thread {idx} error: {exc}")
+
+    p0 = tmp_path / "sandbox_concurrent_0"
+    p1 = tmp_path / "sandbox_concurrent_1"
+    p2 = tmp_path / "sandbox_concurrent_2"
+    for p in (p0, p1, p2):
+        p.mkdir()
+        (p / ".git").mkdir()
+
+    monkeypatch.delenv("TERMINAL_CWD", raising=False)
+
+    threads = [
+        threading.Thread(target=_enter_sandbox, args=(i, d), daemon=True)
+        for i, d in enumerate([p0, p1, p2])
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert not errors, "\n".join(errors)
+
+    # Each thread must have seen its own project_dir
+    assert seen.get(0) == str(p0.resolve()), f"Thread 0: {seen.get(0)}"
+    assert seen.get(1) == str(p1.resolve()), f"Thread 1: {seen.get(1)}"
+    assert seen.get(2) == str(p2.resolve()), f"Thread 2: {seen.get(2)}"
+
+    # After all sandboxes exit, ContextVar is None (no env leak)
+    assert get_sandbox_cwd() is None
+    assert "TERMINAL_CWD" not in os.environ or os.environ.get("TERMINAL_CWD") is None

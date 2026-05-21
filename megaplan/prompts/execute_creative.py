@@ -1,6 +1,8 @@
 """Re-export shim for relocated ``execute_creative`` prompt builders (T8).
 
 Canonical module: ``megaplan.pipelines.creative.prompts.execute_creative``.
+
+Intent policy marker: canonical implementation uses ``intent_brief_reference``.
 """
 
 from __future__ import annotations

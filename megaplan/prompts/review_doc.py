@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import (
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -20,6 +20,7 @@ from .review import (
     _settled_decisions_block,
     _settled_decisions_instruction,
 )
+from ._shared import _gate_summary_or_skipped
 
 
 def _review_doc_prompt(
@@ -47,7 +48,7 @@ def _review_doc_prompt(
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     execution = read_json(plan_dir / "execution.json")
-    gate = read_json(plan_dir / "gate.json")
+    gate = _gate_summary_or_skipped(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
@@ -105,7 +106,7 @@ def _review_doc_prompt(
         Output file path:
         {output_path}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Approved plan:
         {latest_plan}

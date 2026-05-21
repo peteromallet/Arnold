@@ -27,7 +27,13 @@ VALID_PHASE_KEYS = frozenset(DEFAULT_AGENT_ROUTING.keys())
 # stripped before validation so the loader doesn't complain about them,
 # and surfaced via ``ProfileSource.metadata`` for downstream consumers
 # (currently just ``--vendor`` / ``--critic`` rejection on locked profiles).
-PROFILE_METADATA_KEYS = frozenset({"vendor_locked", "default", "extends", "tier_models"})
+PROFILE_METADATA_KEYS = frozenset({
+    "vendor_locked",
+    "default",
+    "extends",
+    "tier_models",
+    "max_tasks_per_batch",
+})
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
@@ -152,6 +158,15 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
             validated_tiers = _validate_tier_models(path, profile_name, tier_data)
             if validated_tiers:
                 validated["tier_models"] = validated_tiers
+        elif key == "max_tasks_per_batch":
+            if not isinstance(value, int):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"expected an integer for 'max_tasks_per_batch', got {type(value).__name__}",
+                )
+            validated["max_tasks_per_batch"] = value
         # Future metadata keys go here.
     return validated
 

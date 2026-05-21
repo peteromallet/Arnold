@@ -201,6 +201,17 @@ class ParallelStage:
     shared ``StepContext``. ``join`` returns a single ``StepResult`` whose
     ``next`` label dispatches like a regular Stage. The empty-steps case
     is guarded in the executor via ``max(1, max_workers or len(steps))``.
+
+    **Thread-safety contract**: every Step in ``steps`` MUST be hermetic
+    with respect to shared mutable state. Steps that read or write the
+    plan's ``state.json`` (e.g. :class:`InProcessHandlerStep`) are NOT
+    safe for parallel fan-out — concurrent handler invocations would race
+    through the same plan directory. The executor enforces this at
+    submission time: a ``ParallelStage`` containing an
+    ``InProcessHandlerStep`` is rejected with a ``ValueError`` before any
+    handler executes. Hermetic steps such as ``PanelReviewerStep`` (which
+    writes to a per-reviewer output directory and does not touch shared
+    state) satisfy the contract.
     """
 
     name: str

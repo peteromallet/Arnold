@@ -50,6 +50,22 @@ def test_response_format_not_sent_to_anthropic_messages() -> None:
     assert "response_format" not in kwargs
 
 
+def test_response_format_not_sent_to_deepseek_direct_chat_completions() -> None:
+    agent = AIAgent(
+        api_mode="chat_completions",
+        base_url="https://api.deepseek.com",
+        enabled_toolsets=[],
+        quiet_mode=True,
+        skip_context_files=True,
+        skip_memory=True,
+    )
+
+    agent.set_response_format(_sample_schema(), name="plan")
+    kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+
+    assert "response_format" not in kwargs
+
+
 def test_response_format_translates_for_codex_responses() -> None:
     agent = AIAgent(
         api_mode="codex_responses",

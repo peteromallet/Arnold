@@ -44,6 +44,20 @@ def _finalized_status(plan: str) -> dict:
     }
 
 
+def _reviewed_status(plan: str) -> dict:
+    """Return a status snapshot after review has approved the work."""
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": "reviewed",
+        "iteration": 1,
+        "summary": "Plan is in state 'reviewed'.",
+        "next_step": "feedback",
+        "valid_next": ["feedback"],
+    }
+
+
 def _execute_status(plan: str, state: str = "finalized") -> dict:
     return {
         "success": True,
@@ -264,6 +278,49 @@ def test_rework_cap_bails_after_exceeding_max_review_rework_cycles(
     assert outcome.status == "stalled"
     assert "review rework cap" in outcome.reason
     assert outcome.final_state == "finalized"
+
+
+def test_rework_cap_does_not_bail_after_review_approves(
+    tmp_path: Path,
+) -> None:
+    """A passing review after several reworks must proceed to feedback."""
+    plan = "reviewed-after-reworks-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    review_path = plan_dir / "review.json"
+    review_path.write_text("{}", encoding="utf-8")
+    base_mtime = review_path.stat().st_mtime
+
+    status_calls = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        status_calls["n"] += 1
+        if status_calls["n"] <= 4:
+            return _finalized_status(plan_name)
+        return _reviewed_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None):
+        run_calls.append(list(args))
+        new_mtime = base_mtime + len(run_calls)
+        os.utime(review_path, (new_mtime, new_mtime))
+        if args and args[0] == "feedback":
+            return 0, "{}", ""
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=100,
+            max_iterations=10,
+            max_review_rework_cycles=2,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status != "stalled"
+    assert any(call and call[0] == "feedback" for call in run_calls)
 
 
 def test_stall_still_trips_without_review_progress(tmp_path: Path) -> None:

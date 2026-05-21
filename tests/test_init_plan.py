@@ -722,6 +722,7 @@ def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     final_md_after_execute = (plan_fixture.plan_dir / "final.md").read_text(encoding="utf-8")
     review = megaplan.handle_review(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
     finalized_after_review = read_json(plan_fixture.plan_dir / "finalize.json")
+    review_after_review = read_json(plan_fixture.plan_dir / "review.json")
     final_md_after_review = (plan_fixture.plan_dir / "final.md").read_text(encoding="utf-8")
     plan_meta = read_json(plan_fixture.plan_dir / "plan_v1.meta.json")
     revise_meta = read_json(plan_fixture.plan_dir / "plan_v2.meta.json")
@@ -751,8 +752,9 @@ def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert all(task["executor_notes"] for task in finalized_after_execute["tasks"])
     assert "Executor notes:" in final_md_after_execute
     assert review["state"] == megaplan.STATE_DONE
-    assert all(task["reviewer_verdict"] for task in finalized_after_review["tasks"])
-    assert all(check["verdict"] for check in finalized_after_review["sense_checks"])
+    assert all(task["reviewer_verdict"] == "" for task in finalized_after_review["tasks"])
+    assert all(verdict["reviewer_verdict"] for verdict in review_after_review["task_verdicts"])
+    assert all(verdict["verdict"] for verdict in review_after_review["sense_check_verdicts"])
     assert "Reviewer verdict:" in final_md_after_review
     assert "Verdict:" in final_md_after_review
     execute_entry = next(entry for entry in state["history"] if entry["step"] == "execute")
