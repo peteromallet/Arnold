@@ -144,6 +144,63 @@ def _record_error(artifact_root: Path, stage_name: str, exc: BaseException) -> N
     )
 
 
+def _is_safe_for_parallel(parallel_stage: ParallelStage) -> bool:
+    """Return False if any step is an InProcessHandlerStep (unsafe for threads).
+
+    InProcessHandlerStep reads and writes shared state.json on disk via
+    handler functions — concurrent handler invocations would race through
+    the same plan directory. PanelReviewerStep and other hermetic steps
+    are safe: they call worker functions that write to per-reviewer output
+    directories and do not touch shared state.
+    """
+    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+
+    return not any(
+        isinstance(step, InProcessHandlerStep) for step in parallel_stage.steps
+    )
+
+
+def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
+    """Run a ParallelStage with thread-safe context isolation.
+
+    * Rejects the stage if any step is an :class:`InProcessHandlerStep`
+      (not thread-safe — reads/writes shared state.json).
+    * Each worker thread receives a shallow copy of *ctx* via
+      ``dataclasses.replace(ctx, state=dict(state))`` so that per-step
+      state mutations do not race through the shared Mapping.
+    * Results are collected in declaration order (not completion order)
+      and joined via ``node.join(results, ctx)``.
+    """
+    from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
+
+    # Guard: reject InProcessHandlerStep before any handler executes.
+    for step in node.steps:
+        if isinstance(step, InProcessHandlerStep):
+            raise ValueError(
+                f"ParallelStage {node.name!r} contains InProcessHandlerStep "
+                f"{step.name!r}. InProcessHandlerStep is not thread-safe — "
+                f"it reads and writes shared state.json on disk. "
+                f"Use a sequential Stage instead."
+            )
+
+    workers = max(1, node.max_workers or len(node.steps))
+    results: list[StepResult] = [None] * len(node.steps)  # type: ignore[list-item]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        future_to_idx: dict[concurrent.futures.Future[StepResult], int] = {}
+        for idx, step in enumerate(node.steps):
+            # Per-thread shallow copy: dict(state) prevents workers
+            # from racing through the shared ctx.state Mapping.
+            thread_ctx = dataclasses.replace(ctx, state=dict(ctx.state))
+            future_to_idx[pool.submit(step.run, thread_ctx)] = idx
+
+        for fut in concurrent.futures.as_completed(future_to_idx):
+            idx = future_to_idx[fut]
+            results[idx] = fut.result()
+
+    return node.join(results, ctx)
+
+
 def run_pipeline(
     pipeline: Pipeline,
     ctx: StepContext,
@@ -177,17 +234,7 @@ def run_pipeline(
 
         try:
             if isinstance(node, ParallelStage):
-                workers = max(1, node.max_workers or len(node.steps))
-                results: list[StepResult] = [None] * len(node.steps)  # type: ignore[list-item]
-                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                    future_to_idx = {
-                        pool.submit(step.run, ctx): idx
-                        for idx, step in enumerate(node.steps)
-                    }
-                    for fut in concurrent.futures.as_completed(future_to_idx):
-                        idx = future_to_idx[fut]
-                        results[idx] = fut.result()
-                result = node.join(results, ctx)
+                result = _run_parallel_stage(node, ctx)
             else:
                 assert isinstance(node, Stage)
                 result = node.step.run(ctx)
@@ -296,17 +343,7 @@ def run_pipeline_with_policy(
         ctx = dataclasses.replace(ctx, state=state)
         try:
             if isinstance(node, ParallelStage):
-                workers = max(1, node.max_workers or len(node.steps))
-                results: list[StepResult] = [None] * len(node.steps)  # type: ignore[list-item]
-                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-                    future_to_idx = {
-                        pool.submit(step.run, ctx): idx
-                        for idx, step in enumerate(node.steps)
-                    }
-                    for fut in concurrent.futures.as_completed(future_to_idx):
-                        idx = future_to_idx[fut]
-                        results[idx] = fut.result()
-                result = node.join(results, ctx)
+                result = _run_parallel_stage(node, ctx)
             else:
                 assert isinstance(node, Stage)
                 result = node.step.run(ctx)
