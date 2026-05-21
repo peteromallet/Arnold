@@ -43,23 +43,30 @@ class BlockedTask:
     task_id: str
     reason: str
     notes: str = ""
+    blocking_action_ids: tuple[str, ...] = ()
 
-    # NOTE: no prereq_ids field — the plan says blocked tasks have zero
-    # producers in megaplan/.
-
-    def to_dict(self) -> dict[str, str]:
-        return {
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
             "task_id": self.task_id,
             "reason": self.reason,
             "notes": self.notes,
         }
+        if self.blocking_action_ids:
+            payload["blocking_action_ids"] = list(self.blocking_action_ids)
+        return payload
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> BlockedTask:
+        raw_action_ids = d.get("blocking_action_ids", ())
+        if not isinstance(raw_action_ids, (list, tuple)):
+            raw_action_ids = ()
         return cls(
             task_id=str(d["task_id"]),
             reason=str(d.get("reason", "")),
             notes=str(d.get("notes", "")),
+            blocking_action_ids=tuple(
+                item for item in raw_action_ids if isinstance(item, str)
+            ),
         )
 
 
@@ -70,11 +77,17 @@ class Deviation:
     kind: str
     message: str
     task_id: str | None = None
+    blocker_id: str | None = None
+    phase: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"kind": self.kind, "message": self.message}
         if self.task_id is not None:
             d["task_id"] = self.task_id
+        if self.blocker_id is not None:
+            d["blocker_id"] = self.blocker_id
+        if self.phase is not None:
+            d["phase"] = self.phase
         return d
 
     @classmethod
@@ -83,6 +96,8 @@ class Deviation:
             kind=str(d["kind"]),
             message=str(d["message"]),
             task_id=d.get("task_id"),
+            blocker_id=d.get("blocker_id"),
+            phase=d.get("phase"),
         )
 
     @classmethod

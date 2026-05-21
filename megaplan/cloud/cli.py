@@ -128,6 +128,22 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
 
     cloud_sub.add_parser("down", parents=[shared], help="Pause the deployment without deleting volume")
 
+    supervise_parser = cloud_sub.add_parser(
+        "supervise",
+        parents=[shared],
+        help="Run a one-shot supervisor tick against a cloud chain",
+    )
+    supervise_parser.add_argument(
+        "--chain",
+        action="store_true",
+        help="Supervise the remote chain (required)",
+    )
+    supervise_parser.add_argument(
+        "--remote-spec",
+        default=None,
+        help="Explicit remote chain spec path for supervision",
+    )
+
     destroy_parser = cloud_sub.add_parser(
         "destroy",
         parents=[shared],
@@ -218,6 +234,14 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
 
         if action == "down":
             return provider.down()
+
+        if action == "supervise":
+            if bool(getattr(args, "chain", False)):
+                return _run_supervise_tick(root, args, spec, provider)
+            raise CliError(
+                "invalid_args",
+                "`cloud supervise` requires --chain. Try `megaplan cloud supervise --chain`.",
+            )
 
         if action == "destroy":
             if not bool(getattr(args, "yes", False)) and not _confirm_destroy(spec):
@@ -462,6 +486,9 @@ def _cloud_chain_launch_provenance(
             "base_branch": chain_spec.base_branch,
             "milestone_count": len(chain_spec.milestones),
             "resolved_phase_map_summary": _resolved_phase_map_summary(preflight_summary),
+            "prerequisite_policy": chain_spec.prerequisite_policy,
+            "validation_policy": chain_spec.validation_policy,
+            "review_policy": dict(chain_spec.review_policy or {}),
         },
         "megaplan": {
             "ref": spec.megaplan.ref,
@@ -473,6 +500,107 @@ def _cloud_chain_launch_provenance(
             "status": _tmux_launch_status(tmux_result),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Shared chain command helper — canonical session / log / env / quoting
+# ---------------------------------------------------------------------------
+
+CHAIN_SESSION_NAME = "megaplan-chain"
+_CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"
+
+
+def _get_provider_identity(spec: CloudSpec) -> str | None:
+    """Return a stable provider-level identity for marker enrichment and
+    consistency checks.
+
+    This is the provider's *service/project identity*, never an SSH attach
+    session name or chain tmux session name.
+    """
+    if spec.provider == "railway":
+        if spec.railway is not None:
+            return spec.railway.service
+        return None
+    if spec.provider == "local":
+        if spec.local is not None:
+            return spec.local.compose_project
+        return None
+    if spec.provider == "ssh":
+        if spec.ssh is not None:
+            return spec.ssh.host
+        return None
+    return None
+
+
+def _chain_start_command(remote_spec_path: str, *, one_shot: bool = False) -> str:
+    """Construct the ``megaplan chain start`` command with canonical quoting.
+
+    Both ``_run_chain_wrapper`` and ``cloud_supervise_tick`` use this helper
+    so the session name, log path, trusted env var, and shell quoting stay
+    consistent across all entry points.
+    """
+    flags = f"--spec {shlex.quote(remote_spec_path)}"
+    if one_shot:
+        flags += " --one"
+    return (
+        f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start {flags} "
+        f">> {shlex.quote(_CHAIN_LOG_RELATIVE)} 2>&1"
+    )
+
+
+def _tmux_chain_launch_command(
+    workspace: str,
+    remote_spec_path: str,
+    *,
+    one_shot: bool = False,
+    session_name: str | None = None,
+) -> str:
+    """Return a single shell command that ensures a tmux session is running the chain.
+
+    When the session already exists the command is a no-op (prints a notice).
+    Otherwise a new detached session is created.
+
+    *session_name* defaults to :data:`CHAIN_SESSION_NAME` (``megaplan-chain``)
+    when not provided.
+    """
+    name = session_name or CHAIN_SESSION_NAME
+    chain_cmd = _chain_start_command(remote_spec_path, one_shot=one_shot)
+    return (
+        f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
+        " && "
+        f"if tmux has-session -t {shlex.quote(name)} 2>/dev/null; then "
+        f"echo '{name} session already running'; "
+        "else "
+        f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
+        f"echo 'started {name} session'; "
+        "fi"
+    )
+
+
+def _tmux_chain_restart_command(
+    workspace: str,
+    remote_spec_path: str,
+    *,
+    session_name: str | None = None,
+) -> str:
+    """Return a shell command that kills any existing tmux session and starts a
+    fresh one-shot tick.
+
+    Only the supervisor uses this path — it is never called from the normal
+    ``cloud chain`` launch flow.
+
+    *session_name* defaults to :data:`CHAIN_SESSION_NAME` (``megaplan-chain``)
+    when not provided.
+    """
+    name = session_name or CHAIN_SESSION_NAME
+    chain_cmd = _chain_start_command(remote_spec_path, one_shot=True)
+    return (
+        f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
+        " && "
+        f"tmux kill-session -t {shlex.quote(name)} 2>/dev/null; "
+        f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
+        f"echo 'restarted {name} session'"
+    )
 
 
 def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
@@ -551,23 +679,15 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     finally:
         if upload_spec_path != local_spec_path:
             upload_spec_path.unlink(missing_ok=True)
-    chain_command = (
-        f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec {shlex.quote(remote_spec_path)} "
-        ">> .megaplan/cloud-chain.log 2>&1"
+    # Resolve the chain session name for the launch tmux session.
+    launch_session = (
+        spec.chain.chain_session
+        if spec.chain is not None and spec.chain.chain_session
+        else CHAIN_SESSION_NAME
     )
     result = provider.ssh_exec(
-        " && ".join(
-            [
-                f"mkdir -p {shlex.quote(str(PurePosixPath(spec.repo.workspace) / '.megaplan'))}",
-                (
-                    "if tmux has-session -t megaplan-chain 2>/dev/null; then "
-                    "echo 'megaplan-chain session already running'; "
-                    "else "
-                    f"tmux new-session -d -s megaplan-chain -c {shlex.quote(spec.repo.workspace)} {shlex.quote(chain_command)}; "
-                    "echo 'started megaplan-chain session'; "
-                    "fi"
-                ),
-            ]
+        _tmux_chain_launch_command(
+            spec.repo.workspace, remote_spec_path, session_name=launch_session
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
@@ -590,6 +710,11 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
+                "workspace": spec.repo.workspace,
+                "chain_session": launch_session,
+                "extra_repos": spec.extra_repos,
+                "provider": spec.provider,
+                "provider_identity": _get_provider_identity(spec),
             },
             indent=2,
         )
@@ -625,15 +750,18 @@ def _resolve_remote_chain_spec(root: Path, args: argparse.Namespace, spec: Cloud
     if explicit:
         return explicit
 
-    marker_path = _marker_dir(_cloud_yaml_path(root, args)) / "last_chain.json"
-    if marker_path.exists():
-        try:
-            marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            marker = {}
-        remote_spec = marker.get("remote_spec")
-        if isinstance(remote_spec, str) and remote_spec:
-            return remote_spec
+    marker_path = _marker_path_no_create(_cloud_yaml_path(root, args)) / "last_chain.json"
+    try:
+        if marker_path.exists():
+            try:
+                marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                marker = {}
+            remote_spec = marker.get("remote_spec")
+            if isinstance(remote_spec, str) and remote_spec:
+                return remote_spec
+    except OSError:
+        pass  # marker dir not accessible, fall through to spec fallback
 
     if spec.mode == "chain" and spec.chain is not None:
         return spec.chain.spec
@@ -653,6 +781,32 @@ def _run_chain_status(root: Path, args: argparse.Namespace, spec: CloudSpec, pro
     return 0
 
 
+def _run_supervise_tick(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    """Entrypoint for `megaplan cloud supervise --chain`.
+
+    Reads chain status, runs supervisor logic, emits JSON on stdout and a
+    human-readable summary on stderr.  The full supervision policy is
+    implemented in :func:`cloud_supervise_tick`.
+    """
+    # ── deferred import to keep the CLI module's top-level light ──────────
+    from megaplan.cloud.supervise import cloud_supervise_tick  # noqa: F811
+
+    report = cloud_supervise_tick(root, args, spec, provider)
+
+    # Human-readable summary on stderr.
+    event = report.get("event", "unknown")
+    acted = report.get("acted", False)
+    next_action = report.get("next_action", "none")
+    refused = report.get("refused_reason")
+    status_line = f"supervisor tick: {event} | acted={acted} | next_action={next_action}"
+    if refused:
+        status_line += f" | refused_reason={refused}"
+    sys.stderr.write(status_line + "\n")
+
+    sys.stdout.write(json.dumps(report, indent=2) + "\n")
+    return 0 if report.get("success") else 1
+
+
 def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `megaplan cloud status`."""
     return provider.status_payload(
@@ -661,11 +815,392 @@ def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) ->
     )
 
 
+def _try_provider_method(provider, method_name: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Call *method_name* on *provider* and return the result, or a structured
+    ``unknown``/``unavailable`` entry on failure."""
+    meth = getattr(provider, method_name, None)
+    if meth is None:
+        return {"status": "unavailable", "reason": f"provider does not implement {method_name}"}
+    try:
+        result = meth(*args, **kwargs)
+    except (CliError, OSError, json.JSONDecodeError) as exc:
+        return {"status": "unavailable", "reason": str(exc)}
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        return {"status": "unknown", "raw": result}
+    return {"status": "unknown", "payload": result}
+
+
+def _classify_effective_status(
+    chain_state: Any,
+    effective: dict[str, Any],
+    milestone_count: int,
+    plan_status: dict[str, Any],
+    runner: dict[str, Any],
+    pr: dict[str, Any],
+    sync: dict[str, Any],
+    human_verification: dict[str, Any] | None = None,
+) -> str:
+    """Classify the effective chain status into one of seven categories.
+
+    Returns one of:
+      ``complete`` — all milestones processed (terminal).
+      ``running`` — a plan is executing and the runner is alive.
+      ``awaiting_pr_merge`` — merge_policy is 'review' and chain is waiting.
+      ``awaiting_human_verify`` — plan is blocked on human verification criteria.
+      ``human_prerequisite`` — prerequisite_policy is 'required' and unmet.
+      ``quality_gate`` — validation_policy is 'required' and quality gate is failing.
+      ``stale_bookkeeping`` — no live runner, no active plan, chain state is stale.
+    """
+    last_state = getattr(chain_state, "last_state", None)
+    current_plan = getattr(chain_state, "current_plan_name", None)
+
+    # Complete/done: all milestones processed (MUST be first — terminal state
+    # takes priority over runner liveness checks).
+    current_index = getattr(chain_state, "current_milestone_index", -1)
+    if milestone_count > 0 and current_index >= milestone_count:
+        return "complete"
+
+    # Explicit awaiting_pr_merge state
+    if last_state == "awaiting_pr_merge":
+        return "awaiting_pr_merge"
+
+    # ── awaiting_human_verify ──────────────────────────────────────────
+    # Checked after terminal / pr-merge so those take priority, but BEFORE
+    # the generic «running» / «stalled» logic so pending verification does
+    # not get misclassified as stale or blocked for other reasons.
+    if plan_status.get("status") == "awaiting_human_verify":
+        # If verification facts are unavailable, invalid, or missing
+        # latest-verdict semantics, fail closed as blocked (do NOT assume
+        # the chain is done or recoverable).
+        if human_verification is None:
+            return "awaiting_human_verify"
+        hv_status = human_verification.get("status")
+        if hv_status != "available":
+            return "awaiting_human_verify"
+        if human_verification.get("semantics") != "latest_verdict":
+            return "awaiting_human_verify"
+
+        all_verified = human_verification.get("all_deferred_must_verified", False)
+        if not all_verified:
+            # Pending deferred must criteria (including latest-verdict
+            # ``fail`` records) remain — still blocked.
+            return "awaiting_human_verify"
+
+        # All deferred must criteria have latest ``pass`` records.
+        runner_alive = runner.get("status") in ("alive", "connected")
+        if runner_alive:
+            return "running"
+        # Runner dead but verification satisfied — chain is stale and
+        # recoverable (supervisor can wake it).
+        return "stale_bookkeeping"
+
+    # Running: plan is active and runner shows signs of life
+    plan_running = plan_status.get("status") in ("running", "active", "in_progress")
+    runner_alive = runner.get("status") in ("alive", "connected")
+    if plan_running and runner_alive:
+        return "running"
+    if plan_running and runner.get("status") == "unknown":
+        # plan reports as running but we can't probe runner; give benefit of doubt
+        return "running"
+
+    # If there's a current plan but no runner, it might be stalled
+    if current_plan and not plan_running:
+        if sync.get("sync_state") in ("stale", "dirty"):
+            return "stale_bookkeeping"
+        # Check for prerequisite block (use effective policy dict).
+        if effective.get("prerequisite_policy") == "required":
+            return "human_prerequisite"
+        if effective.get("validation_policy") == "required":
+            return "quality_gate"
+
+    # No current plan and no runner: stale bookkeeping
+    if not current_plan and not runner_alive:
+        return "stale_bookkeeping"
+
+    # Default: running (we have state but can't confirm otherwise)
+    return "running"
+
+
+def _resolve_chain_execution_context(
+    spec: CloudSpec,
+    chain_state,
+    marker: dict[str, Any] | None,
+    remote_spec: str,
+) -> dict[str, Any]:
+    """Resolve workspace, session, and extra_repos for the chain.
+
+    Resolution order:
+      - workspace:  chain_state.resolved_workspace > marker.workspace >
+                    parent of *remote_spec* (``<workspace>/chain.yaml``) >
+                    spec.repo.workspace
+      - session:    chain_state.chain_session > marker.chain_session >
+                    spec.chain.chain_session > CHAIN_SESSION_NAME
+      - extra_repos: combine spec.extra_repos + chain_state.extra_repos +
+                     marker.extra_repos (deduplicated, order preserved).
+
+    Returns a dict with ``workspace``, ``chain_session``, ``extra_repos``,
+    ``remote_spec``, and ``source`` (which data source provided each field).
+    """
+    if marker is None:
+        marker = {}
+
+    # --- workspace -------------------------------------------------------------
+    workspace: str | None = None
+    workspace_source: str = "default"
+
+    # 1. chain_state.resolved_workspace
+    if getattr(chain_state, "resolved_workspace", None):
+        workspace = chain_state.resolved_workspace
+        workspace_source = "chain_state"
+    # 2. marker.workspace
+    elif isinstance(marker.get("workspace"), str) and marker["workspace"].strip():
+        workspace = marker["workspace"]
+        workspace_source = "marker"
+    # 3. parent of remote_spec (shaped like <workspace>/chain.yaml)
+    elif "/" in remote_spec:
+        parent = str(PurePosixPath(remote_spec).parent)
+        if parent and parent != "/" and parent != ".":
+            workspace = parent
+            workspace_source = "remote_spec"
+    # 4. spec.repo.workspace
+    if workspace is None:
+        workspace = spec.repo.workspace
+        workspace_source = "spec"
+
+    # --- chain_session ---------------------------------------------------------
+    chain_session: str | None = None
+    session_source: str = "default"
+
+    # 1. chain_state.chain_session
+    cs = getattr(chain_state, "chain_session", None)
+    if isinstance(cs, str) and cs.strip():
+        chain_session = cs
+        session_source = "chain_state"
+    # 2. marker.chain_session
+    elif isinstance(marker.get("chain_session"), str) and marker["chain_session"].strip():
+        chain_session = marker["chain_session"]
+        session_source = "marker"
+    # 3. spec.chain.chain_session
+    elif spec.chain is not None and spec.chain.chain_session:
+        chain_session = spec.chain.chain_session
+        session_source = "spec"
+    # 4. CHAIN_SESSION_NAME
+    if chain_session is None:
+        chain_session = CHAIN_SESSION_NAME
+        session_source = "default"
+
+    # --- extra_repos -----------------------------------------------------------
+    seen: set[str] = set()
+    extra_repos: list[str] = []
+    extra_repos_sources: list[str] = []
+
+    for source_label, source_list in (
+        ("spec", list(spec.extra_repos)),
+        ("chain_state", list(getattr(chain_state, "extra_repos", []))),
+        ("marker", list(marker.get("extra_repos", [])) if isinstance(marker.get("extra_repos"), list) else []),
+    ):
+        for repo in source_list:
+            if isinstance(repo, str) and repo.strip() and repo not in seen:
+                seen.add(repo)
+                extra_repos.append(repo)
+                extra_repos_sources.append(source_label)
+
+    return {
+        "workspace": workspace,
+        "chain_session": chain_session,
+        "extra_repos": extra_repos,
+        "remote_spec": remote_spec,
+        "source": {
+            "workspace": workspace_source,
+            "session": session_source,
+            "extra_repos": extra_repos_sources,
+        },
+    }
+
+
+def _marker_path_no_create(cloud_yaml_path: Path) -> Path:
+    """Return the marker directory path without creating any directories.
+
+    This is intentionally read-only so that status / supervisor reads do not
+    require write access to ``~/.megaplan/cloud/markers/``.
+    """
+    marker_key = hashlib.sha256(str(cloud_yaml_path.resolve()).encode()).hexdigest()[:16]
+    return Path.home() / ".megaplan" / "cloud" / "markers" / marker_key
+
+
+def _load_marker(root: Path, args: argparse.Namespace) -> dict[str, Any] | None:
+    """Load the last_chain.json marker if it exists, or None.
+
+    Does NOT create any marker directories — the read path is intentionally
+    non-creating so that ``cloud_chain_status_payload`` and supervisor ticks
+    work when ``~/.megaplan/cloud/markers/`` is not writable.
+    """
+    marker_path = _marker_path_no_create(_cloud_yaml_path(root, args)) / "last_chain.json"
+    try:
+        if not marker_path.exists():
+            return None
+        return json.loads(marker_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _provider_consistency_check(
+    spec: CloudSpec,
+    marker: dict[str, Any] | None,
+    ctx: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare provider identity across spec, marker, and resolved context.
+
+    This compares **provider identity** (service name, project, host), NOT
+    SSH attach session names or chain tmux session names.  For Railway the
+    ``railway.session`` (default ``agent``) is an SSH routing name and is
+    explicitly excluded from the comparison.
+
+    Returns a dict with ``status`` (``consistent``, ``mismatch``,
+    ``unknown``, or ``not_applicable``) and metadata about each source.
+    """
+    provider_name = spec.provider
+    marker_identity = (marker or {}).get("provider_identity")
+    marker_provider = (marker or {}).get("provider")
+
+    # Local / SSH providers have no structured provider identity to compare.
+    if provider_name in ("local", "ssh"):
+        return {
+            "status": "not_applicable",
+            "reason": f"provider {provider_name!r} has no comparable provider identity",
+            "spec_provider": provider_name,
+        }
+
+    # Railway: compare provider name, service name, and marker identity.
+    if provider_name == "railway":
+        spec_identity = _get_provider_identity(spec)
+
+        # If the marker was written by a different provider, flag mismatch.
+        if marker_provider is not None and marker_provider != provider_name:
+            return {
+                "status": "mismatch",
+                "reason": (
+                    f"marker was written for provider {marker_provider!r} "
+                    f"but spec declares {provider_name!r}"
+                ),
+                "spec_provider": provider_name,
+                "marker_provider": marker_provider,
+                "spec_identity": spec_identity,
+                "marker_identity": marker_identity,
+            }
+
+        # If marker identity differs from spec identity, flag mismatch.
+        if (
+            marker_identity is not None
+            and spec_identity is not None
+            and marker_identity != spec_identity
+        ):
+            return {
+                "status": "mismatch",
+                "reason": (
+                    f"marker provider_identity {marker_identity!r} "
+                    f"does not match spec identity {spec_identity!r}"
+                ),
+                "spec_provider": provider_name,
+                "spec_identity": spec_identity,
+                "marker_identity": marker_identity,
+            }
+
+        # All checks passed or not enough data to flag.
+        return {
+            "status": "consistent",
+            "spec_provider": provider_name,
+            "spec_identity": spec_identity,
+            "marker_provider": marker_provider,
+            "marker_identity": marker_identity,
+        }
+
+    return {
+        "status": "unknown",
+        "reason": f"no consistency check defined for provider {provider_name!r}",
+        "spec_provider": provider_name,
+    }
+
+
+def _remote_human_verification_status_command(
+    workspace: str, plan_name: str
+) -> str:
+    """Build a shell command that runs ``verify-human --list --json`` inside
+    the resolved workspace.
+    """
+    return (
+        f"cd {shlex.quote(workspace)} && "
+        f"MEGAPLAN_TRUSTED_CONTAINER=1 megaplan verify-human --list "
+        f"--plan {shlex.quote(plan_name)} --json"
+    )
+
+
+def _remote_human_verification_status(
+    provider,
+    resolved_workspace: str,
+    chain_state,
+) -> dict[str, Any]:
+    """Fetch remote human-verification status via ``verify-human --list --json``.
+
+    Validates that the remote payload declares ``semantics: latest_verdict``.
+    If missing or different, facts are classified as ``unavailable``/``stale``.
+    Providers without ``ssh_exec`` return ``{status: 'unavailable'}``.
+    """
+    current_plan = getattr(chain_state, "current_plan_name", None)
+    if not current_plan:
+        return {"status": "unavailable", "reason": "no current plan"}
+
+    ssh_meth = getattr(provider, "ssh_exec", None)
+    if ssh_meth is None:
+        return {
+            "status": "unavailable",
+            "reason": "provider does not implement ssh_exec",
+        }
+
+    try:
+        cmd = _remote_human_verification_status_command(
+            resolved_workspace, current_plan
+        )
+        result = ssh_meth(cmd)
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            return {"status": "unavailable", "reason": "empty stdout"}
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        return {"status": "unavailable", "reason": f"invalid JSON: {exc}"}
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc)}
+
+    # Validate semantics marker.
+    semantics = payload.get("semantics")
+    if semantics != "latest_verdict":
+        return {
+            "status": "unavailable",
+            "reason": (
+                f"remote payload semantics {semantics!r} != 'latest_verdict'; "
+                "facts may be stale"
+            ),
+            "raw_semantics": semantics,
+        }
+
+    return {
+        "status": "available",
+        "pending": payload.get("pending", 0),
+        "verified": payload.get("verified", 0),
+        "all_deferred_must_verified": payload.get("all_deferred_must_verified", False),
+        "rows": payload.get("rows", []),
+        "semantics": semantics,
+    }
+
+
 def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `megaplan cloud status --chain`."""
     from megaplan import chain as chain_module
 
     remote_spec = _resolve_remote_chain_spec(root, args, spec)
+    marker = _load_marker(root, args)
     state_path = chain_module._state_path_for(Path(remote_spec))
     try:
         chain_state = chain_module.ChainState.from_dict(json.loads(provider.read_remote_file(str(state_path))))
@@ -680,7 +1215,120 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     finally:
         temp_spec.unlink(missing_ok=True)
 
+    # Resolve execution context (workspace, session, extra_repos).
+    ctx = _resolve_chain_execution_context(spec, chain_state, marker, remote_spec)
+    resolved_workspace: str = ctx["workspace"]
+    resolved_session: str = ctx["chain_session"]
+
     summary = chain_module.format_chain_status(chain_spec, chain_state)
+
+    # Build additive sections alongside the existing top-level keys.
+    # Runtime policy (effective, merging any overrides).
+    try:
+        runtime_path = chain_module._runtime_policy_path_for(Path(remote_spec))
+        runtime_raw = provider.read_remote_file(str(runtime_path))
+        runtime_overrides = json.loads(runtime_raw) if runtime_raw else {}
+    except Exception:
+        runtime_overrides = {}
+    effective = chain_module.effective_chain_policy(chain_spec, runtime_overrides)
+    policy: dict[str, Any] = effective
+
+    # Sync state from chain state fields.
+    sync: dict[str, Any] = {
+        "branch_head": chain_state.branch_head,
+        "pr_head": chain_state.pr_head,
+        "last_pushed_commit": chain_state.last_pushed_commit,
+        "dirty_flag": chain_state.dirty_flag,
+        "sync_state": chain_state.sync_state,
+    }
+
+    # Plan status via provider.status_payload when a current plan exists.
+    plan_status: dict[str, Any]
+    if chain_state.current_plan_name:
+        plan_status = _try_provider_method(
+            provider,
+            "status_payload",
+            plan=chain_state.current_plan_name,
+            workspace=resolved_workspace,
+        )
+    else:
+        plan_status = {"status": "missing", "reason": "no current plan"}
+
+    # Runner / heartbeat info via optional ssh_exec probe.
+    runner: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
+    try:
+        ssh_meth = getattr(provider, "ssh_exec", None)
+        if ssh_meth is not None:
+            session_esc = shlex.quote(resolved_session)
+            proc = ssh_meth(f"tmux has-session -t {session_esc} 2>/dev/null && echo alive || echo dead")
+            if proc.returncode == 0 and "alive" in (proc.stdout or ""):
+                runner = {"status": "alive", "session": resolved_session, "detail": "tmux session present"}
+            else:
+                runner = {"status": "dead", "session": resolved_session, "detail": "tmux session absent"}
+    except Exception as exc:
+        runner = {"status": "unknown", "reason": str(exc)}
+
+    # Log paths (structured from the resolved workspace).
+    chain_log_path = (PurePosixPath(resolved_workspace) / ".megaplan" / "cloud-chain.log").as_posix()
+    chain_log_info: dict[str, Any] = {"path": chain_log_path}
+    try:
+        ssh_meth = getattr(provider, "ssh_exec", None)
+        if ssh_meth is not None:
+            stat_proc = ssh_meth(
+                "stat -c '%Y %s' "
+                + shlex.quote(chain_log_path)
+                + " 2>/dev/null || echo unavailable"
+            )
+            stat_out = (stat_proc.stdout or "").strip()
+            if stat_out and stat_out != "unavailable":
+                parts = stat_out.split()
+                if len(parts) >= 2:
+                    chain_log_info["mtime"] = int(parts[0]) if parts[0].lstrip("-").isdigit() else parts[0]
+                    chain_log_info["size"] = int(parts[1]) if parts[1].isdigit() else parts[1]
+            else:
+                chain_log_info["status"] = "unavailable"
+        else:
+            chain_log_info["status"] = "unavailable"
+            chain_log_info["reason"] = "provider does not implement ssh_exec"
+    except Exception as exc:
+        chain_log_info["status"] = "unavailable"
+        chain_log_info["reason"] = str(exc)
+    logs: dict[str, Any] = {
+        "workspace": resolved_workspace,
+        "plan_log": (PurePosixPath(resolved_workspace) / ".megaplan" / "logs" / "latest.log").as_posix()
+        if chain_state.current_plan_name
+        else None,
+        "agent_log": (PurePosixPath(resolved_workspace) / "agent.log").as_posix(),
+        "chain_log": chain_log_info,
+    }
+
+    # PR state.
+    pr: dict[str, Any] = {}
+    if chain_state.pr_number is not None:
+        pr["pr_number"] = chain_state.pr_number
+        pr["pr_state"] = chain_state.pr_state
+        if chain_state.pr_head:
+            pr["pr_head"] = chain_state.pr_head
+    else:
+        pr = {"status": "none"}
+
+    # Provider / session consistency check (read-only).
+    provider_consistency = _provider_consistency_check(spec, marker, ctx)
+
+    # Human-verification status via explicit remote command (T11).
+    # Probing here means ``cloud_chain_status_payload`` is self-contained
+    # and the supervisor tick's (c2) section only needs to refresh when the
+    # effective status is human-verification-related.
+    human_verification: dict[str, Any] = _remote_human_verification_status(
+        provider, resolved_workspace, chain_state,
+    )
+
+    # Classify effective status.
+    effective_status = _classify_effective_status(
+        chain_state, effective, len(chain_spec.milestones), plan_status, runner, pr, sync,
+        human_verification=human_verification,
+    )
+
     return {
         "success": True,
         "spec": remote_spec,
@@ -688,6 +1336,18 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         "seed_plan": chain_spec.seed_plan,
         "chain_state": chain_state.to_dict(),
         "summary": summary,
+        "effective_status": effective_status,
+        "policy": policy,
+        "sync": sync,
+        "plan_status": plan_status,
+        "runner": runner,
+        "logs": logs,
+        "pr": pr,
+        "provider_consistency": provider_consistency,
+        "human_verification": human_verification,
+        "resolved_workspace": resolved_workspace,
+        "resolved_session": resolved_session,
+        "resolved_context": ctx,
     }
 
 

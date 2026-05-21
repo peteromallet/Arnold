@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 import yaml
 
 from megaplan.cloud.cli import (
+    _chain_start_command,
     _ensure_repo_command,
     _marker_dir,
     _persistent_deploy_dir,
@@ -855,3 +857,93 @@ def test_cloud_bootstrap_fails_before_upload_when_ensure_repo_fails(
     assert "ensure repo checkout failed" in payload["message"]
     assert uploads == []
     assert commands == [_ensure_repo_command(_cloud_spec("railway"))]
+
+
+def test_mp_chain_wrapper_matches_canonical_command(tmp_path: Path) -> None:
+    """The wrapper's effective command matches _chain_start_command() output.
+
+    We replace ``megaplan`` with a stub that records its arguments and env,
+    then verify that the wrapper produces the same command as the canonical
+    ``_chain_start_command()`` helper for both normal and --one modes.
+    """
+    wrapper_path = (
+        Path(__file__).parent.parent / "megaplan" / "cloud" / "wrappers" / "mp-chain"
+    )
+    spec_path = "/workspace/app/chain.yaml"
+
+    # Stub megaplan: records its arguments + env var to a known file.
+    stub_output_file = tmp_path / "stub-output.txt"
+    megaplan_stub = tmp_path / "megaplan"
+    megaplan_stub.write_text(
+        "#!/bin/bash\n"
+        f'echo "ARGS=$*" >> {shlex.quote(str(stub_output_file))}'
+        "\n"
+        f'echo "MEGAPLAN_TRUSTED_CONTAINER=${{MEGAPLAN_TRUSTED_CONTAINER:-unset}}" >> {shlex.quote(str(stub_output_file))}'
+        "\n"
+    )
+    megaplan_stub.chmod(0o755)
+
+    # Include standard bin directories so bash builtins and env are available.
+    env = {
+        "PATH": f"{tmp_path}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+    }
+    bash_bin = "/bin/bash"
+
+    # ---- without --one ----
+    expected_cmd = _chain_start_command(spec_path, one_shot=False)
+    (tmp_path / ".megaplan").mkdir(parents=True, exist_ok=True)
+    stub_output_file.write_text("")  # clear
+
+    subprocess.run(
+        [bash_bin, str(wrapper_path), spec_path],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+
+    stub_output = stub_output_file.read_text().strip()
+    stub_lines = stub_output.split("\n")
+    assert len(stub_lines) >= 2, f"unexpected stub output: {stub_output!r}"
+    args_line = stub_lines[0]  # ARGS=chain start --spec <path>
+    env_line = stub_lines[1]   # MEGAPLAN_TRUSTED_CONTAINER=1
+
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1" in env_line
+    # The wrapper must emit the same megaplan arguments as the canonical helper.
+    expected_args = "chain start --spec " + spec_path
+    assert expected_args in args_line, (
+        f"expected args {expected_args!r} in {args_line!r}"
+    )
+    assert "--one" not in args_line
+
+    # The canonical command must contain the log redirect + env var.
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1" in expected_cmd
+    assert ".megaplan/cloud-chain.log" in expected_cmd
+
+    # ---- with --one ----
+    expected_cmd_one = _chain_start_command(spec_path, one_shot=True)
+    stub_output_file.write_text("")  # clear
+
+    subprocess.run(
+        [bash_bin, str(wrapper_path), spec_path, "--one"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+    )
+
+    stub_output_one = stub_output_file.read_text().strip()
+    stub_lines_one = stub_output_one.split("\n")
+    assert len(stub_lines_one) >= 2, f"unexpected stub output: {stub_output_one!r}"
+    args_line_one = stub_lines_one[0]
+
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1" in stub_lines_one[1]
+    expected_args_one = "chain start --spec " + spec_path + " --one"
+    assert expected_args_one in args_line_one, (
+        f"expected args {expected_args_one!r} in {args_line_one!r}"
+    )
+
+    assert "MEGAPLAN_TRUSTED_CONTAINER=1" in expected_cmd_one
+    assert ".megaplan/cloud-chain.log" in expected_cmd_one
+    assert "--one" in expected_cmd_one

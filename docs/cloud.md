@@ -204,6 +204,91 @@ The command prints the structured payload on stdout and the same human-readable 
 
 Without `--chain`, `cloud status` still runs remote `megaplan status` and prints that JSON payload unchanged.
 
+### `megaplan cloud supervise --chain`
+
+`cloud supervise --chain` runs a **one-shot supervisor tick** against the remote chain. It observes the chain, refreshes branch/PR sync state, and makes safe progress decisions. It never invents approvals, bypasses quality gates, or runs destructive git operations.
+
+#### One-shot tick behavior
+
+Each invocation is a single observation + decision cycle:
+
+1. Read remote chain status via the same path as `cloud status --chain`.
+2. Refresh branch/PR sync by running `_capture_sync_state` remotely.
+3. Re-read chain status after the refresh.
+4. Map the refreshed `effective_status` to a safe action.
+5. Execute at most one safe mutation (tmux restart, one-shot chain tick).
+6. Emit a structured JSON report on **stdout** and a human-readable summary on **stderr**.
+
+#### JSON stdout
+
+The tick report on stdout includes these fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `success` | bool | Whether the tick completed without error. |
+| `event` | string | Event label: `supervisor_tick`, `supervisor_blocked`, `supervisor_advanced`, `supervisor_restarted`, or `supervisor_error`. |
+| `spec` | string | Resolved remote chain spec path. |
+| `effective_status` | string | Classified chain status after sync refresh. |
+| `next_action` | string | Decision: `noop`, `done`, `blocked`, `advance`, `restart`, or `none`. |
+| `acted` | bool | Whether the supervisor executed a mutation this tick. |
+| `refused_reason` | string\|null | Human-readable explanation when the supervisor declined to act. |
+| `runner` | object | Runner liveness and session info. |
+| `sync` | object | Branch/PR sync state fields. |
+| `pr` | object | PR number, state, and head. |
+| `logs` | object | Remote log paths and best-effort mtime/size. |
+
+#### Stderr summary
+
+A single line is written to stderr:
+
+```text
+supervisor tick: <event> | acted=<bool> | next_action=<action> [| refused_reason=<reason>]
+```
+
+#### Remote spec precedence
+
+Same resolution order as `cloud status --chain`:
+
+1. `--remote-spec <path>`
+2. `~/.megaplan/cloud/markers/<sha>/last_chain.json`
+3. `spec.chain.spec` from `cloud.yaml` when `mode: chain`
+4. Otherwise `missing_remote_spec`
+
+#### Canonical session
+
+The supervisor targets the same `megaplan-chain` tmux session used by `cloud chain`. All mutations use the canonical `MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec <path> --one` command, appending to `<workspace>/.megaplan/cloud-chain.log`.
+
+#### Safe actions
+
+The supervisor will **only** perform these mutations:
+
+- **Restart a dead runner**: When `effective_status` is `stale_bookkeeping` and the `megaplan-chain` tmux session is dead or missing, the supervisor kills any stale session and starts a fresh one-shot tick.
+- **Advance past a merged PR**: When `effective_status` is `awaiting_pr_merge` and the PR has been merged (confirmed via `gh pr view --json state`), the supervisor advances the chain with a one-shot tick.
+
+#### Refusal cases (no mutation)
+
+The supervisor **refuses to act** and returns `acted: false` with a `refused_reason` for:
+
+| effective_status | Behavior |
+|---|---|
+| `running` | Chain is running; nothing to do. |
+| `complete` | All milestones processed; chain is done. |
+| `human_prerequisite` | Prerequisite policy is `required` and unmet; requires human operator resolution via `megaplan user-action resolve` or `megaplan chain override`. |
+| `quality_gate` | Validation policy is `required` and quality gate is failing; requires human operator resolution. |
+| `awaiting_pr_merge` (PR unmerged) | PR is still open; supervisor will not advance until merged. |
+| `stale_bookkeeping` (runner alive) | Bookkeeping is stale but runner is alive; supervisor will not force-restart a live runner. |
+| Provider lacks `ssh_exec` | Cannot probe or mutate the remote runner. |
+
+#### Not a destructive repair tool
+
+The supervisor is **not** a destructive repair tool and does **not** replace:
+
+- **Human approval** of prerequisites — use `megaplan user-action resolve` or `megaplan chain override`.
+- **PR review** — the supervisor only advances when the PR is already merged.
+- **Quality-gate resolution** — failing gates must be resolved by a human operator.
+
+The supervisor never produces force-push, reset, branch-deletion, or any other destructive git commands. Its only mutations are tmux session management and `chain start --one`.
+
 ## Boot-Time Runner Modes
 
 `mode: auto` and `mode: chain` still control what the long-running remote `agent` session launches on boot. Those boot paths expect the referenced remote files to already exist on the workspace volume.
