@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import TextIO
 
+import re
+
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
@@ -20,6 +22,21 @@ from megaplan.workers._impl import (
 from megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
 from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_hermes_prompt
+
+
+def _sanitize_db_name(identifier: str) -> str:
+    """Sanitize a task/session identifier for use as a safe filename component."""
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', identifier)
+    sanitized = re.sub(r'_+', '_', sanitized).strip('_')
+    if len(sanitized) > 100:
+        sanitized = sanitized[:100]
+    return sanitized or "default"
+
+
+def _worker_db_path(plan_dir: Path, identifier: str) -> Path:
+    """Derive a per-worker SessionDB path from a plan directory and stable identifier."""
+    sanitized = _sanitize_db_name(identifier)
+    return plan_dir / '.hermes_state' / f'state_{sanitized}.db'
 
 
 def _import_hermes_runtime():
@@ -418,6 +435,9 @@ def run_hermes_step(
     fresh = fresh or step != "execute"
 
     AIAgent, SessionDB = _import_hermes_runtime()
+    from run_agent import configure_logging
+
+    configure_logging(verbose_logging=False, quiet_mode=True)
 
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
@@ -521,18 +541,17 @@ def run_hermes_step(
 
     rendered_prompt = prompt
 
-    # Redirect stdout to stderr before creating the agent.  Hermes's
-    # KawaiiSpinner captures sys.stdout at __init__ time and writes
-    # directly to it (bypassing _print_fn).  By swapping stdout to
-    # stderr here, all spinner/progress output flows to stderr while
-    # megaplan keeps stdout clean for structured JSON results.
+    # Build an explicit activity stream that wraps stderr with step-touch
+    # side-effects.  This replaces the old approach of mutating sys.stdout
+    # and sys.stderr globally — instead the stream is passed explicitly to
+    # AIAgent (output_stream) and used via the activity_print helper.
     active_step = state.get("active_step")
     run_id = active_step.get("run_id") if isinstance(active_step, dict) else None
-    real_stdout = sys.stdout
-    real_stderr = sys.stderr
-    activity_stderr = _ActivityStream(real_stderr, plan_dir=plan_dir, run_id=run_id if isinstance(run_id, str) else None)
-    sys.stderr = activity_stderr
-    sys.stdout = activity_stderr
+    activity_stderr = _ActivityStream(sys.stderr, plan_dir=plan_dir, run_id=run_id if isinstance(run_id, str) else None)
+
+    def activity_print(*args, **kwargs):
+        kwargs.pop('file', None)
+        print(*args, file=activity_stderr, **kwargs)
 
     # Resolve model provider — support direct API providers via prefix
     # e.g. "zhipu:glm-5.1" → base_url=Zhipu API, model="glm-5.1"
@@ -553,7 +572,9 @@ def run_hermes_step(
     # without `stream=true`.
     agent_max_tokens = 65536 if step == "execute" else 32768
 
-    def _make_agent(agent_model: str, extra_kwargs: dict) -> "AIAgent":
+    _hermes_db_path = _worker_db_path(plan_dir, session_key)
+
+    def _make_agent(agent_model: str, extra_kwargs: dict):
         current_agent = AIAgent(
             model=agent_model,
             quiet_mode=True,
@@ -561,12 +582,13 @@ def run_hermes_step(
             skip_memory=True,
             enabled_toolsets=toolsets,
             session_id=session_id,
-            session_db=SessionDB(),
+            session_db=SessionDB(db_path=_hermes_db_path),
             max_tokens=agent_max_tokens,
             reasoning_config=_reasoning_off,
+            output_stream=activity_stderr,
             **extra_kwargs,
         )
-        current_agent._print_fn = lambda *a, **kw: print(*a, **kw, file=sys.stderr)
+        current_agent._print_fn = activity_print
         if not toolsets:
             current_agent.set_response_format(schema, name=f"megaplan_{step}")
         return current_agent
@@ -636,7 +658,7 @@ def run_hermes_step(
                         current_payload = reconstructed
                         print(
                             "[hermes-worker] Using reconstructed payload (original failed validation)",
-                            file=sys.stderr,
+                            file=activity_stderr,
                         )
                         error = None
                     except CliError:
@@ -678,7 +700,7 @@ def run_hermes_step(
                     # Quota exhaustion needs a long cooldown (hours, not seconds)
                     cooldown = 3600 if "Limit Exhausted" in exc_str else 120
                     report_429("zhipu", agent_kwargs.get("api_key", ""), cooldown_secs=cooldown)
-                    print(f"[hermes-worker] Z.AI key cooled down for {cooldown}s", file=sys.stderr)
+                    print(f"[hermes-worker] Z.AI key cooled down for {cooldown}s", file=activity_stderr)
                 elif model and model.startswith("deepseek:"):
                     report_429("deepseek", agent_kwargs.get("api_key", ""), cooldown_secs=120)
                 elif model and model.startswith("fireworks:"):
@@ -689,10 +711,10 @@ def run_hermes_step(
                     if isinstance(exc, CliError):
                         print(
                             f"[hermes-worker] MiniMax returned bad content ({_failure_reason(exc)}), falling back to OpenRouter",
-                            file=sys.stderr,
+                            file=activity_stderr,
                         )
                     else:
-                        print(f"[hermes-worker] MiniMax failed ({exc}), falling back to OpenRouter", file=sys.stderr)
+                        print(f"[hermes-worker] MiniMax failed ({exc}), falling back to OpenRouter", file=activity_stderr)
                     from megaplan.runtime.key_pool import minimax_openrouter_model
                     fallback_model = minimax_openrouter_model(model[len("minimax:"):])
                     output_path = _rewrite_output_template(output_path)
@@ -732,8 +754,6 @@ def run_hermes_step(
                     extra={"session_id": session_id},
                 ) from exc
     finally:
-        sys.stdout = real_stdout
-        sys.stderr = real_stderr
         _sandbox_stack.close()
     elapsed_ms = int((time.monotonic() - started) * 1000)
 

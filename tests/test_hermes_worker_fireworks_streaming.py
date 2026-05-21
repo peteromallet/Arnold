@@ -177,7 +177,8 @@ def test_run_check_uses_streaming_for_fireworks_high_max_tokens(
     }
 
     class FakeSessionDB:
-        pass
+        def __init__(self, db_path=None):
+            pass
 
     class FakeAIAgent:
         instances: list["FakeAIAgent"] = []
@@ -254,7 +255,8 @@ def test_run_check_does_not_force_streaming_for_other_providers(
     }
 
     class FakeSessionDB:
-        pass
+        def __init__(self, db_path=None):
+            pass
 
     class FakeAIAgent:
         instances: list["FakeAIAgent"] = []
@@ -312,7 +314,8 @@ def test_run_check_propagates_fireworks_400(
     schema = _critique_schema()
 
     class FakeSessionDB:
-        pass
+        def __init__(self, db_path=None):
+            pass
 
     class FailingAIAgent:
         instances: list["FailingAIAgent"] = []

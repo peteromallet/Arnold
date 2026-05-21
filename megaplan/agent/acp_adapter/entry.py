@@ -39,6 +39,11 @@ def _setup_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
 
+    # Also set up the persistent error-log handler and third-party logger
+    # levels (idempotent — delegates to configure_logging in run_agent).
+    from run_agent import configure_logging
+    configure_logging(verbose_logging=False, quiet_mode=True)
+
 
 def _load_env() -> None:
     """Load .env from HERMES_HOME (default ``~/.hermes``)."""

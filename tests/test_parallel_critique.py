@@ -371,7 +371,8 @@ def test_run_check_uses_same_parse_fallback_chain_as_hermes_worker(
     }
 
     class FakeSessionDB:
-        pass
+        def __init__(self, db_path=None):
+            pass
 
     class FakeAIAgent:
         instances: list["FakeAIAgent"] = []

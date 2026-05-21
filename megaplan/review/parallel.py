@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import get_effective, load_flag_registry, read_json, schemas_root
-from megaplan.workers.hermes import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
+from megaplan.workers.hermes import _toolsets_for_phase, clean_parsed_payload, parse_agent_output, _worker_db_path
 from megaplan.prompts.review import (
     _filtered_prior_flags,
     _write_criteria_verdict_review_template,
@@ -78,12 +78,14 @@ def _run_check(
     project_dir: Path,
     pre_check_flags: list[dict[str, Any]],
     prior_flags: list[dict[str, Any]] | None = None,
+    output_stream: Any | None = None,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
     from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
     check_id = check["id"] if isinstance(check, dict) else getattr(check, "id")
+    _review_db_path = _worker_db_path(plan_dir, f"review_{check_id}")
     output_path = _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json")
     prompt = single_check_review_prompt(state, plan_dir, root, check, output_path, pre_check_flags, prior_flags)
     resolved_model, agent_kwargs = _resolve_model(model)
@@ -96,6 +98,8 @@ def _run_check(
         else None
     )
 
+    _stream = output_stream if output_stream is not None else sys.stderr
+
     def _make_agent(m: str, kw: dict) -> "AIAgent":
         agent = AIAgent(
             model=m,
@@ -104,12 +108,12 @@ def _run_check(
             skip_memory=True,
             enabled_toolsets=_toolsets_for_phase("review"),
             session_id=str(uuid.uuid4()),
-            session_db=SessionDB(),
+            session_db=SessionDB(db_path=_review_db_path),
             max_tokens=32768,
             reasoning_config=_reasoning_off,
             **kw,
         )
-        agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=sys.stderr)
+        agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=_stream)
         return agent
 
     def _run_attempt(current_agent, current_output_path: Path) -> tuple[dict[str, Any], dict[str, Any], list[str], list[str], float, int, int, int]:
@@ -166,10 +170,10 @@ def _run_check(
                 if isinstance(exc, CliError):
                     print(
                         f"[parallel-review] MiniMax returned bad content ({_failure_reason(exc)}), falling back to OpenRouter",
-                        file=sys.stderr,
+                        file=_stream,
                     )
                 else:
-                    print(f"[parallel-review] Primary MiniMax failed ({exc}), falling back to OpenRouter", file=sys.stderr)
+                    print(f"[parallel-review] Primary MiniMax failed ({exc}), falling back to OpenRouter", file=_stream)
                 output_path = _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json")
                 agent = _make_agent(fallback_model, fallback_kwargs)
                 try:
@@ -208,11 +212,13 @@ def _run_criteria_verdict(
     model: str | None,
     schema: dict[str, Any],
     project_dir: Path,
+    output_stream: Any | None = None,
 ) -> tuple[dict[str, Any], float, int, int, int]:
     from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
+    _criteria_db_path = _worker_db_path(plan_dir, "review_criteria_verdict")
     output_path = _write_criteria_verdict_review_template(plan_dir, state, "review_criteria_verdict.json")
     prompt = parallel_criteria_review_prompt(state, plan_dir, root, output_path)
     resolved_model, agent_kwargs = _resolve_model(model)
@@ -225,6 +231,8 @@ def _run_criteria_verdict(
         else None
     )
 
+    _stream_cv = output_stream if output_stream is not None else sys.stderr
+
     def _make_agent(m: str, kw: dict) -> "AIAgent":
         agent = AIAgent(
             model=m,
@@ -233,13 +241,18 @@ def _run_criteria_verdict(
             skip_memory=True,
             enabled_toolsets=_toolsets_for_phase("review"),
             session_id=str(uuid.uuid4()),
-            session_db=SessionDB(),
+            session_db=SessionDB(db_path=_criteria_db_path),
             max_tokens=32768,
             reasoning_config=_reasoning_off,
             **kw,
         )
-        agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=sys.stderr)
+        agent._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=_stream_cv)
         return agent
+
+    def _failure_reason(exc: Exception) -> str:
+        if isinstance(exc, CliError):
+            return exc.message
+        return str(exc) or exc.__class__.__name__
 
     def _run_attempt(current_agent, current_output_path: Path) -> tuple[dict[str, Any], dict[str, Any], float, int, int, int]:
         current_result = current_agent.run_conversation(user_message=prompt)
@@ -283,12 +296,12 @@ def _run_criteria_verdict(
                 if isinstance(exc, CliError):
                     print(
                         f"[parallel-review] MiniMax returned bad criteria content ({_failure_reason(exc)}), falling back to OpenRouter",
-                        file=sys.stderr,
+                        file=_stream_cv,
                     )
                 else:
                     print(
                         f"[parallel-review] Primary MiniMax failed for criteria verdict ({exc}), falling back to OpenRouter",
-                        file=sys.stderr,
+                        file=_stream_cv,
                     )
                 output_path = _write_criteria_verdict_review_template(plan_dir, state, "review_criteria_verdict.json")
                 agent = _make_agent(fallback_model, fallback_kwargs)
@@ -331,56 +344,54 @@ def run_parallel_review(
     total_completion_tokens = 0
     total_tokens = 0
 
-    real_stdout = sys.stdout
-    sys.stdout = sys.stderr
-    try:
-        total_futures = len(checks) + 1
-        concurrency = min(
-            max_concurrent or get_effective("orchestration", "max_critique_concurrency"),
-            total_futures,
-        )
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            future_map = {
-                executor.submit(
-                    _run_check,
-                    index,
-                    check,
-                    state=state,
-                    plan_dir=plan_dir,
-                    root=root,
-                    model=model,
-                    schema=schema,
-                    project_dir=project_dir,
-                    pre_check_flags=pre_check_flags,
-                    prior_flags=_filtered_prior_flags(check, prior_flags),
-                ): ("check", index)
-                for index, check in enumerate(checks)
-            }
-            future_map[
-                executor.submit(
-                    _run_criteria_verdict,
-                    state=state,
-                    plan_dir=plan_dir,
-                    root=root,
-                    model=model,
-                    schema=schema,
-                    project_dir=project_dir,
-                )
-            ] = ("criteria", None)
-            for future in as_completed(future_map):
-                kind, _index = future_map[future]
-                result = future.result()
-                if kind == "criteria":
-                    criteria_payload, cost_usd, pt, ct, tt = result
-                else:
-                    index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = result
-                    results[index] = (check_payload, verified_ids, disputed_ids)
-                total_cost += cost_usd
-                total_prompt_tokens += pt
-                total_completion_tokens += ct
-                total_tokens += tt
-    finally:
-        sys.stdout = real_stdout
+    output_stream = sys.stderr
+    total_futures = len(checks) + 1
+    concurrency = min(
+        max_concurrent or get_effective("orchestration", "max_critique_concurrency"),
+        total_futures,
+    )
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        future_map = {
+            executor.submit(
+                _run_check,
+                index,
+                check,
+                state=state,
+                plan_dir=plan_dir,
+                root=root,
+                model=model,
+                schema=schema,
+                project_dir=project_dir,
+                pre_check_flags=pre_check_flags,
+                prior_flags=_filtered_prior_flags(check, prior_flags),
+                output_stream=output_stream,
+            ): ("check", index)
+            for index, check in enumerate(checks)
+        }
+        future_map[
+            executor.submit(
+                _run_criteria_verdict,
+                state=state,
+                plan_dir=plan_dir,
+                root=root,
+                model=model,
+                schema=schema,
+                project_dir=project_dir,
+                output_stream=output_stream,
+            )
+        ] = ("criteria", None)
+        for future in as_completed(future_map):
+            kind, _index = future_map[future]
+            result = future.result()
+            if kind == "criteria":
+                criteria_payload, cost_usd, pt, ct, tt = result
+            else:
+                index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = result
+                results[index] = (check_payload, verified_ids, disputed_ids)
+            total_cost += cost_usd
+            total_prompt_tokens += pt
+            total_completion_tokens += ct
+            total_tokens += tt
 
     ordered_checks: list[dict[str, Any]] = []
     verified_groups: list[list[str]] = []
