@@ -41,6 +41,93 @@ READY_METADATA = ReadyMetadata.build(
     provenance={'source_workflow': 'workflow_corpus/official/edit/qwen_image_edit.json'},
 )
 
+# === Subgraph functions ===
+
+def qwen_image_edit(
+    *,
+    image,
+    prompt: str,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    lora_name: str,
+    value: bool,
+):
+    """Qwen-Image-Edit - single-image variant.
+
+    Materialized from subgraph 74a8e1e2-9cb8-4112-978e-06ce1b5793f1 in workflow_corpus/official/edit/qwen_image_edit.json.
+    Inner nodes: VAELoader, TextEncodeQwenImageEditx2, CFGNorm, ModelSamplingAuraFlow, VAEDecode, CLIPLoader, VAEEncode, MarkdownNote, LoraLoaderModelOnly, UNETLoader, PrimitiveFloatx2, PrimitiveIntx2, PrimitiveBoolean, KSampler, ComfySwitchNodex3.
+    """
+
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='qwen_image', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+
+    markdownnote = raw_call('MarkdownNote', '97',
+        widget_0='You can test and find the best setting by yourself. The following table is for reference.\n\n| Model            | Steps | CFG |\n|---------------------|---------------|---------------|\n| Offical             | 50               | 4.0               \n| comfy             | 20                | 2.5               |\n| fp8_e4m3fn + 4steps LoRA    | 4               | 1.0               |\n',
+    )
+    primitiveint = raw_call('PrimitiveInt', '103', value=4, widget_1='fixed')
+    primitivefloat = raw_call('PrimitiveFloat', '105', value=1)
+    primitiveint_2 = raw_call('PrimitiveInt', '106', value=20, widget_1='fixed')
+    primitivefloat_2 = raw_call('PrimitiveFloat', '107', value=2.5)
+    primitiveboolean = raw_call('PrimitiveBoolean', '111', value=value)
+
+    textencodeqwenimageedit = TextEncodeQwenImageEdit(
+        prompt=prompt,
+        clip=cliploader,
+        image=image,
+        vae=vaeloader,
+    )
+
+    textencodeqwenimageedit_2 = TextEncodeQwenImageEdit(
+        prompt='',
+        clip=cliploader,
+        image=image,
+        vae=vaeloader,
+    )
+    vaeencode = VAEEncode(pixels=image, vae=vaeloader)
+    loraloadermodelonly = LoraLoaderModelOnly(lora_name=lora_name, model=unetloader)
+
+    comfyswitchnode_2 = ComfySwitchNode(
+        widget_0=False,
+        on_false=primitivefloat_2,
+        on_true=primitivefloat,
+        switch=primitiveboolean,
+    )
+
+    comfyswitchnode_3 = ComfySwitchNode(
+        widget_0=False,
+        on_false=primitiveint_2,
+        on_true=primitiveint,
+        switch=primitiveboolean,
+    )
+
+    comfyswitchnode = ComfySwitchNode(
+        widget_0=False,
+        on_false=unetloader,
+        on_true=loraloadermodelonly,
+        switch=primitiveboolean,
+    )
+    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=comfyswitchnode)
+    cfgnorm = CFGNorm(widget_0=1, model=modelsamplingauraflow)
+
+    ksampler = KSampler(
+        seed=344147753686358,
+        sampler_name=1,
+        scheduler='euler',
+        denoise='simple',
+        widget_6=1,
+        steps=comfyswitchnode_3,
+        cfg=comfyswitchnode_2,
+        latent_image=vaeencode,
+        model=cfgnorm,
+        negative=textencodeqwenimageedit_2,
+        positive=textencodeqwenimageedit,
+    )
+    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+
+    return vaedecode
+
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:

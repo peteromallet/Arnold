@@ -39,6 +39,54 @@ READY_METADATA = ReadyMetadata.build(
     provenance={'source_workflow': 'workflow_corpus/official/image/z_image.json'},
 )
 
+# === Subgraph functions ===
+
+def text_to_image_z_image_base(
+    *,
+    width: int,
+    height: int,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    text: str,
+    steps: int,
+    cfg: float,
+):
+    """Text to Image(Z-Image-Base).
+
+    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in workflow_corpus/official/image/z_image.json.
+    Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler, MarkdownNote.
+    """
+
+    cliploader = CLIPLoader(type_='lumina2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+    unetloader = UNETLoader(unet_name=unet_name)
+    emptysd3latentimage = EmptySD3LatentImage(width=width, height=height)
+
+    markdownnote = raw_call('MarkdownNote', '76',
+        widget_0='- Steps: 30～50\n- cfg:  3～5',
+    )
+    positive = CLIPTextEncode(text=text, clip=cliploader)
+    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
+    negative = CLIPTextEncode(text='', clip=cliploader)
+
+    ksampler = KSampler(
+        seed=770044821593082,
+        sampler_name=4,
+        scheduler='res_multistep',
+        denoise='simple',
+        widget_6=1,
+        steps=steps,
+        cfg=cfg,
+        latent_image=emptysd3latentimage,
+        model=modelsamplingauraflow,
+        negative=negative,
+        positive=positive,
+    )
+    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+
+    return vaedecode
+
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:

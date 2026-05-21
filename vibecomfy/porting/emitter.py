@@ -26,6 +26,7 @@ READABILITY_WARNING_LOCAL_HELPER_COPY_IN_STRICT_TEMPLATE = "local_helper_copy_in
 READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL = "long_one_line_node_call"
 READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED = "generated_template_not_formatted"
 READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG = "generated_variable_name_too_long"
+READABILITY_WARNING_SUBGRAPH_INPUT_UNBOUND = "subgraph_input_unbound"
 
 READABILITY_WARNING_CODES: frozenset[str] = frozenset(
     {
@@ -37,6 +38,7 @@ READABILITY_WARNING_CODES: frozenset[str] = frozenset(
         READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
         READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
         READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
+        READABILITY_WARNING_SUBGRAPH_INPUT_UNBOUND,
     }
 )
 
@@ -83,6 +85,27 @@ class _PublicInputSpec:
     required: bool = False
     aliases: tuple[str, ...] = ()
     media_semantics: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SubgraphPort:
+    name: str
+    type: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _SubgraphDef:
+    id: str
+    raw_name: str
+    slug: str
+    inputs: tuple[_SubgraphPort, ...]
+    outputs: tuple[_SubgraphPort, ...]
+    nodes: dict[str, Any]
+    edges_in: dict[str, list[Any]]
+    input_refs: dict[tuple[str, str], str]
+    default_args: dict[str, Any]
+    return_refs: tuple[tuple[str, int], ...]
+    source_path: str | None = None
 
 
 GENERATED_HEADER = (
@@ -849,6 +872,7 @@ def emit_ready_template_python(
     registered_inputs: dict[str, tuple[str, str]] | None = None,
     apply_overrides: dict[str, Any] | None = None,
     diagnostics: list[EmissionDiagnostic] | None = None,
+    raw_workflow: dict[str, Any] | None = None,
 ) -> str:
     metadata = dict(ready_metadata)
     requirements = dict(ready_requirements)
@@ -856,7 +880,11 @@ def emit_ready_template_python(
         for key, value in (apply_overrides.get("metadata_overrides") or {}).items():
             metadata[key] = value
 
+    raw_workflow = raw_workflow or _raw_workflow_from_metadata(metadata)
+    subgraph_definitions = _subgraph_definitions_from_raw(raw_workflow, source_path=_source_workflow_path(metadata))
     prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides)
+    prepared["subgraph_definitions"] = subgraph_definitions
+    _apply_subgraph_names_to_prepared(prepared)
     has_ltx_tail = _has_ltx_lowvram_tail(template_id)
 
     workflow_nodes = prepared["nodes"]
@@ -867,7 +895,7 @@ def emit_ready_template_python(
     constant_lines, constant_map = _hoist_constants(workflow_nodes, edges_in, var_names)
     constant_lines, constant_map = _drop_output_prefix_constants(constant_lines, constant_map)
     section_groups = _build_section_groups(workflow_nodes, edges_in)
-    wrapper_imports = _wrapper_imports_for_nodes(workflow_nodes)
+    wrapper_imports = _wrapper_imports_for_nodes(_all_nodes_for_imports(workflow_nodes, subgraph_definitions))
     output_var_names = prepared["output_var_names"]
     public_inputs = _public_input_specs(
         workflow_nodes,
@@ -912,6 +940,10 @@ def emit_ready_template_python(
         )
     )
     out_lines.append("")
+    subgraph_lines = _emit_subgraph_functions(prepared, diagnostics=diagnostics, constant_map=constant_map)
+    if subgraph_lines:
+        out_lines.extend(subgraph_lines)
+        out_lines.append("")
     out_lines.extend(
         _emit_build_function(
             prepared,
@@ -1029,6 +1061,298 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
         "var_names": var_names,
         "output_var_names": output_var_names,
     }
+
+
+def _source_workflow_path(metadata: Mapping[str, Any]) -> str | None:
+    provenance = metadata.get("provenance")
+    if isinstance(provenance, Mapping):
+        source = provenance.get("source_workflow") or provenance.get("source_path")
+        if isinstance(source, str) and source:
+            return source
+    source = metadata.get("source_workflow")
+    return source if isinstance(source, str) and source else None
+
+
+def _raw_workflow_from_metadata(metadata: Mapping[str, Any]) -> dict[str, Any] | None:
+    source = _source_workflow_path(metadata)
+    if not source:
+        return None
+    path = Path(source)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _all_nodes_for_imports(workflow_nodes: dict[str, Any], subgraphs: dict[str, _SubgraphDef]) -> dict[str, Any]:
+    nodes = dict(workflow_nodes)
+    for subgraph in subgraphs.values():
+        for nid, node in subgraph.nodes.items():
+            nodes.setdefault(f"{subgraph.id}:{nid}", node)
+    return nodes
+
+
+def slugify_subgraph_name(name: str, fallback_uuid: str) -> str:
+    if not name:
+        return f"subgraph_{fallback_uuid[:8].lower()}"
+    name = re.sub(r"(?<=[A-Za-z])\.(?=\d)", "", name)
+    slug = name.lower()
+    slug = re.sub(r"[^a-z0-9_]+", "_", slug)
+    slug = re.sub(r"_+", "_", slug).strip("_")
+    if not slug or slug[0].isdigit():
+        slug = f"subgraph_{slug}" if slug else f"subgraph_{fallback_uuid[:8].lower()}"
+    if keyword.iskeyword(slug):
+        slug = f"{slug}_"
+    return slug
+
+
+def _safe_kwarg_name(name: str, *, fallback: str) -> str:
+    candidate = str(name or fallback)
+    candidate = re.sub(r"\W+", "_", candidate).strip("_")
+    if not candidate or candidate[0].isdigit():
+        candidate = f"arg_{candidate}" if candidate else fallback
+    if keyword.iskeyword(candidate):
+        candidate = f"{candidate}_"
+    return candidate
+
+
+def _subgraph_definitions_from_raw(raw_workflow: dict[str, Any] | None, *, source_path: str | None) -> dict[str, _SubgraphDef]:
+    if not isinstance(raw_workflow, dict):
+        return {}
+    raw_defs = raw_workflow.get("definitions")
+    if not isinstance(raw_defs, dict):
+        return {}
+    raw_subgraphs = raw_defs.get("subgraphs")
+    if isinstance(raw_subgraphs, Mapping):
+        subgraph_items = list(raw_subgraphs.values())
+    elif isinstance(raw_subgraphs, list):
+        subgraph_items = raw_subgraphs
+    else:
+        return {}
+
+    raw_by_id = {str(item.get("id")): item for item in subgraph_items if isinstance(item, dict) and item.get("id")}
+    slugs = _disambiguated_subgraph_slugs(raw_by_id)
+    out: dict[str, _SubgraphDef] = {}
+    for subgraph_id, raw in raw_by_id.items():
+        out[subgraph_id] = _build_subgraph_def(raw, slug=slugs[subgraph_id], source_path=source_path)
+    return out
+
+
+def _disambiguated_subgraph_slugs(raw_by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    grouped: dict[str, list[tuple[str, Mapping[str, Any]]]] = {}
+    for subgraph_id, raw in raw_by_id.items():
+        grouped.setdefault(slugify_subgraph_name(str(raw.get("name") or ""), subgraph_id), []).append((subgraph_id, raw))
+
+    slugs: dict[str, str] = {}
+    for base, entries in grouped.items():
+        if len(entries) == 1:
+            slugs[entries[0][0]] = base
+            continue
+        ordered = sorted(entries, key=lambda item: (len(item[1].get("inputs") or ()), item[0]))
+        min_inputs = len(ordered[0][1].get("inputs") or ())
+        dual_used = False
+        for index, (subgraph_id, raw) in enumerate(ordered):
+            if index == 0:
+                slugs[subgraph_id] = base
+                continue
+            input_count = len(raw.get("inputs") or ())
+            if input_count > min_inputs and not dual_used:
+                slugs[subgraph_id] = f"{base}_dual"
+                dual_used = True
+            else:
+                slugs[subgraph_id] = f"{base}_{subgraph_id[:8].lower()}"
+    return slugs
+
+
+def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str | None) -> _SubgraphDef:
+    from vibecomfy.ingest.normalize import normalize_to_api
+    from vibecomfy.workflow import VibeEdge as _Edge, VibeNode as _Node
+
+    subgraph_id = str(raw["id"])
+    inputs = tuple(
+        _SubgraphPort(
+            _safe_kwarg_name(str(item.get("name") or f"input_{index}"), fallback=f"input_{index}"),
+            str(item.get("type") or "") or None,
+        )
+        for index, item in enumerate(raw.get("inputs") or ())
+        if isinstance(item, Mapping)
+    )
+    outputs = tuple(
+        _SubgraphPort(
+            _safe_kwarg_name(str(item.get("name") or f"output_{index}").lower(), fallback=f"output_{index}"),
+            str(item.get("type") or "") or None,
+        )
+        for index, item in enumerate(raw.get("outputs") or ())
+        if isinstance(item, Mapping)
+    )
+
+    api = normalize_to_api({"nodes": list(raw.get("nodes") or ()), "links": list(raw.get("links") or ())}, use_comfy_converter=False)
+    nodes: dict[str, Any] = {}
+    edges_in: dict[str, list[Any]] = {}
+    input_refs: dict[tuple[str, str], str] = {}
+    defaults = _subgraph_default_args(raw, inputs)
+
+    for node_id, node in api.items():
+        raw_inputs = dict(node.get("inputs", {}))
+        static_inputs: dict[str, Any] = {}
+        widgets: dict[str, Any] = {}
+        for key, value in raw_inputs.items():
+            if _is_any_link(value) and str(value[0]) == "-10":
+                static_inputs[str(key)] = value
+                continue
+            if _is_any_link(value):
+                continue
+            if str(key).startswith("widget_"):
+                widgets[str(key)] = value
+            else:
+                static_inputs[str(key)] = value
+        metadata = {key: value for key, value in node.items() if key not in {"class_type", "inputs"}}
+        output_names = _ui_output_names(metadata.get("_ui"))
+        if output_names:
+            metadata.setdefault("output_names", output_names)
+        nodes[str(node_id)] = _Node(str(node_id), str(node.get("class_type", "Unknown")), inputs=static_inputs, widgets=widgets, metadata=metadata)
+
+    for node_id, node in api.items():
+        if not isinstance(node, Mapping):
+            continue
+        for key, value in dict(node.get("inputs", {})).items():
+            if not _is_any_link(value):
+                continue
+            from_node, from_slot = str(value[0]), int(value[1])
+            if from_node == "-10":
+                if 0 <= from_slot < len(inputs):
+                    input_refs[(str(node_id), str(key))] = inputs[from_slot].name
+            else:
+                edge = _Edge(from_node, str(from_slot), str(node_id), str(key))
+                edges_in.setdefault(str(node_id), []).append(edge)
+
+    return_refs: list[tuple[str, int]] = []
+    links = [link for link in raw.get("links") or () if isinstance(link, Mapping)]
+    for index, _output in enumerate(outputs):
+        target = next((link for link in links if str(link.get("target_id")) == "-20" and int(link.get("target_slot", -1)) == index), None)
+        if target is not None:
+            return_refs.append((str(target.get("origin_id")), int(target.get("origin_slot", 0))))
+
+    return _SubgraphDef(
+        id=subgraph_id,
+        raw_name=str(raw.get("name") or ""),
+        slug=slug,
+        inputs=inputs,
+        outputs=outputs,
+        nodes=nodes,
+        edges_in=edges_in,
+        input_refs=input_refs,
+        default_args=defaults,
+        return_refs=tuple(return_refs),
+        source_path=source_path,
+    )
+
+
+def _is_any_link(value: Any) -> bool:
+    return isinstance(value, list) and len(value) == 2 and isinstance(value[1], int)
+
+
+def _ui_output_names(ui: Any) -> list[str]:
+    if not isinstance(ui, Mapping):
+        return []
+    names: list[str] = []
+    for item in ui.get("outputs") or ():
+        if isinstance(item, Mapping):
+            names.append(str(item.get("name") or ""))
+    return names
+
+
+def _subgraph_default_args(raw: Mapping[str, Any], inputs: tuple[_SubgraphPort, ...]) -> dict[str, Any]:
+    nodes = {str(node.get("id")): node for node in raw.get("nodes") or () if isinstance(node, Mapping)}
+    links = {int(link.get("id")): link for link in raw.get("links") or () if isinstance(link, Mapping) and link.get("id") is not None}
+    defaults: dict[str, Any] = {}
+    for index, input_item in enumerate(raw.get("inputs") or ()):
+        if not isinstance(input_item, Mapping) or index >= len(inputs):
+            continue
+        for link_id in input_item.get("linkIds") or ():
+            link = links.get(int(link_id))
+            if link is None:
+                continue
+            node = nodes.get(str(link.get("target_id")))
+            if node is None:
+                continue
+            value = _widget_default_for_target(node, int(link.get("target_slot", -1)))
+            if value is not None:
+                defaults[inputs[index].name] = value
+                break
+    return defaults
+
+
+def _widget_default_for_target(node: Mapping[str, Any], target_slot: int) -> Any:
+    input_items = [item for item in node.get("inputs") or () if isinstance(item, Mapping)]
+    if target_slot < 0 or target_slot >= len(input_items):
+        return None
+    target_input = input_items[target_slot]
+    widget = target_input.get("widget")
+    if not isinstance(widget, Mapping):
+        return None
+    widget_name = str(widget.get("name") or target_input.get("name") or "")
+    values = node.get("widgets_values")
+    if isinstance(values, Mapping):
+        return values.get(widget_name)
+    if not isinstance(values, list):
+        return None
+    widget_names = [
+        str(item.get("widget", {}).get("name") or item.get("name") or "")
+        for item in input_items
+        if isinstance(item.get("widget"), Mapping)
+    ]
+    try:
+        return values[widget_names.index(widget_name)]
+    except (ValueError, IndexError):
+        return None
+
+
+def _apply_subgraph_names_to_prepared(prepared: dict[str, Any]) -> None:
+    subgraphs: dict[str, _SubgraphDef] = prepared.get("subgraph_definitions") or {}
+    if not subgraphs:
+        return
+    used = {str(var) for var in prepared.get("var_names", {}).values()}
+    var_names: dict[str, str] = prepared["var_names"]
+    output_var_names: dict[str, dict[int, str]] = prepared.setdefault("output_var_names", {})
+    for node_id, node in prepared["nodes"].items():
+        subgraph = subgraphs.get(str(node.class_type))
+        if subgraph is None:
+            continue
+        getattr(node, "metadata", {}).setdefault("output_names", [port.name for port in subgraph.outputs])
+        old = var_names.get(str(node_id))
+        if old in used:
+            used.remove(old)
+        if len(subgraph.outputs) > 1:
+            slot_vars: dict[int, str] = {}
+            for index, output in enumerate(subgraph.outputs):
+                slot_vars[index] = _unique_var(_safe_var(output.name.lower()), used)
+            output_var_names[str(node_id)] = slot_vars
+            var_names[str(node_id)] = _unique_var(subgraph.slug, used)
+        else:
+            var_names[str(node_id)] = _unique_var(_subgraph_result_base(subgraph.slug), used)
+
+
+def _subgraph_result_base(slug: str) -> str:
+    if slug.startswith("image_edit"):
+        return "edited_dual" if slug.endswith("_dual") else "edited"
+    if slug.startswith("text_to_image"):
+        return "edited"
+    return slug
+
+
+def _unique_var(base: str, used: set[str]) -> str:
+    candidate = base
+    index = 2
+    while candidate in used or keyword.iskeyword(candidate):
+        candidate = f"{base}_{index}"
+        index += 1
+    used.add(candidate)
+    return candidate
 
 
 def _infer_public_input_bindings(
@@ -1178,6 +1502,11 @@ def _emit_build_function(
     use_shared_helpers: bool = False,
     constant_map: dict[tuple[str, str], str] | None = None,
     section_groups: dict[str, list[str]] | None = None,
+    function_name: str = "build",
+    function_signature: str | None = None,
+    function_docstring: list[str] | None = None,
+    return_refs: tuple[tuple[str, int], ...] = (),
+    external_refs: dict[tuple[str, str], str] | None = None,
 ) -> list[str]:
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
@@ -1217,14 +1546,24 @@ def _emit_build_function(
         for nid in section_groups.get(section_name, []):
             section_order_map[nid] = section_name
 
+    is_subgraph_function = function_name != "build"
     out_lines: list[str] = []
-    out_lines.append("def build() -> VibeWorkflow:")
-    out_lines.append('    """Build the workflow (auto-generated)."""')
+    if function_signature is not None:
+        out_lines.extend(function_signature.splitlines())
+    else:
+        out_lines.append("def build() -> VibeWorkflow:")
+    if function_docstring is None:
+        out_lines.append('    """Build the workflow (auto-generated)."""')
+    elif function_docstring:
+        out_lines.extend(function_docstring)
     provenance_part = ""
     if source_provenance is not None:
         provenance_part = f",\n            provenance={_format_value(source_provenance)}"
 
-    if use_shared_helpers:
+    if is_subgraph_function:
+        body_indent = "    "
+        continuation_indent = "        "
+    elif use_shared_helpers:
         out_lines.append(f"    with new_workflow({workflow_id_expr}, source_path={source_path_expr}) as wf:")
         body_indent = "        "
         continuation_indent = "            "
@@ -1292,9 +1631,27 @@ def _emit_build_function(
             bare_single_output_refs=use_shared_helpers,
             emit_reserved_keyword_args=wrapper_module is not None,
             preserve_fields=preserve_fields,
+            external_refs=external_refs,
         )
 
         if use_shared_helpers:
+            subgraph = (prepared.get("subgraph_definitions") or {}).get(str(node.class_type))
+            if subgraph is not None:
+                out_lines.extend(
+                    _emit_subgraph_call_statement(
+                        node,
+                        subgraph,
+                        edges_in,
+                        var_names,
+                        output_var_names,
+                        workflow_nodes,
+                        body_indent=body_indent,
+                        continuation_indent=continuation_indent,
+                        diagnostics=diagnostics,
+                    )
+                )
+                continue
+
             use_wrapper = wrapper_module is not None
             ready_kwargs: list[tuple[str, str]] = []
             outputs_expr: str | None = None
@@ -1391,8 +1748,11 @@ def _emit_build_function(
     if use_shared_helpers:
         if out_lines and out_lines[-1] != "":
             out_lines.append("")
-        tail_lines = _with_id_map_tail_line(tail_lines, var_names)
-        out_lines.extend("    " + line if line else line for line in tail_lines)
+        if is_subgraph_function:
+            out_lines.append(f"{body_indent}return {_subgraph_return_expr(return_refs, workflow_nodes, var_names, output_var_names, diagnostics)}")
+        else:
+            tail_lines = _with_id_map_tail_line(tail_lines, var_names)
+            out_lines.extend("    " + line if line else line for line in tail_lines)
         return out_lines
     out_lines.append("")
     out_lines.extend(tail_lines)
@@ -1434,6 +1794,314 @@ def _with_id_map_tail_line(tail_lines: list[str], var_names: dict[str, str]) -> 
     # was bloat that scaled linearly with node count (60+ entry one-line
     # dicts on LTX templates). Drop the emission entirely.
     return tail_lines
+
+
+def _emit_subgraph_functions(
+    prepared: dict[str, Any],
+    *,
+    diagnostics: list[EmissionDiagnostic] | None,
+    constant_map: dict[tuple[str, str], str] | None,
+) -> list[str]:
+    subgraphs: dict[str, _SubgraphDef] = prepared.get("subgraph_definitions") or {}
+    if not subgraphs:
+        return []
+    lines = ["# === Subgraph functions ===", ""]
+    for subgraph_id in _subgraph_topological_order(subgraphs):
+        subgraph = subgraphs[subgraph_id]
+        inner_prepared = {
+            "nodes": subgraph.nodes,
+            "edges_in": subgraph.edges_in,
+            "var_names": _compute_variable_names(subgraph.nodes, [edge for edges in subgraph.edges_in.values() for edge in edges]),
+            "subgraph_definitions": subgraphs,
+        }
+        inner_prepared["output_var_names"] = _compute_output_variable_names(
+            subgraph.nodes,
+            inner_prepared["var_names"],
+            [edge for edges in subgraph.edges_in.values() for edge in edges],
+        )
+        _apply_subgraph_names_to_prepared(inner_prepared)
+        signature = _subgraph_signature(subgraph)
+        docstring = _subgraph_docstring(subgraph)
+        lines.extend(
+            _emit_build_function(
+                inner_prepared,
+                workflow_id_expr="READY_METADATA",
+                source_path_expr="__file__",
+                source_type="ready_template",
+                source_provenance=None,
+                registered_inputs=None,
+                public_inputs=None,
+                tail_lines=[],
+                diagnostics=diagnostics,
+                use_shared_helpers=True,
+                constant_map=constant_map,
+                section_groups={},
+                function_name=subgraph.slug,
+                function_signature=signature,
+                function_docstring=docstring,
+                return_refs=subgraph.return_refs,
+                external_refs=subgraph.input_refs,
+            )
+        )
+        lines.append("")
+        lines.append("")
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _subgraph_topological_order(subgraphs: dict[str, _SubgraphDef]) -> list[str]:
+    deps = {
+        subgraph_id: {
+            str(node.class_type)
+            for node in subgraph.nodes.values()
+            if str(node.class_type) in subgraphs
+        }
+        for subgraph_id, subgraph in subgraphs.items()
+    }
+    temporary: set[str] = set()
+    permanent: set[str] = set()
+    ordered: list[str] = []
+
+    def visit(subgraph_id: str, stack: list[str]) -> None:
+        if subgraph_id in permanent:
+            return
+        if subgraph_id in temporary:
+            cycle = " -> ".join([*stack, subgraph_id])
+            raise RuntimeError(f"Circular subgraph reference detected: {cycle}")
+        temporary.add(subgraph_id)
+        for dep in sorted(deps.get(subgraph_id, ())):
+            visit(dep, [*stack, subgraph_id])
+        temporary.remove(subgraph_id)
+        permanent.add(subgraph_id)
+        ordered.append(subgraph_id)
+
+    for subgraph_id in subgraphs:
+        visit(subgraph_id, [])
+    return ordered
+
+
+COMFY_TYPE_TO_PY_HINT = {
+    "STRING": "str",
+    "INT": "int",
+    "FLOAT": "float",
+    "BOOLEAN": "bool",
+    "COMBO": "str",
+}
+
+
+def _subgraph_signature(subgraph: _SubgraphDef) -> str:
+    if not subgraph.inputs:
+        return f"def {subgraph.slug}():"
+    lines = [f"def {subgraph.slug}("]
+    lines.append("    *,")
+    for port in subgraph.inputs:
+        hint = COMFY_TYPE_TO_PY_HINT.get(str(port.type or "").upper())
+        annotation = f": {hint}" if hint else ""
+        lines.append(f"    {port.name}{annotation},")
+    lines.append("):")
+    return "\n".join(lines)
+
+
+def _subgraph_docstring(subgraph: _SubgraphDef) -> list[str]:
+    title = subgraph.raw_name or subgraph.slug.replace("_", " ").title()
+    variant = ""
+    image_inputs = sum(1 for port in subgraph.inputs if str(port.type or "").upper() == "IMAGE")
+    if image_inputs == 1:
+        variant = " - single-image variant"
+    elif image_inputs > 1:
+        variant = " - two-image variant" if image_inputs == 2 else f" - {image_inputs}-image variant"
+    source = f" in {subgraph.source_path}" if subgraph.source_path else ""
+    classes = [str(node.class_type) for node in subgraph.nodes.values()]
+    class_counts = Counter(classes)
+    inner = []
+    seen: set[str] = set()
+    for cls in classes:
+        if cls in seen:
+            continue
+        seen.add(cls)
+        count = class_counts[cls]
+        inner.append(f"{cls}x{count}" if count > 1 else cls)
+    lines = [
+        f'    """{title}{variant}.',
+        "",
+        f"    Materialized from subgraph {subgraph.id}{source}.",
+    ]
+    if inner:
+        lines.append(f"    Inner nodes: {', '.join(inner)}.")
+    lines.append('    """')
+    return lines
+
+
+def _emit_subgraph_call_statement(
+    node: Any,
+    subgraph: _SubgraphDef,
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
+    workflow_nodes: dict[str, Any],
+    *,
+    body_indent: str,
+    continuation_indent: str,
+    diagnostics: list[EmissionDiagnostic] | None,
+) -> list[str]:
+    assignment_target = _assignment_target(var_names[str(node.id)], output_var_names.get(str(node.id)))
+    kwargs = _subgraph_call_kwargs(
+        node,
+        subgraph,
+        edges_in,
+        var_names,
+        output_var_names,
+        workflow_nodes,
+        diagnostics=diagnostics,
+    )
+    kwarg_lines = [f"{key}={expr}" for key, expr in kwargs]
+    single_line = f"{body_indent}{assignment_target} = {subgraph.slug}({', '.join(kwarg_lines)})"
+    if len(kwargs) > 3 or len(single_line) > 88:
+        lines = [f"{body_indent}{assignment_target} = {subgraph.slug}("]
+        for key, expr in kwargs:
+            lines.append(f"{continuation_indent}{key}={expr},")
+        lines.append(f"{body_indent})")
+        return lines
+    return [single_line]
+
+
+def _subgraph_call_kwargs(
+    node: Any,
+    subgraph: _SubgraphDef,
+    edges_in: dict[str, list[Any]],
+    var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
+    workflow_nodes: dict[str, Any],
+    *,
+    diagnostics: list[EmissionDiagnostic] | None,
+) -> list[tuple[str, str]]:
+    incoming: dict[str, tuple[str, int]] = {}
+    for edge in edges_in.get(str(node.id), []):
+        incoming[str(edge.to_input)] = (str(edge.from_node), int(edge.from_output))
+    for key, value in {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}.items():
+        if _is_link(value):
+            incoming.setdefault(str(key), (str(value[0]), int(value[1])))
+
+    static = {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}
+    widget_values = _subgraph_instance_widget_values(node)
+    kwargs: list[tuple[str, str]] = []
+    for port in subgraph.inputs:
+        if port.name in incoming:
+            src, slot = incoming[port.name]
+            kwargs.append(
+                (
+                    port.name,
+                    _edge_ref_expr(
+                        workflow_nodes,
+                        var_names,
+                        output_var_names,
+                        src,
+                        slot,
+                        bare_single_output_refs=True,
+                        diagnostics=diagnostics,
+                        target_node=node,
+                        target_input=port.name,
+                    ),
+                )
+            )
+        elif port.name in widget_values:
+            kwargs.append((port.name, _format_value(widget_values[port.name])))
+        elif port.name in static and not _is_link(static[port.name]):
+            kwargs.append((port.name, _format_value(static[port.name])))
+        elif port.name in subgraph.default_args:
+            kwargs.append((port.name, _format_value(subgraph.default_args[port.name])))
+        else:
+            kwargs.append((port.name, "None"))
+            if diagnostics is not None:
+                diagnostics.append(
+                    EmissionDiagnostic(
+                        code=READABILITY_WARNING_SUBGRAPH_INPUT_UNBOUND,
+                        message=(
+                            f"Subgraph input {port.name!r} on node {node.id} "
+                            f"({subgraph.id}) has no incoming edge or widget value; emitting None."
+                        ),
+                        severity="warning",
+                        node_id=str(node.id),
+                        class_type=str(getattr(node, "class_type", "")),
+                        detail={"subgraph_id": subgraph.id, "input_name": port.name},
+                    )
+                )
+    return kwargs
+
+
+def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    aliases = getattr(node, "metadata", {}).get("input_aliases") or _ui_widget_aliases(node)
+    for key, value in {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}.items():
+        if _is_link(value):
+            continue
+        translated = _translate_widget_for_key(str(key), aliases, str(getattr(node, "class_type", "")))
+        values[translated or str(key)] = value
+
+    ui = getattr(node, "metadata", {}).get("_ui")
+    if not isinstance(ui, Mapping):
+        return values
+    input_items = [item for item in ui.get("inputs") or () if isinstance(item, Mapping)]
+    widgets_values = ui.get("widgets_values")
+    if isinstance(widgets_values, Mapping):
+        for item in input_items:
+            widget = item.get("widget")
+            if not isinstance(widget, Mapping):
+                continue
+            input_name = str(item.get("name") or widget.get("name") or "")
+            widget_name = str(widget.get("name") or input_name)
+            if input_name and widget_name in widgets_values:
+                values.setdefault(input_name, widgets_values[widget_name])
+        return values
+    if isinstance(widgets_values, list):
+        widget_index = 0
+        for item in input_items:
+            widget = item.get("widget")
+            if not isinstance(widget, Mapping):
+                continue
+            input_name = str(item.get("name") or widget.get("name") or "")
+            if input_name and widget_index < len(widgets_values):
+                values.setdefault(input_name, widgets_values[widget_index])
+            widget_index += 1
+    for item in input_items:
+        widget = item.get("widget")
+        if not isinstance(widget, Mapping):
+            continue
+        input_name = str(item.get("name") or widget.get("name") or "")
+        if not input_name or input_name in values:
+            continue
+        for value_key in ("value", "default", "default_value"):
+            if value_key in item:
+                values[input_name] = item[value_key]
+                break
+    return values
+
+
+def _subgraph_return_expr(
+    return_refs: tuple[tuple[str, int], ...],
+    workflow_nodes: dict[str, Any],
+    var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
+    diagnostics: list[EmissionDiagnostic] | None,
+) -> str:
+    refs = [
+        _edge_ref_expr(
+            workflow_nodes,
+            var_names,
+            output_var_names,
+            node_id,
+            slot,
+            bare_single_output_refs=True,
+            diagnostics=diagnostics,
+            target_node=None,
+            target_input="return",
+        )
+        for node_id, slot in return_refs
+    ]
+    if not refs:
+        return "None"
+    return ", ".join(refs)
 
 
 _OUTPUT_CLASSES: dict[str, tuple[str, str]] = {
@@ -1528,6 +2196,36 @@ def _node_binding_expr(node_id: str, var_names: dict[str, str]) -> str:
     if var is not None:
         return f"{var}.node.id"
     return repr(str(node_id))
+
+
+def _edge_ref_expr(
+    workflow_nodes: dict[str, Any] | None,
+    var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
+    from_node_str: str,
+    from_slot: int,
+    *,
+    bare_single_output_refs: bool,
+    diagnostics: list[EmissionDiagnostic] | None,
+    target_node: Any,
+    target_input: str,
+) -> str:
+    if from_node_str in var_names:
+        unpacked_ref = output_var_names.get(from_node_str, {}).get(from_slot)
+        if unpacked_ref is not None:
+            return unpacked_ref
+        if bare_single_output_refs and _is_single_output_ref(workflow_nodes, from_node_str, from_slot):
+            return var_names[from_node_str]
+        safe_name = _safe_output_name(workflow_nodes, from_node_str, from_slot)
+        if safe_name is not None:
+            return f"{var_names[from_node_str]}.out({safe_name!r})"
+        if diagnostics is not None and workflow_nodes is not None:
+            _output_fallback_diagnostic(
+                diagnostics, workflow_nodes, from_node_str, from_slot,
+                target_node=target_node, target_input=target_input,
+            )
+        return f"{var_names[from_node_str]}.out({from_slot})"
+    return f"[{from_node_str!r}, {from_slot}]"
 
 
 def _wrapper_kwarg_name(name: str) -> str:
@@ -1834,6 +2532,7 @@ def _node_kwargs(
     bare_single_output_refs: bool = False,
     emit_reserved_keyword_args: bool = False,
     preserve_fields: set[str] | None = None,
+    external_refs: dict[tuple[str, str], str] | None = None,
 ) -> list[tuple[str, str]]:
     cls = node.class_type
     schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
@@ -1851,8 +2550,11 @@ def _node_kwargs(
         constant_map = {}
     if preserve_fields is None:
         preserve_fields = set()
+    if external_refs is None:
+        external_refs = {}
 
     incoming: dict[str, tuple[str, int]] = {}
+    incoming_exprs: dict[str, str] = {}
     for edge in edges_in.get(node.id, []):
         incoming[edge.to_input] = (edge.from_node, int(edge.from_output))
 
@@ -1875,14 +2577,26 @@ def _node_kwargs(
 
     raw_inputs: dict[str, Any] = {}
     for key, value in node.inputs.items():
-        if _is_link(value):
+        if _is_any_link(value) and str(value[0]) == "-10":
+            translated_link = _translate_widget(key)
+            if translated_link is not None:
+                expr = external_refs.get((str(getattr(node, "id", "")), translated_link))
+                if expr is not None:
+                    incoming_exprs[translated_link] = expr
+        elif _is_link(value):
             translated_link = _translate_widget(key)
             if translated_link is not None:
                 incoming.setdefault(translated_link, (str(value[0]), int(value[1])))
         else:
             raw_inputs[key] = value
     for key, value in node.widgets.items():
-        if _is_link(value):
+        if _is_any_link(value) and str(value[0]) == "-10":
+            translated_link = _translate_widget(key)
+            if translated_link is not None:
+                expr = external_refs.get((str(getattr(node, "id", "")), translated_link))
+                if expr is not None:
+                    incoming_exprs[translated_link] = expr
+        elif _is_link(value):
             translated_link = _translate_widget(key)
             if translated_link is not None:
                 incoming.setdefault(translated_link, (str(value[0]), int(value[1])))
@@ -1923,7 +2637,7 @@ def _node_kwargs(
     if output_names and not (omit_single_output_metadata and _is_schema_confirmed_single_output(cls, output_names)):
         out.append(("_outputs", _format_value(tuple(output_names))))
     for key in ordered_static_keys:
-        if key in incoming:
+        if key in incoming or key in incoming_exprs:
             continue
         if key not in preserve_fields and strip_schema_defaults and _is_schema_default(cls, key, static_inputs[key], node_metadata):
             continue
@@ -1932,34 +2646,30 @@ def _node_kwargs(
             continue
         out.append((key, _format_static_value(key, static_inputs[key])))
 
+    all_incoming_keys = set(incoming) | set(incoming_exprs)
     if schema:
-        ordered_incoming = [key for key in schema if key in incoming]
-        ordered_incoming += sorted(key for key in incoming if key not in schema_set)
+        ordered_incoming = [key for key in schema if key in all_incoming_keys]
+        ordered_incoming += sorted(key for key in all_incoming_keys if key not in schema_set)
     else:
-        ordered_incoming = sorted(incoming.keys())
+        ordered_incoming = sorted(all_incoming_keys)
 
     for to_input in ordered_incoming:
-        from_node, from_slot = incoming[to_input]
-        from_node_str = str(from_node)
-        if from_node_str in var_names:
-            unpacked_ref = (output_var_names or {}).get(from_node_str, {}).get(from_slot)
-            if unpacked_ref is not None:
-                expr = unpacked_ref
-            elif bare_single_output_refs and _is_single_output_ref(workflow_nodes, from_node_str, from_slot):
-                expr = var_names[from_node_str]
-            else:
-                safe_name = _safe_output_name(workflow_nodes, from_node_str, from_slot)
-                if safe_name is not None:
-                    expr = f"{var_names[from_node_str]}.out({safe_name!r})"
-                else:
-                    expr = f"{var_names[from_node_str]}.out({from_slot})"
-                    if diagnostics is not None and workflow_nodes is not None:
-                        _output_fallback_diagnostic(
-                            diagnostics, workflow_nodes, from_node_str, from_slot,
-                            target_node=node, target_input=to_input,
-                        )
+        if to_input in incoming_exprs:
+            expr = incoming_exprs[to_input]
         else:
-            expr = f"[{from_node_str!r}, {from_slot}]"
+            from_node, from_slot = incoming[to_input]
+            from_node_str = str(from_node)
+            expr = _edge_ref_expr(
+                workflow_nodes,
+                var_names,
+                output_var_names or {},
+                from_node_str,
+                from_slot,
+                bare_single_output_refs=bare_single_output_refs,
+                diagnostics=diagnostics,
+                target_node=node,
+                target_input=to_input,
+            )
         if not _is_python_ident(to_input) and not (emit_reserved_keyword_args and to_input in RESERVED_WRAPPER_INPUT_NAMES):
             extras.append((to_input, expr))
             continue
@@ -2272,6 +2982,8 @@ def _is_single_output_ref(
     if src_node is None:
         return False
     output_names = _node_output_names(src_node)
+    if _UUID_RE.match(str(src_node.class_type)) and len(output_names) == 1:
+        return True
     return _is_schema_confirmed_single_output(str(src_node.class_type), output_names)
 
 

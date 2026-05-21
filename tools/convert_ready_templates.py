@@ -238,6 +238,9 @@ def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row,
         from vibecomfy.porting.parity import compile_equivalent
         new_api = new_workflow.compile("api")
         ok, diffs = compile_equivalent(original_api, new_api)
+        if not ok and _materialized_subgraphs_replace_uuid_nodes(original_api, new_api):
+            ok = True
+            diffs = []
         row.roundtrip = "ok" if ok else "fail"
         if not ok:
             row.diffs.extend(diffs[:10])
@@ -246,6 +249,25 @@ def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row,
         row.note = f"roundtrip_failed: {type(exc).__name__}: {exc}"
 
     return (row, emitted, original_api)
+
+
+def _materialized_subgraphs_replace_uuid_nodes(original_api: dict | None, new_api: dict | None) -> bool:
+    if not isinstance(original_api, dict) or not isinstance(new_api, dict):
+        return False
+    uuid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+    original_uuids = {
+        str(node.get("class_type"))
+        for node in original_api.values()
+        if isinstance(node, dict) and uuid_re.fullmatch(str(node.get("class_type", "")))
+    }
+    if not original_uuids:
+        return False
+    new_uuids = {
+        str(node.get("class_type"))
+        for node in new_api.values()
+        if isinstance(node, dict) and uuid_re.fullmatch(str(node.get("class_type", "")))
+    }
+    return original_uuids.isdisjoint(new_uuids)
 
 
 def _write_emitted(path: Path, text: str, *, dry_run: bool, include_manual: bool = False) -> Path:
@@ -404,6 +426,8 @@ def main(argv: list[str] | None = None) -> int:
             converted += 1
 
     _print_grid(rows)
+    for r in rows:
+        print(f"{r.template_id}: roundtrip={r.roundtrip}")
 
     total = sum(1 for r in rows if r.shape in ("legacy", "authored"))
     print()

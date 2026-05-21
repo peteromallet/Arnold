@@ -394,6 +394,7 @@ def format_as_python(
     template_id: str,
     registered_inputs: dict[str, tuple[str, str]] | None = None,
     apply_overrides: dict | None = None,
+    raw_workflow: dict | None = None,
 ) -> str:
     """[LEGACY] Emit the converted Python module text for the given VibeWorkflow.
 
@@ -619,6 +620,7 @@ def format_as_python(
     template_id: str,
     registered_inputs: dict[str, tuple[str, str]] | None = None,
     apply_overrides: dict | None = None,
+    raw_workflow: dict | None = None,
 ) -> str:
     """Compatibility wrapper for the package ready-template emitter."""
     from vibecomfy.porting.emitter import emit_ready_template_python
@@ -630,6 +632,7 @@ def format_as_python(
         template_id=template_id,
         registered_inputs=registered_inputs,
         apply_overrides=apply_overrides,
+        raw_workflow=raw_workflow,
     )
 
 

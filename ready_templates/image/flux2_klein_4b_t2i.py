@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
-from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlux2LatentImage, Flux2Scheduler, KSamplerSelect, PrimitiveStringMultiline, RandomNoise, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAELoader
+from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, ConditioningZeroOut, EmptyFlux2LatentImage, Flux2Scheduler, KSamplerSelect, PrimitiveStringMultiline, RandomNoise, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAELoader
 
 
 DEFAULT_SEED = 0
@@ -39,6 +39,124 @@ READY_METADATA = ReadyMetadata.build(
     output_prefix='Flux2-Klein',
     provenance={'source_workflow': 'workflow_corpus/official/image/flux2_klein_4b_t2i.json'},
 )
+
+# === Subgraph functions ===
+
+def text_to_image_flux2_klein_4b(
+    *,
+    value: int,
+    value_1: int,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    text: str,
+):
+    """Text to Image (Flux.2 Klein 4B).
+
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/image/flux2_klein_4b_t2i.json.
+    Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, PrimitiveIntx2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
+    """
+
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    primitiveint = raw_call('PrimitiveInt', '68', widget_1='fixed', value=value)
+    primitiveint_2 = raw_call('PrimitiveInt', '69', widget_1='fixed', value=value_1)
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+    randomnoise = RandomNoise(control_after_generate='randomize')
+
+    flux2scheduler = Flux2Scheduler(
+        widget_1=1024,
+        widget_2=1024,
+        height=primitiveint_2,
+        width=primitiveint,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        width=primitiveint,
+        height=primitiveint_2,
+    )
+    negative = CLIPTextEncode(text='', clip=cliploader)
+    positive = CLIPTextEncode(text=text, clip=cliploader)
+
+    cfgguider = CFGGuider(
+        cfg=5,
+        model=unetloader,
+        negative=negative,
+        positive=positive,
+    )
+
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=emptyflux2latentimage,
+        noise=randomnoise,
+        sampler=ksamplerselect,
+        sigmas=flux2scheduler,
+    )
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+
+    return vaedecode
+
+
+def text_to_image_flux2_klein_4b_distilled(
+    *,
+    value: int,
+    value_1: int,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    text: str,
+):
+    """Text to Image (Flux.2 Klein 4B Distilled).
+
+    Materialized from subgraph a67caa28-5f85-4917-8396-36004960dd30 in workflow_corpus/official/image/flux2_klein_4b_t2i.json.
+    Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, PrimitiveIntx2, RandomNoise, UNETLoader, CLIPLoader, VAELoader, CFGGuider, ConditioningZeroOut, CLIPTextEncode, Flux2Scheduler.
+    """
+
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    primitiveint = raw_call('PrimitiveInt', '68', widget_1='fixed', value=value)
+    primitiveint_2 = raw_call('PrimitiveInt', '69', widget_1='fixed', value=value_1)
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+
+    randomnoise = RandomNoise(
+        noise_seed=432262096973490,
+        control_after_generate='randomize',
+    )
+
+    flux2scheduler = Flux2Scheduler(
+        steps=4,
+        widget_1=1024,
+        widget_2=1024,
+        height=primitiveint_2,
+        width=primitiveint,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        width=primitiveint,
+        height=primitiveint_2,
+    )
+    positive = CLIPTextEncode(text=text, clip=cliploader)
+    conditioningzeroout = ConditioningZeroOut(conditioning=positive)
+
+    cfgguider = CFGGuider(
+        cfg=1,
+        model=unetloader,
+        negative=conditioningzeroout,
+        positive=positive,
+    )
+
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=emptyflux2latentimage,
+        noise=randomnoise,
+        sampler=ksamplerselect,
+        sigmas=flux2scheduler,
+    )
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+
+    return vaedecode
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""

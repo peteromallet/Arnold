@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from vibecomfy.ingest.normalize import convert_to_vibe_format, normalize_to_api
 from vibecomfy.porting.convert import ManualTemplateRefusal, _check_manual_refusal
 from vibecomfy.porting.emitter import (
     EmissionDiagnostic,
@@ -32,6 +33,30 @@ def _sample_workflow() -> VibeWorkflow:
     workflow.connect("10.0", "20.images")
     workflow.register_input("prefix", "20", "filename_prefix", "out/sample")
     return workflow
+
+
+def _workflow_from_ui_json(path: str) -> tuple[VibeWorkflow, dict[str, Any]]:
+    import json
+
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    api = normalize_to_api(raw, use_comfy_converter=False)
+    workflow = convert_to_vibe_format(api, source_path=path, workflow_id=Path(path).stem)
+    return workflow, raw
+
+
+def _emit_ready_from_ui_json(path: str, template_id: str) -> str:
+    workflow, raw = _workflow_from_ui_json(path)
+    return emit_ready_template_python(
+        workflow,
+        ready_metadata={
+            "ready_template": template_id,
+            "capability": "image_edit",
+            "provenance": {"source_workflow": path},
+        },
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id=template_id,
+        raw_workflow=raw,
+    )
 
 
 def test_emit_scratchpad_python_preserves_ids_extras_inputs_and_provenance() -> None:
@@ -140,6 +165,192 @@ def test_ready_template_preserves_explicit_custom_node_pack_override() -> None:
     )
 
     assert "custom_node_packs={'ExamplePack': {'commit': 'abc', 'classes_used': ['LoadImage']}}" in text
+
+
+def test_subgraph_materialized_as_bare_function() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+        "edit/flux2_klein_9b_image_edit_base",
+    )
+
+    assert "@block" not in text
+    assert "@subgraph" not in text
+    assert "Handles(" not in text
+    assert "def image_edit_flux2_klein_9b(" in text
+    assert "workflow: VibeWorkflow" not in text
+    body = text[text.index("def image_edit_flux2_klein_9b("):text.index("def image_edit_flux2_klein_9b_dual(")]
+    assert "unet_name: str" in body
+    assert "image," in body
+    assert "UNETLoader(unet_name=unet_name)" in body
+    assert "return vaedecode" in body
+
+
+def test_subgraph_multi_output_returns_tuple() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+        "edit/flux2_klein_4b_image_edit_distilled",
+    )
+
+    body = text[text.index("def reference_conditioning("):text.index("def reference_conditioning_93041a64(")]
+    assert "return referencelatent_2, referencelatent" in body
+    assert "conditioning, conditioning_1 = reference_conditioning(" in text
+
+
+def test_subgraph_call_site_replaces_raw_call() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+        "edit/flux2_klein_9b_image_edit_base",
+    )
+
+    assert "edited = image_edit_flux2_klein_9b(" in text
+    assert "edited_dual = image_edit_flux2_klein_9b_dual(" in text
+    assert "raw_call('7b34ab90" not in text
+    assert "raw_call('65c22b29" not in text
+
+    workflow = VibeWorkflow("uuid", WorkflowSource("uuid"))
+    workflow.nodes["1"] = VibeNode("1", "11111111-1111-1111-1111-111111111111")
+    fallback = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/uuid", "capability": "image"},
+        ready_requirements={},
+        template_id="image/uuid",
+        raw_workflow={"definitions": {"subgraphs": []}},
+    )
+    assert "raw_call('11111111-1111-1111-1111-111111111111'" in fallback
+
+
+def test_subgraph_call_site_uses_widget_fed_literals() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/image/flux2_klein_9b_t2i.json",
+        "image/flux2_klein_9b_t2i",
+    )
+
+    assert "def text_to_image_flux2_klein_9b(" in text
+    assert "edited = text_to_image_flux2_klein_9b(" in text
+    assert "raw_call('7b34ab90" not in text
+    call = text[text.index("edited = text_to_image_flux2_klein_9b("):text.index("saveimage = SaveImage(")]
+    assert "value=1024" in call
+    assert "value_1=1024" in call
+    assert "unet_name='flux-2-klein-base-9b-fp8.safetensors'" in call
+    assert "clip_name='qwen_3_8b_fp8mixed.safetensors'" in call
+    assert "vae_name='full_encoder_small_decoder.safetensors'" in call
+    assert "text=''" in call
+
+
+def test_subgraph_call_site_uses_instance_widget_values_and_warns_when_unbound() -> None:
+    workflow = VibeWorkflow("widget_subgraph", WorkflowSource("widget_subgraph"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        metadata={
+            "_ui": {
+                "inputs": [
+                    {"name": "value", "type": "INT", "widget": {"name": "value"}, "link": None},
+                ],
+                "widgets_values": [123],
+            }
+        },
+    )
+    raw = {
+        "definitions": {
+            "subgraphs": [
+                {
+                    "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                    "name": "Widget Source",
+                    "inputs": [
+                        {"name": "value", "type": "INT"},
+                        {"name": "missing", "type": "STRING"},
+                    ],
+                    "outputs": [],
+                    "nodes": [],
+                    "links": [],
+                }
+            ]
+        }
+    }
+    diagnostics: list[EmissionDiagnostic] = []
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/widget_subgraph", "capability": "image"},
+        ready_requirements={},
+        template_id="image/widget_subgraph",
+        raw_workflow=raw,
+        diagnostics=diagnostics,
+    )
+
+    assert "def widget_source(" in text
+    assert "value=123" in text
+    assert "missing=None" in text
+    assert any(diag.code == "subgraph_input_unbound" for diag in diagnostics)
+
+
+def test_subgraph_slug_collision_disambiguated() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",
+        "edit/flux2_klein_9b_image_edit_base",
+    )
+
+    assert "def image_edit_flux2_klein_9b(" in text
+    assert "def image_edit_flux2_klein_9b_dual(" in text
+
+
+def test_nested_subgraph_emits_function_call() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+        "edit/flux2_klein_4b_image_edit_distilled",
+    )
+
+    outer = text[text.index("def image_edit_flux2_klein_4b_distilled_dual("):text.index("def build()")]
+    assert "reference_conditioning(" in outer
+    assert "reference_conditioning_93041a64(" in outer
+    assert "raw_call('27eacb9f" not in outer
+    assert "raw_call('93041a64" not in outer
+
+
+def test_nested_subgraph_topological_order() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json",
+        "edit/flux2_klein_4b_image_edit_distilled",
+    )
+
+    assert text.index("def reference_conditioning(") < text.index("def image_edit_flux2_klein_4b_distilled_dual(")
+    assert text.index("def reference_conditioning_93041a64(") < text.index("def image_edit_flux2_klein_4b_distilled_dual(")
+
+
+def test_nested_subgraph_circular_raises() -> None:
+    workflow = VibeWorkflow("cycle", WorkflowSource("cycle"))
+    raw = {
+        "definitions": {
+            "subgraphs": [
+                {
+                    "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                    "name": "Cycle A",
+                    "inputs": [],
+                    "outputs": [],
+                    "nodes": [{"id": 1, "type": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "inputs": [], "outputs": [], "widgets_values": []}],
+                    "links": [],
+                },
+                {
+                    "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                    "name": "Cycle B",
+                    "inputs": [],
+                    "outputs": [],
+                    "nodes": [{"id": 2, "type": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "inputs": [], "outputs": [], "widgets_values": []}],
+                    "links": [],
+                },
+            ]
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="Circular subgraph reference detected"):
+        emit_ready_template_python(
+            workflow,
+            ready_metadata={"ready_template": "image/cycle", "capability": "image"},
+            ready_requirements={},
+            template_id="image/cycle",
+            raw_workflow=raw,
+        )
 
 
 def test_tools_format_as_python_remains_ready_template_wrapper() -> None:

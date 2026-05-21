@@ -39,6 +39,191 @@ READY_METADATA = ReadyMetadata.build(
     provenance={'source_workflow': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json'},
 )
 
+# === Subgraph functions ===
+
+def image_edit_flux2_klein_4b_distilled(
+    *,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    text: str,
+    image,
+):
+    """Image Edit (Flux.2 Klein 4B Distilled) - single-image variant.
+
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Inner nodes: KSamplerSelect, UNETLoader, CLIPLoader, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, Flux2Scheduler, CLIPTextEncode, ConditioningZeroOut, ReferenceLatentx2, GetImageSize, VAEEncode, SamplerCustomAdvanced, VAEDecode, RandomNoise, CFGGuider.
+    """
+
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+
+    randomnoise = RandomNoise(
+        noise_seed=43301611940728,
+        control_after_generate='randomize',
+    )
+
+    imagescaletototalpixels = ImageScaleToTotalPixels(
+        upscale_method='nearest-exact',
+        image=image,
+    )
+    cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
+    width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
+    vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
+
+    flux2scheduler = Flux2Scheduler(
+        steps=4,
+        widget_1=1024,
+        widget_2=1024,
+        height=height,
+        width=width,
+    )
+    emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
+    conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
+    referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
+
+    referencelatent = ReferenceLatent(
+        conditioning=conditioningzeroout,
+        latent=vaeencode,
+    )
+
+    cfgguider = CFGGuider(
+        cfg=1,
+        model=unetloader,
+        negative=referencelatent,
+        positive=referencelatent_2,
+    )
+
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=emptyflux2latentimage,
+        noise=randomnoise,
+        sampler=ksamplerselect,
+        sigmas=flux2scheduler,
+    )
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+
+    return vaedecode
+
+
+def reference_conditioning(
+    *,
+    conditioning,
+    conditioning_1,
+    pixels,
+    vae,
+):
+    """Reference Conditioning - single-image variant.
+
+    Materialized from subgraph 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Inner nodes: ReferenceLatentx2, VAEEncode.
+    """
+
+    vaeencode = VAEEncode(pixels=pixels, vae=vae)
+    referencelatent = ReferenceLatent(conditioning=conditioning_1, latent=vaeencode)
+    referencelatent_2 = ReferenceLatent(conditioning=conditioning, latent=vaeencode)
+
+    return referencelatent_2, referencelatent
+
+
+def reference_conditioning_93041a64(
+    *,
+    conditioning,
+    conditioning_1,
+    pixels,
+    vae,
+):
+    """Reference Conditioning - single-image variant.
+
+    Materialized from subgraph 93041a64-452a-477a-9447-40330b7c1136 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Inner nodes: ReferenceLatentx2, VAEEncode.
+    """
+
+    vaeencode = VAEEncode(pixels=pixels, vae=vae)
+    referencelatent = ReferenceLatent(conditioning=conditioning_1, latent=vaeencode)
+    referencelatent_2 = ReferenceLatent(conditioning=conditioning, latent=vaeencode)
+
+    return referencelatent_2, referencelatent
+
+
+def image_edit_flux2_klein_4b_distilled_dual(
+    *,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    text: str,
+    image,
+    image_1,
+):
+    """Image Edit (Flux.2 Klein 4B Distilled) - two-image variant.
+
+    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncode, VAELoader, ImageScaleToTotalPixelsx2, 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709, 93041a64-452a-477a-9447-40330b7c1136, ConditioningZeroOut, EmptyFlux2LatentImage, GetImageSize.
+    """
+
+    imagescaletototalpixels = ImageScaleToTotalPixels(
+        upscale_method='nearest-exact',
+        image=image_1,
+    )
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+
+    randomnoise = RandomNoise(
+        noise_seed=786795143695419,
+        control_after_generate='randomize',
+    )
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+
+    imagescaletototalpixels_2 = ImageScaleToTotalPixels(
+        upscale_method='nearest-exact',
+        image=image,
+    )
+    cliptextencode = CLIPTextEncode(text=text, clip=cliploader)
+    width, height, batch_size = GetImageSize(image=imagescaletototalpixels_2)
+    conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
+
+    flux2scheduler = Flux2Scheduler(
+        steps=4,
+        widget_1=1024,
+        widget_2=1024,
+        height=height,
+        width=width,
+    )
+    emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
+    conditioning, conditioning_1 = reference_conditioning(
+        conditioning=cliptextencode,
+        conditioning_1=conditioningzeroout,
+        pixels=imagescaletototalpixels_2,
+        vae=vaeloader,
+    )
+    conditioning_2, conditioning_1_2 = reference_conditioning_93041a64(
+        conditioning=conditioning,
+        conditioning_1=conditioning_1,
+        pixels=imagescaletototalpixels,
+        vae=vaeloader,
+    )
+
+    cfgguider = CFGGuider(
+        cfg=1,
+        model=unetloader,
+        negative=conditioning_1_2,
+        positive=conditioning_2,
+    )
+
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=emptyflux2latentimage,
+        noise=randomnoise,
+        sampler=ksamplerselect,
+        sigmas=flux2scheduler,
+    )
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+
+    return vaedecode
+
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
