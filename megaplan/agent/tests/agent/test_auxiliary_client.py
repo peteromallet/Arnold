@@ -3,15 +3,18 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
 
+import agent.auxiliary_client as aux
 from agent.auxiliary_client import (
     get_text_auxiliary_client,
     get_vision_auxiliary_client,
     get_available_vision_backends,
     resolve_provider_client,
+    call_llm,
     auxiliary_max_tokens_param,
     _read_codex_access_token,
     _get_auxiliary_provider,
@@ -35,6 +38,11 @@ def _clean_env(monkeypatch):
         "CONTEXT_COMPRESSION_PROVIDER", "CONTEXT_COMPRESSION_MODEL",
     ):
         monkeypatch.delenv(key, raising=False)
+    aux._client_cache.clear()
+    aux._provider_retry_cooldowns.clear()
+    yield
+    aux._client_cache.clear()
+    aux._provider_retry_cooldowns.clear()
 
 
 @pytest.fixture
@@ -54,6 +62,81 @@ def codex_auth_dir(tmp_path, monkeypatch):
         lambda: "codex-test-token-abc123",
     )
     return codex_dir
+
+
+class _StatusError(Exception):
+    def __init__(self, status_code):
+        super().__init__(f"Error code: {status_code} - test failure")
+        self.status_code = status_code
+
+
+def _client(result, base_url="https://openrouter.ai/api/v1"):
+    create = MagicMock(side_effect=result) if isinstance(result, BaseException) else MagicMock(return_value=result)
+    return SimpleNamespace(
+        api_key="test-key",
+        base_url=base_url,
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    )
+
+
+def _response(content):
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
+
+
+class TestAuxiliaryProviderCooldown:
+    def _stub_later_providers(self, fallback):
+        return {
+            "_try_nous": MagicMock(return_value=(fallback, "nous-model")),
+            "_try_custom_endpoint": MagicMock(return_value=(None, None)),
+            "_try_codex": MagicMock(return_value=(None, None)),
+            "_resolve_api_key_provider": MagicMock(return_value=(None, None)),
+        }
+
+    def test_auto_openrouter_403_is_not_retried_inside_cooldown(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        monkeypatch.setattr(aux.time, "time", lambda: 1000.0)
+        openrouter = MagicMock(return_value=(_client(_StatusError(403)), "or-model"))
+        fallback = _client(_response("fallback"), "https://inference-api.nousresearch.com/v1")
+
+        with patch.multiple(aux, _try_openrouter=openrouter, **self._stub_later_providers(fallback)):
+            with pytest.raises(_StatusError):
+                call_llm(task="compression", messages=[{"role": "user", "content": "summarize"}])
+            response = call_llm(task="compression", messages=[{"role": "user", "content": "summarize"}])
+
+        openrouter.assert_called_once()
+        assert response.choices[0].message.content == "fallback"
+
+    def test_auto_retries_openrouter_after_cooldown(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        now = [1000.0]
+        monkeypatch.setattr(aux.time, "time", lambda: now[0])
+        openrouter = MagicMock(side_effect=[
+            (_client(_StatusError(403)), "or-model"),
+            (_client(_response("recovered")), "or-model"),
+        ])
+        fallback = _client(_response("fallback"), "https://inference-api.nousresearch.com/v1")
+
+        with patch.multiple(aux, _try_openrouter=openrouter, **self._stub_later_providers(fallback)):
+            with pytest.raises(_StatusError):
+                call_llm(task="compression", messages=[{"role": "user", "content": "summarize"}])
+            call_llm(task="compression", messages=[{"role": "user", "content": "summarize"}])
+            now[0] += aux._PROVIDER_COOLDOWN_SECONDS + 1
+            response = call_llm(task="compression", messages=[{"role": "user", "content": "summarize"}])
+
+        assert openrouter.call_count == 2
+        assert response.choices[0].message.content == "recovered"
+
+    def test_auto_still_prefers_openrouter_without_cooldown(self, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        openrouter_client = _client(_response("openrouter"))
+        openrouter = MagicMock(return_value=(openrouter_client, "or-model"))
+        nous = MagicMock(return_value=(_client(_response("nous")), "nous-model"))
+
+        with patch.multiple(aux, _try_openrouter=openrouter, _try_nous=nous):
+            client, model = _resolve_auto()
+
+        assert (client, model) == (openrouter_client, "or-model")
+        nous.assert_not_called()
 
 
 class TestReadCodexAccessToken:

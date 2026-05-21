@@ -79,6 +79,7 @@ NOUS_EXTRA_BODY = {"tags": ["product=hermes-agent"]}
 
 # Set at resolve time — True if the auxiliary client points to Nous Portal
 auxiliary_is_nous: bool = False
+_last_auto_provider: Optional[str] = None
 
 # Default auxiliary models per provider
 _OPENROUTER_MODEL = "google/gemini-3-flash-preview"
@@ -733,12 +734,22 @@ def _resolve_forced_provider(forced: str) -> Tuple[Optional[OpenAI], Optional[st
 
 def _resolve_auto() -> Tuple[Optional[OpenAI], Optional[str]]:
     """Full auto-detection chain: OpenRouter → Nous → custom → Codex → API-key → None."""
-    global auxiliary_is_nous
+    global auxiliary_is_nous, _last_auto_provider
     auxiliary_is_nous = False  # Reset — _try_nous() will set True if it wins
-    for try_fn in (_try_openrouter, _try_nous, _try_custom_endpoint,
-                   _try_codex, _resolve_api_key_provider):
+    _last_auto_provider = None
+    for provider_name, try_fn in (
+        ("openrouter", _try_openrouter),
+        ("nous", _try_nous),
+        ("custom", _try_custom_endpoint),
+        ("openai-codex", _try_codex),
+        ("api-key", _resolve_api_key_provider),
+    ):
+        if _provider_on_cooldown(provider_name):
+            logger.debug("Auxiliary client: skipping %s during retry cooldown", provider_name)
+            continue
         client, model = try_fn()
         if client is not None:
+            _last_auto_provider = provider_name
             return client, model
     logger.debug("Auxiliary client: none available")
     return None, None
@@ -1209,6 +1220,66 @@ def auxiliary_max_tokens_param(value: int) -> dict:
 _client_cache: Dict[tuple, tuple] = {}
 _client_cache_lock = threading.Lock()
 
+_RETRY_COOLDOWN_STATUS_CODES = {403, 429}
+_PROVIDER_COOLDOWN_SECONDS = 90.0
+_provider_retry_cooldowns: Dict[Tuple[str, int], float] = {}
+_provider_retry_cooldowns_lock = threading.Lock()
+
+
+def _prune_expired_provider_cooldowns() -> bool:
+    now = time.time()
+    expired = False
+    with _provider_retry_cooldowns_lock:
+        for key, expires_at in list(_provider_retry_cooldowns.items()):
+            if expires_at <= now:
+                del _provider_retry_cooldowns[key]
+                expired = True
+    return expired
+
+
+def _provider_on_cooldown(provider: Optional[str]) -> bool:
+    if not provider:
+        return False
+    _prune_expired_provider_cooldowns()
+    with _provider_retry_cooldowns_lock:
+        return any(key[0] == provider for key in _provider_retry_cooldowns)
+
+
+def _cooldown_status_code(exc: BaseException) -> Optional[int]:
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    text = str(exc)
+    for code in _RETRY_COOLDOWN_STATUS_CODES:
+        if f"Error code: {code}" in text or f"HTTP {code}" in text:
+            return code
+    return None
+
+
+def _record_provider_success(provider: Optional[str]) -> None:
+    if not provider:
+        return
+    with _provider_retry_cooldowns_lock:
+        for key in list(_provider_retry_cooldowns):
+            if key[0] == provider:
+                del _provider_retry_cooldowns[key]
+
+
+def _record_provider_failure(provider: Optional[str], exc: BaseException) -> None:
+    status_code = _cooldown_status_code(exc)
+    if not provider or status_code not in _RETRY_COOLDOWN_STATUS_CODES:
+        return
+    with _provider_retry_cooldowns_lock:
+        _provider_retry_cooldowns[(provider, status_code)] = time.time() + _PROVIDER_COOLDOWN_SECONDS
+    with _client_cache_lock:
+        for key in list(_client_cache):
+            if key[0] == "auto":
+                del _client_cache[key]
+    logger.warning(
+        "Auxiliary provider %s returned HTTP %s; skipping it in auto mode for %.0fs",
+        provider, status_code, _PROVIDER_COOLDOWN_SECONDS,
+    )
+
 
 def _force_close_async_httpx(client: Any) -> None:
     """Mark the httpx AsyncClient inside an AsyncOpenAI client as closed.
@@ -1268,19 +1339,24 @@ def _get_cached_client(
     cache_key = (provider, async_mode, base_url or "", api_key or "")
     with _client_cache_lock:
         if cache_key in _client_cache:
-            cached_client, cached_default, cached_loop = _client_cache[cache_key]
-            if async_mode:
-                # Async clients are bound to the event loop that created them.
-                # A cached async client whose loop has been closed will raise
-                # "Event loop is closed" when httpx tries to clean up its
-                # transport.  Discard the stale client and create a fresh one.
-                if cached_loop is not None and cached_loop.is_closed():
-                    _force_close_async_httpx(cached_client)
-                    del _client_cache[cache_key]
+            # If auto fell back while a provider was cooled down, refresh once
+            # the cooldown expires so the normal priority order is restored.
+            if (provider or "").strip().lower() == "auto" and _prune_expired_provider_cooldowns():
+                del _client_cache[cache_key]
+            else:
+                cached_client, cached_default, cached_loop = _client_cache[cache_key]
+                if async_mode:
+                    # Async clients are bound to the event loop that created them.
+                    # A cached async client whose loop has been closed will raise
+                    # "Event loop is closed" when httpx tries to clean up its
+                    # transport.  Discard the stale client and create a fresh one.
+                    if cached_loop is not None and cached_loop.is_closed():
+                        _force_close_async_httpx(cached_client)
+                        del _client_cache[cache_key]
+                    else:
+                        return cached_client, model or cached_default
                 else:
                     return cached_client, model or cached_default
-            else:
-                return cached_client, model or cached_default
     # Build outside the lock
     client, default_model = resolve_provider_client(
         provider,
@@ -1532,15 +1608,26 @@ def call_llm(
         tools=tools, timeout=timeout, extra_body=extra_body,
         base_url=resolved_base_url)
 
+    actual_provider = _last_auto_provider if resolved_provider == "auto" else resolved_provider
+
     # Handle max_tokens vs max_completion_tokens retry
     try:
-        return client.chat.completions.create(**kwargs)
+        response = client.chat.completions.create(**kwargs)
+        _record_provider_success(actual_provider)
+        return response
     except Exception as first_err:
         err_str = str(first_err)
         if "max_tokens" in err_str or "unsupported_parameter" in err_str:
             kwargs.pop("max_tokens", None)
             kwargs["max_completion_tokens"] = max_tokens
-            return client.chat.completions.create(**kwargs)
+            try:
+                response = client.chat.completions.create(**kwargs)
+                _record_provider_success(actual_provider)
+                return response
+            except Exception as retry_err:
+                _record_provider_failure(actual_provider, retry_err)
+                raise
+        _record_provider_failure(actual_provider, first_err)
         raise
 
 
@@ -1622,12 +1709,23 @@ async def async_call_llm(
         tools=tools, timeout=timeout, extra_body=extra_body,
         base_url=resolved_base_url)
 
+    actual_provider = _last_auto_provider if resolved_provider == "auto" else resolved_provider
+
     try:
-        return await client.chat.completions.create(**kwargs)
+        response = await client.chat.completions.create(**kwargs)
+        _record_provider_success(actual_provider)
+        return response
     except Exception as first_err:
         err_str = str(first_err)
         if "max_tokens" in err_str or "unsupported_parameter" in err_str:
             kwargs.pop("max_tokens", None)
             kwargs["max_completion_tokens"] = max_tokens
-            return await client.chat.completions.create(**kwargs)
+            try:
+                response = await client.chat.completions.create(**kwargs)
+                _record_provider_success(actual_provider)
+                return response
+            except Exception as retry_err:
+                _record_provider_failure(actual_provider, retry_err)
+                raise
+        _record_provider_failure(actual_provider, first_err)
         raise
