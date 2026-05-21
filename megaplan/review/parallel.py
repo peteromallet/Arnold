@@ -17,9 +17,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import get_effective, read_json, schemas_root
+from megaplan._core import get_effective, load_flag_registry, read_json, schemas_root
 from megaplan.workers.hermes import _toolsets_for_phase, clean_parsed_payload, parse_agent_output
 from megaplan.prompts.review import (
+    _filtered_prior_flags,
     _write_criteria_verdict_review_template,
     _write_single_check_review_template,
     parallel_criteria_review_prompt,
@@ -76,6 +77,7 @@ def _run_check(
     schema: dict[str, Any],
     project_dir: Path,
     pre_check_flags: list[dict[str, Any]],
+    prior_flags: list[dict[str, Any]] | None = None,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float, int, int, int]:
     from megaplan.workers.hermes import _import_hermes_runtime
 
@@ -83,7 +85,7 @@ def _run_check(
 
     check_id = check["id"] if isinstance(check, dict) else getattr(check, "id")
     output_path = _write_single_check_review_template(plan_dir, state, check, f"review_check_{check_id}.json")
-    prompt = single_check_review_prompt(state, plan_dir, root, check, output_path, pre_check_flags)
+    prompt = single_check_review_prompt(state, plan_dir, root, check, output_path, pre_check_flags, prior_flags)
     resolved_model, agent_kwargs = _resolve_model(model)
 
     _model_lower = (resolved_model or "").lower()
@@ -323,6 +325,7 @@ def run_parallel_review(
     project_dir = Path(state["config"]["project_dir"])
     results: list[tuple[dict[str, Any], list[str], list[str]] | None] = [None] * len(checks)
     criteria_payload: dict[str, Any] | None = None
+    prior_flags = load_flag_registry(plan_dir).get("flags", [])
     total_cost = 0.0
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -349,6 +352,7 @@ def run_parallel_review(
                     schema=schema,
                     project_dir=project_dir,
                     pre_check_flags=pre_check_flags,
+                    prior_flags=_filtered_prior_flags(check, prior_flags),
                 ): ("check", index)
                 for index, check in enumerate(checks)
             }

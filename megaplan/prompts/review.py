@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import textwrap
 from pathlib import Path
@@ -23,6 +24,8 @@ from megaplan.types import PlanState
 
 from ._shared import _gate_summary_or_skipped
 
+log = logging.getLogger(__name__)
+
 
 def _check_field(check: Any, name: str) -> Any:
     if isinstance(check, dict):
@@ -35,7 +38,56 @@ def _review_check_flag_id(check_id: str, index: int) -> str:
     return f"REVIEW-{stem}-{index:03d}"
 
 
-def _review_template_payload(plan_dir: Path) -> dict[str, object]:
+def _latest_meta_without_state(plan_dir: Path) -> dict[str, Any]:
+    candidates = sorted(plan_dir.glob("plan_v*.meta.json"))
+    if not candidates:
+        return {}
+    try:
+        return read_json(candidates[-1])
+    except (OSError, ValueError):
+        return {}
+
+
+def _criteria_from_plan_artifacts(plan_dir: Path, state: PlanState | None) -> list[dict[str, str]]:
+    """Return review criteria from the durable plan artifact, with gate fallback."""
+    criteria: list[dict[str, str]] = []
+    if state is None:
+        meta = _latest_meta_without_state(plan_dir)
+    else:
+        try:
+            meta = read_json(latest_plan_meta_path(plan_dir, state))
+        except (OSError, ValueError):
+            meta = {}
+
+    raw_criteria = meta.get("success_criteria", [])
+    if not isinstance(raw_criteria, list) or not raw_criteria:
+        gate = _gate_summary_or_skipped(plan_dir)
+        criteria_check = gate.get("criteria_check", {})
+        if isinstance(criteria_check, dict):
+            raw_criteria = criteria_check.get("items", [])
+
+    if not isinstance(raw_criteria, list):
+        return criteria
+
+    for crit in raw_criteria:
+        if not isinstance(crit, dict):
+            continue
+        name = crit.get("name") or crit.get("criterion")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        priority = crit.get("priority", "must")
+        if priority not in {"must", "should", "info"}:
+            priority = "must"
+        criteria.append({
+            "name": name,
+            "priority": str(priority),
+            "pass": "",
+            "evidence": "",
+        })
+    return criteria
+
+
+def _review_template_payload(plan_dir: Path, state: PlanState | None = None) -> dict[str, object]:
     finalize_data = read_json(plan_dir / "finalize.json")
 
     task_verdicts = []
@@ -57,15 +109,7 @@ def _review_template_payload(plan_dir: Path) -> dict[str, object]:
                 "verdict": "",
             })
 
-    criteria = []
-    for crit in finalize_data.get("success_criteria", []):
-        if isinstance(crit, dict) and crit.get("name"):
-            criteria.append({
-                "name": crit["name"],
-                "priority": crit.get("priority", "must"),
-                "pass": "",
-                "evidence": "",
-            })
+    criteria = _criteria_from_plan_artifacts(plan_dir, state)
 
     return {
         "review_verdict": "",
@@ -101,7 +145,45 @@ def _parallel_review_context(state: PlanState, plan_dir: Path) -> dict[str, Any]
         "git_diff": git_diff,
         "finalize_data": read_json(plan_dir / "finalize.json"),
         "settled_decisions": settled_decisions,
+        "prior_flags": load_flag_registry(plan_dir).get("flags", []),
     }
+
+
+def _flag_text(flag: dict[str, Any]) -> str:
+    return f"{flag.get('concern', '')} {flag.get('evidence', '')}".lower()
+
+
+def _filtered_prior_flags(check: Any, flags: list[Any]) -> list[dict[str, Any]]:
+    check_id = str(_check_field(check, "id") or "")
+    filtered: list[dict[str, Any]] = []
+    for raw_flag in flags:
+        if not isinstance(raw_flag, dict):
+            continue
+        status = str(raw_flag.get("status", "open"))
+        category = str(raw_flag.get("category", "other"))
+        text = _flag_text(raw_flag)
+        include = status == "addressed"
+        if check_id == "coverage":
+            include = include or category in {"completeness", "scope"}
+        elif check_id == "placement":
+            include = include or (category == "correctness" and ("/" in text or ".py" in text or "`" in text))
+        elif check_id == "adjacent_calls":
+            include = include or (category == "correctness" and any(term in text for term in ("caller", "call site", "downstream", "sibling")))
+        elif check_id == "simplicity":
+            include = include or category == "maintainability"
+        if not include:
+            continue
+        filtered.append(
+            {
+                "id": str(raw_flag.get("id", "")),
+                "concern": str(raw_flag.get("concern", "")),
+                "category": category,
+                "status": status,
+                "severity": str(raw_flag.get("severity") or raw_flag.get("severity_hint") or "uncertain"),
+                "evidence": str(raw_flag.get("evidence", "")),
+            }
+        )
+    return filtered
 
 
 def _build_review_checks_template(
@@ -116,6 +198,7 @@ def _build_review_checks_template(
             "question": _check_field(check, "question"),
             "guidance": _check_field(check, "guidance") or "",
             "findings": [],
+            "concerned_task_ids": [],
         }
         checks_template.append(entry)
 
@@ -184,19 +267,40 @@ def _write_criteria_verdict_review_template(
     state: PlanState,
     filename: str,
 ) -> Path:
-    del state
     output_path = plan_dir / filename
-    output_path.write_text(json.dumps(_review_template_payload(plan_dir), indent=2), encoding="utf-8")
+    output_path.write_text(json.dumps(_review_template_payload(plan_dir, state), indent=2), encoding="utf-8")
     return output_path
+
+
+def _settled_decision_lines(settled_decisions: list[object]) -> list[str]:
+    lines: list[str] = []
+    for item in settled_decisions:
+        if isinstance(item, dict):
+            decision_id = item.get("id", "DECISION")
+            decision = item.get("decision", "")
+            rationale = item.get("rationale", "")
+            line = f"- {decision_id}: {decision}"
+            if rationale:
+                line += f" ({rationale})"
+            lines.append(line)
+            continue
+        if isinstance(item, str):
+            log.warning(
+                "Legacy string settled_decision encountered; producer (gate) should emit dicts. "
+                "Promoting in-place for this render."
+            )
+            lines.append(f"- [unknown id]: {item}")
+    return lines
 
 
 def _settled_decisions_review_block(settled_decisions: list[object]) -> str:
     if not settled_decisions:
         return "Settled decisions from gate (`gate.json`): []"
+    rendered = "\n".join(_settled_decision_lines(settled_decisions))
     return textwrap.dedent(
         f"""
         Settled decisions from gate (`gate.json`):
-        {json_dump(settled_decisions).strip()}
+        {rendered}
         """
     ).strip()
 
@@ -208,12 +312,24 @@ def single_check_review_prompt(
     check: Any,
     output_path: Path,
     pre_check_flags: list[dict[str, Any]],
+    prior_flags: list[dict[str, Any]] | None = None,
 ) -> str:
     del root
     context = _parallel_review_context(state, plan_dir)
     check_id = _check_field(check, "id")
     question = _check_field(check, "question")
     guidance = _check_field(check, "guidance") or ""
+    prior_flags = _filtered_prior_flags(check, context["prior_flags"]) if prior_flags is None else prior_flags
+    prior_flags_block = ""
+    if prior_flags:
+        prior_flags_block = textwrap.dedent(
+            f"""
+            Critique flagged these concerns related to your check:
+            {json_dump(prior_flags).strip()}
+
+            For each concern above, verify in the diff whether it was resolved. Mark `verified_flag_ids: [...]` for resolved ones and `disputed_flag_ids: [...]` for unresolved ones.
+            """
+        ).strip()
     iteration = state.get("iteration", 1)
     iteration_context = ""
     if iteration > 1:
@@ -241,6 +357,8 @@ def single_check_review_prompt(
         Advisory mechanical pre-check flags (copy these verbatim into `pre_check_flags` in the output file):
         {json_dump(pre_check_flags).strip()}
 
+        {prior_flags_block}
+
         Your output template is at: {output_path}
         Read this file first. It contains exactly one check slot.
 
@@ -262,7 +380,8 @@ def single_check_review_prompt(
         - Use `minor` for informational quality notes that do not justify rework.
         - Use `flagged: false` with `status: "n/a"` only when the finding is purely informational and poses no downside.
         - Leave `flags` empty unless you discover an additional concern that does not fit the focused check.
-        - Keep `verified_flag_ids` and `disputed_flag_ids` empty unless you are explicitly confirming or disputing an existing REVIEW-* flag from a prior iteration.
+        - Keep `verified_flag_ids` and `disputed_flag_ids` empty unless you are explicitly confirming or disputing an existing flag from the prior-flag block above.
+        - Populate `checks[0].concerned_task_ids` with the real finalize task IDs affected by any blocking finding. Leave it empty when no specific task is implicated.
         - Preserve the `pre_check_flags` list verbatim in the output file.{iteration_context}
         """
     ).strip()
@@ -326,16 +445,7 @@ def _settled_decisions_block(gate: dict[str, object]) -> str:
     if not isinstance(settled_decisions, list) or not settled_decisions:
         return ""
     lines = ["Settled decisions (verify the executor implemented these correctly):"]
-    for item in settled_decisions:
-        if not isinstance(item, dict):
-            continue
-        decision_id = item.get("id", "DECISION")
-        decision = item.get("decision", "")
-        rationale = item.get("rationale", "")
-        line = f"- {decision_id}: {decision}"
-        if rationale:
-            line += f" ({rationale})"
-        lines.append(line)
+    lines.extend(_settled_decision_lines(settled_decisions))
     lines.append("")
     return "\n".join(lines)
 
@@ -377,16 +487,7 @@ def _write_review_template(plan_dir: Path, state: PlanState) -> Path:
                 "verdict": "",
             })
 
-    # Pre-populate criteria from finalize success_criteria if available
-    criteria = []
-    for crit in finalize_data.get("success_criteria", []):
-        if isinstance(crit, dict) and crit.get("name"):
-            criteria.append({
-                "name": crit["name"],
-                "priority": crit.get("priority", "must"),
-                "pass": "",
-                "evidence": "",
-            })
+    criteria = _criteria_from_plan_artifacts(plan_dir, state)
 
     template = {
         "review_verdict": "",

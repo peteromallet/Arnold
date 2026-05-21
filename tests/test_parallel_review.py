@@ -91,6 +91,7 @@ def _check_payload(check: object, detail: str, *, flagged: bool = False, status:
     return {
         "id": check.id,
         "question": check.question,
+        "concerned_task_ids": [],
         "findings": [_finding(detail, flagged=flagged, status=status)],
     }
 
@@ -160,6 +161,7 @@ def test_run_check_uses_single_check_prompt_and_review_toolset(
                 "question": check.question,
                 "guidance": check.guidance,
                 "prior_findings": [],
+                "concerned_task_ids": [],
                 "findings": [
                     _finding(
                         "Checked the focused review path and confirmed the dedicated prompt builder was used for this check.",
@@ -202,7 +204,7 @@ def test_run_check_uses_single_check_prompt_and_review_toolset(
     monkeypatch.setattr("megaplan.review.parallel._resolve_model", lambda model: ("mock-model", {}))
     monkeypatch.setattr(
         "megaplan.review.parallel.single_check_review_prompt",
-        lambda state, plan_dir, root, check, output_path, pre_check_flags: prompt_calls.append(
+        lambda state, plan_dir, root, check, output_path, pre_check_flags, prior_flags=None: prompt_calls.append(
             (check.id, pre_check_flags)
         )
         or "focused-review-prompt",
@@ -228,6 +230,7 @@ def test_run_check_uses_single_check_prompt_and_review_toolset(
     assert check_payload == {
         "id": check.id,
         "question": check.question,
+        "concerned_task_ids": [],
         "findings": [
             {
                 "detail": "Checked the focused review path and confirmed the dedicated prompt builder was used for this check.",
