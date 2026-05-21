@@ -30,7 +30,6 @@ from .io import (
     find_plan_dir,
     now_utc,
     plan_search_roots,
-    plans_root,
     read_json,
 )
 
@@ -44,6 +43,7 @@ DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
 # ---------------------------------------------------------------------------
 # Plan resolution
 # ---------------------------------------------------------------------------
+
 
 def active_plan_dirs(root: Path) -> list[Path]:
     by_name: dict[str, Path] = {}
@@ -199,7 +199,9 @@ def plan_lock(plan_dir: Path, *, step: str) -> Iterator[None]:
 
 
 @contextmanager
-def load_plan_locked(root: Path, requested_name: str | None, *, step: str) -> Iterator[tuple[Path, PlanState]]:
+def load_plan_locked(
+    root: Path, requested_name: str | None, *, step: str
+) -> Iterator[tuple[Path, PlanState]]:
     plan_dir = resolve_plan_dir(root, requested_name)
     with plan_lock(plan_dir, step=step):
         yield load_plan_from_dir(plan_dir)
@@ -225,13 +227,16 @@ def save_state(plan_dir: Path, state: PlanState) -> None:
 # eventually calls ``save_state``, it would overwrite the override's append
 # with stale data — silently losing the operator's note or override record.
 #
-# The two append-only meta fields are ``meta.notes`` and ``meta.overrides``.
-# Everything else in state.json is only mutated by the lock-holder. So the
-# fix is targeted: when saving from the lock-holding side, re-read the
-# on-disk ``meta.notes`` and ``meta.overrides``, take the union with the
-# in-memory copies (de-duped by content), and only then write.
+# Append-only operator meta fields can be written while a phase holds the plan
+# lock. Re-read them on save, take the union with the in-memory copies
+# (de-duped by content), and only then write.
 
-_DEFAULT_MERGE_FIELDS: tuple[str, ...] = ("notes", "overrides")
+_DEFAULT_MERGE_FIELDS: tuple[str, ...] = (
+    "notes",
+    "overrides",
+    "user_action_resolutions",
+    "quality_gate_resolutions",
+)
 
 
 def _note_merge_key(entry: Any) -> tuple[str, str]:
@@ -244,7 +249,7 @@ def _note_merge_key(entry: Any) -> tuple[str, str]:
     if not isinstance(entry, dict):
         encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
         return ("", hashlib.sha256(encoded).hexdigest()[:16])
-    timestamp = entry.get("timestamp", "")
+    timestamp = entry.get("timestamp") or entry.get("created_at") or ""
     note = entry.get("note", "")
     if not isinstance(timestamp, str):
         timestamp = str(timestamp)
@@ -265,7 +270,7 @@ def _override_merge_key(entry: Any) -> tuple[str, str, str]:
     if not isinstance(entry, dict):
         encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
         return ("", "", hashlib.sha256(encoded).hexdigest()[:16])
-    timestamp = entry.get("timestamp", "")
+    timestamp = entry.get("timestamp") or entry.get("created_at") or ""
     action = entry.get("action", "")
     note = entry.get("note", "")
     reason = entry.get("reason", "")
@@ -281,15 +286,81 @@ def _override_merge_key(entry: Any) -> tuple[str, str, str]:
     return (timestamp, action, digest)
 
 
+def _resolution_merge_key(entry: Any) -> tuple[str, str, str, str]:
+    """Stable de-dup key for a ``meta.user_action_resolutions`` entry.
+
+    Resolution events are ``{"action_id": str, "timestamp": str,
+    "resolution": str, "reason": str, ...}``.  We dedupe by ``(action_id,
+    timestamp, resolution, hash(reason))`` so two distinct resolution events
+    that happen to share a timestamp still survive.
+    """
+    if not isinstance(entry, dict):
+        encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+        return ("", "", "", hashlib.sha256(encoded).hexdigest()[:16])
+    action_id = entry.get("action_id", "")
+    timestamp = entry.get("timestamp") or entry.get("created_at") or ""
+    resolution = entry.get("resolution", "")
+    reason = entry.get("reason", "")
+    digest_payload = {
+        "debt_note": entry.get("debt_note", ""),
+        "evidence": entry.get("evidence", []),
+        "fallback_mode": entry.get("fallback_mode", ""),
+        "instructions": entry.get("instructions", ""),
+        "phase": entry.get("phase", ""),
+        "reason": reason,
+    }
+    if not isinstance(action_id, str):
+        action_id = str(action_id)
+    if not isinstance(timestamp, str):
+        timestamp = str(timestamp)
+    if not isinstance(resolution, str):
+        resolution = str(resolution)
+    digest = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    return (action_id, timestamp, resolution, digest)
+
+
+def _quality_resolution_merge_key(entry: Any) -> tuple[str, str, str, str]:
+    """Stable de-dup key for a ``meta.quality_gate_resolutions`` entry."""
+    if not isinstance(entry, dict):
+        encoded = json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+        return ("", "", "", hashlib.sha256(encoded).hexdigest()[:16])
+    blocker_id = entry.get("blocker_id", "")
+    timestamp = entry.get("timestamp") or entry.get("created_at") or ""
+    resolution = entry.get("resolution", "")
+    evidence = entry.get("evidence", [])
+    debt_note = entry.get("debt_note", "")
+    phase = entry.get("phase", "")
+    if not isinstance(blocker_id, str):
+        blocker_id = str(blocker_id)
+    if not isinstance(timestamp, str):
+        timestamp = str(timestamp)
+    if not isinstance(resolution, str):
+        resolution = str(resolution)
+    digest_payload = {
+        "debt_note": debt_note,
+        "evidence": evidence,
+        "fallback_mode": entry.get("fallback_mode", ""),
+        "phase": phase,
+    }
+    digest = hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    return (blocker_id, timestamp, resolution, digest)
+
+
 _FIELD_KEY_FUNCS: dict[str, Any] = {
     "notes": _note_merge_key,
     "overrides": _override_merge_key,
+    "user_action_resolutions": _resolution_merge_key,
+    "quality_gate_resolutions": _quality_resolution_merge_key,
 }
 
 
 def _timestamp_sort_key(entry: Any) -> str:
     if isinstance(entry, dict):
-        timestamp = entry.get("timestamp", "")
+        timestamp = entry.get("timestamp") or entry.get("created_at") or ""
         if isinstance(timestamp, str):
             return timestamp
         return str(timestamp)
@@ -474,7 +545,11 @@ def touch_active_step(
 
 def clear_active_step(state: PlanState, *, run_id: str | None = None) -> None:
     active_step = state.get("active_step")
-    if run_id is not None and isinstance(active_step, dict) and active_step.get("run_id") != run_id:
+    if (
+        run_id is not None
+        and isinstance(active_step, dict)
+        and active_step.get("run_id") != run_id
+    ):
         return
     state.pop("active_step", None)
 
@@ -482,6 +557,7 @@ def clear_active_step(state: PlanState, *, run_id: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 # History helpers
 # ---------------------------------------------------------------------------
+
 
 def append_history(state: PlanState, entry: HistoryEntry) -> None:
     state["history"].append(entry)
@@ -564,7 +640,9 @@ def make_history_entry(
     return entry
 
 
-def store_raw_worker_output(plan_dir: Path, step: str, iteration: int, content: str) -> str:
+def store_raw_worker_output(
+    plan_dir: Path, step: str, iteration: int, content: str
+) -> str:
     filename = current_iteration_raw_artifact(plan_dir, step, iteration).name
     atomic_write_text(plan_dir / filename, content)
     return filename
@@ -601,6 +679,7 @@ def record_step_failure(
 # ---------------------------------------------------------------------------
 # Plan version helpers
 # ---------------------------------------------------------------------------
+
 
 def latest_plan_record(state: PlanState) -> PlanVersionRecord:
     plan_versions = state["plan_versions"]

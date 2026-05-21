@@ -379,6 +379,12 @@ def parse_agent_spec(spec: str) -> tuple[str, str | None]:
     return spec, None
 
 
+# PR sync state classifications — used by ChainState to report whether
+# the milestone branch/PR is up-to-date with local and remote heads.
+SYNC_CLEAN = "clean"      # branch head, PR head, and last pushed commit all agree; worktree clean
+SYNC_STALE = "stale"      # local branch head is behind remote/PR head (needs fetch/rebase)
+SYNC_DIRTY = "dirty"      # uncommitted changes in worktree or diverged from pushed commit
+
 SCOPE_CREEP_TERMS = (
     "scope creep",
     "out of scope",
