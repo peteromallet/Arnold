@@ -79,7 +79,7 @@ def test_ready_template_emitter_uses_typed_wrappers_and_strips_schema_defaults()
     assert "source_id='1'" not in source
     assert "weight_dtype='default'" not in source
     assert "bind_output(" not in source
-    assert "return wf.finalize(PUBLIC_INPUTS" in source
+    assert "return wf.finalize({}" in source
 
 
 def test_ready_template_emitter_preserves_kept_schema_default() -> None:
@@ -1431,7 +1431,7 @@ def test_ready_template_uses_shared_helpers_and_passes_import_build_compile_pari
     assert result.validation is not None
 
     # Import check: emitted code must import the natural template surface, not define local _node
-    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref" in result.text
+    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref" in result.text
     assert "from vibecomfy.registry.ready_template import" not in result.text
     assert "new_workflow" in result.text
     assert "wf.finalize(PUBLIC_INPUTS" in result.text

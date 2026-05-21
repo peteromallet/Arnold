@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call, ref
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, GetVideoComponents, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, SamplerCustomAdvanced, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.depthanythingv2 import DepthAnything_V2, DownloadAndLoadDepthAnythingV2Model
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, PathchSageAttentionKJ
@@ -39,16 +39,17 @@ UPSCALE_METHOD_2 = 'lanczos'
 
 
 MODELS = {
-    'ltx_2_3_text_projection_bf16': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors', sha256='911d59bb4cb7708179c9a0045ea0fe41212ecfb77aed3a02702b7c0a8274911f', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=2312149072, subdir='text_encoders'),
-    'ltx23_video_vae_bf16': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors', sha256='01ea62d09bc139f95c5dee7b5c062ad6a3e6cd8be910a1983ac02e7eb5b8ee3b', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=1452258578, subdir='vae'),
-    'ltx23_audio_vae_bf16': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors', sha256='5bc10fa4adecf99dda132d916e23048cbd56797702c5fa50eb5d2079048a38c3', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=364855188, subdir='checkpoints'),
-    'taeltx2_3': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors', sha256='f0773b4e3e57318e6aa4dd4a35e1d16213a5f160fbc0376163f06888bbcbe246', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=23531296, subdir='vae'),
-    'ltx_2_3_22b_distilled_1_1_transformer_only_fp8_scaled': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors', sha256='0a1d7aac2b338e8ec7e832149f1dcf11c9323272482b1cca0673d229702370f0', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=25226571988, subdir='diffusion_models'),
-    'ltx_v2_ltx_2_3_22b_distilled_1_1_lora_dynamic_fro09_avg_rank_111_bf16': ModelAsset(filename='LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors', url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors', sha256='31e0c0195fb841bf31af78e8b60858f489e87ddcea4a5239abc80943da65e3ac', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=2741024390, subdir='loras'),
+    'text_encoder': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors', sha256='911d59bb4cb7708179c9a0045ea0fe41212ecfb77aed3a02702b7c0a8274911f', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=2312149072, subdir='text_encoders'),
+    'vae': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors', sha256='01ea62d09bc139f95c5dee7b5c062ad6a3e6cd8be910a1983ac02e7eb5b8ee3b', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=1452258578, subdir='vae'),
+    'checkpoint': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors', sha256='5bc10fa4adecf99dda132d916e23048cbd56797702c5fa50eb5d2079048a38c3', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=364855188, subdir='checkpoints'),
+    'vae_2': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors', sha256='f0773b4e3e57318e6aa4dd4a35e1d16213a5f160fbc0376163f06888bbcbe246', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=23531296, subdir='vae'),
+    'diffusion_model': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors', sha256='0a1d7aac2b338e8ec7e832149f1dcf11c9323272482b1cca0673d229702370f0', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=25226571988, subdir='diffusion_models'),
+    'lora': ModelAsset(filename='LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors', url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors', sha256='31e0c0195fb841bf31af78e8b60858f489e87ddcea4a5239abc80943da65e3ac', hf_revision='72af6430be2ff9b6792e9bdb8b7bd8ddcc11bc8b', size_bytes=2741024390, subdir='loras'),
     'depth_anything_v2_vits_fp32': ModelAsset(url='https://huggingface.co/Kijai/DepthAnythingV2-safetensors/resolve/main/depth_anything_v2_vits_fp32.safetensors', sha256='cb2d537ed6e45921f27f61f0b605dcfafb6b97c7d1a15e551280bdd867605c86', hf_revision='5aa7ab578df757d94c743998b157a0204ff29215', size_bytes=99165460, subdir='depthanything'),
     'yolox_l': ModelAsset(url='https://huggingface.co/yzd-v/DWPose/resolve/main/yolox_l.onnx', target_path='custom_nodes/comfyui_controlnet_aux/ckpts/yzd-v/DWPose/yolox_l.onnx', sha256='7860ae79de6c89a3c1eb72ae9a2756c0ccfbe04b7791bb5880afabd97855a411', hf_revision='1a7144101628d69ee7a3768d1ee3a094070dc388', size_bytes=216746733, subdir='controlnet_aux'),
     'dw_ll_ucoco_384_bs5_torchscript': ModelAsset(url='https://huggingface.co/hr16/DWPose-TorchScript-BatchSize5/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt', target_path='custom_nodes/comfyui_controlnet_aux/ckpts/hr16/DWPose-TorchScript-BatchSize5/dw-ll_ucoco_384_bs5.torchscript.pt', sha256='d86a0b2b59fddc0901a7076e9f59c9f8602602133ed72511c693fd11eea23d91', hf_revision='359d662a9b33b73f6d0f21732baf8845f17bb4be', size_bytes=135059124, subdir='controlnet_aux'),
 }
+
 
 PUBLIC_INPUTS = {
     'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
@@ -130,8 +131,6 @@ def build() -> VibeWorkflow:
         )
 
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
-
-        # Inputs
         primitivefloat = raw_call('PrimitiveFloat', '2076', value=8)
         intconstant = INTConstant(value=9)
         intconstant_2 = INTConstant(value=256)
@@ -151,7 +150,6 @@ def build() -> VibeWorkflow:
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
         cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=dualcliploader)
 
-        # Sampling
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
             width=intconstant_3,
             height=intconstant_2,
@@ -237,7 +235,6 @@ def build() -> VibeWorkflow:
             image=image_image_3,
         )
 
-        # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH_2,
             model=ltx2_nag,
@@ -336,7 +333,6 @@ def build() -> VibeWorkflow:
             video_latent=latent,
         )
 
-        # Sampling
         output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=ltxvconcatavlatent,

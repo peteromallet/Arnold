@@ -100,6 +100,9 @@ def test_session_cli_start_list_flush_stop_flow(
         "warm_policy": "always",
         "disable_smart_memory": True,
         "server_log_path": "out/sessions/default/comfy.log",
+        "models_root": str(tmp_path / "ComfyUI/models"),
+        "models_root_normalized": str(tmp_path / "ComfyUI/models"),
+        "locality": "managed_local_server",
     }
 
     assert session_cmd._cmd_session_list(argparse.Namespace()) == 0

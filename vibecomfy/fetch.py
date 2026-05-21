@@ -41,7 +41,11 @@ def local_path(entry: Mapping[str, Any], *, root: Path | None = None) -> Path:
 
 def is_present(entry: Mapping[str, Any], *, root: Path | None = None) -> bool:
     path = local_path(entry, root=root)
-    return path.is_file() and path.stat().st_size > 0
+    if not path.is_file() or path.stat().st_size <= 0:
+        return False
+    if entry.get("gated") is True:
+        return True
+    return True
 
 
 def verify(entry: Mapping[str, Any], path: Path | None = None, *, root: Path | None = None) -> None:
@@ -52,6 +56,8 @@ def verify(entry: Mapping[str, Any], path: Path | None = None, *, root: Path | N
             f"size mismatch for {entry['name']}: expected {expected_size} bytes, got {resolved.stat().st_size}"
         )
     expected_sha = entry.get("sha256")
+    if entry.get("gated") is True:
+        return
     if isinstance(expected_sha, str) and expected_sha:
         actual_sha = hashlib.sha256(resolved.read_bytes()).hexdigest()
         if actual_sha.lower() != expected_sha.lower():

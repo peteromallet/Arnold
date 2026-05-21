@@ -13,13 +13,14 @@ import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from vibecomfy.comfy_command import comfyui_command
 from vibecomfy.memory_profile import MemoryProfile, apply_memory_profile_overrides
 from vibecomfy.workflow import VibeWorkflow
 
 from .client import ComfyClient
+from .model_policy import apply_model_preflight, normalized_models_root, resolve_model_preflight_policy
 from .watchdog import Watchdog, write_report
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,20 @@ OVERRIDES_EXCLUDE: set[str] = set()
 
 def _workflow_queue_failure_message(workflow: VibeWorkflow, exc: Exception) -> str:
     return f"Workflow queue failed: {exc}; id_map={workflow.id_map()}"
+
+
+def _schema_warn_only(config: SessionConfig | None = None) -> bool:
+    if os.environ.get("VIBECOMFY_SCHEMA_WARN_ONLY") == "1":
+        return True
+    return bool(config is not None and config.extra.get("quiet_schema_degradation") is True)
+
+
+def _schema_skipped_class_types(api_dict: Mapping[str, Any]) -> list[str]:
+    return sorted({
+        str(node.get("class_type"))
+        for node in api_dict.values()
+        if isinstance(node, Mapping) and node.get("class_type")
+    })
 
 
 def _node_packs_from_requirements(workflow: VibeWorkflow):
@@ -104,6 +119,12 @@ class RunResult:
     log_path: str
 
 
+class PreparedPrompt(dict):
+    def __init__(self, api_dict: dict[str, Any], *, schema_validation_skipped: list[str] | None = None) -> None:
+        super().__init__(api_dict)
+        self.schema_validation_skipped = schema_validation_skipped or []
+
+
 @dataclass(slots=True)
 class SessionConfig:
     memory_profile: MemoryProfile | None = None
@@ -169,9 +190,10 @@ class EmbeddedSession:
         self._inflight_run: asyncio.Task[Any] | None = None
 
     def _on_schema_unavailable(self, msg: str) -> None:
-        if self._schema_warning_emitted:
+        if self._schema_warning_emitted and "schema validation skipped for class types" not in msg:
             return
-        logger.warning("vibecomfy schema gate: %s", msg)
+        level = logging.WARNING if _schema_warn_only(self.config) else logging.ERROR
+        logger.log(level, "vibecomfy schema gate: %s", msg)
         self._schema_warning_emitted = True
 
     async def start(self) -> None:
@@ -230,14 +252,8 @@ class EmbeddedSession:
             if installed_or_refreshed:
                 await self.reload_for_nodepack_change(reason="ensure_packs")
         if ensure_models:
-            from vibecomfy import fetch as fetch_assets
-
-            entries = _model_assets_from_workflow(workflow)
-            if entries:
-                try:
-                    fetch_assets.download_many(entries)
-                except Exception as exc:
-                    raise RuntimeError(f"ensure_models: {exc}") from exc
+            policy = resolve_model_preflight_policy(mode="embedded", ensure_models=True)
+            apply_model_preflight(workflow, policy)
         task = asyncio.current_task()
         self._inflight_run = task
         try:
@@ -263,6 +279,7 @@ class EmbeddedSession:
             on_unavailable=self._on_schema_unavailable,
             cache_only=True,
         )
+        schema_validation_skipped = list(getattr(api_dict, "schema_validation_skipped", []))
         timings["prepare_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         fp = model_fingerprint(api_dict)
 
@@ -318,6 +335,7 @@ class EmbeddedSession:
             runtime="embedded",
             config=self.config,
             timings=timings,
+            schema_validation_skipped=schema_validation_skipped,
         )
         metadata_path = run_dir / "metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -386,9 +404,10 @@ class ServerSession:
         self._inflight_run: asyncio.Task[Any] | None = None
 
     def _on_schema_unavailable(self, msg: str) -> None:
-        if self._schema_warning_emitted:
+        if self._schema_warning_emitted and "schema validation skipped for class types" not in msg:
             return
-        logger.warning("vibecomfy schema gate: %s", msg)
+        level = logging.WARNING if _schema_warn_only(self.config) else logging.ERROR
+        logger.log(level, "vibecomfy schema gate: %s", msg)
         self._schema_warning_emitted = True
 
     async def start(self) -> None:
@@ -402,9 +421,22 @@ class ServerSession:
         )
         self._argv = _comfy_server_argv(self.config)
 
-    async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+    async def run(
+        self,
+        workflow: VibeWorkflow,
+        *,
+        backend: str = "api",
+        ensure_models: bool = False,
+        shared_models_root: str | Path | None = None,
+    ) -> RunResult:
         if self._inflight_run is not None and not self._inflight_run.done():
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
+        policy = resolve_model_preflight_policy(
+            mode="managed_local_server",
+            ensure_models=ensure_models,
+            shared_root=shared_models_root,
+        )
+        apply_model_preflight(workflow, policy)
         task = asyncio.current_task()
         self._inflight_run = task
         try:
@@ -429,6 +461,7 @@ class ServerSession:
             schema_provider=self._schema_provider,
             on_unavailable=self._on_schema_unavailable,
         )
+        schema_validation_skipped = list(getattr(api_dict, "schema_validation_skipped", []))
         timings["prepare_prompt_sec"] = round(time.monotonic() - phase_start, 3)
         fp = model_fingerprint(api_dict)
 
@@ -479,6 +512,7 @@ class ServerSession:
             runtime="server",
             config=self.config,
             timings=timings,
+            schema_validation_skipped=schema_validation_skipped,
         )
         metadata_path = run_dir / "metadata.json"
         metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -552,7 +586,7 @@ async def _resolve_inflight_before_stop(session: Any, wait_for_inflight: bool) -
     session._inflight_run = None
 
 
-def find_active_session(id: str = "default") -> str | None:
+def active_session_metadata(id: str = "default") -> dict[str, Any] | None:
     session_dir = Path("out/sessions") / id
     pid_path = session_dir / "pid"
     url_path = session_dir / "url"
@@ -587,10 +621,9 @@ def find_active_session(id: str = "default") -> str | None:
         _cleanup_session_files(session_dir)
         return None
     except PermissionError:
-        if _session_url_healthy(url):
-            return url
-        _cleanup_session_files(session_dir)
-        return None
+        if not _session_url_healthy(url):
+            _cleanup_session_files(session_dir)
+            return None
     except OSError:
         _cleanup_session_files(session_dir)
         return None
@@ -598,7 +631,29 @@ def find_active_session(id: str = "default") -> str | None:
         _terminate_session_pid(pid)
         _cleanup_session_files(session_dir)
         return None
-    return url
+    config = _read_session_config(session_dir)
+    return {
+        "id": id,
+        "pid": pid,
+        "url": url,
+        "config": config,
+        "models_root": config.get("models_root"),
+        "models_root_normalized": config.get("models_root_normalized"),
+        "locality": config.get("locality"),
+    }
+
+
+def find_active_session(id: str = "default") -> str | None:
+    metadata = active_session_metadata(id)
+    return str(metadata["url"]) if metadata else None
+
+
+def _read_session_config(session_dir: Path) -> dict[str, Any]:
+    try:
+        data = json.loads((session_dir / "config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _session_url_healthy(url: str) -> bool:
@@ -784,7 +839,11 @@ async def _prepare_prompt_async(
         cache_only=cache_only,
     )
     try:
-        return _prepare_runtime_prompt(workflow, backend=backend, schema_provider=effective)
+        api_dict = _prepare_runtime_prompt(workflow, backend=backend, schema_provider=effective)
+        skipped = _schema_skipped_class_types(api_dict) if schema_provider is not None and effective is None else []
+        if skipped:
+            on_unavailable("schema validation skipped for class types: " + ", ".join(skipped))
+        return PreparedPrompt(api_dict, schema_validation_skipped=skipped)
     except ValueError as exc:
         raise ValueError(f"Workflow build failed: {exc}") from exc
     except RuntimeError as exc:
@@ -841,6 +900,7 @@ def _run_metadata(
     comfy_outputs: Any = None,
     config: SessionConfig | None = None,
     timings: dict[str, float] | None = None,
+    schema_validation_skipped: list[str] | None = None,
 ) -> dict[str, Any]:
     if comfy_outputs is None:
         comfy_outputs = _raw_comfy_outputs(queued)
@@ -860,6 +920,7 @@ def _run_metadata(
         "artifact_paths": outputs,
         "outputs": outputs,
         "runtime": runtime,
+        "schema_validation_skipped": schema_validation_skipped or [],
     }
     if timings:
         metadata["timings"] = timings

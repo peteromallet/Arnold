@@ -4,19 +4,12 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import ImageScaleBy
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 
-
-MODELS = {}
-
-PUBLIC_INPUTS = {}
-
 READY_METADATA = ReadyMetadata.build(
     capability='video_enhance',
-    inputs=PUBLIC_INPUTS,
-    models=MODELS,
     requirements={'custom_nodes': ['ComfyUI-VideoHelperSuite']},
     custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}},
     approach='VHS_LoadVideo -> ImageScaleBy -> VHS_VideoCombine, avoiding gated model downloads.',
@@ -46,5 +39,5 @@ def build() -> VibeWorkflow:
             images=imagescaleby,
         )
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video-enhance')
+        return wf.finalize({}, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video-enhance')
 

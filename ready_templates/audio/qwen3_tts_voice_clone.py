@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref
 from vibecomfy.nodes.core import LoadAudio, SaveAudioMP3
 from vibecomfy.nodes.qwentts import AILab_Qwen3TTSVoiceClone
 
@@ -13,8 +13,6 @@ AUDIO = 'speech_smoke.wav'
 DEFAULT_SEED = 3189
 
 
-MODELS = {}
-
 PUBLIC_INPUTS = {
     'seed': InputSpec(node=ref('ailab_qwen3ttsvoiceclone'), field='seed', default=DEFAULT_SEED),
 }
@@ -22,7 +20,6 @@ PUBLIC_INPUTS = {
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_speech_voice_clone',
     inputs=PUBLIC_INPUTS,
-    models=MODELS,
     requirements={'custom_nodes': ['ComfyUI-QwenTTS']},
     custom_node_packs={'ComfyUI-QwenTTS': {'commit': 'd8122a8ba835b65fd65c113d2b273b1ad1579293', 'url': 'https://github.com/1038lab/ComfyUI-QwenTTS.git', 'class_schema_sha256': '4137bb4f37ea178be0e794377829905d9ede1bc65496a23a51d766a3f03b2c84', 'classes_used': ['AILab_Qwen3TTSVoiceClone'], 'pip_packages': ['accelerate', 'librosa', 'openai-whisper', 'qwen-tts', 'soundfile', 'tiktoken'], 'status': 'pinned'}},
     approach='reference-audio voice cloning with a bundled smoke fixture',

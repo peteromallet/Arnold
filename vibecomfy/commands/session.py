@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from vibecomfy.runtime.client import ComfyClient
+from vibecomfy.runtime.model_policy import normalized_models_root
 from vibecomfy.runtime.session import (
     ServerSession,
     SessionConfig,
@@ -58,6 +59,9 @@ def _config_from_args(args: argparse.Namespace) -> dict[str, Any]:
     ready_timeout_sec = getattr(args, "ready_timeout_sec", None)
     if ready_timeout_sec is not None:
         config["ready_timeout_sec"] = ready_timeout_sec
+    config["models_root"] = normalized_models_root()
+    config["models_root_normalized"] = normalized_models_root()
+    config["locality"] = "managed_local_server"
     return config
 
 

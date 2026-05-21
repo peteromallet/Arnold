@@ -441,6 +441,60 @@
       "model_count": 3,
       "public_inputs": [
         {
+          "name": "model",
+          "target": {
+            "node_id": "",
+            "field": "unet_name"
+          },
+          "node_id": "",
+          "field": "unet_name",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "",
+            "field": "noise_seed"
+          },
+          "node_id": "",
+          "field": "noise_seed",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "",
+            "field": "text"
+          },
+          "node_id": "",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "image",
           "target": {
             "node_id": "",
@@ -645,6 +699,60 @@
       "model_count": 3,
       "public_inputs": [
         {
+          "name": "model",
+          "target": {
+            "node_id": "",
+            "field": "unet_name"
+          },
+          "node_id": "",
+          "field": "unet_name",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "",
+            "field": "noise_seed"
+          },
+          "node_id": "",
+          "field": "noise_seed",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "",
+            "field": "text"
+          },
+          "node_id": "",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
           "name": "image",
           "target": {
             "node_id": "",
@@ -679,42 +787,6 @@
           "media_semantics": null,
           "status": "static",
           "source": "InputSpec"
-        },
-        {
-          "name": "prompt",
-          "target": {
-            "node_id": "7",
-            "field": "text"
-          },
-          "node_id": "7",
-          "field": "text",
-          "value": "",
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
-        },
-        {
-          "name": "seed",
-          "target": {
-            "node_id": "5",
-            "field": "noise_seed"
-          },
-          "node_id": "5",
-          "field": "noise_seed",
-          "value": 192774551144773,
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [],
@@ -757,6 +829,60 @@
       "custom_nodes": [],
       "model_count": 3,
       "public_inputs": [
+        {
+          "name": "model",
+          "target": {
+            "node_id": "",
+            "field": "unet_name"
+          },
+          "node_id": "",
+          "field": "unet_name",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "",
+            "field": "noise_seed"
+          },
+          "node_id": "",
+          "field": "noise_seed",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "",
+            "field": "text"
+          },
+          "node_id": "",
+          "field": "text",
+          "value": null,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "InputSpec"
+        },
         {
           "name": "image",
           "target": {
@@ -1405,12 +1531,49 @@
       "coverage_tier": "supplemental",
       "custom_nodes": [],
       "model_count": 3,
-      "public_inputs": [],
+      "public_inputs": [
+        {
+          "name": "prompt",
+          "target": {
+            "node_id": "8",
+            "field": "text"
+          },
+          "node_id": "8",
+          "field": "text",
+          "value": "",
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        },
+        {
+          "name": "seed",
+          "target": {
+            "node_id": "5",
+            "field": "noise_seed"
+          },
+          "node_id": "5",
+          "field": "noise_seed",
+          "value": 653844576367526,
+          "type": null,
+          "default": null,
+          "required": false,
+          "range": null,
+          "aliases": [],
+          "media_semantics": null,
+          "status": "static",
+          "source": "finalize_metadata"
+        }
+      ],
       "public_outputs": [],
       "contract_shape": "workflow_runtime_contract.v1.public_descriptors.v2",
       "artifact_expectations": [],
       "static_diagnostics": [],
-      "public_input_status": "missing",
+      "public_input_status": "declared",
       "public_output_status": "missing",
       "custom_node_count": 0,
       "strict_ready_diagnostic_counts": {},

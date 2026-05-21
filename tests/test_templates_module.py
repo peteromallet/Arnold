@@ -265,6 +265,12 @@ def test_ready_metadata_build_serializes_inputs_models_and_filters_none_extras()
             hf_revision="abc123",
             size_bytes=123,
         ),
+        "gated": ModelAsset(
+            filename="gated.safetensors",
+            url="https://example.test/gated.safetensors",
+            subdir="diffusion_models",
+            gated=True,
+        ),
     }
 
     metadata = ReadyMetadata.build(
@@ -296,6 +302,12 @@ def test_ready_metadata_build_serializes_inputs_models_and_filters_none_extras()
             "sha256": "0" * 64,
             "hf_revision": "abc123",
             "size_bytes": 123,
+        },
+        {
+            "name": "gated.safetensors",
+            "url": "https://example.test/gated.safetensors",
+            "subdir": "diffusion_models",
+            "gated": True,
         },
     ]
     assert metadata["edit_guide"] == "Public inputs:\n- prompt: Prompt text.\n- image: Controls image."
@@ -766,6 +778,13 @@ def test_inputspec_type_and_modelasset_filename_are_derivable() -> None:
     assert wf.inputs["model"].node_id == loader.node.id
     assert wf.inputs["model"].type == "ENUM"
     assert model.filename == "model.safetensors"
+
+
+def test_modelasset_rejects_legacy_gated_magic_literals() -> None:
+    with pytest.raises(ValueError, match="gated=True"):
+        ModelAsset(url="https://example.test/model.safetensors", subdir="checkpoints", sha256="gated")
+    with pytest.raises(ValueError, match="gated=True"):
+        ModelAsset(url="https://example.test/model.safetensors", subdir="checkpoints", hf_revision="gated")
 
 
 def test_ready_metadata_build_minimal_derives_traceability_fields() -> None:

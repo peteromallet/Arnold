@@ -13,10 +13,12 @@ pytest.importorskip("dotenv", reason="requires runpod-launch extra (python-doten
 from scripts.runpod_corpus_matrix import _remote_script
 from vibecomfy.registry import models_loader
 from vibecomfy.registry.models_loader import (
+    ModelFile,
     ModelEntry,
     ModelSource,
     ModelTarget,
     canonical_filename,
+    composite_sha256,
     load_registry,
     normalize_alias,
     stage_entry,
@@ -71,6 +73,29 @@ def test_load_registry_roundtrip_sample(tmp_path: Path) -> None:
         tags=("phase:core",),
         notes="sample model",
     )
+
+
+def test_registry_rejects_legacy_gated_magic_literals(tmp_path: Path) -> None:
+    registry = _write_registry(
+        tmp_path / "models.yaml",
+        """
+models:
+  - id: gated
+    source:
+      kind: huggingface
+      repo: example/repo
+      filename: model.bin
+      revision: gated
+    min_size: 1
+    sha256: gated
+    targets:
+      - node_pack: pack
+        path: checkpoints/model.bin
+""",
+    )
+
+    with pytest.raises(ValueError, match="gated: true"):
+        load_registry(registry)
     assert canonical_filename("sample", registry=entries) == "model.bin"
 
 
@@ -153,6 +178,88 @@ def test_stage_entry_passes_hf_revision_and_verifies_pins(monkeypatch: pytest.Mo
 
     assert calls == [{"repo_id": "example/repo", "filename": "model.bin", "revision": "abc123"}]
     assert staged_paths[0].read_bytes() == payload
+
+
+def test_load_registry_supports_composite_files_and_deterministic_hash(tmp_path: Path) -> None:
+    first = hashlib.sha256(b"first").hexdigest()
+    second = hashlib.sha256(b"second").hexdigest()
+    files = (
+        ModelFile(path="encoder/model.bin", sha256=first, size_bytes=5),
+        ModelFile(path="decoder/model.bin", sha256=second, size_bytes=6),
+    )
+    composite = composite_sha256(files)
+    registry = _write_registry(
+        tmp_path / "models.yaml",
+        f"""
+models:
+  - id: composite
+    source:
+      kind: huggingface
+      repo: example/repo
+      revision: abc123
+    min_size: 1
+    composite_sha256: {composite}
+    files:
+      - path: encoder/model.bin
+        sha256: {first}
+        size_bytes: 5
+      - path: decoder/model.bin
+        sha256: {second}
+        size_bytes: 6
+    targets:
+      - node_pack: pack
+        path: diffusion_models/composite
+""",
+    )
+
+    entry = load_registry(registry)[0]
+
+    assert entry.files == files
+    assert entry.composite_sha256 == composite
+    assert composite_sha256(tuple(reversed(files))) == composite
+
+
+def test_stage_entry_stages_composite_child_files_and_verifies_pins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    payloads = {
+        "encoder/model.bin": b"first",
+        "decoder/model.bin": b"second",
+    }
+    source_root = tmp_path / "hf"
+    for relative, payload in payloads.items():
+        path = source_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+    calls: list[dict[str, str]] = []
+
+    def fake_hf_download(**kwargs: str) -> str:
+        calls.append(kwargs)
+        return str(source_root / kwargs["filename"])
+
+    files = tuple(
+        ModelFile(path=relative, sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload))
+        for relative, payload in payloads.items()
+    )
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_hf_download)
+    entry = ModelEntry(
+        id="composite",
+        source=ModelSource(kind="huggingface", repo="example/repo", revision="abc123"),
+        min_size=1,
+        targets=(ModelTarget(node_pack="pack", path="diffusion_models/composite"),),
+        files=files,
+        composite_sha256=composite_sha256(files),
+    )
+
+    staged_paths = stage_entry(entry, models_root=tmp_path / "models")
+
+    assert calls == [
+        {"repo_id": "example/repo", "filename": "encoder/model.bin", "revision": "abc123"},
+        {"repo_id": "example/repo", "filename": "decoder/model.bin", "revision": "abc123"},
+    ]
+    assert staged_paths == [
+        tmp_path / "models" / "diffusion_models/composite/encoder/model.bin",
+        tmp_path / "models" / "diffusion_models/composite/decoder/model.bin",
+    ]
+    assert [path.read_bytes() for path in staged_paths] == [b"first", b"second"]
 
 
 def test_stage_entry_rejects_pinned_sha_or_size_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

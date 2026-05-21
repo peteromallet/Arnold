@@ -295,6 +295,8 @@ def _normalise_model_entry(model: Any, *, class_type: str) -> dict[str, Any] | N
     size_bytes = model.get("size_bytes")
     if isinstance(size_bytes, int) and size_bytes >= 0:
         entry["size_bytes"] = size_bytes
+    if model.get("gated") is True:
+        entry["gated"] = True
     return entry
 
 

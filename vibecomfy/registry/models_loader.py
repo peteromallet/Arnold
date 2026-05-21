@@ -44,6 +44,14 @@ class ModelTarget:
 
 
 @dataclass(frozen=True)
+class ModelFile:
+    path: str
+    sha256: str | None = None
+    size_bytes: int | None = None
+    min_size: int | None = None
+
+
+@dataclass(frozen=True)
 class ModelEntry:
     id: str
     source: ModelSource
@@ -55,6 +63,9 @@ class ModelEntry:
     notes: str | None = None
     sha256: str | None = None
     size_bytes: int | None = None
+    gated: bool = False
+    files: tuple[ModelFile, ...] = ()
+    composite_sha256: str | None = None
 
 
 _REGISTRY_CACHE: dict[Path, tuple[ModelEntry, ...]] = {}
@@ -77,6 +88,8 @@ def load_registry(path: str | Path | None = None) -> tuple[ModelEntry, ...]:
 
 
 def stage_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
+    if entry.files:
+        return _stage_composite_entry(entry, models_root=models_root)
     source = _download_source(entry, models_root=models_root)
     _check_size(source, entry.min_size, entry.id)
     _check_pins(source, entry)
@@ -160,6 +173,11 @@ def _parse_entry(raw: Any, *, registry_path: Path) -> ModelEntry:
     if size_bytes is not None and (not isinstance(size_bytes, int) or size_bytes < 0):
         raise ValueError(f"{entry_id}: size_bytes must be a non-negative integer when set")
     sha256 = _optional_str(raw.get("sha256"))
+    gated = bool(raw.get("gated", False))
+    files = _parse_files(raw.get("files", []), entry_id=entry_id)
+    composite_sha256 = _optional_str(raw.get("composite_sha256"))
+    if sha256 == "gated" or source.revision == "gated":
+        raise ValueError(f"{entry_id}: use gated: true instead of sha256/source.revision 'gated'")
     if (notes := raw.get("notes")) is not None and not isinstance(notes, str):
         raise ValueError(f"{entry_id}: notes must be a string")
     return ModelEntry(
@@ -169,6 +187,9 @@ def _parse_entry(raw: Any, *, registry_path: Path) -> ModelEntry:
         targets=targets,
         sha256=sha256,
         size_bytes=size_bytes,
+        gated=gated,
+        files=files,
+        composite_sha256=composite_sha256,
         canonical_name=canonical_name,
         aliases=aliases,
         tags=tags,
@@ -185,6 +206,38 @@ def _parse_target(raw: Any, *, entry_id: str) -> ModelTarget:
     return ModelTarget(node_pack=node_pack, path=path)
 
 
+def _parse_files(raw: Any, *, entry_id: str) -> tuple[ModelFile, ...]:
+    if raw in (None, []):
+        return ()
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{entry_id}: files must be a non-empty list when set")
+    files: list[ModelFile] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise ValueError(f"{entry_id}: each files item must be a mapping")
+        path = _required_str(item, "path", entry_id)
+        _validate_relative_file_path(path, entry_id=entry_id, field="files.path")
+        if path in seen:
+            raise ValueError(f"{entry_id}: duplicate files.path {path!r}")
+        seen.add(path)
+        size_bytes = item.get("size_bytes")
+        if size_bytes is not None and (not isinstance(size_bytes, int) or size_bytes < 0):
+            raise ValueError(f"{entry_id}: files.size_bytes must be a non-negative integer when set")
+        min_size = item.get("min_size")
+        if min_size is not None and (not isinstance(min_size, int) or min_size < 0):
+            raise ValueError(f"{entry_id}: files.min_size must be a non-negative integer when set")
+        files.append(
+            ModelFile(
+                path=path,
+                sha256=_optional_str(item.get("sha256")),
+                size_bytes=size_bytes,
+                min_size=min_size,
+            )
+        )
+    return tuple(files)
+
+
 def _validate_registry(entries: Sequence[ModelEntry], *, registry_path: Path) -> None:
     seen_ids: set[str] = set()
     seen_aliases: dict[str, str] = {}
@@ -193,13 +246,23 @@ def _validate_registry(entries: Sequence[ModelEntry], *, registry_path: Path) ->
             raise ValueError(f"{registry_path}: duplicate model id {entry.id!r}")
         seen_ids.add(entry.id)
         if entry.source.kind == "huggingface":
-            if not entry.source.repo or not entry.source.filename:
-                raise ValueError(f"{entry.id}: huggingface source requires repo and filename")
+            if not entry.source.repo:
+                raise ValueError(f"{entry.id}: huggingface source requires repo")
+            if not entry.files and not entry.source.filename:
+                raise ValueError(f"{entry.id}: huggingface source requires filename for single-file entries")
         elif entry.source.kind == "url":
             if not entry.source.url:
                 raise ValueError(f"{entry.id}: url source requires url")
+            if entry.files:
+                raise ValueError(f"{entry.id}: composite files are only supported for huggingface sources")
         else:
             raise ValueError(f"{entry.id}: unsupported source kind {entry.source.kind!r}")
+        if entry.files:
+            if not entry.source.revision:
+                raise ValueError(f"{entry.id}: composite huggingface entries require source.revision")
+            expected = composite_sha256(entry.files)
+            if entry.composite_sha256 and entry.composite_sha256.lower() != expected:
+                raise ValueError(f"{entry.id}: composite_sha256 {entry.composite_sha256} does not match deterministic child hash {expected}")
         for tag in entry.tags:
             if tag not in RESERVED_TAGS:
                 raise ValueError(f"{entry.id}: unknown tag {tag!r}")
@@ -222,6 +285,12 @@ def _validate_target_path(path: str, *, entry_id: str) -> None:
         raise ValueError(f"{entry_id}: invalid target.path {path!r}: '..' segments are not allowed")
 
 
+def _validate_relative_file_path(path: str, *, entry_id: str, field: str) -> None:
+    posix, windows = PurePosixPath(path), PureWindowsPath(path)
+    if not path or posix.is_absolute() or windows.is_absolute() or windows.drive or ".." in posix.parts or ".." in windows.parts:
+        raise ValueError(f"{entry_id}: invalid {field} {path!r}: must be a relative file path")
+
+
 def _download_source(entry: ModelEntry, *, models_root: Path) -> Path:
     if entry.source.kind == "huggingface":
         from huggingface_hub import hf_hub_download
@@ -240,11 +309,41 @@ def _download_source(entry: ModelEntry, *, models_root: Path) -> Path:
                 "url": entry.source.url,
                 **({"sha256": entry.sha256} if entry.sha256 else {}),
                 **({"size_bytes": entry.size_bytes} if entry.size_bytes is not None else {}),
+                **({"gated": True} if entry.gated else {}),
             },
             root=models_root,
         )
         return downloaded.resolve(strict=True)
     raise ValueError(f"{entry.id}: unsupported source kind {entry.source.kind!r}")
+
+
+def _download_model_file(entry: ModelEntry, file: ModelFile) -> Path:
+    from huggingface_hub import hf_hub_download
+
+    kwargs = {"repo_id": entry.source.repo, "filename": file.path}
+    if entry.source.revision is not None:
+        kwargs["revision"] = entry.source.revision
+    return Path(hf_hub_download(**kwargs)).resolve(strict=True)
+
+
+def _stage_composite_entry(entry: ModelEntry, *, models_root: Path) -> list[Path]:
+    staged_paths: list[Path] = []
+    for file in entry.files:
+        source = _download_model_file(entry, file)
+        _check_model_file_pins(source, entry=entry, file=file)
+        for target in entry.targets:
+            staged = models_root / target.path / file.path
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            if os.path.lexists(staged):
+                _check_collision(staged, source, entry.id)
+                staged.unlink()
+            try:
+                os.link(source, staged)
+            except OSError:
+                os.symlink(source, staged)
+            _check_model_file_pins(staged, entry=entry, file=file)
+            staged_paths.append(staged)
+    return staged_paths
 
 
 def _check_collision(staged: Path, source: Path, entry_id: str) -> None:
@@ -268,9 +367,35 @@ def _check_pins(path: Path, entry: ModelEntry) -> None:
     if entry.size_bytes is not None and path.stat().st_size != entry.size_bytes:
         raise RuntimeError(f"{entry.id}: {path} size {path.stat().st_size} does not match pinned size_bytes {entry.size_bytes}")
     if entry.sha256:
+        if entry.gated:
+            return
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual.lower() != entry.sha256.lower():
             raise RuntimeError(f"{entry.id}: {path} sha256 {actual} does not match pinned sha256 {entry.sha256}")
+
+
+def _check_model_file_pins(path: Path, *, entry: ModelEntry, file: ModelFile) -> None:
+    min_size = entry.min_size if file.min_size is None else file.min_size
+    _check_size(path, min_size, entry.id)
+    if file.size_bytes is not None and path.stat().st_size != file.size_bytes:
+        raise RuntimeError(f"{entry.id}: {file.path} size {path.stat().st_size} does not match pinned size_bytes {file.size_bytes}")
+    if file.sha256 and not entry.gated:
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual.lower() != file.sha256.lower():
+            raise RuntimeError(f"{entry.id}: {file.path} sha256 {actual} does not match pinned sha256 {file.sha256}")
+
+
+def composite_sha256(files: Sequence[ModelFile]) -> str:
+    payload = [
+        {
+            "path": file.path,
+            "sha256": file.sha256,
+            "size_bytes": file.size_bytes,
+        }
+        for file in sorted(files, key=lambda item: item.path)
+    ]
+    rendered = yaml.safe_dump(payload, sort_keys=True, allow_unicode=False)
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
 
 def _select_by_ids(entries: Sequence[ModelEntry], ids: Sequence[str] | None) -> tuple[ModelEntry, ...]:
@@ -335,6 +460,11 @@ def _pin_status(entry: ModelEntry) -> str:
         parts.append(f"revision={entry.source.revision}")
     if entry.sha256:
         parts.append(f"sha256={entry.sha256}")
+    if entry.files:
+        parts.append(f"files={len(entry.files)}")
+        parts.append(f"composite_sha256={entry.composite_sha256 or composite_sha256(entry.files)}")
+    if entry.gated:
+        parts.append("gated=True")
     if entry.size_bytes is not None:
         parts.append(f"size_bytes={entry.size_bytes}")
     return ", ".join(parts)

@@ -341,6 +341,7 @@ class ModelAsset:
     sha256: str | None = None
     hf_revision: str | None = None
     size_bytes: int | None = None
+    gated: bool = False
 
     def __init__(
         self,
@@ -352,9 +353,12 @@ class ModelAsset:
         sha256: str | None = None,
         hf_revision: str | None = None,
         size_bytes: int | None = None,
+        gated: bool = False,
     ) -> None:
         if url is None or subdir is None:
             raise TypeError("ModelAsset requires url=... and subdir=...")
+        if sha256 == "gated" or hf_revision == "gated":
+            raise ValueError("Use ModelAsset(..., gated=True) instead of sha256='gated' or hf_revision='gated'.")
         derived_filename = filename or Path(urlsplit(url).path).name
         if not derived_filename:
             raise ValueError("ModelAsset filename could not be derived from url")
@@ -365,6 +369,7 @@ class ModelAsset:
         object.__setattr__(self, "sha256", sha256)
         object.__setattr__(self, "hf_revision", hf_revision)
         object.__setattr__(self, "size_bytes", size_bytes)
+        object.__setattr__(self, "gated", bool(gated))
 
 
 class ReadyMetadata:
@@ -692,6 +697,8 @@ def _model_asset_metadata(model: ModelAsset) -> dict[str, str]:
         data["hf_revision"] = model.hf_revision
     if model.size_bytes is not None:
         data["size_bytes"] = model.size_bytes
+    if model.gated:
+        data["gated"] = True
     return data
 
 

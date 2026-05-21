@@ -6,8 +6,14 @@ from typing import Any
 
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.registry.library import load_workflow_reference
+from vibecomfy.runtime.model_policy import (
+    apply_model_preflight,
+    normalized_models_root,
+    resolve_model_preflight_policy,
+    shared_models_root,
+)
 from vibecomfy.runtime.run import run_embedded_sync, run_sync
-from vibecomfy.runtime.session import SessionConfig, apply_memory_profile_override, find_active_session
+from vibecomfy.runtime.session import SessionConfig, active_session_metadata, apply_memory_profile_override, find_active_session
 from vibecomfy.schema import get_schema_provider
 
 
@@ -42,11 +48,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
         ensure_models_disabled = ensure_models_flag is False
         memory_profile = getattr(args, "memory_profile", None)
         session_url = args.server_url
+        session_metadata = None
         if memory_profile is not None and args.server_url is not None:
             print(_memory_profile_restart_required_message("explicit --server-url"), file=sys.stderr)
             return 2
         if session_url is None and args.runtime in {"auto", "server"}:
-            session_url = find_active_session("default")
+            session_metadata = active_session_metadata("default")
+            session_url = str(session_metadata["url"]) if session_metadata else find_active_session("default")
             if memory_profile is not None and session_url is not None:
                 print(_memory_profile_restart_required_message("already-running session"), file=sys.stderr)
                 return 2
@@ -75,6 +83,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 SessionConfig.from_workflow_metadata(workflow),
                 memory_profile,
             )
+        quiet_schema_degradation = bool(getattr(args, "quiet_schema_degradation", False))
+        if quiet_schema_degradation:
+            base_config = override_config or SessionConfig.from_workflow_metadata(workflow)
+            base_config.extra["quiet_schema_degradation"] = True
+            override_config = base_config
         if args.runtime == "embedded":
             ensure_models = not ensure_models_disabled
             if override_config is None:
@@ -86,10 +99,25 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 if ensure_packs:
                     print("run failed: --ensure-packs is only supported for embedded runtime", file=sys.stderr)
                     return 2
-                if ensure_models_requested:
-                    print("run failed: --ensure-models is only supported for embedded runtime", file=sys.stderr)
-                    return 2
-                result = run_sync(workflow, server_url=session_url, backend=args.backend)
+                ensure_models = _server_ensure_models_enabled(
+                    ensure_models_requested=ensure_models_requested,
+                    ensure_models_disabled=ensure_models_disabled,
+                    explicit_server_url=args.server_url is not None,
+                )
+                if args.server_url is None and session_metadata is None and not ensure_models_requested:
+                    ensure_models = False
+                shared_root = shared_models_root(getattr(args, "shared_models_root", None))
+                if ensure_models and args.server_url is None:
+                    policy = _active_session_policy(session_metadata, shared_root=shared_root)
+                    apply_model_preflight(workflow, policy)
+                    ensure_models = False
+                result = _run_server_command(
+                    workflow,
+                    server_url=session_url,
+                    backend=args.backend,
+                    ensure_models=ensure_models,
+                    shared_models_root=shared_root,
+                )
             else:
                 ensure_models = not ensure_models_disabled
                 if override_config is None:
@@ -100,13 +128,35 @@ def _cmd_run(args: argparse.Namespace) -> int:
             if ensure_packs:
                 print("run failed: --ensure-packs is only supported for embedded runtime", file=sys.stderr)
                 return 2
-            if ensure_models_requested:
-                print("run failed: --ensure-models is only supported for embedded runtime", file=sys.stderr)
-                return 2
+            ensure_models = _server_ensure_models_enabled(
+                ensure_models_requested=ensure_models_requested,
+                ensure_models_disabled=ensure_models_disabled,
+                explicit_server_url=args.server_url is not None,
+            )
+            if args.server_url is None and session_url is not None and session_metadata is None and not ensure_models_requested:
+                ensure_models = False
+            shared_root = shared_models_root(getattr(args, "shared_models_root", None))
+            if ensure_models and args.server_url is None and session_url is not None:
+                policy = _active_session_policy(session_metadata, shared_root=shared_root)
+                apply_model_preflight(workflow, policy)
+                ensure_models = False
             if override_config is None:
-                result = run_sync(workflow, server_url=session_url, backend=args.backend)
+                result = _run_server_command(
+                    workflow,
+                    server_url=session_url,
+                    backend=args.backend,
+                    ensure_models=ensure_models,
+                    shared_models_root=shared_root,
+                )
             else:
-                result = run_sync(workflow, server_url=session_url, backend=args.backend, config=override_config)
+                result = _run_server_command(
+                    workflow,
+                    server_url=session_url,
+                    backend=args.backend,
+                    config=override_config,
+                    ensure_models=ensure_models,
+                    shared_models_root=shared_root,
+                )
         else:
             print(f"unknown runtime: {args.runtime}", file=sys.stderr)
             return 2
@@ -140,6 +190,60 @@ def _run_embedded_command(
     return run_embedded_sync(workflow, **kwargs)
 
 
+def _run_server_command(
+    workflow,
+    *,
+    server_url: str | None,
+    backend: str,
+    config: SessionConfig | None = None,
+    ensure_models: bool = False,
+    shared_models_root: str | None = None,
+):
+    kwargs: dict[str, Any] = {"server_url": server_url, "backend": backend}
+    if config is not None:
+        kwargs["config"] = config
+    if ensure_models:
+        kwargs["ensure_models"] = True
+    if shared_models_root is not None:
+        kwargs["shared_models_root"] = shared_models_root
+    return run_sync(workflow, **kwargs)
+
+
+def _server_ensure_models_enabled(
+    *,
+    ensure_models_requested: bool,
+    ensure_models_disabled: bool,
+    explicit_server_url: bool,
+) -> bool:
+    if ensure_models_disabled:
+        return False
+    if explicit_server_url:
+        return ensure_models_requested
+    return not ensure_models_disabled
+
+
+def _active_session_policy(session_metadata: dict[str, Any] | None, *, shared_root: str | None):
+    local_root = session_metadata.get("models_root_normalized") if session_metadata else None
+    if not local_root:
+        return resolve_model_preflight_policy(
+            mode="explicit_remote_server_unverified",
+            ensure_models=True,
+            shared_root=shared_root,
+        )
+    caller_root = normalized_models_root()
+    if str(local_root) != caller_root:
+        raise RuntimeError(
+            "active session model root does not match caller local model root "
+            f"({local_root!r} != {caller_root!r})"
+        )
+    return resolve_model_preflight_policy(
+        mode="attached_local_session_verified",
+        ensure_models=True,
+        local_models_root=local_root,
+        shared_root=shared_root,
+    )
+
+
 def _memory_profile_restart_required_message(target: str) -> str:
     return (
         "run failed: --memory-profile requires a new local VibeComfy runtime for this run; "
@@ -162,4 +266,6 @@ def register(subparsers) -> None:
     run.add_argument("--ensure-packs", action="store_true")
     run.add_argument("--ensure-models", dest="ensure_models", action="store_true", default=None)
     run.add_argument("--no-ensure-models", dest="ensure_models", action="store_false")
+    run.add_argument("--shared-models-root")
+    run.add_argument("--quiet-schema-degradation", action="store_true", help="Downgrade schema-unavailable runtime logs from ERROR to WARNING.")
     run.set_defaults(func=_cmd_run)

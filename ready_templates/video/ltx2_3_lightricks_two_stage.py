@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call, ref
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMAudioVAELoader, LowVRAMCheckpointLoader
 
@@ -25,8 +25,6 @@ MODEL_NAME_3 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 WIDGET_0 = ''
 
 
-MODELS = {}
-
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME),
     'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
@@ -40,7 +38,6 @@ PUBLIC_INPUTS = {
 READY_METADATA = ReadyMetadata.build(
     capability='text_or_image_to_video_upscale',
     inputs=PUBLIC_INPUTS,
-    models=MODELS,
     requirements={'models': ['euler_ancestral_cfg_pp', 'euler_cfg_pp', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
     custom_node_packs={'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVEmptyLatentAudio', 'LTXVPreprocess', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'pinned'}},
     approach='official two-stage low-VRAM T2V/I2V with latent spatial upscaler',
@@ -75,8 +72,6 @@ def build() -> VibeWorkflow:
         )
 
         ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
-
-        # Inputs
         primitivestring = raw_call('PrimitiveString', '4979', value='')
 
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
@@ -107,7 +102,6 @@ def build() -> VibeWorkflow:
             clip=ltxavtextencoderloader,
         )
 
-        # Sampling
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
             width=256,
             height=256,
@@ -173,7 +167,6 @@ def build() -> VibeWorkflow:
             vae=vae,
         )
 
-        # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH_2,
             model=loraloadermodelonly,
@@ -193,7 +186,6 @@ def build() -> VibeWorkflow:
             video_latent=ltxvimgtovideoconditiononly,
         )
 
-        # Sampling
         output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=ltxvconcatavlatent,

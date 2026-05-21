@@ -1,0 +1,22 @@
+name: canonical-parity
+
+on:
+  push: {}
+  pull_request: {}
+
+jobs:
+  canonical-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Check canonical ready-template parity
+        run: uv run python -m tools.check_canonical_parity --all

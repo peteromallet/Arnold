@@ -413,7 +413,7 @@ def test_cmd_run_auto_uses_active_session_for_schema_and_run(
         loaded_schema_providers.append(kwargs["schema_provider"])
         return _workflow()
 
-    def fake_run_sync(workflow: VibeWorkflow, *, server_url: str | None, backend: str):
+    def fake_run_sync(workflow: VibeWorkflow, *, server_url: str | None, backend: str, **kwargs):
         run_calls.append((workflow, server_url, backend))
         return types.SimpleNamespace(
             run_id="run-1",
@@ -507,7 +507,7 @@ def test_cmd_run_server_without_active_session_starts_one_shot_managed_server(
     )
     monkeypatch.setattr("vibecomfy.commands.run.load_workflow_reference", lambda *args, **kwargs: _workflow())
 
-    def fake_run_sync(workflow: VibeWorkflow, *, server_url: str | None, backend: str):
+    def fake_run_sync(workflow: VibeWorkflow, *, server_url: str | None, backend: str, **kwargs):
         run_calls.append((workflow, server_url, backend))
         return types.SimpleNamespace(
             run_id="run-managed",
@@ -616,6 +616,7 @@ def test_cmd_run_memory_profile_overrides_new_managed_server_config(
         server_url: str | None,
         backend: str,
         config: SessionConfig,
+        **kwargs,
     ):
         server_configs.append(config)
         return types.SimpleNamespace(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib
 import json
 import keyword
@@ -106,6 +107,7 @@ class _SubgraphDef:
     input_refs: dict[tuple[str, str], str]
     default_args: dict[str, Any]
     return_refs: tuple[tuple[str, int], ...]
+    source_hash: str
     source_path: str | None = None
 
 
@@ -638,7 +640,7 @@ def _public_input_specs(
 
 def _format_public_inputs_block(specs: list[_PublicInputSpec]) -> list[str]:
     if not specs:
-        return ["PUBLIC_INPUTS = {}"]
+        return []
     lines = ["PUBLIC_INPUTS = {"]
     for spec in specs:
         args = [
@@ -676,6 +678,15 @@ def _model_assets_for_emit(
 
 
 def _model_key(asset: Mapping[str, Any], used: set[str]) -> str:
+    role = _model_role_key(asset)
+    if role:
+        candidate = role
+        index = 2
+        while candidate in used:
+            candidate = f"{role}_{index}"
+            index += 1
+        used.add(candidate)
+        return candidate
     raw_name = str(asset.get("name") or asset.get("filename") or "model")
     base = re.sub(r"[^0-9a-zA-Z_]+", "_", raw_name.rsplit(".", 1)[0]).strip("_").lower() or "model"
     if base[0].isdigit():
@@ -691,9 +702,34 @@ def _model_key(asset: Mapping[str, Any], used: set[str]) -> str:
     return candidate
 
 
+def _model_role_key(asset: Mapping[str, Any]) -> str | None:
+    subdir = str(asset.get("subdir") or asset.get("directory") or "").replace("\\", "/").strip("/")
+    field = str(asset.get("field") or asset.get("input") or "").lower()
+    role_by_subdir = {
+        "checkpoints": "checkpoint",
+        "clip_vision": "clip_vision",
+        "controlnet": "controlnet",
+        "diffusion_models": "diffusion_model",
+        "latent_upscale_models": "upscale_model",
+        "loras": "lora",
+        "text_encoders": "text_encoder",
+        "unet": "unet",
+        "vae": "vae",
+    }
+    if field in {"ckpt_name", "checkpoint"}:
+        return "checkpoint"
+    if field in {"unet_name", "model_name"} and subdir in {"diffusion_models", "unet"}:
+        return role_by_subdir.get(subdir, "model")
+    if field in {"vae_name"}:
+        return "vae"
+    if field in {"clip_name", "clip_name1", "clip_name2", "text_encoder"}:
+        return "text_encoder"
+    return role_by_subdir.get(subdir)
+
+
 def _format_models_block(model_assets: list[Mapping[str, Any]]) -> list[str]:
     if not model_assets:
-        return ["MODELS = {}"]
+        return []
     lines = ["MODELS = {"]
     used: set[str] = set()
     for asset in model_assets:
@@ -703,7 +739,7 @@ def _format_models_block(model_assets: list[Mapping[str, Any]]) -> list[str]:
         args: list[str] = []
         if filename is not None and not _filename_is_url_derived(str(filename), asset.get("url")):
             args.append(f"filename={_format_value(filename)}")
-        for field_name in ("url", "target_path", "sha256", "hf_revision", "size_bytes"):
+        for field_name in ("url", "target_path", "sha256", "hf_revision", "size_bytes", "gated"):
             value = asset.get(field_name)
             if value is not None:
                 args.append(f"{field_name}={_format_value(value)}")
@@ -742,6 +778,7 @@ def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
         "comfy_core",
         "coverage_tier",
         "custom_node_packs",
+        "_has_public_inputs_for_emit",
     }
     extras = {
         str(key): value
@@ -840,6 +877,7 @@ def _format_ready_metadata_build(
     requirements: Mapping[str, Any],
     *,
     has_models: bool,
+    has_public_inputs: bool,
     custom_node_packs: Mapping[str, Any] | None = None,
 ) -> list[str]:
     template_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
@@ -848,9 +886,11 @@ def _format_ready_metadata_build(
     lines = [
         "READY_METADATA = ReadyMetadata.build(",
         f"    capability={capability!r},",
-        "    inputs=PUBLIC_INPUTS,",
-        "    models=MODELS,",
     ]
+    if has_public_inputs:
+        lines.append("    inputs=PUBLIC_INPUTS,")
+    if has_models:
+        lines.append("    models=MODELS,")
     if output_prefix != template_id:
         lines.append(f"    output_prefix={output_prefix!r},")
     requirements_expr = _requirements_expr_for_emit(requirements, has_models=has_models)
@@ -862,6 +902,29 @@ def _format_ready_metadata_build(
         lines.append(f"    {key}={_format_value(value)},")
     lines.append(")")
     return lines
+
+
+def _strip_unused_template_imports(source: str) -> str:
+    tree = ast.parse(source)
+    used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    target = "from vibecomfy.templates import "
+    lines = source.splitlines()
+    rewritten: list[str] = []
+    for line in lines:
+        if not line.startswith(target):
+            rewritten.append(line)
+            continue
+        names = [name.strip() for name in line[len(target) :].split(",")]
+        kept = [name for name in names if _import_binding_name(name) in used]
+        if kept:
+            rewritten.append(target + ", ".join(kept))
+    return "\n".join(rewritten) + ("\n" if source.endswith("\n") else "")
+
+
+def _import_binding_name(import_name: str) -> str:
+    if " as " in import_name:
+        return import_name.rsplit(" as ", 1)[1].strip()
+    return import_name
 
 
 def emit_ready_template_python(
@@ -908,6 +971,8 @@ def emit_ready_template_python(
     )
     model_assets = _model_assets_for_emit(metadata, requirements)
     custom_node_packs = _custom_node_packs_for_emit(workflow_nodes, metadata, requirements)
+    has_public_inputs = bool(public_inputs)
+    metadata["_has_public_inputs_for_emit"] = has_public_inputs
 
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
@@ -927,16 +992,22 @@ def emit_ready_template_python(
         out_lines.append("")
         out_lines.extend(constant_lines)
         out_lines.append("")
-    out_lines.append("")
-    out_lines.extend(_format_models_block(model_assets))
-    out_lines.append("")
-    out_lines.extend(_format_public_inputs_block(public_inputs))
-    out_lines.append("")
+    model_lines = _format_models_block(model_assets)
+    if model_lines:
+        out_lines.append("")
+        out_lines.extend(model_lines)
+        out_lines.append("")
+    public_input_lines = _format_public_inputs_block(public_inputs)
+    if public_input_lines:
+        out_lines.append("")
+        out_lines.extend(public_input_lines)
+        out_lines.append("")
     out_lines.extend(
         _format_ready_metadata_build(
             metadata,
             requirements,
             has_models=bool(model_assets),
+            has_public_inputs=has_public_inputs,
             custom_node_packs=custom_node_packs,
         )
     )
@@ -971,6 +1042,7 @@ def emit_ready_template_python(
     out_lines.append("")
 
     combined = "\n".join(out_lines) + "\n"
+    combined = _strip_unused_template_imports(combined)
 
     # -- readability diagnostic: generated_template_not_formatted -------------
     if diagnostics is not None:
@@ -1319,8 +1391,39 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
         input_refs=input_refs,
         default_args=defaults,
         return_refs=tuple(return_refs),
+        source_hash=subgraph_source_hash(
+            raw,
+            slug=slug,
+            input_names=[port.name for port in inputs],
+            return_refs=return_refs,
+            runtime_graph=api,
+        ),
         source_path=source_path,
     )
+
+
+def subgraph_source_hash(
+    raw: Mapping[str, Any],
+    *,
+    slug: str | None = None,
+    input_names: list[str] | None = None,
+    return_refs: list[tuple[str, int]] | None = None,
+    runtime_graph: Mapping[str, Any] | None = None,
+) -> str:
+    payload = {
+        "id": str(raw.get("id") or ""),
+        "name": str(raw.get("name") or ""),
+        "slug": slug,
+        "runtime_graph": runtime_graph or {},
+        "inputs": raw.get("inputs") or [],
+        "outputs": raw.get("outputs") or [],
+        "nodes": raw.get("nodes") or [],
+        "links": raw.get("links") or [],
+        "emitted_input_names": input_names or [],
+        "return_refs": return_refs or [],
+    }
+    rendered = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
 
 def _is_any_link(value: Any) -> bool:
@@ -1654,7 +1757,7 @@ def _emit_build_function(
         continuation_indent = "        "
     out_lines.append("")
 
-    last_section: str | None = None
+    emitted_sections: set[str] = set()
     for nid in topo_order:
         node = workflow_nodes[nid]
         var = var_names[nid]
@@ -1677,11 +1780,11 @@ def _emit_build_function(
 
         # Emit section comment if entering a new section group
         section = section_order_map.get(nid)
-        if section is not None and section != last_section:
+        if section is not None and section not in emitted_sections:
             if out_lines and out_lines[-1] != "":
                 out_lines.append("")
             out_lines.append(f"{body_indent}# {section}")
-            last_section = section
+            emitted_sections.add(section)
 
         wrapper_module = _wrapper_module_for_class(str(node.class_type)) if use_shared_helpers else None
         preserve_fields = {
@@ -2001,6 +2104,7 @@ def _subgraph_docstring(subgraph: _SubgraphDef) -> list[str]:
         f'    """{title}{variant}.',
         "",
         f"    Materialized from subgraph {subgraph.id}{source}.",
+        f"    # vibecomfy source hash: sha256:{subgraph.source_hash}",
     ]
     if inner:
         lines.append(f"    Inner nodes: {', '.join(inner)}.")
@@ -2203,7 +2307,8 @@ def _ready_template_tail_lines(
     metadata: Mapping[str, Any],
 ) -> list[str]:
     finalize_args = _finalize_args(workflow_nodes, edges_in, var_names, output_var_names, metadata)
-    call = f"    return wf.finalize(PUBLIC_INPUTS{finalize_args})"
+    input_expr = "PUBLIC_INPUTS" if metadata.get("_has_public_inputs_for_emit") else "{}"
+    call = f"    return wf.finalize({input_expr}{finalize_args})"
     if has_ltx_tail:
         return [
             "    apply_ltx_lowvram(wf)",

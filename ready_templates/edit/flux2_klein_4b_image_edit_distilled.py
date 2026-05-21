@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
 from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, ConditioningZeroOut, EmptyFlux2LatentImage, Flux2Scheduler, GetImageSize, ImageScaleToTotalPixels, KSamplerSelect, LoadImage, RandomNoise, ReferenceLatent, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAEEncode, VAELoader
 
 
@@ -16,10 +16,11 @@ MODEL_NAME_3 = 'flux2-vae.safetensors'
 
 
 MODELS = {
-    'flux_2_klein_4b_fp8': ModelAsset(url='https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors', sha256='97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6', hf_revision='5b4408e59397a4a37ccb46afe426d8ed86379441', size_bytes=4070624520, subdir='diffusion_models'),
-    'qwen_3_4b': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors', sha256='6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a', hf_revision='2f862278568d3f0a83167a16e5f11094da6dee72', size_bytes=8044982048, subdir='text_encoders'),
-    'flux2_vae': ModelAsset(url='https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors', sha256='d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5', hf_revision='03d6521e6f6a47396b3f951cbea50f7e6c2f482e', size_bytes=336213556, subdir='vae'),
+    'diffusion_model': ModelAsset(url='https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors', sha256='97ed34fe0567e436200f2faee3939b88f2b5d99f8af2a4dc16532c4245c0ccb6', hf_revision='5b4408e59397a4a37ccb46afe426d8ed86379441', size_bytes=4070624520, subdir='diffusion_models'),
+    'text_encoder': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors', sha256='6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a', hf_revision='2f862278568d3f0a83167a16e5f11094da6dee72', size_bytes=8044982048, subdir='text_encoders'),
+    'vae': ModelAsset(url='https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors', sha256='d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5', hf_revision='03d6521e6f6a47396b3f951cbea50f7e6c2f482e', size_bytes=336213556, subdir='vae'),
 }
+
 
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
@@ -52,6 +53,7 @@ def image_edit_flux2_klein_4b_distilled(
     """Image Edit (Flux.2 Klein 4B Distilled) - single-image variant.
 
     Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    # vibecomfy source hash: sha256:e532a05f63f1bca6714349dfeb92151f8d66393fe1f88595bed4e404e642b2d6
     Inner nodes: KSamplerSelect, UNETLoader, CLIPLoader, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, Flux2Scheduler, CLIPTextEncode, ConditioningZeroOut, ReferenceLatentx2, GetImageSize, VAEEncode, SamplerCustomAdvanced, VAEDecode, RandomNoise, CFGGuider.
     """
 
@@ -113,6 +115,7 @@ def reference_conditioning(
     """Reference Conditioning - single-image variant.
 
     Materialized from subgraph 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    # vibecomfy source hash: sha256:0a54ae9cc50d44681b6bf8ae109ddc6010b6ae19d9222f4581ca22dc967db4b0
     Inner nodes: ReferenceLatentx2, VAEEncode.
     """
 
@@ -133,6 +136,7 @@ def reference_conditioning_93041a64(
     """Reference Conditioning - single-image variant.
 
     Materialized from subgraph 93041a64-452a-477a-9447-40330b7c1136 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    # vibecomfy source hash: sha256:b77feaa1986e88bb2b5924db33685bce2c22a9498c9969a3624ae0b7955ff0db
     Inner nodes: ReferenceLatentx2, VAEEncode.
     """
 
@@ -155,6 +159,7 @@ def image_edit_flux2_klein_4b_distilled_dual(
     """Image Edit (Flux.2 Klein 4B Distilled) - two-image variant.
 
     Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    # vibecomfy source hash: sha256:56221cc5c44463fbeff7b13305983b432aea67f150181e0ca528f120ab5daf6a
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncode, VAELoader, ImageScaleToTotalPixelsx2, 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709, 93041a64-452a-477a-9447-40330b7c1136, ConditioningZeroOut, EmptyFlux2LatentImage, GetImageSize.
     """
 
@@ -247,8 +252,6 @@ def build() -> VibeWorkflow:
         conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
         width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
         vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-
-        # Sampling
         flux2scheduler = Flux2Scheduler(steps=4, width=width, height=height)
         emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
 
@@ -262,7 +265,6 @@ def build() -> VibeWorkflow:
             latent=vaeencode,
         )
 
-        # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=unetloader,
@@ -270,7 +272,6 @@ def build() -> VibeWorkflow:
             positive=referencelatent_2,
         )
 
-        # Sampling
         output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=emptyflux2latentimage,

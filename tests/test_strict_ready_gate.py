@@ -78,6 +78,33 @@ def test_generated_style_diagnostics_are_warnings_until_protected() -> None:
     assert all(item["severity"] == "warning" and item["enforced"] is False for item in diagnostics)
 
 
+def test_manual_legacy_v26_shape_diagnostics_are_not_blocking_when_unprotected(tmp_path: Path) -> None:
+    template = tmp_path / "manual.py"
+    template.write_text(
+        """
+# vibecomfy: manual
+from vibecomfy.registry.ready_template import bind_input
+
+def _at(wf, node_id, field):
+    return wf.nodes[node_id].inputs[field]
+
+def build():
+    bind_input(None, 'prompt', '1', 'text')
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    diagnostics = gate._v26_shape_diagnostics(
+        ready_id="image/manual",
+        path=template,
+        relative_path="ready_templates/image/manual.py",
+        enforced=False,
+    )
+
+    assert any(item["code"] == "v26_legacy_ready_template_call" for item in diagnostics)
+    assert all(item["severity"] == "warning" and item["enforced"] is False for item in diagnostics)
+
+
 def test_legacy_vocabulary_diagnostic_flips_per_target_ok_false(monkeypatch) -> None:
     """Synthetic legacy import/call diagnostic causes per-target ok=false."""
     monkeypatch.setattr(
