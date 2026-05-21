@@ -122,7 +122,7 @@ def _check_template(row: dict[str, Any], inventory_entry: Any | None) -> dict[st
     if protected:
         strict_ready_diagnostics = _strict_ready_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path)
         strict_ready_diagnostics = [{**item, "enforced": False} for item in strict_ready_diagnostics]
-    v26_diagnostics = _v26_shape_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path, enforced=True)
+    v26_diagnostics = _v26_shape_diagnostics(ready_id=ready_id, path=path, relative_path=relative_path, enforced=protected)
     diagnostics = [
         *static_drift,
         *strict_ready_diagnostics,
@@ -433,7 +433,7 @@ def _v26_shape_diagnostics(
                 detail={"count": len(build_defs)},
             )
         )
-        return diagnostics
+        return _downgrade_unenforced_v26(diagnostics, enforced)
     build = build_defs[0]
 
     with_blocks = [
@@ -516,7 +516,18 @@ def _v26_shape_diagnostics(
             diagnostics.extend(_v26_pack_provenance_diagnostics(ready_id, relative_path, tree, packs_kw, enforced))
             break
 
-    return diagnostics
+    return _downgrade_unenforced_v26(diagnostics, enforced)
+
+
+def _downgrade_unenforced_v26(diagnostics: list[dict[str, Any]], enforced: bool) -> list[dict[str, Any]]:
+    if enforced:
+        return diagnostics
+    return [
+        {**item, "severity": "warning", "enforced": False}
+        if item.get("category") == V26_SHAPE_CATEGORY
+        else item
+        for item in diagnostics
+    ]
 
 
 def _is_new_workflow_context(item: ast.withitem) -> bool:

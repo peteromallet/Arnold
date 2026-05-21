@@ -6889,8 +6889,8 @@ def _render_model_block(models: OrderedDict[str, dict[str, Any]]) -> str:
         if hf_meta.get("sha256"):
             lines.append(f"        sha256={hf_meta['sha256']!r},\n")
         elif hf_meta.get("status") == "gated":
-            lines.append("        sha256='gated',\n")
-        if hf_meta.get("hf_revision"):
+            lines.append("        gated=True,\n")
+        if hf_meta.get("hf_revision") and hf_meta.get("hf_revision") != "gated":
             lines.append(f"        hf_revision={hf_meta['hf_revision']!r},\n")
         if hf_meta.get("size_bytes") is not None:
             lines.append(f"        size_bytes={hf_meta['size_bytes']!r},\n")

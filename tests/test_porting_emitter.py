@@ -101,7 +101,7 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "READY_REQUIREMENTS =" not in text
     assert "ReadyMetadata.build(" in text
     assert "template_id='image/sample'" not in text
-    assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref" in text
+    assert "from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref" in text
     assert "from vibecomfy.registry.ready_template import" not in text
     assert "def _node" not in text
     assert "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in text
@@ -128,7 +128,52 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert workflow.id_map() == {}
     assert workflow.inputs["prefix"].node_id == "2"
     assert workflow.inputs["prefix"].default == "out/sample"
-    assert workflow.outputs[0].artifact_kind == "image"
+
+
+def test_emit_ready_template_omits_empty_model_and_input_boilerplate() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample", provenance={"origin": "unit"}))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "out/sample"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/no_inputs", "capability": "image"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="image/no_inputs",
+    )
+
+    assert "MODELS = {}" not in text
+    assert "PUBLIC_INPUTS = {}" not in text
+    assert "    inputs=PUBLIC_INPUTS," not in text
+    assert "    models=MODELS," not in text
+    assert "return wf.finalize({}" in text
+    assert "ModelAsset" not in text
+    assert "InputSpec" not in text
+
+
+def test_model_block_uses_role_based_keys_for_model_constants() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample", provenance={"origin": "unit"}))
+    workflow.nodes["1"] = VibeNode("1", "UNETLoader", inputs={"unet_name": "model.safetensors", "weight_dtype": "default"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={
+            "ready_template": "image/roles",
+            "capability": "image",
+            "model_assets": [
+                {
+                    "name": "obscure-file-name.safetensors",
+                    "url": "https://example.test/obscure-file-name.safetensors",
+                    "subdir": "diffusion_models",
+                    "field": "unet_name",
+                }
+            ],
+        },
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="image/roles",
+    )
+
+    assert "'diffusion_model': ModelAsset(" in text
+    assert "'obscure_file_name': ModelAsset(" not in text
 
 
 def test_ready_template_emits_custom_node_pack_provenance_from_lockfile() -> None:
@@ -165,6 +210,29 @@ def test_ready_template_preserves_explicit_custom_node_pack_override() -> None:
     )
 
     assert "custom_node_packs={'ExamplePack': {'commit': 'abc', 'classes_used': ['LoadImage']}}" in text
+
+
+def test_model_block_emits_gated_model_assets() -> None:
+    text = emit_ready_template_python(
+        _sample_workflow(),
+        ready_metadata={
+            "ready_template": "image/gated",
+            "capability": "image",
+            "model_assets": [
+                {
+                    "name": "gated.safetensors",
+                    "url": "https://example.test/gated.safetensors",
+                    "subdir": "diffusion_models",
+                    "gated": True,
+                }
+            ],
+        },
+        ready_requirements={},
+        template_id="image/gated",
+    )
+
+    assert "gated=True" in text
+    assert "sha256='gated'" not in text
 
 
 def test_subgraph_materialized_as_bare_function() -> None:

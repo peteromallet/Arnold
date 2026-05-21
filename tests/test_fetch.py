@@ -72,6 +72,15 @@ def test_download_verifies_present_file_sha256(monkeypatch: pytest.MonkeyPatch, 
         fetch.download({**ENTRY, "sha256": "0" * 64})
 
 
+def test_gated_present_file_skips_sha256_verification(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
+    path = tmp_path / "checkpoints" / "model.safetensors"
+    path.parent.mkdir()
+    path.write_bytes(b"present")
+
+    fetch.verify({**ENTRY, "sha256": "0" * 64, "gated": True})
+
+
 def test_download_writes_tmp_then_renames(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path))
     requested: dict[str, object] = {}

@@ -2,58 +2,87 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
-from vibecomfy.porting.parity import _is_schema_default_input, compile_equivalent
-from vibecomfy.registry.ready import workflow_from_ready
-from vibecomfy.testing.canonical import canonical_form
+from tools import check_canonical_parity as parity
 
 
-BASELINE_DIR = Path("out/v26_baseline")
+def test_canonical_parity_baseline_matches_current_ready_templates() -> None:
+    report = parity.check_baseline()
+
+    assert report["ok"], report["errors"]
 
 
-def _snapshot_to_api(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Adapt stored canonical snapshots to the API shape used by parity checks.
+def test_canonical_parity_reports_hash_mismatch(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(parity.build_baseline(ready_root)), encoding="utf-8")
 
-    The v2.6 emitter intentionally elides schema defaults. Those defaults
-    participate in the old canonical snapshot labels, so direct JSON equality
-    is too strict. Rehydrating the snapshot into a graph-shaped dict lets the
-    shared `compile_equivalent()` comparator ignore exactly the same defaults
-    for both sides while still checking class types, literals, and topology.
-    """
+    _write_ready_template(tmp_path, literal=2)
+    report = parity.check_baseline(baseline, ready_root=ready_root)
 
-    nodes = list(snapshot.get("nodes") or [])
-    label_to_id: dict[str, str] = {}
-    for index, node in enumerate(nodes):
-        label_to_id.setdefault(str(node.get("label")), str(index))
-
-    api: dict[str, dict[str, Any]] = {}
-    for index, node in enumerate(nodes):
-        class_type = str(node.get("class_type") or "")
-        inputs: dict[str, Any] = {}
-        for key, value in dict(node.get("inputs") or {}).items():
-            if _is_schema_default_input(class_type, str(key), value):
-                continue
-            if isinstance(value, list) and len(value) == 2:
-                source_label = str(value[0])
-                inputs[str(key)] = [label_to_id.get(source_label, source_label), value[1]]
-            else:
-                inputs[str(key)] = value
-        api[str(index)] = {"class_type": class_type, "inputs": inputs}
-    return api
+    assert not report["ok"]
+    assert report["mismatched"][0]["id"] == "image/example"
+    assert "canonical hash changed for image/example" in report["errors"][0]
 
 
-def test_v26_templates_are_semantically_equivalent_to_baseline_snapshots() -> None:
-    records = json.loads((BASELINE_DIR / "compiled_templates.json").read_text(encoding="utf-8"))
-    failures: list[str] = []
+def test_canonical_parity_reports_missing_and_extra_templates(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(parity.build_baseline(ready_root)), encoding="utf-8")
 
-    for record in records:
-        template_id = str(record["template_id"])
-        baseline = json.loads(Path(record["snapshot"]).read_text(encoding="utf-8"))
-        current = canonical_form(workflow_from_ready(template_id).compile("api"))
+    (ready_root / "image" / "example.py").unlink()
+    _write_ready_template(tmp_path, template_id="image/new_example", literal=1)
+    report = parity.check_baseline(baseline, ready_root=ready_root)
 
-        ok, diffs = compile_equivalent(_snapshot_to_api(baseline), _snapshot_to_api(current))
-        if not ok:
-            failures.append(f"{template_id}: {'; '.join(diffs[:5])}")
+    assert not report["ok"]
+    assert report["missing"] == ["image/example"]
+    assert report["extra"] == ["image/new_example"]
 
-    assert failures == []
+
+def test_canonical_parity_update_rewrites_baseline(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    baseline = tmp_path / "baseline.json"
+
+    assert parity.main(["--ready-root", str(ready_root), "--baseline", str(baseline), "--update"]) == 0
+
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert payload["template_count"] == 1
+    assert payload["templates"][0]["id"] == "image/example"
+
+
+def test_canonical_parity_excludes_manual_templates(tmp_path: Path) -> None:
+    ready_root = _write_ready_template(tmp_path, literal=1)
+    _write_ready_template(tmp_path, template_id="image/manual", literal=1, marker="# vibecomfy: manual")
+
+    payload = parity.build_baseline(ready_root)
+
+    assert [row["id"] for row in payload["templates"]] == ["image/example"]
+
+
+def _write_ready_template(
+    tmp_path: Path,
+    *,
+    template_id: str = "image/example",
+    literal: int,
+    marker: str = "# vibecomfy: generated - converted by tools/convert_ready_templates.py",
+) -> Path:
+    ready_root = tmp_path / "ready_templates"
+    path = ready_root / f"{template_id}.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""{marker}
+from __future__ import annotations
+
+from vibecomfy.workflow import VibeWorkflow, WorkflowSource
+
+
+def build() -> VibeWorkflow:
+    wf = VibeWorkflow("{template_id}", WorkflowSource("{template_id}", path=__file__, source_type="ready_template"))
+    wf.add_node("Constant", _id="1", value={literal})
+    wf.add_node("SaveImage", _id="2", filename_prefix="example")
+    wf.connect("1.0", "2.images")
+    return wf
+""",
+        encoding="utf-8",
+    )
+    return ready_root

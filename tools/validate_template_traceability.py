@@ -407,6 +407,8 @@ def _model_asset_diagnostics(*, ready_id: str, target: str, contract: Mapping[st
             continue
         asset_target = f"{target}#model_assets[{index}]"
         name = str(asset.get("name") or asset.get("filename") or index)
+        if asset.get("gated") is True:
+            continue
         if not asset.get("sha256"):
             diagnostics.append(_diagnostic("template_model_asset_missing_sha256", f"ModelAsset {name!r} is missing sha256.", ready_id, asset_target, {"asset": dict(asset)}))
         if asset.get("size_bytes") is None:
@@ -457,9 +459,20 @@ def _model_registry_diagnostics(model_registry: Path) -> list[dict[str, Any]]:
 def _model_registry_entry_diagnostics(entry: ModelEntry) -> list[dict[str, Any]]:
     target = f"model-registry:{entry.id}"
     diagnostics: list[dict[str, Any]] = []
-    if not entry.sha256:
+    if entry.gated:
+        return diagnostics
+    if entry.files:
+        for index, file in enumerate(entry.files):
+            file_target = f"{target}#files[{index}]"
+            if not file.sha256:
+                diagnostics.append(_diagnostic("model_registry_missing_sha256", f"Model registry row {entry.id!r} file {file.path!r} is missing sha256.", entry.id, file_target, {}))
+            if file.size_bytes is None:
+                diagnostics.append(_diagnostic("model_registry_missing_size_bytes", f"Model registry row {entry.id!r} file {file.path!r} is missing size_bytes.", entry.id, file_target, {}))
+        if not entry.composite_sha256:
+            diagnostics.append(_diagnostic("model_registry_missing_sha256", f"Composite model registry row {entry.id!r} is missing composite_sha256.", entry.id, target, {}))
+    elif not entry.sha256:
         diagnostics.append(_diagnostic("model_registry_missing_sha256", f"Model registry row {entry.id!r} is missing sha256.", entry.id, target, {}))
-    if entry.size_bytes is None:
+    if not entry.files and entry.size_bytes is None:
         diagnostics.append(_diagnostic("model_registry_missing_size_bytes", f"Model registry row {entry.id!r} is missing size_bytes.", entry.id, target, {}))
     if entry.source.kind == "huggingface" and not entry.source.revision:
         diagnostics.append(_diagnostic("model_registry_missing_revision", f"Hugging Face model registry row {entry.id!r} is missing source.revision.", entry.id, target, {}))

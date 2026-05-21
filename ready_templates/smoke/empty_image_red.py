@@ -4,11 +4,9 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref
 from vibecomfy.nodes.core import EmptyImage, SaveImage
 
-
-MODELS = {}
 
 PUBLIC_INPUTS = {
     'width': InputSpec(node=ref('emptyimage'), field='width', default=64),
@@ -18,7 +16,6 @@ PUBLIC_INPUTS = {
 READY_METADATA = ReadyMetadata.build(
     capability='runtime_smoke',
     inputs=PUBLIC_INPUTS,
-    models=MODELS,
     approach='minimal Python ready template for cloud/runtime/artifact validation',
     runtime_note='No model assets; use corpus/model matrices for production model coverage.',
 )

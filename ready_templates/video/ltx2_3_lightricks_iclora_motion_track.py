@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call, ref
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMAudioVAELoader, LowVRAMCheckpointLoader
 
@@ -26,8 +26,6 @@ SCALE_METHOD = 'lanczos'
 WIDGET_0 = ''
 
 
-MODELS = {}
-
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME),
     'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
@@ -39,7 +37,6 @@ PUBLIC_INPUTS = {
 READY_METADATA = ReadyMetadata.build(
     capability='motion_track_control',
     inputs=PUBLIC_INPUTS,
-    models=MODELS,
     requirements={'models': ['euler_ancestral_cfg_pp', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'pinned'}},
     approach='official IC-LoRA motion-track image anchor/control workflow',
@@ -68,7 +65,6 @@ def build() -> VibeWorkflow:
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
 
-        # Inputs
         primitivestring = raw_call('PrimitiveString', '5022', value='')
 
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
@@ -181,7 +177,6 @@ def build() -> VibeWorkflow:
             width=width,
         )
 
-        # Sampling
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
             widget_0=256,
             widget_1=256,
@@ -220,7 +215,6 @@ def build() -> VibeWorkflow:
             video_latent=latent,
         )
 
-        # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH_2,
             model=model_ltxic,
@@ -228,7 +222,6 @@ def build() -> VibeWorkflow:
             positive=positive_ltx,
         )
 
-        # Sampling
         output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=ltxvconcatavlatent,
@@ -265,7 +258,6 @@ def build() -> VibeWorkflow:
             images=ltxvtiledvaedecode,
         )
 
-        # Outputs
         savevideo_2 = SaveVideo(filename_prefix='output', video=createvideo_2)
 
         return wf.finalize(PUBLIC_INPUTS, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')

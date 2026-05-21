@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
 from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlux2LatentImage, Flux2Scheduler, GetImageSize, ImageScaleToTotalPixels, KSamplerSelect, LoadImage, RandomNoise, ReferenceLatent, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAEEncode, VAELoader
 
 
@@ -24,10 +24,11 @@ UPSCALE_METHOD = 'nearest-exact'
 
 
 MODELS = {
-    'flux_2_klein_base_4b_fp8': ModelAsset(url='https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4b-fp8/resolve/main/flux-2-klein-base-4b-fp8.safetensors', sha256='44bab3a86fe98b85d21dd2a4729ebdc3ae51fb8a39f76e457e18c724219e6840', hf_revision='103db268c10d4d3921101b46057671f9ac460da6', size_bytes=4089498488, subdir='diffusion_models'),
-    'qwen_3_4b': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors', sha256='6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a', hf_revision='2f862278568d3f0a83167a16e5f11094da6dee72', size_bytes=8044982048, subdir='text_encoders'),
-    'full_encoder_small_decoder': ModelAsset(url='https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors', sha256='ea4273f02d1fafbf8e1d1c2cf6018ed8748652eb0bf34f2dd91171f16f15ab62', hf_revision='a3efc24f613ef42d9428af62fdbd6f5fd8856c4a', size_bytes=249519092, subdir='vae'),
+    'diffusion_model': ModelAsset(url='https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4b-fp8/resolve/main/flux-2-klein-base-4b-fp8.safetensors', sha256='44bab3a86fe98b85d21dd2a4729ebdc3ae51fb8a39f76e457e18c724219e6840', hf_revision='103db268c10d4d3921101b46057671f9ac460da6', size_bytes=4089498488, subdir='diffusion_models'),
+    'text_encoder': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors', sha256='6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a', hf_revision='2f862278568d3f0a83167a16e5f11094da6dee72', size_bytes=8044982048, subdir='text_encoders'),
+    'vae': ModelAsset(url='https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors', sha256='ea4273f02d1fafbf8e1d1c2cf6018ed8748652eb0bf34f2dd91171f16f15ab62', hf_revision='a3efc24f613ef42d9428af62fdbd6f5fd8856c4a', size_bytes=249519092, subdir='vae'),
 }
+
 
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
@@ -59,6 +60,7 @@ def image_edit_flux2_klein_4b(
     """Image Edit (Flux.2 Klein 4B) - single-image variant.
 
     Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json.
+    # vibecomfy source hash: sha256:93485ad599c8953cdc6bfb19a765b319305d8f31faef9dea11b21cf8d0d61953
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncodex2, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, GetImageSize, ReferenceLatentx2, VAEEncode.
     """
 
@@ -118,6 +120,7 @@ def image_edit_flux2_klein_9b(
     """Image Edit (Flux.2 Klein 9B) - two-image variant.
 
     Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_base.json.
+    # vibecomfy source hash: sha256:9865b964bc214fb9bbe16fb67ea685334baa13e88d122a7abc41e3eee75af6a3
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, VAELoader, GetImageSize, EmptyFlux2LatentImage, ImageScaleToTotalPixelsx2, CLIPLoader, CLIPTextEncodex2, CFGGuider, Flux2Scheduler, ReferenceLatentx4, VAEEncodex2.
     """
 
@@ -202,7 +205,6 @@ def build() -> VibeWorkflow:
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
 
-        # Sampling
         ksamplerselect_2 = KSamplerSelect(sampler_name=SAMPLER_NAME)
 
         randomnoise_2 = RandomNoise(
@@ -210,7 +212,6 @@ def build() -> VibeWorkflow:
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
 
-        # Loaders
         unetloader_2 = UNETLoader(unet_name=MODEL_NAME)
         vaeloader_2 = VAELoader(vae_name=MODEL_NAME_3)
         cliploader_2 = CLIPLoader(clip_name=MODEL_NAME_2, type_=TYPE)
@@ -245,8 +246,6 @@ def build() -> VibeWorkflow:
 
         vaeencode_2 = VAEEncode(pixels=imagescaletototalpixels_3, vae=vaeloader_2)
         vaeencode_3 = VAEEncode(pixels=imagescaletototalpixels_2, vae=vaeloader_2)
-
-        # Sampling
         flux2scheduler = Flux2Scheduler(width=width, height=height)
         emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
         referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
@@ -269,7 +268,6 @@ def build() -> VibeWorkflow:
             latent=vaeencode_2,
         )
 
-        # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=unetloader,
@@ -287,7 +285,6 @@ def build() -> VibeWorkflow:
             latent=vaeencode_3,
         )
 
-        # Sampling
         output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=emptyflux2latentimage,
@@ -296,7 +293,6 @@ def build() -> VibeWorkflow:
             sigmas=flux2scheduler,
         )
 
-        # Conditioning
         cfgguider_2 = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=unetloader_2,
@@ -307,7 +303,6 @@ def build() -> VibeWorkflow:
         # Decode
         vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
-        # Sampling
         output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
             guider=cfgguider_2,
             latent_image=emptyflux2latentimage_2,
@@ -316,7 +311,6 @@ def build() -> VibeWorkflow:
             sigmas=flux2scheduler_2,
         )
 
-        # Decode
         vaedecode_2 = VAEDecode(samples=output_sampler, vae=vaeloader_2)
 
         # Outputs

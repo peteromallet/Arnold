@@ -10,6 +10,7 @@ from typing import Any
 from vibecomfy.workflow import VibeWorkflow
 
 from .client import ComfyClient
+from .model_policy import apply_model_preflight, resolve_model_preflight_policy
 from .server import comfy_server
 from .session import (
     EmbeddedSession,
@@ -22,6 +23,7 @@ from .session import (
     _outputs_from_server_history,
     _prepare_prompt_async,
     _run_metadata,
+    _schema_warn_only,
     _wait_for_server_history,
     _workflow_queue_failure_message,
 )
@@ -35,6 +37,8 @@ async def run(
     server_url: str | None = None,
     backend: str = "api",
     config: SessionConfig | None = None,
+    ensure_models: bool = False,
+    shared_models_root: str | Path | None = None,
 ) -> RunResult:
     run_id = f"run-{int(time.time())}"
     run_dir = Path("out/runs") / run_id
@@ -42,14 +46,20 @@ async def run(
     log_path = run_dir / "comfy.log"
     resolved_config = config or SessionConfig.from_workflow_metadata(workflow)
     managed_config = resolved_config if server_url is None else None
+    policy = resolve_model_preflight_policy(
+        mode="managed_local_server" if server_url is None else "explicit_remote_server_unverified",
+        ensure_models=ensure_models,
+        shared_root=shared_models_root,
+    )
+    apply_model_preflight(workflow, policy)
     async with comfy_server(server_url=server_url, log_path=log_path, config=managed_config) as active_url:
         provider = _build_schema_provider(active_url)
         warned = {"emitted": False}
 
         def on_unavailable(msg: str) -> None:
-            if warned["emitted"]:
+            if warned["emitted"] and "schema validation skipped for class types" not in msg:
                 return
-            logger.warning("vibecomfy schema gate: %s", msg)
+            logger.log(logging.WARNING if _schema_warn_only(resolved_config) else logging.ERROR, "vibecomfy schema gate: %s", msg)
             warned["emitted"] = True
 
         api_dict = await _prepare_prompt_async(
@@ -58,6 +68,7 @@ async def run(
             schema_provider=provider,
             on_unavailable=on_unavailable,
         )
+        schema_validation_skipped = list(getattr(api_dict, "schema_validation_skipped", []))
         try:
             queued = await ComfyClient(active_url).queue_prompt(api_dict)
         except Exception as exc:
@@ -78,6 +89,7 @@ async def run(
         outputs=outputs,
         runtime="server",
         config=managed_config,
+        schema_validation_skipped=schema_validation_skipped,
     )
     metadata_path = run_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
@@ -96,8 +108,19 @@ def run_sync(
     server_url: str | None = None,
     backend: str = "api",
     config: SessionConfig | None = None,
+    ensure_models: bool = False,
+    shared_models_root: str | Path | None = None,
 ) -> RunResult:
-    return asyncio.run(run(workflow, server_url=server_url, backend=backend, config=config))
+    return asyncio.run(
+        run(
+            workflow,
+            server_url=server_url,
+            backend=backend,
+            config=config,
+            ensure_models=ensure_models,
+            shared_models_root=shared_models_root,
+        )
+    )
 
 
 async def run_embedded(

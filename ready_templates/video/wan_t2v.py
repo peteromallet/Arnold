@@ -4,7 +4,7 @@
 """Auto-generated ready_template - see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, EmptyHunyuanLatentVideo, KSampler, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader
 
 
@@ -20,10 +20,11 @@ MODEL_NAME_3 = 'wan_2.1_vae.safetensors'
 
 
 MODELS = {
-    'wan2_1_t2v_1_3b_fp16': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors', sha256='be531024cd9018cb5b48c40cfbb6a6191645b1c792eb8bf4f8c1c6e10f924dc5', hf_revision='06e001fc51048fb03433a6fb25334de7836704a5', size_bytes=2838303560, subdir='diffusion_models'),
-    'umt5_xxl_fp8_e4m3fn_scaled': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors', hf_revision='main', subdir='text_encoders'),
-    'wan_2_1_vae': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors', hf_revision='main', subdir='vae'),
+    'diffusion_model': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors', sha256='be531024cd9018cb5b48c40cfbb6a6191645b1c792eb8bf4f8c1c6e10f924dc5', hf_revision='06e001fc51048fb03433a6fb25334de7836704a5', size_bytes=2838303560, subdir='diffusion_models'),
+    'text_encoder': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors', hf_revision='main', subdir='text_encoders'),
+    'vae': ModelAsset(url='https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors', hf_revision='main', subdir='vae'),
 }
+
 
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
@@ -71,7 +72,6 @@ def build() -> VibeWorkflow:
         negative = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
         modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
 
-        # Sampling
         ksampler = KSampler(
             seed=DEFAULT_SEED,
             steps=30,

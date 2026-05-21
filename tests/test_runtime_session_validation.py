@@ -67,7 +67,7 @@ def test_session_caches_schema_provider_across_runs(
     assert len(fake_server) == 1
 
 
-def test_provider_unavailable_falls_back_to_structural_with_warning(
+def test_provider_unavailable_falls_back_to_structural_with_error_and_metadata(
     fake_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -80,20 +80,50 @@ def test_provider_unavailable_falls_back_to_structural_with_warning(
 
     monkeypatch.setattr(session_module, "_build_schema_provider", lambda server_url: UnavailableProvider())
 
+    metadata_paths: list[Path] = []
+
     async def run_twice() -> None:
         session = ServerSession(SessionConfig(port=8200))
         try:
+            first = await session.run(_workflow())
+            second = await session.run(_workflow(seed=2))
+            metadata_paths.extend([Path(first.metadata_path), Path(second.metadata_path)])
+        finally:
+            await session.stop()
+
+    with caplog.at_level("ERROR", logger=session_module.__name__):
+        asyncio.run(run_twice())
+
+    assert any(record.levelname == "ERROR" and "schema validation skipped for class types" in record.message for record in caplog.records)
+    metadata = session_module.json.loads(metadata_paths[0].read_text(encoding="utf-8"))
+    assert metadata["schema_validation_skipped"] == ["CheckpointLoaderSimple", "KSampler"]
+
+
+def test_schema_degradation_env_offramp_downgrades_to_warning(
+    fake_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_WARN_ONLY", "1")
+
+    class UnavailableProvider:
+        _object_info = None
+
+        async def object_info_async(self):
+            raise OSError("offline")
+
+    monkeypatch.setattr(session_module, "_build_schema_provider", lambda server_url: UnavailableProvider())
+
+    async def run_once() -> None:
+        session = ServerSession(SessionConfig(port=8200))
+        try:
             await session.run(_workflow())
-            await session.run(_workflow(seed=2))
         finally:
             await session.stop()
 
     with caplog.at_level("WARNING", logger=session_module.__name__):
-        asyncio.run(run_twice())
+        asyncio.run(run_once())
 
-    assert [record.message for record in caplog.records].count(
-        "vibecomfy schema gate: OSError: offline; using structural validation only"
-    ) == 1
+    assert any(record.levelname == "WARNING" and "schema validation skipped for class types" in record.message for record in caplog.records)
 
 
 def test_server_session_validates_against_started_url(

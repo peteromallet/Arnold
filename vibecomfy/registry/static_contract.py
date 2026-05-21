@@ -718,6 +718,7 @@ def _eval_model_asset_call(node: ast.Call, assignments: dict[str, Any]) -> dict[
         **({"sha256": result["sha256"]} if isinstance(result.get("sha256"), str) else {}),
         **({"hf_revision": result["hf_revision"]} if isinstance(result.get("hf_revision"), str) else {}),
         **({"size_bytes": result["size_bytes"]} if isinstance(result.get("size_bytes"), int) else {}),
+        **({"gated": True} if result.get("gated") is True else {}),
     }
 
 
