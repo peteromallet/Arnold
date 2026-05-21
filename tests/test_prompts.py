@@ -840,10 +840,9 @@ def test_finalize_prompt_requests_structured_tracking_fields(tmp_path: Path) -> 
     assert "sense_checks" in prompt
     assert "executor_notes" in prompt
     assert "reviewer_verdict" in prompt
-    assert "validation" in prompt
-    assert "plan_steps_covered" in prompt
-    assert "orphan_tasks" in prompt
-    assert "coverage_complete" in prompt
+    assert "Do not include `validation` or `coverage_complete` fields" in prompt
+    assert "plan_steps_covered" not in prompt
+    assert "orphan_tasks" not in prompt
     assert "final_plan" not in prompt
     assert "_notes:_" not in prompt
     assert "_verdict:_" not in prompt

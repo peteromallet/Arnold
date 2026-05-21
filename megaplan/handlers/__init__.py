@@ -43,7 +43,6 @@ from .gate import (
     handle_gate,
 )
 from .finalize import (
-    _reconcile_validation_after_mutation,
     _validate_finalize_payload,
     _ensure_verification_task,
     _capture_test_baseline,

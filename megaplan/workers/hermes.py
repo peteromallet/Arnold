@@ -103,12 +103,15 @@ def _toolsets_for_phase(phase: str) -> list[str] | None:
 
     Execute phase gets full terminal + file + web access.
     Plan, critique, and revise get file + web (verify APIs against docs).
-    Gate, finalize, review get file only (judgment, not investigation).
+    Gate and review get file only (judgment, not investigation).
+    Finalize is a pure compiler and uses structured JSON response format without tools.
     """
     if phase == "execute":
         return ["terminal", "file", "web"]
     if phase in ("plan", "prep", "critique", "revise"):
         return ["file", "web"]
+    if phase == "finalize":
+        return None
     return ["file"]
 
 
@@ -471,6 +474,8 @@ def run_hermes_step(
             "They are used for scoring after execution and must remain unchanged."
         )
 
+    toolsets = _toolsets_for_phase(step)
+
     # Critique and review: use custom template writers that pre-populate IDs.
     # Other template-file phases: hermes_worker writes a generic template.
     if step == "critique":
@@ -491,7 +496,7 @@ def run_hermes_step(
             "Do NOT leave reviewer_verdict or verdict fields empty. "
             "Do NOT put your results in a text response. The file is the only output that matters."
         )
-    elif step in _TEMPLATE_FILE_PHASES:
+    elif step in _TEMPLATE_FILE_PHASES and toolsets:
         output_path = plan_dir / f"{step}_output.json"
         output_path.write_text(
             _build_output_template(step, schema),
@@ -534,8 +539,6 @@ def run_hermes_step(
     # Uses the key pool for key rotation and cooldown on 429s.
     from megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)
-
-    toolsets = _toolsets_for_phase(step)
 
     # Disable reasoning/thinking only for model families that otherwise return
     # structured output outside the normal content field. DeepSeek V4 is not in

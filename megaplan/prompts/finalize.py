@@ -12,13 +12,11 @@ from megaplan._core import (
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
-    load_flag_registry,
     read_json,
 )
 from megaplan.types import PlanState
 
-from ._shared import _finalize_debt_block, _gate_summary_or_skipped
-from .gate import _collect_critique_summaries, _flag_summary
+from ._shared import _gate_summary_or_skipped
 
 
 def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
@@ -26,9 +24,6 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     gate = _gate_summary_or_skipped(plan_dir)
-    flag_registry = load_flag_registry(plan_dir)
-    critique_history = _collect_critique_summaries(plan_dir, state["iteration"])
-    debt_block = _finalize_debt_block(plan_dir, root)
     plan_mode = state.get("config", {}).get("mode", "code")
     robustness = configured_robustness(state)
     if is_prose_mode(state):
@@ -65,7 +60,9 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         ).strip()
     return textwrap.dedent(
         f"""
-        You are preparing an execution-ready briefing document from the approved plan.
+        You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
 
         Project directory:
         {project_dir}
@@ -81,16 +78,15 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         Gate summary:
         {json_dump(gate).strip()}
 
-        Flag registry:
-        {json_dump(_flag_summary(flag_registry)).strip()}
-
-        Critique history:
-        {json_dump(critique_history).strip()}
-
-        {debt_block}
-
         Requirements:
         - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Identify user_actions ONLY for human-only setup: env vars, manual UI tests, deploys, out-of-band approvals, or other work the executor cannot perform in the repo.
+        - Do not invent tasks that don't trace to a plan step.
+        - batch_1 (dependency-independent tasks executed together) MUST have at most 5 tasks. If you have more than 5 independent tasks, linearize some via depends_on to spread them across batches.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
         - `tasks` must be an ordered array of task objects. Every task object must include:
           - `id`: short stable task ID like `T1`
           - `description`: concrete work item
@@ -113,23 +109,6 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
           - `verdict`: always `""` at finalize time
         {user_actions_guidance}
         - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
-        - `validation` must be an object that self-checks plan coverage:
-          - `plan_steps_covered`: enumerate EVERY step from the approved plan. For each step, provide a short `plan_step_summary` (the step's intent in one phrase) and `finalize_item_ids` (array of task IDs `T*` or user_action IDs `U*` that implement or cover it — a single plan step may map to multiple tasks and/or user_actions).
-          - `orphan_tasks`: task IDs that do not correspond to any plan step. Normally empty. If non-empty, explain in `completeness_notes`.
-          - `completeness_notes`: free-text explanation of any gaps, deviations, or deliberate omissions.
-          - `coverage_complete`: set to `true` only if every plan step has at least one finalize task or user_action AND you have verified the mapping by reviewing each entry. Set to `false` if any plan step is missing coverage.
-          - Example:
-          ```json
-          "validation": {{
-            "plan_steps_covered": [
-              {{"plan_step_summary": "Add retry logic to API client", "finalize_item_ids": ["T1", "T2"]}},
-              {{"plan_step_summary": "Set required production secret", "finalize_item_ids": ["U1"]}}
-            ],
-            "orphan_tasks": [],
-            "completeness_notes": "All plan steps mapped to tasks.",
-            "coverage_complete": true
-          }}
-          ```
         - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
         - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
         - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
