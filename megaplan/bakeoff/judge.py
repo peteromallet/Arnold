@@ -59,10 +59,10 @@ def used_executor_identities(root: Path, bakeoff_state: BakeoffState) -> set[str
             spec = phase_map.get(phase)
             if not spec:
                 continue
-            agent, model = parse_agent_spec(spec)
-            used.add(agent.lower())
-            if model:
-                used.add(model.lower())
+            parsed = parse_agent_spec(spec)
+            used.add(parsed.agent.lower())
+            if parsed.model:
+                used.add(parsed.model.lower())
     return used
 
 

@@ -838,6 +838,7 @@ def run_shannon_step(
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
     session_agent: str = "shannon",
+    model: str | None = None,
 ) -> WorkerResult:
     """Run a megaplan phase via Shannon (Claude in an interactive tmux session).
 
@@ -856,7 +857,7 @@ def run_shannon_step(
     # ── (b) resolve working directory and session ───────────────────────
     _ensure_shannon_parent_timeout_control()
     work_dir = resolve_work_dir(state)
-    session_key = session_key_for(step, session_agent)
+    session_key = session_key_for(step, session_agent, model=model)
     session = state["sessions"].get(session_key, {})
     session_id: str | None = session.get("id")
 
@@ -897,10 +898,14 @@ def run_shannon_step(
     # command-line prompt only points Claude at that file.
     base_command = [
         "shannon",
+    ]
+    if model is not None:
+        base_command.extend(["--model", model])
+    base_command.extend([
         "-p",
         launcher_prompt,
         "--output-format=json",
-    ]
+    ])
     drop_root_requested = _shannon_drop_root_enabled()
     if drop_root_requested:
         # Claude's non-print interactive mode only consumes ANTHROPIC_API_KEY
@@ -961,10 +966,14 @@ def run_shannon_step(
         readiness_prompt = _shannon_random_handshake_prompt()
         readiness_command = [
             "shannon",
+        ]
+        if model is not None:
+            readiness_command.extend(["--model", model])
+        readiness_command.extend([
             "-p",
             readiness_prompt,
             "--output-format=json",
-        ]
+        ])
         if effort is not None:
             readiness_command.extend(["--effort", effort])
         if drop_root_requested:

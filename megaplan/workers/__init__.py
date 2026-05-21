@@ -1,5 +1,6 @@
 from megaplan.workers._impl import *  # noqa: F401,F403
 from megaplan.workers._impl import (
+    AgentMode,
     CommandResult,
     WorkerResult,
     STEP_SCHEMA_FILENAMES,
@@ -24,6 +25,7 @@ from megaplan.workers._impl import (
 )
 
 __all__ = [
+    "AgentMode",
     "CommandResult",
     "WorkerResult",
     "STEP_SCHEMA_FILENAMES",

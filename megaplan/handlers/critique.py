@@ -63,7 +63,8 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
         expected_ids = [check["id"] for check in active_checks]
-        agent_type, mode, refreshed, model = _pkg.resolve_agent_mode("critique", args)
+        resolved = _pkg.resolve_agent_mode("critique", args)
+        agent_type, mode, refreshed, model = resolved.agent, resolved.mode, resolved.refreshed, resolved.model
         if len(active_checks) > 1 and agent_type == "hermes":
             run_id = set_active_step(state, step="critique", agent="hermes", mode="persistent", model=model)
             save_state_merge_meta(plan_dir, state)

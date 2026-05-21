@@ -130,8 +130,8 @@ def _build_resolved(
     """Build a resolved tuple for ephemeral mode (FLAG-002)."""
     from megaplan.workers import resolve_agent_mode
 
-    agent, _mode, _refreshed, model = resolve_agent_mode(step, args)
-    return (agent, "ephemeral", True, model)
+    am = resolve_agent_mode(step, args)
+    return (am.agent, "ephemeral", True, am.model)
 
 
 def _resolve_question(args: argparse.Namespace) -> str:

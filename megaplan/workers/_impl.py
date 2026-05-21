@@ -24,12 +24,14 @@ from megaplan.forms.provocations import select_active_checks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key
 from megaplan.orchestration.progress import strip_progress_env
 from megaplan.types import (
+    AgentMode,
     CliError,
     DEFAULT_AGENT_ROUTING,
     MOCK_ENV_VAR,
     PlanState,
     SessionInfo,
     parse_agent_spec,
+    resolved_default_model_for_agent,
 )
 from megaplan._core import (
     apply_session_update,
@@ -1819,6 +1821,7 @@ def run_claude_step(
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
+    model: str | None = None,
 ) -> WorkerResult:
     """Compatibility wrapper: the public ``claude`` route runs via Shannon."""
     if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
@@ -1835,6 +1838,7 @@ def run_claude_step(
         prompt_kwargs=prompt_kwargs,
         effort=effort,
         session_agent="claude",
+        model=model,
     )
 
 
@@ -1850,6 +1854,7 @@ def run_codex_step(
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
+    model: str | None = None,
 ) -> WorkerResult:
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
@@ -1865,7 +1870,7 @@ def run_codex_step(
         else STEP_SCHEMA_FILENAMES[step]
     )
     schema_file = schemas_root(root) / codex_schema_name
-    session_key = session_key_for(step, "codex")
+    session_key = session_key_for(step, "codex", model=model)
     session = state["sessions"].get(session_key, {})
     out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
     out_handle.close()
@@ -1887,6 +1892,8 @@ def run_codex_step(
         command = ["codex", "exec", "resume"]
         if _trusted_container():
             command.append("--dangerously-bypass-approvals-and-sandbox")
+        if model is not None:
+            command.extend(["-c", f"model='{model}'"])
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
         command.extend(_codex_exec_mode_flags(step))
@@ -1957,6 +1964,8 @@ def run_codex_step(
             "-o",
             str(output_path),
         ])
+        if model is not None:
+            command.extend(["-c", f"model='{model}'"])
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
         if not persistent:
@@ -2004,6 +2013,7 @@ def run_codex_step(
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
+                model=model,
             )
         # Recover from a poisoned session: the history carries an obsolete
         # "sandbox is broken" belief from a pre-trusted-container run. Only
@@ -2036,6 +2046,7 @@ def run_codex_step(
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
+                model=model,
             )
         # Recover from a session that grew too large to remote-compact:
         # OpenAI 429s the compaction call, codex gives up and exits. Same
@@ -2065,6 +2076,7 @@ def run_codex_step(
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
+                model=model,
             )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
@@ -2142,6 +2154,7 @@ def run_codex_step(
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
             effort=effort,
+            model=model,
         )
     # Poisoned-session recovery on non-exception path: the worker exited 0 or
     # non-zero but produced output that still echoes an obsolete sandbox
@@ -2170,6 +2183,7 @@ def run_codex_step(
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
             effort=effort,
+            model=model,
         )
     # Oversized-session recovery on non-exception path. See the matching
     # branch in the CliError handler above for context.
@@ -2197,6 +2211,7 @@ def run_codex_step(
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
             effort=effort,
+            model=model,
         )
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
@@ -2300,17 +2315,20 @@ def _runtime_fallback_candidates(current_agent: str) -> list[str]:
     return [agent for agent in detect_available_agents() if agent != current_agent]
 
 
-def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None = None) -> tuple[str, str, bool, str | None]:
-    """Returns (agent, mode, refreshed, model).
+def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None = None) -> AgentMode:
+    """Returns an :class:`AgentMode` with agent, mode, refreshed, model, effort, resolved_model.
 
     Both agents default to persistent sessions.  Use --fresh to start a new
     persistent session (break continuity) or --ephemeral for a truly one-off
     call with no session saved.
 
     The model is extracted from compound agent specs (e.g. 'hermes:openai/gpt-5')
-    or from --phase-model / --hermes CLI flags. None means use agent default.
+    or from --phase-model / --hermes CLI flags.  For bare ``claude`` /
+    ``codex`` specs (no explicit model), the pinned default model is resolved
+    and stored in ``resolved_model``.
     """
-    model = None
+    model: str | None = None
+    effort: str | None = None
 
     # Check --phase-model overrides first (highest priority)
     phase_models = getattr(args, "phase_model", None) or []
@@ -2318,7 +2336,10 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         if "=" in pm:
             pm_step, pm_spec = pm.split("=", 1)
             if pm_step == step:
-                agent, model = parse_agent_spec(pm_spec)
+                pm_parsed = parse_agent_spec(pm_spec)
+                agent = pm_parsed.agent
+                model = pm_parsed.model
+                effort = pm_parsed.effort
                 break
     else:
         # Check --hermes flag
@@ -2331,12 +2352,18 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             # Check explicit --agent flag
             explicit = args.agent
             if explicit:
-                agent, model = parse_agent_spec(explicit)
+                explicit_parsed = parse_agent_spec(explicit)
+                agent = explicit_parsed.agent
+                model = explicit_parsed.model
+                effort = explicit_parsed.effort
             else:
                 # Fall back to config / defaults
                 config = load_config(home)
                 spec = config.get("agents", {}).get(step) or DEFAULT_AGENT_ROUTING[step]
-                agent, model = parse_agent_spec(spec)
+                spec_parsed = parse_agent_spec(spec)
+                agent = spec_parsed.agent
+                model = spec_parsed.model
+                effort = spec_parsed.effort
 
     # Validate agent availability
     # MEGAPLAN_MOCK_WORKERS=1 bypasses availability for explicit Shannon
@@ -2389,6 +2416,7 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
         }
         agent = fallback
         model = None  # Reset model when falling back
+        effort = None
 
     ephemeral = getattr(args, "ephemeral", False)
     fresh = getattr(args, "fresh", False)
@@ -2396,8 +2424,20 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     conflicting = sum([fresh, persist, ephemeral])
     if conflicting > 1:
         raise CliError("invalid_args", "Cannot combine --fresh, --persist, and --ephemeral")
+    # Resolve default model for bare premium agent specs.
+    resolved_model: str | None = model
+    if resolved_model is None and agent in ("claude", "codex"):
+        resolved_model = resolved_default_model_for_agent(agent)
+
     if ephemeral:
-        return agent, "ephemeral", True, model
+        return AgentMode(
+            agent=agent,
+            mode="ephemeral",
+            refreshed=True,
+            model=model,
+            effort=effort,
+            resolved_model=resolved_model,
+        )
     refreshed = fresh
     # Review with Claude: default to fresh to avoid self-bias (principle #5)
     if step == "review" and agent == "claude":
@@ -2405,7 +2445,14 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
             raise CliError("invalid_args", "Claude review requires --confirm-self-review when using --persist")
         if not persist:
             refreshed = True
-    return agent, "persistent", refreshed, model
+    return AgentMode(
+        agent=agent,
+        mode="persistent",
+        refreshed=refreshed,
+        model=model,
+        effort=effort,
+        resolved_model=resolved_model,
+    )
 
 
 def run_step_with_worker(
@@ -2415,11 +2462,17 @@ def run_step_with_worker(
     args: argparse.Namespace,
     *,
     root: Path,
-    resolved: tuple[str, str, bool, str | None] | None = None,
+    resolved: tuple[str, str, bool, str | None] | AgentMode | None = None,
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
-    agent, mode, refreshed, model = resolved or resolve_agent_mode(step, args)
+    am = resolved or resolve_agent_mode(step, args)
+    agent = am.agent if isinstance(am, AgentMode) else am[0]
+    mode = am.mode if isinstance(am, AgentMode) else am[1]
+    refreshed = am.refreshed if isinstance(am, AgentMode) else am[2]
+    model = am.model if isinstance(am, AgentMode) else am[3]
+    effort = am.effort if isinstance(am, AgentMode) else None
+    resolved_model = am.resolved_model if isinstance(am, AgentMode) else am[3]
     # Cross-call persistence is only valid for execute-shaped phases. Every
     # other phase receives all needed context in its prompt, so resuming prior
     # planner/critic/reviewer sessions risks cache-replay no-ops.
@@ -2451,8 +2504,9 @@ def run_step_with_worker(
                     fresh=effective_refreshed,
                     prompt_override=prompt_override,
                     prompt_kwargs=prompt_kwargs,
-                    effort=model,
+                    effort=effort,
                     session_agent="claude",
+                    model=resolved_model,
                 )
             elif agent == "shannon":
                 # Deferred import to avoid circular import
@@ -2465,7 +2519,8 @@ def run_step_with_worker(
                     fresh=effective_refreshed,
                     prompt_override=prompt_override,
                     prompt_kwargs=prompt_kwargs,
-                    effort=model,
+                    effort=effort,
+                    model=resolved_model,
                 )
             else:
                 attempted_retry = False
@@ -2481,7 +2536,8 @@ def run_step_with_worker(
                             json_trace=(step == "execute"),
                             prompt_override=prompt_override,
                             prompt_kwargs=prompt_kwargs,
-                            effort=model,
+                            effort=effort,
+                            model=resolved_model,
                         )
                         break
                     except CliError as error:
@@ -2501,6 +2557,7 @@ def run_step_with_worker(
                                 session_id,
                                 mode=mode,
                                 refreshed=effective_refreshed,
+                                model=resolved_model,
                             )
                             effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
                         continue

@@ -114,7 +114,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "missing_approval",
                 "Execute requires explicit user approval (--user-approved) when auto-approve is not set. The orchestrator must confirm with the user at the gate checkpoint before proceeding.",
             )
-        agent, mode, refreshed, model = worker_module.resolve_agent_mode("execute", args)
+        am = worker_module.resolve_agent_mode("execute", args)
+        agent, mode, refreshed, model = am.agent, am.mode, am.refreshed, am.model
         # Force fresh session after review kickback or blocked retry to avoid
         # prior-context bias (poisoned environment beliefs, stale task state).
         if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):

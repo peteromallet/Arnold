@@ -124,16 +124,16 @@ def resolve_cloud_chain_runtime_dependencies(
         milestone_provider_requirements: list[dict[str, Any]] = []
 
         for spec in resolved.values():
-            agent, model = parse_agent_spec(spec)
-            milestone_agents.add(agent)
-            required_agents.add(agent)
-            for command in _COMMANDS_BY_AGENT.get(agent, ()):
+            parsed = parse_agent_spec(spec)
+            milestone_agents.add(parsed.agent)
+            required_agents.add(parsed.agent)
+            for command in _COMMANDS_BY_AGENT.get(parsed.agent, ()):
                 milestone_commands.add(command)
                 runtime_commands.add(command)
-            for env_name in _ENV_HINTS_BY_AGENT.get(agent, ()):
+            for env_name in _ENV_HINTS_BY_AGENT.get(parsed.agent, ()):
                 milestone_env_hints.add(env_name)
                 env_hints.add(env_name)
-            requirements = _provider_requirements(agent, model)
+            requirements = _provider_requirements(parsed.agent, parsed.model)
             if requirements:
                 milestone_provider_requirements.extend(requirements)
                 provider_requirements.extend(requirements)
