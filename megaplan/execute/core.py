@@ -14,6 +14,7 @@ from megaplan._core import (
     atomic_write_text,
     batch_artifact_path,
     build_next_step_runtime,
+    compute_batch_complexity,
     compute_global_batches,
     compute_task_batches,
     configured_robustness,
@@ -27,6 +28,7 @@ from megaplan._core import (
     read_json,
     render_final_md,
     save_state_merge_meta,
+    set_active_step,
     sha256_file,
     store_raw_worker_output,
 )
@@ -67,6 +69,29 @@ from megaplan.types import (
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
+
+
+def _resolve_tier_spec(
+    args: argparse.Namespace,
+    tier_spec: str,
+) -> tuple[str, str, str | None]:
+    """Resolve a tier spec string to (agent, mode, model) without mutating *args*.
+
+    Copies *args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
+    copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
+    user CLI override — the override guard in ``apply_profile_expansion``
+    already strips ``tier_models.execute`` when ``--phase-model execute=…``
+    is present, so this helper is only called when tier routing is active.
+    """
+    import copy
+
+    tier_args = copy.copy(args)
+    tier_args.phase_model = [f"execute={tier_spec}"]
+    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
+        "execute", tier_args
+    )
+    return agent, _mode, model
+
 
 # Private marker set: dispatcher return paths stamp one of these four values.
 # Handlers later read _phase_outcome to derive the correct ExitKind for
@@ -729,6 +754,7 @@ def handle_execute_one_batch(
     mode: str,
     refreshed: bool,
     model: str | None = None,
+    tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     finalize_data = read_json(plan_dir / "finalize.json")
     global_config = load_config()
@@ -784,6 +810,37 @@ def handle_execute_one_batch(
     batch_prompt = _execute_batch_prompt(
         state, plan_dir, batch_task_ids, completed_ids, root=root
     )
+
+    # Per-batch tier resolution: when tier_map is provided, select the model
+    # for the maximum task complexity in this batch.
+    fallback_agent, fallback_mode, fallback_refreshed, fallback_model = (
+        agent, mode, refreshed, model
+    )
+    # Tier routing observability — populated only when tier_map is active.
+    tier_routing_active = bool(tier_map)
+    tier_complexity: int | None = None
+    tier_spec_raw: str | None = None
+    tier_resolved_model: str | None = None
+    if tier_map:
+        batch_complexity = compute_batch_complexity(finalize_data, batch_task_ids)
+        tier_complexity = batch_complexity
+        tier_spec = tier_map.get(batch_complexity)
+        if tier_spec:
+            tier_spec_raw = tier_spec
+            tier_agent, tier_mode, tier_model = _resolve_tier_spec(
+                args, tier_spec
+            )
+            tier_resolved_model = tier_model
+            agent, mode, model = tier_agent, tier_mode, tier_model
+            # Force fresh session when the tier-selected model differs from
+            # the fallback model.
+            if tier_model != fallback_model:
+                refreshed = True
+            # Update active-step state to reflect the tier-selected model
+            # while this batch runs.
+            set_active_step(
+                state, step="execute", agent=agent, mode=mode, model=model
+            )
 
     try:
         result = _run_and_merge_batch(
@@ -914,6 +971,9 @@ def handle_execute_one_batch(
             artifact_hash=sha256_file(batch_artifact_path(plan_dir, batch_number)),
             finalize_hash=result.finalize_hash,
             approval_mode=approval_mode,
+            batch_complexity=tier_complexity if tier_routing_active else None,
+            tier_model_spec=tier_spec_raw if tier_routing_active else None,
+            tier_model_resolved=tier_resolved_model if tier_routing_active else None,
         ),
     )
     if aggregate_payload is not None and drift is not None:
@@ -1020,6 +1080,13 @@ def handle_execute_one_batch(
         "blocked_task_ids": batch_blocked_ids,
         "_phase_outcome": phase_outcome,
     }
+    # Tier routing observability — omitted for flat profiles.
+    if tier_routing_active:
+        response["batch_complexity"] = tier_complexity
+        response["tier_model_spec"] = tier_spec_raw
+        response["tier_agent"] = agent
+        response["tier_mode"] = mode
+        response["tier_model"] = model
     if next_step == "execute" and not blocked:
         response["guidance"] = f"Run --batch {batch_number + 1}"
     emitter = getattr(args, "progress_emitter", None)
@@ -1035,6 +1102,9 @@ def handle_execute_one_batch(
             total_task_count=result.total_task_count,
             blocked=blocked,
             state=response_state,
+            batch_complexity=tier_complexity if tier_routing_active else None,
+            tier_model_spec=tier_spec_raw if tier_routing_active else None,
+            tier_model=tier_resolved_model if tier_routing_active else None,
         )
     _attach_next_step_runtime(response)
     return response
@@ -1082,6 +1152,7 @@ def handle_execute_auto_loop(
     mode: str,
     refreshed: bool,
     model: str | None = None,
+    tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     finalize_data = read_json(plan_dir / "finalize.json")
     global_config = load_config()
@@ -1245,6 +1316,17 @@ def handle_execute_auto_loop(
     latest_session_id: str | None = None
     blocking_reasons: list[str] = []
     timeout_recovery: StepResponse | None = None
+    # Per-batch tier routing: track the previous batch's resolved (agent, model)
+    # identity so we can force a fresh session when the model changes.
+    prev_batch_identity: tuple[str, str | None] | None = None
+    # Save the fallback identity for tier-change freshness detection.
+    fallback_agent, fallback_mode, fallback_refreshed, fallback_model = (
+        agent, mode, refreshed, model
+    )
+    # Tier routing observability — only populated when tier_map is active.
+    tier_routing_active = bool(tier_map)
+    # Batch-to-tier mapping for the aggregate history entry summary.
+    batch_to_tier: list[dict[str, Any]] = []
 
     for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
         batch_prompt = (
@@ -1269,16 +1351,60 @@ def handle_execute_auto_loop(
             else _active_sense_check_ids(finalize_data, set(batch_task_ids))
         )
         batches_total_for_observation = 1 if single_batch_mode else len(global_batches)
+
+        # Per-batch tier resolution: select the model for the max task
+        # complexity in this batch.  Falls back to the caller-provided
+        # agent/mode/model when tier_map is None or the complexity has no entry.
+        batch_agent, batch_mode, batch_refreshed, batch_model = (
+            agent, mode, refreshed, model
+        )
+        # Tier routing per-batch observability (only populated when active).
+        batch_tier_complexity: int | None = None
+        batch_tier_spec: str | None = None
+        if tier_map:
+            batch_complexity = compute_batch_complexity(
+                finalize_data, batch_task_ids
+            )
+            batch_tier_complexity = batch_complexity
+            tier_spec = tier_map.get(batch_complexity)
+            if tier_spec:
+                batch_tier_spec = tier_spec
+                tier_agent, tier_mode, tier_model = _resolve_tier_spec(
+                    args, tier_spec
+                )
+                batch_agent, batch_mode, batch_model = (
+                    tier_agent, tier_mode, tier_model
+                )
+                # Freshness: first batch keeps the caller's refreshed
+                # value (unless rework/block retry already forced it);
+                # later batches force a fresh session when the resolved
+                # model identity differs from the previous batch.
+                if batch_index == 1:
+                    batch_refreshed = refreshed  # already set by caller
+                elif prev_batch_identity is not None:
+                    new_identity = (batch_agent, batch_model)
+                    if new_identity != prev_batch_identity:
+                        batch_refreshed = True
+                # Update active-step state to reflect the tier-selected model
+                # while this batch runs.
+                set_active_step(
+                    state,
+                    step="execute",
+                    agent=batch_agent,
+                    mode=batch_mode,
+                    model=batch_model,
+                )
+
         try:
             result = _run_and_merge_batch(
                 root=root,
                 plan_dir=plan_dir,
                 state=state,
                 args=args,
-                agent=agent,
-                mode=mode,
-                refreshed=refreshed,
-                model=model,
+                agent=batch_agent,
+                mode=batch_mode,
+                refreshed=batch_refreshed,
+                model=batch_model,
                 prompt_override=batch_prompt,
                 batch_task_ids=batch_task_ids,
                 batch_sense_check_ids=batch_sense_check_ids,
@@ -1300,8 +1426,8 @@ def handle_execute_auto_loop(
                     plan_dir=plan_dir,
                     state=state,
                     error=error,
-                    agent=agent,
-                    mode=mode,
+                    agent=batch_agent,
+                    mode=batch_mode,
                     refreshed=refreshed,
                     auto_approve=auto_approve,
                     args=args,
@@ -1335,6 +1461,20 @@ def handle_execute_auto_loop(
             mode=result.mode,
             refreshed=result.refreshed,
         )
+        # Track the actual tier-selected model identity for the next batch's
+        # freshness comparison (timeout recovery paths read this same tracking).
+        prev_batch_identity = (batch_agent, batch_model)
+        # Record batch-to-tier mapping for the aggregate history entry.
+        if tier_routing_active:
+            batch_to_tier.append({
+                "batch_number": batch_number_for_artifact,
+                "batch_index": batch_index,
+                "batch_complexity": batch_tier_complexity,
+                "tier_model_spec": batch_tier_spec,
+                "resolved_agent": batch_agent,
+                "resolved_mode": batch_mode,
+                "resolved_model": batch_model,
+            })
         batch_payloads.append(result.payload)
         all_attribution_records.extend(result.attribution_records)
         if result.worker.trace_output is not None:
@@ -1522,24 +1662,25 @@ def handle_execute_auto_loop(
     receipt_metrics = execute_metrics(aggregate_payload, drift)
     receipt_metrics["batches"] = batch_payloads
     receipt_worker.receipt_metrics = receipt_metrics
-    append_history(
-        state,
-        make_history_entry(
-            "execute",
-            duration_ms=total_duration_ms,
-            cost_usd=total_cost_usd,
-            result=result_value,
-            agent=agent,
-            mode=mode,
-            worker=receipt_worker,
-            output_file="execution.json",
-            artifact_hash=sha256_file(plan_dir / "execution.json"),
-            finalize_hash=finalize_hash,
-            raw_output_file=raw_output_file,
-            message=message,
-            approval_mode=approval_mode,
-        ),
+    aggregate_history_entry = make_history_entry(
+        "execute",
+        duration_ms=total_duration_ms,
+        cost_usd=total_cost_usd,
+        result=result_value,
+        agent=agent,
+        mode=mode,
+        worker=receipt_worker,
+        output_file="execution.json",
+        artifact_hash=sha256_file(plan_dir / "execution.json"),
+        finalize_hash=finalize_hash,
+        raw_output_file=raw_output_file,
+        message=message,
+        approval_mode=approval_mode,
     )
+    # Include batch-to-tier mapping summary when tier routing was active.
+    if tier_routing_active and batch_to_tier:
+        aggregate_history_entry["batch_to_tier"] = batch_to_tier
+    append_history(state, aggregate_history_entry)
     try:
         artifact_hash = sha256_file(plan_dir / "execution.json")
         receipt = build_receipt(

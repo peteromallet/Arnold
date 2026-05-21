@@ -110,6 +110,13 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
             - `docs`: writes documentation files (executor must produce `files_changed`).
             If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. Use the rubric:
+            - 1 = trivial single-file mechanical change
+            - 2 = simple change with tests to update
+            - 3 = multi-file change with non-trivial logic
+            - 4 = cross-cutting change with architecture implications
+            - 5 = fundamental system change with high regression risk
+            Missing or uncertain scores MUST default to 5, never 3.
         - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
         - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
           - `id`: short stable ID like `SC1`

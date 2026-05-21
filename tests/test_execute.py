@@ -2753,3 +2753,1051 @@ def test_completed_status_counts_as_tracked_in_batch_coverage(
         "Completed/done tasks must not trigger 'tracking is incomplete'; "
         f"got deviations={deviations!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tier routing observability tests
+# ---------------------------------------------------------------------------
+
+
+def test_make_history_entry_includes_tier_fields_when_provided() -> None:
+    """History entries include batch_complexity, tier_model_spec, and
+    tier_model_resolved when tier routing is active."""
+    entry = megaplan._core.make_history_entry(
+        "execute",
+        duration_ms=100,
+        cost_usd=0.01,
+        result="success",
+        agent="codex",
+        mode="persistent",
+        batch_complexity=3,
+        tier_model_spec="codex:medium",
+        tier_model_resolved="codex-medium-v2",
+    )
+    assert entry["batch_complexity"] == 3
+    assert entry["tier_model_spec"] == "codex:medium"
+    assert entry["tier_model_resolved"] == "codex-medium-v2"
+
+
+def test_make_history_entry_omits_tier_fields_for_flat_profile() -> None:
+    """History entries omit tier fields when they are None (flat profiles)."""
+    entry = megaplan._core.make_history_entry(
+        "execute",
+        duration_ms=100,
+        cost_usd=0.01,
+        result="success",
+        agent="codex",
+        mode="persistent",
+        # No tier fields passed — flat profile.
+    )
+    assert "batch_complexity" not in entry
+    assert "tier_model_spec" not in entry
+    assert "tier_model_resolved" not in entry
+
+
+def test_handle_execute_one_batch_response_includes_tier_metadata(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """StepResponse includes tier fields when tier_map is active and the
+    batch's max complexity maps to a tier spec."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    tier_map = {
+        1: "hermes:deepseek:deepseek-v4-flash",
+        3: "codex:medium",
+        5: "codex:high",
+    }
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    # With tier_map active, response should carry tier observability fields.
+    assert "batch_complexity" in response, (
+        "StepResponse must include batch_complexity when tier routing active"
+    )
+    assert "tier_model_spec" in response, (
+        "StepResponse must include tier_model_spec when tier routing active"
+    )
+    assert "tier_agent" in response, (
+        "StepResponse must include tier_agent when tier routing active"
+    )
+    assert "tier_mode" in response, (
+        "StepResponse must include tier_mode when tier routing active"
+    )
+    assert "tier_model" in response, (
+        "StepResponse must include tier_model when tier routing active"
+    )
+    # The plan's single task T1 has no complexity field → defaults to 5.
+    assert response["batch_complexity"] == 5, (
+        "Missing complexity defaults to 5"
+    )
+    assert response["tier_model_spec"] == "codex:high", (
+        "Complexity 5 maps to codex:high in the tier_map"
+    )
+
+
+def test_handle_execute_one_batch_response_omits_tier_metadata_for_flat_profile(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """StepResponse omits tier fields when tier_map is None (flat profiles)."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=None,  # Flat profile — no tier routing.
+    )
+
+    # Flat profile: no tier fields in response.
+    assert "batch_complexity" not in response, (
+        "Flat profiles must not include batch_complexity in response"
+    )
+    assert "tier_model_spec" not in response, (
+        "Flat profiles must not include tier_model_spec in response"
+    )
+    assert "tier_agent" not in response, (
+        "Flat profiles must not include tier_agent in response"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T17 — Execute routing tests: tier selection, freshness, flat/CLI-override,
+#        and observability for auto_loop and one_batch dispatch paths.
+# ---------------------------------------------------------------------------
+
+
+def _setup_three_batch_tier_plan(plan_fixture: PlanFixture) -> None:
+    """Drive plan to finalized and install a 3-batch dependency chain
+    with explicit complexity scores [1, 3, 5]."""
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(
+            plan=plan_fixture.plan_name,
+            override_action="force-proceed",
+            reason="test",
+        ),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"] = [
+        {
+            "id": "T1",
+            "description": "Trivial task — complexity 1",
+            "depends_on": [],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+            "complexity": 1,
+        },
+        {
+            "id": "T2",
+            "description": "Medium task — complexity 3",
+            "depends_on": ["T1"],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+            "complexity": 3,
+        },
+        {
+            "id": "T3",
+            "description": "Systemic task — complexity 5",
+            "depends_on": ["T2"],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+            "complexity": 5,
+        },
+    ]
+    finalize_data["sense_checks"] = [
+        {
+            "id": "SC1",
+            "task_id": "T1",
+            "question": "T1 ok?",
+            "executor_note": "",
+            "verdict": "",
+        },
+        {
+            "id": "SC2",
+            "task_id": "T2",
+            "question": "T2 ok?",
+            "executor_note": "",
+            "verdict": "",
+        },
+        {
+            "id": "SC3",
+            "task_id": "T3",
+            "question": "T3 ok?",
+            "executor_note": "",
+            "verdict": "",
+        },
+    ]
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _make_fake_batch_result(
+    batch_task_ids: list[str],
+    batch_sense_check_ids: list[str],
+    batch_number: int = 1,
+    agent: str = "codex",
+    mode: str = "persistent",
+    refreshed: bool = False,
+    session_id: str = "fake-session",
+) -> megaplan.execute.core.BatchResult:
+    """Return a minimal BatchResult suitable for auto_loop consumption."""
+    payload = {
+        "output": f"Batch {batch_number} complete.",
+        "files_changed": [f"batch{batch_number}.py"],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [
+            {
+                "task_id": tid,
+                "status": "done",
+                "executor_notes": f"Completed {tid}.",
+                "files_changed": [f"batch{batch_number}.py"],
+                "commands_run": [],
+            }
+            for tid in batch_task_ids
+        ],
+        "sense_check_acknowledgments": [
+            {
+                "sense_check_id": scid,
+                "executor_note": f"Acknowledged {scid}.",
+            }
+            for scid in batch_sense_check_ids
+        ],
+    }
+    return megaplan.execute.core.BatchResult(
+        worker=WorkerResult(
+            payload=payload,
+            raw_output="",
+            duration_ms=1,
+            cost_usd=0.0,
+            session_id=session_id,
+        ),
+        agent=agent,
+        mode=mode,
+        refreshed=refreshed,
+        payload=payload,
+        batch_number=batch_number,
+        batch_task_ids=list(batch_task_ids),
+        batch_sense_check_ids=list(batch_sense_check_ids),
+        merged_task_count=len(batch_task_ids),
+        total_task_count=len(batch_task_ids),
+        acknowledged_sense_check_count=len(batch_sense_check_ids),
+        total_sense_check_count=len(batch_sense_check_ids),
+        missing_task_evidence=[],
+        execution_audit={"skipped": False, "reason": "", "findings": []},
+        finalize_hash="fake-hash",
+        attribution_records=[],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tier resolution order tests — one_batch dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_one_batch_tier_selection_respects_complexity(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a batch's max complexity maps to a tier, that tier spec is resolved
+    and the selected agent/mode/model are used."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    # Override with explicit complexity=3.
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    for task in finalize_data["tasks"]:
+        task["complexity"] = 3
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    # Track calls to _resolve_tier_spec.
+    tier_spec_calls: list[str] = []
+
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        tier_spec_calls.append(tier_spec)
+        return ("resolved-agent", "resolved-mode", "resolved-model")
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {1: "tier-1-spec", 3: "tier-3-spec", 5: "tier-5-spec"}
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    # Complexity 3 → tier-3-spec resolved.
+    assert tier_spec_calls == ["tier-3-spec"], (
+        f"Expected tier-3-spec for complexity 3, got {tier_spec_calls}"
+    )
+    assert response.get("tier_model_spec") == "tier-3-spec"
+    assert response.get("batch_complexity") == 3
+
+
+def test_one_batch_tier_selection_missing_complexity_defaults_to_5(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a task has no complexity field, compute_batch_complexity returns 5,
+    and the tier-5 spec is resolved."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    # Task has no complexity field at all.
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    tier_spec_calls: list[str] = []
+
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        tier_spec_calls.append(tier_spec)
+        return ("resolved-agent", "resolved-mode", "resolved-model")
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {1: "tier-1-spec", 5: "tier-5-spec"}
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    # Missing complexity → 5 → tier-5-spec resolved.
+    assert tier_spec_calls == ["tier-5-spec"], (
+        f"Expected tier-5-spec for missing complexity, got {tier_spec_calls}"
+    )
+    assert response.get("batch_complexity") == 5
+    assert response.get("tier_model_spec") == "tier-5-spec"
+
+
+def test_one_batch_flat_profile_no_tier_routing(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When tier_map is None (flat profile), the fallback agent/mode/model are
+    used and _resolve_tier_spec is never called."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    for task in finalize_data["tasks"]:
+        task["complexity"] = 3
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    tier_spec_calls: list[str] = []
+
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        tier_spec_calls.append(tier_spec)
+        return ("resolved-agent", "resolved-mode", "resolved-model")
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    response = megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=None,  # Flat profile
+    )
+
+    # _resolve_tier_spec was never called.
+    assert tier_spec_calls == [], (
+        f"_resolve_tier_spec should not be called for flat profiles, got {tier_spec_calls}"
+    )
+    # Response omits tier fields.
+    assert "batch_complexity" not in response
+    assert "tier_model_spec" not in response
+
+
+# ---------------------------------------------------------------------------
+# CLI override test — handler-level guard
+# ---------------------------------------------------------------------------
+
+
+def test_handle_execute_cli_override_disables_tier_routing(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When --phase-model execute=... is present, tier_models.execute is
+    stripped and the dispatchers receive tier_map=None (flat behavior)."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+
+    # Monkeypatch resolve_agent_mode so handle_execute can resolve
+    # "execute=codex:high" without needing real CLI agents installed.
+    monkeypatch.setattr(
+        megaplan.workers,
+        "resolve_agent_mode",
+        lambda step, args: ("codex", "persistent", False, "codex-high-v1"),
+    )
+
+    # Install tier_models on args so the detection code has something to strip.
+    # We monkeypatch handle_execute_one_batch to capture the tier_map it receives.
+    captured_tier_map: dict | None = "SENTINEL"
+
+    def _capture_and_dispatch(*, root, plan_dir, state, args, batch_number,
+                              auto_approve, agent, mode, refreshed, model=None,
+                              tier_map="SENTINEL", **kwargs):
+        nonlocal captured_tier_map
+        captured_tier_map = tier_map
+        # Forward to the real implementation so the rest of the test works.
+        return megaplan.execute.core.handle_execute_one_batch(
+            root=root, plan_dir=plan_dir, state=state, args=args,
+            batch_number=batch_number, auto_approve=auto_approve,
+            agent=agent, mode=mode, refreshed=refreshed, model=model,
+            tier_map=tier_map,
+        )
+
+    # Patch the import alias used by handlers/execute.py
+    monkeypatch.setattr(
+        execute_handler,
+        "dispatch_execute_one_batch",
+        _capture_and_dispatch,
+    )
+
+    # Build args with phase_model containing execute=... and tier_models.
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        confirm_destructive=True,
+        user_approved=True,
+        batch=1,
+    )
+    # Simulate what apply_profile_expansion does: when the CLI has an
+    # explicit execute --phase-model override, tier_models.execute is
+    # stripped.  So tier_models is present but has no execute key.
+    args.tier_models = {"review": {4: "claude:medium"}}
+    # CLI override: --phase-model execute=codex:high
+    args.phase_model = ["execute=codex:high"]
+
+    # Call handle_execute which runs the detection logic.
+    response = megaplan.handle_execute(plan_fixture.root, args)
+
+    # The detection code should have set tier_map = None (CLI override wins).
+    assert captured_tier_map is None, (
+        f"CLI execute override must disable tier routing; "
+        f"got tier_map={captured_tier_map!r}"
+    )
+    # Response should omit tier fields since tier routing is disabled.
+    assert "batch_complexity" not in response, (
+        "CLI override must suppress batch_complexity in response"
+    )
+
+
+def test_handle_execute_variable_profile_passes_tier_map_without_cli_override(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When args.tier_models has execute tiers and args.phase_model contains
+    profile-expanded execute=... (not a CLI override), handle_execute must pass
+    tier_map to the dispatcher."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "resolve_agent_mode",
+        lambda step, args: ("codex", "persistent", False, "codex-medium-v1"),
+    )
+
+    captured_tier_map: dict | None = "SENTINEL"
+
+    def _capture_and_dispatch(*, root, plan_dir, state, args, batch_number,
+                              auto_approve, agent, mode, refreshed, model=None,
+                              tier_map="SENTINEL", **kwargs):
+        nonlocal captured_tier_map
+        captured_tier_map = tier_map
+        return megaplan.execute.core.handle_execute_one_batch(
+            root=root, plan_dir=plan_dir, state=state, args=args,
+            batch_number=batch_number, auto_approve=auto_approve,
+            agent=agent, mode=mode, refreshed=refreshed, model=model,
+            tier_map=tier_map,
+        )
+
+    monkeypatch.setattr(
+        execute_handler,
+        "dispatch_execute_one_batch",
+        _capture_and_dispatch,
+    )
+
+    args = plan_fixture.make_args(
+        plan=plan_fixture.plan_name,
+        confirm_destructive=True,
+        user_approved=True,
+        batch=1,
+    )
+    # Simulate what apply_profile_expansion does for variable-codex:
+    # tier_models.execute is present, and phase_model includes the
+    # profile's own execute=... entry (no explicit CLI override).
+    args.tier_models = {"execute": {1: "hermes:flash", 5: "codex:high"}}
+    args.phase_model = ["execute=codex:medium"]
+
+    response = megaplan.handle_execute(plan_fixture.root, args)
+
+    # tier_map MUST be passed — there is no explicit CLI override
+    assert captured_tier_map is not None, (
+        "Variable profile without CLI override must pass tier_map; "
+        f"got tier_map={captured_tier_map!r}"
+    )
+    assert captured_tier_map == {1: "hermes:flash", 5: "codex:high"}, (
+        f"Expected tier_map {{1: 'hermes:flash', 5: 'codex:high'}}, "
+        f"got {captured_tier_map!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Freshness tests — auto_loop per-batch tier change
+# ---------------------------------------------------------------------------
+
+
+def test_auto_loop_freshness_forced_on_model_change(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the tier-selected model differs from the previous batch's model,
+    refreshed=True is forced for the later batch."""
+    _setup_three_batch_tier_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot_recursive",
+        lambda *_: ({}, None),
+    )
+
+    tier_spec_resolutions: list[tuple[str, str, str | None]] = []
+    # Batch 1: model-A, Batch 2: model-B (different), Batch 3: model-C (different)
+    model_sequence = iter(["model-A", "model-B", "model-C"])
+
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        model = next(model_sequence)
+        result = ("codex", "persistent", model)
+        tier_spec_resolutions.append(result)
+        return result
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+
+    # Track agent/mode/model/refreshed passed to _run_and_merge_batch.
+    run_params: list[dict] = []
+
+    def _fake_run_and_merge(**kwargs):
+        run_params.append({
+            "agent": kwargs["agent"],
+            "mode": kwargs["mode"],
+            "refreshed": kwargs["refreshed"],
+            "model": kwargs["model"],
+            "batch_task_ids": kwargs["batch_task_ids"],
+            "batch_number": kwargs["batch_number"],
+        })
+        # Write finalize.json updates so the auto_loop can continue.
+        finalize_data = read_json(kwargs["plan_dir"] / "finalize.json")
+        for tid in kwargs["batch_task_ids"]:
+            for task in finalize_data.get("tasks", []):
+                if task.get("id") == tid:
+                    task["status"] = "done"
+                    task["executor_notes"] = f"Batch {kwargs['batch_number']} done."
+        (kwargs["plan_dir"] / "finalize.json").write_text(
+            json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+        )
+        return _make_fake_batch_result(
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs["batch_sense_check_ids"],
+            batch_number=kwargs["batch_number"],
+            agent=kwargs["agent"],
+            mode=kwargs["mode"],
+            refreshed=kwargs["refreshed"],
+            session_id=f"session-{kwargs['batch_number']}",
+        )
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_run_and_merge_batch",
+        _fake_run_and_merge,
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {
+        1: "hermes:flash",
+        3: "codex:medium",
+        5: "codex:high",
+    }
+
+    response = megaplan.execute.core.handle_execute_auto_loop(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    assert len(run_params) == 3, f"Expected 3 batches, got {len(run_params)}"
+
+    # Batch 1: first batch keeps caller's refreshed value (False).
+    assert run_params[0]["refreshed"] is False, (
+        "Batch 1 should preserve caller refreshed=False"
+    )
+    assert run_params[0]["model"] == "model-A"
+
+    # Batch 2: model changed (model-A → model-B) → refreshed=True.
+    assert run_params[1]["refreshed"] is True, (
+        "Batch 2 must force refreshed=True when model differs from batch 1"
+    )
+    assert run_params[1]["model"] == "model-B"
+
+    # Batch 3: model changed again (model-B → model-C) → refreshed=True.
+    assert run_params[2]["refreshed"] is True, (
+        "Batch 3 must force refreshed=True when model differs from batch 2"
+    )
+    assert run_params[2]["model"] == "model-C"
+
+
+def test_auto_loop_same_model_no_extra_refresh(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When consecutive batches use the same tier-selected model, refreshed
+    is NOT forced to True."""
+    _setup_three_batch_tier_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot_recursive",
+        lambda *_: ({}, None),
+    )
+
+    # All batches resolve to the same model.
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        return ("codex", "persistent", "same-model")
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+
+    run_params: list[dict] = []
+
+    def _fake_run_and_merge(**kwargs):
+        run_params.append({
+            "refreshed": kwargs["refreshed"],
+            "model": kwargs["model"],
+            "batch_number": kwargs["batch_number"],
+        })
+        finalize_data = read_json(kwargs["plan_dir"] / "finalize.json")
+        for tid in kwargs["batch_task_ids"]:
+            for task in finalize_data.get("tasks", []):
+                if task.get("id") == tid:
+                    task["status"] = "done"
+                    task["executor_notes"] = f"Batch {kwargs['batch_number']} done."
+        (kwargs["plan_dir"] / "finalize.json").write_text(
+            json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+        )
+        return _make_fake_batch_result(
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs["batch_sense_check_ids"],
+            batch_number=kwargs["batch_number"],
+            agent=kwargs["agent"],
+            mode=kwargs["mode"],
+            refreshed=kwargs["refreshed"],
+            session_id=f"session-{kwargs['batch_number']}",
+        )
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_run_and_merge_batch",
+        _fake_run_and_merge,
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {
+        1: "hermes:flash",
+        3: "codex:medium",
+        5: "codex:high",
+    }
+
+    megaplan.execute.core.handle_execute_auto_loop(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    assert len(run_params) == 3
+
+    # Batch 1: caller's refreshed=False.
+    assert run_params[0]["refreshed"] is False
+
+    # Batch 2: same model → refreshed stays False.
+    assert run_params[1]["refreshed"] is False, (
+        "Same model on consecutive batch should not force refreshed=True"
+    )
+
+    # Batch 3: same model → refreshed stays False.
+    assert run_params[2]["refreshed"] is False, (
+        "Same model on third batch should not force refreshed=True"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Auto_loop observability — batch_to_tier mapping and history entries
+# ---------------------------------------------------------------------------
+
+
+def test_auto_loop_batch_to_tier_observability(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When tier routing is active, the aggregate history entry includes a
+    batch_to_tier mapping with complexities, specs, and resolved models."""
+    _setup_three_batch_tier_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot_recursive",
+        lambda *_: ({}, None),
+    )
+
+    # Map tier specs predictably.
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        spec_to_model = {
+            "hermes:flash": "deepseek-flash-v1",
+            "codex:medium": "codex-medium-v2",
+            "codex:high": "codex-high-v1",
+        }
+        model = spec_to_model.get(tier_spec, "unknown")
+        return ("codex", "persistent", model)
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+
+    def _fake_run_and_merge(**kwargs):
+        finalize_data = read_json(kwargs["plan_dir"] / "finalize.json")
+        for tid in kwargs["batch_task_ids"]:
+            for task in finalize_data.get("tasks", []):
+                if task.get("id") == tid:
+                    task["status"] = "done"
+                    task["executor_notes"] = f"Batch {kwargs['batch_number']} done."
+        (kwargs["plan_dir"] / "finalize.json").write_text(
+            json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+        )
+        return _make_fake_batch_result(
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs["batch_sense_check_ids"],
+            batch_number=kwargs["batch_number"],
+            agent=kwargs["agent"],
+            mode=kwargs["mode"],
+            refreshed=kwargs["refreshed"],
+            session_id=f"session-{kwargs['batch_number']}",
+        )
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_run_and_merge_batch",
+        _fake_run_and_merge,
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {
+        1: "hermes:flash",
+        3: "codex:medium",
+        5: "codex:high",
+    }
+
+    response = megaplan.execute.core.handle_execute_auto_loop(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    # Read back the state to inspect the aggregate history entry.
+    state_after = load_state(plan_fixture.plan_dir)
+    history = state_after.get("history", [])
+
+    # Find the aggregate execute history entry (the last one for the auto loop).
+    agg_entry = None
+    for entry in reversed(history):
+        if entry.get("step") == "execute" and "batch_to_tier" in entry:
+            agg_entry = entry
+            break
+
+    assert agg_entry is not None, (
+        "Aggregate history entry must include batch_to_tier when tier routing active"
+    )
+
+    batch_to_tier = agg_entry["batch_to_tier"]
+    assert len(batch_to_tier) == 3, (
+        f"Expected 3 batch→tier mappings, got {len(batch_to_tier)}"
+    )
+
+    # Verify ordered mapping: complexity 1→hermes:flash, 3→codex:medium, 5→codex:high.
+    assert batch_to_tier[0]["batch_complexity"] == 1
+    assert batch_to_tier[0]["tier_model_spec"] == "hermes:flash"
+    assert batch_to_tier[0]["resolved_model"] == "deepseek-flash-v1"
+
+    assert batch_to_tier[1]["batch_complexity"] == 3
+    assert batch_to_tier[1]["tier_model_spec"] == "codex:medium"
+    assert batch_to_tier[1]["resolved_model"] == "codex-medium-v2"
+
+    assert batch_to_tier[2]["batch_complexity"] == 5
+    assert batch_to_tier[2]["tier_model_spec"] == "codex:high"
+    assert batch_to_tier[2]["resolved_model"] == "codex-high-v1"
+
+
+# ---------------------------------------------------------------------------
+# Active-step model alignment — verifies set_active_step reflects tier model
+# ---------------------------------------------------------------------------
+
+
+def test_one_batch_active_step_reflects_tier_selected_model(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When tier routing is active, set_active_step is called with the
+    tier-selected model before _run_and_merge_batch runs."""
+    _setup_single_auto_attribute_plan(plan_fixture)
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    for task in finalize_data["tasks"]:
+        task["complexity"] = 3
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    _stub_auto_attribute_git_snapshots(monkeypatch)
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+
+    # Track set_active_step calls.
+    active_step_calls: list[dict] = []
+
+    def _tracking_set_active_step(state, *, step, agent=None, mode=None, model=None):
+        active_step_calls.append({
+            "step": step,
+            "agent": agent,
+            "mode": mode,
+            "model": model,
+        })
+        # Still call the real function to update state.
+        megaplan._core.set_active_step(state, step=step, agent=agent, mode=mode, model=model)
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "set_active_step",
+        _tracking_set_active_step,
+    )
+
+    def _tracking_resolve_tier_spec(args, tier_spec):
+        return ("codex-tier", "persistent-tier", "model-tier-3")
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_resolve_tier_spec",
+        _tracking_resolve_tier_spec,
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    tier_map = {1: "t1", 3: "t3", 5: "t5"}
+
+    megaplan.execute.core.handle_execute_one_batch(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            batch=1,
+        ),
+        batch_number=1,
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        tier_map=tier_map,
+    )
+
+    # The handler's set_active_step (at line ~140 of handlers/execute.py)
+    # sets the fallback model. Then the per-batch tier resolution sets the
+    # tier-selected model. We should see at least one call with the tier model.
+    tier_calls = [
+        c for c in active_step_calls
+        if c["model"] == "model-tier-3"
+    ]
+    assert len(tier_calls) >= 1, (
+        f"Expected set_active_step to be called with tier-selected model "
+        f"'model-tier-3', got calls: {active_step_calls}"
+    )
