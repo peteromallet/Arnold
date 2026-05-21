@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -34,6 +36,113 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
 _VALUE_ALIASES: dict[str, dict[str, str]] = {
     "status": {"completed": "done", "complete": "done", "skip": "skipped"},
 }
+
+
+_DEVIATION_BLOCKING_PHRASES: tuple[str, ...] = (
+    "patch artifact",
+    "patch_artifact",
+    "patch_corruption",
+    "budget exhausted",
+    "iteration budget",
+    "context budget",
+    "out of context",
+    "syntax error",
+    "syntaxerror",
+)
+
+
+def _append_executor_note(task: dict[str, Any], note: str) -> None:
+    existing = task.get("executor_notes")
+    if isinstance(existing, str) and existing:
+        task["executor_notes"] = f"{existing}\n{note}"
+    else:
+        task["executor_notes"] = note
+
+
+def _is_blocking_deviation(deviation: str) -> str | None:
+    normalized = deviation.casefold()
+    for phrase in _DEVIATION_BLOCKING_PHRASES:
+        if phrase in normalized:
+            return phrase
+    if "correctness" in normalized and "failed" in normalized:
+        return "correctness failed"
+    if "unfinished" in normalized and "task" in normalized:
+        return "unfinished task"
+    return None
+
+
+def _task_deviation_strings(task: dict[str, Any], issues: list[str]) -> list[str]:
+    task_deviations = [
+        deviation
+        for deviation in task.get("deviations", [])
+        if isinstance(deviation, str)
+    ]
+    task_id = task.get("id")
+    if not isinstance(task_id, str) or not task_id:
+        return task_deviations
+    return task_deviations + [
+        deviation
+        for deviation in issues
+        if isinstance(deviation, str) and task_id in deviation
+    ]
+
+
+def _validate_python_file_for_task(task: dict[str, Any], issues: list[str]) -> None:
+    for file_name in task.get("files_changed", []) or []:
+        if not isinstance(file_name, str) or not file_name.endswith(".py"):
+            continue
+        path = Path(file_name)
+        if not path.exists():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8")
+            ast.parse(content, filename=str(path))
+        except UnicodeDecodeError:
+            message = f"patch_corruption: {file_name}: file not valid UTF-8"
+        except SyntaxError as exc:
+            line = exc.lineno or "unknown"
+            message = f"patch_corruption: {file_name} line {line}: {exc.msg}"
+        else:
+            continue
+        task["status"] = "blocked"
+        _append_executor_note(task, f"[harness] {message}")
+        issues.append(message)
+
+
+def _apply_task_update_guardrails(
+    entries: list[dict[str, Any]],
+    *,
+    targets_by_id: dict[str, dict[str, Any]],
+    id_field: str,
+    merge_fields: tuple[str, ...],
+    issues: list[str],
+) -> None:
+    if id_field != "task_id" or "files_changed" not in merge_fields:
+        return
+    task_ids = {
+        entry[id_field]
+        for entry in entries
+        if isinstance(entry.get(id_field), str)
+    }
+    for task_id in task_ids:
+        task = targets_by_id.get(task_id)
+        if task is None:
+            continue
+        _validate_python_file_for_task(task, issues)
+    for task_id in task_ids:
+        task = targets_by_id.get(task_id)
+        if task is None or task.get("status") != "done":
+            continue
+        for deviation in _task_deviation_strings(task, issues):
+            matched = _is_blocking_deviation(deviation)
+            if matched is None:
+                continue
+            task["status"] = "blocked"
+            _append_executor_note(
+                task,
+                f"[harness] status auto-downgraded: deviation contains {matched}",
+            )
+            break
 
 
 def _normalize_field_aliases(entry: dict[str, Any], required_fields: tuple[str, ...]) -> dict[str, Any]:
@@ -194,6 +303,13 @@ def _validate_and_merge_batch(
         merge_fields=merge_fields,
         issues=issues,
         label=merge_label,
+    )
+    _apply_task_update_guardrails(
+        valid_entries,
+        targets_by_id=targets_by_id,
+        id_field=id_field,
+        merge_fields=merge_fields,
+        issues=issues,
     )
     if incomplete_message is not None and merged_count < total:
         issues.append(incomplete_message(merged_count, total))
