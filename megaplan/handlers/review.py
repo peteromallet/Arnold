@@ -25,6 +25,7 @@ from megaplan.types import (
     STATE_FINALIZED,
     STATE_REVIEWED,
     StepResponse,
+    normalize_robustness,
 )
 from megaplan.workers import (
     WorkerResult,
@@ -207,6 +208,7 @@ def _resolve_review_outcome(
 
     Returns (result, next_state, next_step).
     """
+    robustness = normalize_robustness(robustness)
     blocked = (
         verdict_count < total_tasks
         or check_count < total_checks

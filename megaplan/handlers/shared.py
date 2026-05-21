@@ -424,7 +424,12 @@ def _write_plan_version(
         if state.get("plan_versions")
         else None
     )
-    if isinstance(prior_version, dict) and prior_version.get("hash") == new_hash:
+    is_primary_plan_artifact = resolved_plan_filename == f"plan_v{version}.md"
+    if (
+        is_primary_plan_artifact
+        and isinstance(prior_version, dict)
+        and prior_version.get("hash") == new_hash
+    ):
         raise CliError(
             "cache_hit_suspected",
             "revise produced byte-identical content to prior plan version - likely a session-cache replay. See ticket.",

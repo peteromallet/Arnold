@@ -1162,20 +1162,20 @@ def bundled_global_file(name: str) -> str:
 # `tests/test_setup_no_shadow_skills.py` asserts every target uses symlink.
 _GLOBAL_TARGETS = [
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan/SKILL.md", "data": "_composed/claude_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan", "data": "_codex_skills/megaplan", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan", "data": "_codex_skills/megaplan", "install": "symlink"},
     {"agent": "cursor", "detect": ".cursor", "path": ".cursor/rules/megaplan.mdc", "data": "_composed/cursor_rule.mdc", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-bakeoff/SKILL.md", "data": "bakeoff_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-bakeoff", "data": "_codex_skills/megaplan-bakeoff", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-bakeoff", "data": "_codex_skills/megaplan-bakeoff", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets", "data": "_codex_skills/megaplan-tickets", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets", "data": "_codex_skills/megaplan-tickets", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision", "data": "_codex_skills/megaplan-decision", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision", "data": "_codex_skills/megaplan-decision", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic", "data": "_codex_skills/megaplan-epic", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic", "data": "_codex_skills/megaplan-epic", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe", "data": "_codex_skills/megaplan-observe", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-observe", "data": "_codex_skills/megaplan-observe", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-cloud/SKILL.md", "data": "cloud_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-cloud", "data": "_codex_skills/megaplan-cloud", "install": "dir_symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-cloud", "data": "_codex_skills/megaplan-cloud", "install": "symlink"},
 ]
 
 
@@ -3126,17 +3126,6 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
     invoking repo, its branches (other than the one it creates), its remotes,
     its stash, or any other worktree. If anything looks ambiguous, it raises.
     """
-    from megaplan.bakeoff.worktree import (
-        branch_exists,
-        carry_dirty_state_atomic,
-        create_named_worktree,
-        ensure_no_inprogress_op,
-        has_dirty_state,
-        resolve_ref,
-        validate_worktree_name,
-        worktree_registered,
-    )
-
     name = getattr(args, "in_worktree", None)
     clean_worktree = bool(getattr(args, "clean_worktree", False))
     carry_dirty_flag = bool(getattr(args, "carry_dirty", False))
@@ -3157,6 +3146,17 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
                 "--clean-worktree / --carry-dirty are only valid with --in-worktree",
             )
         return
+
+    from megaplan.bakeoff.worktree import (
+        branch_exists,
+        carry_dirty_state_atomic,
+        create_named_worktree,
+        ensure_no_inprogress_op,
+        has_dirty_state,
+        resolve_ref,
+        validate_worktree_name,
+        worktree_registered,
+    )
 
     if getattr(args, "project_dir", None):
         raise CliError(

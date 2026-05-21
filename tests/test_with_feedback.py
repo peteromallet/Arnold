@@ -30,7 +30,7 @@ from megaplan._core import (
     workflow_transition,
 )
 from megaplan._core.workflow import _RESUME_ACTIVE_STATES, _with_feedback_from_state, _workflow_for_robustness
-from megaplan.types import STATE_INITIALIZED, STATE_PLANNED, STATE_GATED, STATE_FINALIZED, STATE_PREPPED, STATE_CRITIQUED, CliError
+from megaplan.types import STATE_INITIALIZED, STATE_PLANNED, STATE_GATED, STATE_FINALIZED, STATE_PREPPED, STATE_CRITIQUED, CliError, normalize_robustness
 
 # ---------------------------------------------------------------------------
 # (a) Workflow shape — ``workflow_includes_step`` at every robustness level
@@ -446,7 +446,7 @@ def test_light_tiny_execute_short_circuit_suppressed_with_feedback(
     plan_dir = megaplan.plans_root(root) / response["plan"]
     state = read_json(plan_dir / "state.json")
     assert state["config"]["with_feedback"] is True
-    assert state["config"]["robustness"] == robustness
+    assert state["config"]["robustness"] == normalize_robustness(robustness)
 
     # Verify workflow_includes_step behaviour
     assert workflow_includes_step(robustness, "review", with_feedback=True) is True
