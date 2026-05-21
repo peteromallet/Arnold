@@ -536,6 +536,46 @@ def test_recover_codex_payload_keeps_meaningful_critique_when_template_is_empty(
     assert recovered == meaningful_payload
 
 
+def test_recover_codex_payload_critique_scoring_handles_scalar_checks(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    output_path = tmp_path / "codex-o.json"
+    malformed_payload = {
+        "checks": 1,
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    complete_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [
+                    {
+                        "detail": "A scalar checks candidate must not crash recovery.",
+                        "flagged": False,
+                    }
+                ],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    output_path.write_text(json.dumps(malformed_payload), encoding="utf-8")
+    (plan_dir / "critique_output.json").write_text(json.dumps(complete_payload), encoding="utf-8")
+
+    recovered = _recover_codex_payload(
+        "critique",
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw="",
+    )
+
+    assert recovered == complete_payload
+
+
 def test_recover_codex_payload_normalizes_execute_batch_aliases(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()

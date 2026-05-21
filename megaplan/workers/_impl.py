@@ -1216,6 +1216,8 @@ def _recover_codex_payload(
     if step == "critique" and len(valid_payloads) > 1:
         def _critique_completeness_score(item: dict[str, Any]) -> tuple[int, int]:
             checks = item.get("checks", [])
+            if not isinstance(checks, list):
+                return (0, 0)
             completed_checks = 0
             total_findings = 0
             for check in checks:

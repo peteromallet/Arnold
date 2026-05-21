@@ -1542,6 +1542,14 @@ def _canonical_bakeoff_skill() -> str:
     return resources.files("megaplan").joinpath("data", "bakeoff_skill.md").read_text(encoding="utf-8")
 
 
+def _canonical_pre_commit_hook() -> str:
+    return (
+        resources.files("megaplan")
+        .joinpath("data", "pre-commit-hook.sh")
+        .read_text(encoding="utf-8")
+    )
+
+
 def _canonical_composed(name: str) -> str:
     return (
         resources.files("megaplan")
@@ -1859,9 +1867,54 @@ def handle_setup_global(force: bool = False, home: Path | None = None) -> StepRe
     return result_data
 
 
+def handle_setup_hooks(target_dir: Path | None = None, *, force: bool = False) -> StepResponse:
+    root = _find_megaplan_root((target_dir or Path.cwd()).resolve())
+    git_dir = root / ".git"
+    if not git_dir.exists():
+        raise CliError(
+            "not_git_repo",
+            f"Cannot install hooks because {root} does not contain a .git directory.",
+        )
+    if not git_dir.is_dir():
+        raise CliError(
+            "unsupported_git_dir",
+            f"Cannot install hooks for {root}: .git is not a directory.",
+        )
+    hook_path = git_dir / "hooks" / "pre-commit"
+    content = _canonical_pre_commit_hook()
+    if hook_path.exists() and not force:
+        if hook_path.read_text(encoding="utf-8") == content:
+            return {
+                "success": True,
+                "step": "setup",
+                "mode": "hooks",
+                "summary": f"Pre-commit hook already up to date at {hook_path}",
+                "path": str(hook_path),
+                "skipped": True,
+            }
+        raise CliError(
+            "hook_exists",
+            f"Pre-commit hook already exists at {hook_path}. Re-run with --force to replace it.",
+        )
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(hook_path, content)
+    hook_path.chmod(0o755)
+    return {
+        "success": True,
+        "step": "setup",
+        "mode": "hooks",
+        "summary": f"Installed pre-commit hook at {hook_path}",
+        "path": str(hook_path),
+        "skipped": False,
+    }
+
+
 def handle_setup(args: argparse.Namespace) -> StepResponse:
     if getattr(args, "regen_composed", False):
         return handle_regen_composed()
+    if getattr(args, "install_hooks", False):
+        target_dir = Path(args.target_dir).resolve() if args.target_dir else Path.cwd()
+        return handle_setup_hooks(target_dir, force=args.force)
     local = args.local or args.target_dir
     if not local:
         return handle_setup_global(force=args.force)
@@ -3063,6 +3116,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--regen-composed",
         action="store_true",
         help="Regenerate composed skill bundles from source files",
+    )
+    setup_parser.add_argument(
+        "--install-hooks",
+        action="store_true",
+        help="Install the canonical megaplan git hooks into this repository",
     )
 
     init_parser = subparsers.add_parser("init")
