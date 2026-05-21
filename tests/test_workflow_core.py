@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import warnings
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from vibecomfy.ingest.index import index_workflows
 from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape, normalize_to_api
 from vibecomfy.registry.library import load_workflow_reference, workflow_from_id
 from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+from vibecomfy.handles import Handle
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -40,6 +42,49 @@ def test_api_workflow_converts_to_vibe_workflow() -> None:
     assert api["2"]["inputs"]["seed"] == 42
     assert api["2"]["inputs"]["steps"] == 8
     assert api["2"]["inputs"]["positive"] == ["1", 0]
+    assert workflow.export_to_json(format="api") == api
+    with pytest.raises(ValueError, match="Unsupported workflow JSON export format"):
+        workflow.export_to_json(format="ui")
+
+
+def test_export_to_json_api_is_compile_api_for_ready_template() -> None:
+    from vibecomfy import load_workflow_any
+
+    workflow = load_workflow_any("image/z_image")
+
+    assert workflow.export_to_json(format="api") == workflow.compile("api")
+
+
+def test_handle_is_generic_for_static_tools() -> None:
+    assert Handle[str] is not None
+
+
+def test_node_builder_handles_include_schema_output_type() -> None:
+    workflow = VibeWorkflow("typed", WorkflowSource("typed"))
+
+    image = workflow.node("EmptyImage", width=8, height=8, batch_size=1, color=0)
+    latent = workflow.node("EmptyLatentImage", width=8, height=8, batch_size=1)
+
+    assert image.out(0).output_type == "IMAGE"
+    assert latent.out(0).output_type == "LATENT"
+
+
+def test_strict_types_warns_for_known_incompatible_connections_only() -> None:
+    workflow = VibeWorkflow("typed", WorkflowSource("typed"), strict_types=True)
+    image = workflow.node("EmptyImage", width=8, height=8, batch_size=1, color=0)
+    latent = workflow.node("EmptyLatentImage", width=8, height=8, batch_size=1)
+    sampler = workflow.node("KSampler")
+    unknown = workflow.node("UnknownNode")
+
+    with pytest.warns(RuntimeWarning, match="IMAGE.*LATENT"):
+        workflow.connect(image.out(0), f"{sampler.id}.latent_image")
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        workflow.connect(latent.out(0), f"{sampler.id}.latent_image")
+        workflow.connect(unknown.out(0), f"{sampler.id}.latent_image")
+
+    assert captured == []
 
 
 def test_api_workflow_import_preserves_schema_output_names() -> None:

@@ -12,7 +12,13 @@ from vibecomfy.comfy_command import has_comfyui_runtime
 from vibecomfy.runtime.client import ComfyClient
 from vibecomfy.runtime.server import comfy_server
 
-from .cache import load_object_info_cache, object_info_cache_path, runtime_fingerprint, write_object_info_cache
+from .cache import (
+    load_object_info_cache,
+    object_info_cache_candidates,
+    object_info_cache_path,
+    runtime_fingerprint,
+    write_object_info_cache,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -226,6 +232,14 @@ class ObjectInfoIndexSchemaProvider:
             self._schemas[class_type] = self._load_schema(class_type)
         return self._schemas[class_type]
 
+    def schemas(self) -> dict[str, NodeSchema]:
+        loaded: dict[str, NodeSchema] = {}
+        for class_type in self._load_index():
+            schema = self.get_schema(class_type)
+            if schema is not None:
+                loaded[class_type] = schema
+        return loaded
+
     def _load_index(self) -> dict[str, str]:
         if self._index is not None:
             return self._index
@@ -251,7 +265,16 @@ class ObjectInfoIndexSchemaProvider:
         info = data.get(class_type)
         if not isinstance(info, dict):
             return None
-        return _schema_from_object_info(class_type, info)
+        schema = _schema_from_object_info(class_type, info)
+        return NodeSchema(
+            class_type=schema.class_type,
+            pack=schema.pack,
+            inputs=schema.inputs,
+            outputs=schema.outputs,
+            source_provider="object_info_index",
+            source_cache_path=str(self.root / filename),
+            source_package=schema.pack,
+        )
 
 
 class CompositeSchemaProvider:
@@ -267,6 +290,63 @@ class CompositeSchemaProvider:
             if schema is not None:
                 return schema
         return None
+
+
+class AuthoringSchemaProvider:
+    """Offline schema provider for schema-only authoring and CLI inspection.
+
+    Unlike ``ConversionSchemaProvider``, this provider intentionally prefers the
+    committed structured object_info cache before local/generated
+    ``node_index.json`` so schema-only commands are not shadowed by stale local
+    indexes.
+    """
+
+    def __init__(
+        self,
+        *,
+        object_info_index_root: str | Path | None = None,
+        object_info_cache_path: str | Path | None = None,
+        object_info_cache_dir: str | Path = "out/cache",
+        source_roots: list[str | Path] | None = None,
+        node_index_path: str | Path = "node_index.json",
+    ) -> None:
+        self.object_info_index_root = Path(object_info_index_root) if object_info_index_root is not None else _default_object_info_index_root()
+        self.object_info_cache_path = Path(object_info_cache_path) if object_info_cache_path is not None else None
+        self.object_info_cache_dir = Path(object_info_cache_dir)
+        self.node_index_path = Path(node_index_path)
+        self._providers: tuple[SchemaProvider, ...] = self._build_providers(source_roots=source_roots)
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.get_schema(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        for provider in self._providers:
+            try:
+                schema = provider.get_schema(class_type)
+            except SchemaIndexError:
+                continue
+            if schema is not None:
+                return schema
+        return None
+
+    def schemas(self) -> dict[str, NodeSchema]:
+        merged: dict[str, NodeSchema] = {}
+        for provider in reversed(self._providers):
+            schemas = schemas_for(provider)
+            if schemas is not None:
+                merged.update({str(key): value for key, value in schemas.items() if isinstance(value, NodeSchema)})
+        return merged
+
+    def _build_providers(self, *, source_roots: list[str | Path] | None) -> tuple[SchemaProvider, ...]:
+        providers: list[SchemaProvider] = []
+        if self.object_info_cache_path is not None:
+            providers.append(ObjectInfoSchemaProvider(self.object_info_cache_path))
+        providers.append(ObjectInfoIndexSchemaProvider(self.object_info_index_root))
+        if self.object_info_cache_path is None:
+            providers.extend(ObjectInfoSchemaProvider(path) for path in object_info_cache_candidates(self.object_info_cache_dir))
+        providers.append(SourceSchemaProvider(source_roots))
+        providers.append(LocalSchemaProvider(self.node_index_path))
+        return tuple(providers)
 
 
 class ConversionSchemaProvider:
@@ -566,14 +646,16 @@ class RuntimeSchemaProvider:
 
 
 def get_schema_provider(
-    prefer: Literal["runtime", "local", "auto"] = "auto",
+    prefer: Literal["runtime", "local", "authoring", "auto"] = "auto",
     *,
     server_url: str | None = None,
-) -> RuntimeSchemaProvider | LocalSchemaProvider | CompositeSchemaProvider:
+) -> RuntimeSchemaProvider | LocalSchemaProvider | AuthoringSchemaProvider | CompositeSchemaProvider:
     if prefer == "runtime":
         return RuntimeSchemaProvider(server_url=server_url)
     if prefer == "local":
         return LocalSchemaProvider()
+    if prefer == "authoring":
+        return get_authoring_schema_provider()
     if prefer != "auto":
         raise ValueError(f"Unknown schema provider preference: {prefer}")
     if server_url:
@@ -583,6 +665,23 @@ def get_schema_provider(
     if has_comfyui_runtime():
         return RuntimeSchemaProvider(server_url=server_url)
     return LocalSchemaProvider()
+
+
+def get_authoring_schema_provider(
+    *,
+    object_info_cache_path: str | Path | None = None,
+    object_info_index_root: str | Path | None = None,
+    node_index_path: str | Path = "node_index.json",
+) -> AuthoringSchemaProvider:
+    return AuthoringSchemaProvider(
+        object_info_cache_path=object_info_cache_path,
+        object_info_index_root=object_info_index_root,
+        node_index_path=node_index_path,
+    )
+
+
+def _default_object_info_index_root() -> Path:
+    return Path(__file__).resolve().parents[1] / "porting" / "cache" / "object_info"
 
 
 def _schema_from_object_info(class_type: str, info: dict[str, Any]) -> NodeSchema:

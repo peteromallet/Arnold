@@ -4,18 +4,21 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def DepthAnything_V2(
     *args: VibeWorkflow,
     _id: str | None = None,
-    da_model: Any = _UNSET,
-    images: Any = _UNSET,
+    da_model: Any | _Omitted = _UNSET,
+    images: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -41,8 +44,8 @@ def DepthAnything_V2(
 def DownloadAndLoadDepthAnythingV2Model(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    precision: Any = _UNSET,
+    model: Literal['depth_anything_v2_vits_fp16.safetensors', 'depth_anything_v2_vits_fp32.safetensors', 'depth_anything_v2_vitb_fp16.safetensors', 'depth_anything_v2_vitb_fp32.safetensors', 'depth_anything_v2_vitl_fp16.safetensors', 'depth_anything_v2_vitl_fp32.safetensors', 'depth_anything_v2_vitg_fp32.safetensors', 'depth_anything_v2_metric_hypersim_vitl_fp32.safetensors', 'depth_anything_v2_metric_vkitti_vitl_fp32.safetensors'] | _Omitted = _UNSET,
+    precision: Literal['auto', 'bf16', 'fp16', 'fp32'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

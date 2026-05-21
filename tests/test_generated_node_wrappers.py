@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import inspect
+import tomllib
+from pathlib import Path
+
 import pytest
 
 from vibecomfy.nodes.core import EmptyImage, SaveImage
@@ -50,3 +54,40 @@ def test_generated_wrapper_preserves_extras_and_pass_raw() -> None:
     assert saved.node.id == "10"
     assert wf.nodes["10"].inputs["custom_extra"] == "kept"
     assert wf.nodes["10"].inputs["images"] is image
+
+
+def test_generated_wrapper_annotations_use_literal_and_omitted_sentinel() -> None:
+    from vibecomfy.nodes.core import KSampler
+
+    signature = inspect.signature(KSampler)
+    sampler_annotation = signature.parameters["sampler_name"].annotation
+    steps_annotation = signature.parameters["steps"].annotation
+
+    assert "Literal[" in sampler_annotation
+    assert "Any" not in sampler_annotation
+    assert "_Omitted" in sampler_annotation
+    assert steps_annotation == "int | _Omitted"
+
+
+def test_generated_stubs_and_typed_marker_are_present() -> None:
+    root = Path(__file__).resolve().parents[1]
+    core_stub = root / "vibecomfy" / "nodes" / "_generated" / "core.pyi"
+    core_reexport_stub = root / "vibecomfy" / "nodes" / "core.pyi"
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    artifacts = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["artifacts"]
+
+    assert (root / "vibecomfy" / "py.typed").is_file()
+    assert "vibecomfy/py.typed" in artifacts
+    assert "vibecomfy/**/*.pyi" in artifacts
+    text = core_stub.read_text(encoding="utf-8")
+    assert "def KSampler(" in text
+    assert "sampler_name: Literal[" in text
+    assert "'euler'" in text
+    assert "sampler_name: Literal[" in (root / "vibecomfy" / "nodes" / "_generated" / "core.py").read_text(encoding="utf-8")
+    assert "steps: int | _Omitted = ..." in text
+    assert "denoise: float | _Omitted = ..." in text
+    assert "pass_raw: bool = ..." in text
+    assert "**_extras: Any" in text
+    assert "| _Omitted = ..." in text
+    assert core_reexport_stub.is_file()
+    assert "from vibecomfy.nodes._generated.core import *" in core_reexport_stub.read_text(encoding="utf-8")

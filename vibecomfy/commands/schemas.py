@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import shutil
 import json as json_module
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 from vibecomfy.commands._output import emit
 from vibecomfy.porting.object_info.consume import get_class, list_classes
 from vibecomfy.porting.object_info.serialize import CACHE_DIR, refresh_from_source
+from vibecomfy.schema import RuntimeSchemaProvider
 
 
 # ---------------------------------------------------------------------------
@@ -67,17 +69,89 @@ def _extract_class_types_from_template(template_path: str | Path) -> list[str]:
 
 def _cmd_schemas_refresh(args: argparse.Namespace) -> int:
     """``schemas refresh --source <path>``"""
-    if args.runtime is not None:
-        raise NotImplementedError(
-            f"--runtime {args.runtime} is not implemented yet. "
-            "TODO: support --runtime embedded|server|runpod for live object_info fetching."
-        )
-    result = refresh_from_source(args.source)
+    if args.server_url:
+        provider = RuntimeSchemaProvider(server_url=args.server_url)
+        object_info = provider.object_info()
+        source = Path("out/cache") / "object_info.schemas-refresh.json"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(json_module.dumps(object_info, indent=2, sort_keys=True), encoding="utf-8")
+        result = refresh_from_source(str(source))
+        result["source"] = str(source)
+        result["server_url"] = args.server_url
+    else:
+        if args.source is None:
+            print("--source is required unless --server-url is supplied", file=__import__("sys").stderr)
+            return 2
+        result = refresh_schema_cache_from_source(args.source)
     msg = (
         f"Cache refreshed: {result['classes_indexed']} classes "
         f"across {result['packs_written']} packs → {result['cache_dir']}"
     )
     return emit(result, json=args.json, text_renderer=lambda _: msg)
+
+
+def refresh_schema_cache_from_source(source: str | Path) -> dict[str, Any]:
+    source_path = Path(source)
+    if source_path.is_dir() and (source_path / "index.json").is_file():
+        return _copy_structured_cache(source_path)
+    if source_path.name == "index.json" and source_path.parent.is_dir():
+        return _copy_structured_cache(source_path.parent)
+    if source_path.is_file():
+        data = json_module.loads(source_path.read_text(encoding="utf-8"))
+        if _looks_like_structured_pack_cache(data):
+            return _copy_single_structured_cache_file(source_path, data)
+    result = refresh_from_source(str(source_path))
+    result["source"] = str(source_path)
+    return result
+
+
+def _copy_structured_cache(source_dir: Path) -> dict[str, Any]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for path in source_dir.glob("*.json"):
+        shutil.copy2(path, CACHE_DIR / path.name)
+        copied += 1
+    index = json_module.loads((CACHE_DIR / "index.json").read_text(encoding="utf-8"))
+    return {
+        "status": "ok",
+        "classes_indexed": len(index) if isinstance(index, dict) else 0,
+        "packs_written": max(0, copied - 1),
+        "cache_dir": str(CACHE_DIR),
+        "version": "structured-cache",
+        "source": str(source_dir),
+    }
+
+
+def _copy_single_structured_cache_file(source_file: Path, data: dict[str, Any]) -> dict[str, Any]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    target = CACHE_DIR / source_file.name
+    shutil.copy2(source_file, target)
+    index_path = CACHE_DIR / "index.json"
+    if index_path.is_file():
+        index = json_module.loads(index_path.read_text(encoding="utf-8"))
+        if not isinstance(index, dict):
+            index = {}
+    else:
+        index = {}
+    for class_type in data:
+        if class_type != "_cache_metadata":
+            index[str(class_type)] = target.name
+    index_path.write_text(json_module.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
+    return {
+        "status": "ok",
+        "classes_indexed": len([key for key in data if key != "_cache_metadata"]),
+        "packs_written": 1,
+        "cache_dir": str(CACHE_DIR),
+        "version": "structured-cache",
+        "source": str(source_file),
+    }
+
+
+def _looks_like_structured_pack_cache(data: Any) -> bool:
+    if not isinstance(data, dict) or not data:
+        return False
+    entries = [value for key, value in data.items() if key != "_cache_metadata"]
+    return bool(entries) and all(isinstance(value, dict) and "inputs" in value and "outputs" in value for value in entries)
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +362,9 @@ def register(subparsers) -> None:
 
     # --- schemas refresh --------------------------------------------------
     refresh = schemas_sub.add_parser("refresh", help="Regenerate cache from object_info dump")
-    refresh.add_argument("--source", required=True, help="Path to object_info JSON dump")
+    refresh.add_argument("--source", help="Path to object_info JSON dump or structured object_info cache file/directory")
     refresh.add_argument("--json", action="store_true", help="Output as JSON")
+    refresh.add_argument("--server-url", help="Fetch object_info from a live server URL before refreshing the cache")
     # Stubs for future runtime modes
     refresh.add_argument(
         "--runtime",

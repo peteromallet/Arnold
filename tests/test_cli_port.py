@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from vibecomfy.cli import build_parser
-from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_lint, _cmd_port_rules, _cmd_port_simulate, _cmd_port_widgets
+from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_doctor_all, _cmd_port_export, _cmd_port_lint, _cmd_port_rules, _cmd_port_simulate, _cmd_port_validate_call, _cmd_port_widgets
 
 from tests._cli_helpers import (
     _load_emitted_provenance,
@@ -57,6 +59,227 @@ def test_port_subcommand_help_is_discoverable(capsys: pytest.CaptureFixture[str]
     assert "--ready-id" in convert_text
     assert "--head-check-models" in convert_text
     assert "--runtime-object-info" in convert_text
+
+
+def test_port_export_ready_template_json_matches_compile(capsys: pytest.CaptureFixture[str]) -> None:
+    from vibecomfy import load_workflow_any
+
+    code = _cmd_port_export(
+        argparse.Namespace(
+            workflow="image/z_image",
+            ready=True,
+            to="json",
+            json=True,
+            object_info_cache=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["api"] == load_workflow_any("image/z_image").compile("api")
+
+
+def test_port_export_ready_template_subprocess_json_matches_compile() -> None:
+    from vibecomfy import load_workflow_any
+
+    result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "port", "export", "image/z_image", "--ready", "--to", "json", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["api"] == load_workflow_any("image/z_image").compile("api")
+
+
+def test_port_export_rejects_unsupported_target(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_port_export(argparse.Namespace(workflow="image/z_image", ready=True, to="yaml", json=True))
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "unsupported export target" in captured.err
+
+
+def test_port_validate_call_returns_structured_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_port_validate_call(
+        argparse.Namespace(
+            class_type="KSampler",
+            kwargs=json.dumps({"seed": "bad", "sampler_name": "not-a-sampler", "steps": 999999, "extra": 1}),
+            json=True,
+            object_info_cache=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    codes = {issue["code"] for issue in payload["issues"]}
+    assert code == 1
+    assert payload["status"] == "error"
+    assert payload["provider"] == "AuthoringSchemaProvider"
+    assert {"missing_required_input", "unknown_input", "value_not_in_enum", "value_out_of_range", "primitive_type_mismatch"} <= codes
+
+
+def test_port_validate_call_success_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_port_validate_call(
+        argparse.Namespace(
+            class_type="SaveImage",
+            kwargs=json.dumps({"images": ["1", 0], "filename_prefix": "out/test"}),
+            json=True,
+            object_info_cache=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["issues"] == []
+
+
+def test_port_validate_call_subprocess_nonzero_for_structured_errors() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "vibecomfy.cli",
+            "port",
+            "validate-call",
+            "KSampler",
+            "--kwargs",
+            '{"seed": "bad"}',
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.returncode == 1
+    assert any(issue["code"] == "primitive_type_mismatch" for issue in payload["issues"])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected_code", "expected_input"),
+    [
+        ({"sampler_name": "not-a-sampler"}, "value_not_in_enum", "sampler_name"),
+        ({}, "missing_required_input", "model"),
+        ({"unknown_knob": 1}, "unknown_input", "unknown_knob"),
+        ({"steps": 999999}, "value_out_of_range", "steps"),
+        ({"seed": "12"}, "primitive_type_mismatch", "seed"),
+    ],
+)
+def test_port_validate_call_subprocess_reports_stable_error_fields(
+    kwargs: dict[str, object],
+    expected_code: str,
+    expected_input: str,
+) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "vibecomfy.cli",
+            "port",
+            "validate-call",
+            "KSampler",
+            "--kwargs",
+            json.dumps(kwargs),
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    matching = [issue for issue in payload["issues"] if issue["code"] == expected_code and issue["input"] == expected_input]
+    assert result.returncode == 1
+    assert payload["status"] == "error"
+    assert payload["class_type"] == "KSampler"
+    assert payload["provider"] == "AuthoringSchemaProvider"
+    assert matching
+    issue = matching[0]
+    assert set(issue) == {"code", "message", "severity", "input", "detail"}
+    assert issue["severity"] == "error"
+    assert issue["detail"]["class_type"] == "KSampler"
+    assert issue["detail"]["input"] == expected_input
+
+
+def test_port_doctor_all_json_combines_isolated_sections(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("vibecomfy.commands.doctor.read_lockfile", lambda: [])
+    scratchpad = tmp_path / "doctor_all.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    workflow = VibeWorkflow(id="doctor-all", source=WorkflowSource(id="doctor-all"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="EmptyImage", inputs={"width": 8, "height": 8, "batch_size": 1, "color": 0})
+    workflow.nodes["2"] = VibeNode(id="2", class_type="SaveImage", inputs={"filename_prefix": "out/doctor"})
+    workflow.edges.append(VibeEdge("1", "0", "2", "images"))
+    workflow.finalize_metadata()
+    return workflow
+""",
+        encoding="utf-8",
+    )
+
+    code = _cmd_port_doctor_all(argparse.Namespace(workflow=str(scratchpad), ready=False, json=True, object_info_cache=None))
+
+    payload = json.loads(capsys.readouterr().out)
+    sections = {section["name"]: section for section in payload["sections"]}
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert {"port_check", "nodes_install_plan", "validate", "doctor", "runtime_doctor"} <= set(sections)
+    for section in sections.values():
+        assert "duration_ms" in section
+        assert "payload" in section
+        assert "findings" in section
+        assert "stderr" in section
+        assert "next_action" in section
+    assert payload["summary"]["section_count"] == 5
+
+
+def test_port_doctor_all_continues_after_section_failures(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_port_doctor_all(argparse.Namespace(workflow="image/z_image", ready=True, json=True, object_info_cache=None))
+
+    payload = json.loads(capsys.readouterr().out)
+    sections = {section["name"]: section for section in payload["sections"]}
+    assert code == 1
+    assert payload["status"] == "error"
+    assert payload["summary"]["section_count"] == 5
+    assert sections["runtime_doctor"]["status"] == "ok"
+    assert sections["doctor"]["payload"] is not None
+    assert isinstance(payload["findings"], list)
+    assert payload["next_action"]
+
+
+def test_port_doctor_all_subprocess_stdout_is_single_json_object() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "port", "doctor-all", "image/z_image", "--ready", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    decoder = json.JSONDecoder()
+    payload, end = decoder.raw_decode(result.stdout)
+    assert result.stdout[end:].strip() == ""
+    assert result.stdout.lstrip().startswith("{")
+    assert result.stdout.rstrip().endswith("}")
+    assert result.stderr == ""
+    assert result.returncode == 1
+    assert payload["summary"]["section_count"] == 5
+    sections = {section["name"]: section for section in payload["sections"]}
+    assert sections["runtime_doctor"]["status"] == "ok"
+    assert sections["runtime_doctor"]["payload"] is not None
+    assert sections["doctor"]["payload"] is not None
+    assert all(isinstance(section["captured_stdout"], str) for section in payload["sections"])
 
 
 def test_port_check_json_returns_zero_for_clean_workflow(

@@ -23,10 +23,13 @@ from vibecomfy.schema import (
     RuntimeSchemaProvider,
     SchemaIndexError,
     SourceSchemaProvider,
+    get_authoring_schema_provider,
     get_schema_provider,
     schema_for,
     schema_registry_empty,
     schemas_for,
+    socket_types_compatible,
+    validate_node_call,
 )
 from vibecomfy.schema.cache import load_object_info_cache
 from vibecomfy.workflow import ValidationIssue, VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
@@ -46,6 +49,90 @@ class LegacyGetSchemaProvider:
 
     def get(self, class_type: str) -> NodeSchema | None:
         return self._schemas.get(class_type)
+
+
+def test_authoring_schema_provider_prefers_committed_object_info_when_node_index_empty(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+
+    provider = get_authoring_schema_provider()
+
+    assert provider.get_schema("KSampler").source_provider == "object_info_index"
+    assert provider.get_schema("SaveImage").source_provider == "object_info_index"
+
+
+def test_authoring_schema_provider_prefers_committed_object_info_when_node_index_stale(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([
+            {"class_type": "KSampler", "inputs": {"bogus": "STRING"}, "outputs": ["IMAGE"]},
+            {"class_type": "SaveImage", "inputs": {"bogus": "STRING"}, "outputs": []},
+        ]),
+        encoding="utf-8",
+    )
+
+    provider = get_authoring_schema_provider()
+    ksampler = provider.get_schema("KSampler")
+    save_image = provider.get_schema("SaveImage")
+
+    assert ksampler.source_provider == "object_info_index"
+    assert "latent_image" in ksampler.inputs
+    assert "bogus" not in ksampler.inputs
+    assert save_image.source_provider == "object_info_index"
+    assert "images" in save_image.inputs
+
+
+def test_authoring_schema_provider_prefers_committed_object_info_when_node_index_incomplete(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "node_index.json").write_text(
+        json.dumps([{"class_type": "KSampler", "inputs": {"seed": "INT"}, "outputs": []}]),
+        encoding="utf-8",
+    )
+
+    provider = get_authoring_schema_provider()
+
+    assert provider.get_schema("KSampler").source_provider == "object_info_index"
+    assert provider.get_schema("SaveImage").source_provider == "object_info_index"
+
+
+def test_socket_types_compatible_public_helper_preserves_validation_semantics() -> None:
+    assert socket_types_compatible("LATENT", "LATENT") is True
+    assert socket_types_compatible("ANY", "IMAGE") is True
+    assert socket_types_compatible("*", "IMAGE") is True
+    assert socket_types_compatible(None, "IMAGE") is True
+    assert socket_types_compatible("IMAGE", "LATENT") is False
+
+
+def test_validate_node_call_reports_structured_primitive_errors() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "PrimitiveNode": NodeSchema(
+                class_type="PrimitiveNode",
+                pack=None,
+                inputs={
+                    "required_text": InputSpec("STRING", required=True),
+                    "mode": InputSpec("CHOICE", choices=["a", "b"]),
+                    "steps": InputSpec("INT", min=1, max=4),
+                    "enabled": InputSpec("BOOLEAN"),
+                },
+                outputs=[],
+            )
+        }
+    )
+
+    report = validate_node_call(
+        "PrimitiveNode",
+        {"mode": "c", "steps": 9, "enabled": "yes", "extra": True},
+        provider,
+    )
+
+    assert report.ok is False
+    by_code = {issue.code: issue for issue in report.issues}
+    assert by_code["missing_required_input"].input == "required_text"
+    assert by_code["unknown_input"].input == "extra"
+    assert by_code["value_not_in_enum"].detail["choices"] == ["a", "b"]
+    assert by_code["value_out_of_range"].detail["max"] == 4
+    assert by_code["primitive_type_mismatch"].detail["expected"] == "bool"
 
 
 def _workflow(*nodes: VibeNode, edges: list[VibeEdge] | None = None) -> VibeWorkflow:

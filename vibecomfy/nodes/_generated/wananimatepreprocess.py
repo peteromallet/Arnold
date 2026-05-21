@@ -4,23 +4,26 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def DrawViTPose(
     *args: VibeWorkflow,
     _id: str | None = None,
-    pose_data: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    retarget_padding: Any = _UNSET,
-    body_stick_width: Any = _UNSET,
-    hand_stick_width: Any = _UNSET,
-    draw_head: Any = _UNSET,
+    pose_data: Any | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    retarget_padding: int | _Omitted = _UNSET,
+    body_stick_width: int | _Omitted = _UNSET,
+    hand_stick_width: int | _Omitted = _UNSET,
+    draw_head: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -56,9 +59,9 @@ def DrawViTPose(
 def OnnxDetectionModelLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vitpose_model: Any = _UNSET,
-    yolo_model: Any = _UNSET,
-    onnx_device: Any = _UNSET,
+    vitpose_model: Any | _Omitted = _UNSET,
+    yolo_model: Any | _Omitted = _UNSET,
+    onnx_device: Literal['CUDAExecutionProvider', 'CPUExecutionProvider'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -86,12 +89,12 @@ def OnnxDetectionModelLoader(
 def PoseAndFaceDetection(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    images: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    retarget_image: Any = _UNSET,
-    face_padding: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    retarget_image: Any | _Omitted = _UNSET,
+    face_padding: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -125,14 +128,14 @@ def PoseAndFaceDetection(
 def PoseDetectionOneToAllAnimation(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    images: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    align_to: Any = _UNSET,
-    draw_face_points: Any = _UNSET,
-    draw_head: Any = _UNSET,
-    ref_image: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    align_to: Literal['ref', 'pose', 'none'] | _Omitted = _UNSET,
+    draw_face_points: Literal['full', 'weak', 'none'] | _Omitted = _UNSET,
+    draw_head: Literal['full', 'weak', 'none'] | _Omitted = _UNSET,
+    ref_image: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -170,7 +173,7 @@ def PoseDetectionOneToAllAnimation(
 def PoseRetargetPromptHelper(
     *args: VibeWorkflow,
     _id: str | None = None,
-    pose_data: Any = _UNSET,
+    pose_data: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

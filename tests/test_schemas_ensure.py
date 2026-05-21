@@ -7,6 +7,7 @@ and synthetic Python packages with relative imports.
 from __future__ import annotations
 
 import ast
+import argparse
 import json
 import os
 import sys
@@ -15,11 +16,91 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+import yaml
 
 # Add repo root for imports
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 from vibecomfy.handles import Handle
+from vibecomfy.commands import schemas as schemas_command
+
+
+def test_schemas_refresh_accepts_structured_cache_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache_root = tmp_path / "object_info_cache"
+    monkeypatch.setattr(schemas_command, "CACHE_DIR", cache_root)
+    source = tmp_path / "pack.json"
+    source.write_text(
+        json.dumps(
+            {
+                "TinyNode": {
+                    "pack": "tiny",
+                    "inputs": {"required": {"value": ["INT", {"default": 1}]}},
+                    "outputs": [{"name": "value", "type": "INT"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = schemas_command.refresh_schema_cache_from_source(source)
+
+    assert result["status"] == "ok"
+    assert result["classes_indexed"] == 1
+    index = json.loads((cache_root / "index.json").read_text(encoding="utf-8"))
+    assert index == {"TinyNode": "pack.json"}
+
+
+def test_schema_freshness_workflow_is_manual_and_artifact_based() -> None:
+    workflow_path = Path(".github/workflows/schema_freshness.yml")
+
+    payload = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+
+    assert "workflow_dispatch" in payload[True]
+    job = payload["jobs"]["schema-freshness"]
+    commands = "\n".join(step.get("run", "") for step in job["steps"] if isinstance(step, dict))
+    uses = [step.get("uses", "") for step in job["steps"] if isinstance(step, dict)]
+    assert "schemas refresh --source" in commands
+    assert "git diff -- vibecomfy/porting/cache/object_info" in commands
+    assert "actions/upload-artifact@v4" in uses
+    assert "contents" in payload["permissions"]
+    assert "push" not in payload
+    assert "schedule" not in payload
+    assert "pull_request" not in payload
+    assert "secrets." not in workflow_path.read_text(encoding="utf-8")
+
+
+def test_schemas_refresh_command_uses_local_source_without_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cache_root = tmp_path / "object_info_cache"
+    monkeypatch.setattr(schemas_command, "CACHE_DIR", cache_root)
+    source = tmp_path / "pack.json"
+    source.write_text(
+        json.dumps(
+            {
+                "OfflineNode": {
+                    "pack": "offline",
+                    "inputs": {"required": {"value": ["STRING", {"default": "x"}]}},
+                    "outputs": [{"name": "value", "type": "STRING"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = schemas_command._cmd_schemas_refresh(
+        argparse.Namespace(source=str(source), server_url=None, json=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["version"] == "structured-cache"
+    assert payload["source"] == str(source)
+    assert "server_url" not in payload
+    assert json.loads((cache_root / "index.json").read_text(encoding="utf-8")) == {"OfflineNode": "pack.json"}
 
 
 # ============================================================================

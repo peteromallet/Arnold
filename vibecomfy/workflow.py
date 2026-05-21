@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from vibecomfy.handles import Handle
@@ -110,6 +111,7 @@ class VibeWorkflow:
     outputs: list[VibeOutput] = field(default_factory=list)
     requirements: WorkflowRequirements = field(default_factory=WorkflowRequirements)
     metadata: dict[str, Any] = field(default_factory=dict)
+    strict_types: bool = False
     _id_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __enter__(self) -> "VibeWorkflow":
@@ -307,12 +309,41 @@ class VibeWorkflow:
         return _NodeBuilder(workflow=self, node=node)
 
     def connect(self, from_ref: str | Handle, to_ref: str) -> "VibeWorkflow":
-        if isinstance(from_ref, Handle):
-            from_ref = str(from_ref)
-        from_node, from_output = from_ref.split(".", 1)
+        from_handle = from_ref if isinstance(from_ref, Handle) else None
+        from_ref_text = str(from_ref)
+        from_node, from_output = from_ref_text.split(".", 1)
         to_node, to_input = to_ref.split(".", 1)
+        if self.strict_types:
+            self._warn_if_incompatible_connect(from_node, from_output, to_node, to_input, from_handle)
         self.edges.append(VibeEdge(from_node, from_output, to_node, to_input))
         return self
+
+    def _warn_if_incompatible_connect(
+        self,
+        from_node: str,
+        from_output: str,
+        to_node: str,
+        to_input: str,
+        from_handle: Handle | None = None,
+    ) -> None:
+        output_type = from_handle.output_type if from_handle is not None else None
+        if output_type is None:
+            output_type = _node_output_type(self.nodes.get(str(from_node)), from_output)
+        input_type = _node_input_type(self.nodes.get(str(to_node)), to_input)
+        if output_type is None or input_type is None:
+            return
+        from vibecomfy.schema import socket_types_compatible
+
+        if socket_types_compatible(output_type, input_type):
+            return
+        warnings.warn(
+            (
+                f"Strict type warning: connecting {from_node}.{from_output} ({output_type}) "
+                f"to {to_node}.{to_input} ({input_type}) may be incompatible."
+            ),
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
     def disconnect(self, to_ref: str) -> bool:
         """Remove the edge whose target matches ``to_ref`` (``"node_id.input_name"``).
@@ -448,6 +479,11 @@ class VibeWorkflow:
                 continue
             api[str(edge.to_node)]["inputs"][edge.to_input] = edge_source
         return api
+
+    def export_to_json(self, *, format: str = "api") -> dict[str, Any]:
+        if format != "api":
+            raise ValueError(f"Unsupported workflow JSON export format: {format!r}")
+        return self.compile("api")
 
     def id_map(self) -> dict[str, str]:
         """Map variable name (as used in build()) to assigned node id."""
@@ -609,14 +645,22 @@ class _NodeBuilder:
         except ValueError as exc:
             output_names = self.node.metadata.get("output_names")
             if isinstance(output_names, (list, tuple)) and slot in output_names:
-                return Handle(node_id=self.node.id, output_slot=output_names.index(slot), name=str(slot))
+                index = output_names.index(slot)
+                return Handle(
+                    node_id=self.node.id,
+                    output_slot=index,
+                    output_type=_node_output_type(self.node, index),
+                    name=str(slot),
+                )
             if isinstance(output_names, (list, tuple)):
                 normalized_slot = str(slot).upper()
                 normalized_names = [str(name).upper() for name in output_names]
                 if normalized_slot in normalized_names:
+                    index = normalized_names.index(normalized_slot)
                     return Handle(
                         node_id=self.node.id,
-                        output_slot=normalized_names.index(normalized_slot),
+                        output_slot=index,
+                        output_type=_node_output_type(self.node, index),
                         name=str(slot),
                     )
             raise NotImplementedError(
@@ -624,19 +668,79 @@ class _NodeBuilder:
                 "register output_names metadata or pass an integer slot. "
                 "Full named-output lookup awaits MP-6 schema integration."
             ) from exc
-        return Handle(node_id=self.node.id, output_slot=output_slot)
+        return Handle(node_id=self.node.id, output_slot=output_slot, output_type=_node_output_type(self.node, output_slot))
 
     def __iter__(self):
-        output_names = self.node.metadata.get("output_names")
+        output_names = _node_output_names(self.node)
         if isinstance(output_names, (list, tuple)) and output_names:
             for index, name in enumerate(output_names):
                 yield Handle(
                     node_id=self.node.id,
                     output_slot=index,
+                    output_type=_node_output_type(self.node, index),
                     name=str(name) if isinstance(name, str) and name else None,
                 )
             return
         yield self.out(0)
+
+
+def _node_output_type(node: VibeNode | None, output_slot: int | str) -> str | None:
+    if node is None:
+        return None
+    output_types = node.metadata.get("output_types")
+    try:
+        index = int(str(output_slot))
+    except (TypeError, ValueError):
+        index = None
+    if isinstance(output_types, (list, tuple)) and index is not None and 0 <= index < len(output_types):
+        value = output_types[index]
+        return str(value) if value is not None else None
+    schema = _schema_for_node(node)
+    outputs = getattr(schema, "outputs", None) or []
+    if index is not None and 0 <= index < len(outputs):
+        value = getattr(outputs[index], "type", None)
+        return str(value) if value is not None else None
+    for output in outputs:
+        if getattr(output, "name", None) == output_slot:
+            value = getattr(output, "type", None)
+            return str(value) if value is not None else None
+    return None
+
+
+def _node_output_names(node: VibeNode) -> list[str | None]:
+    output_names = node.metadata.get("output_names")
+    if isinstance(output_names, (list, tuple)) and output_names:
+        return [str(name) if name is not None else None for name in output_names]
+    schema = _schema_for_node(node)
+    outputs = getattr(schema, "outputs", None) or []
+    return [
+        str(getattr(output, "name", "")) if getattr(output, "name", None) else None
+        for output in outputs
+    ]
+
+
+def _node_input_type(node: VibeNode | None, input_name: str) -> str | None:
+    if node is None:
+        return None
+    schema = _schema_for_node(node)
+    inputs = getattr(schema, "inputs", {}) or {}
+    spec = inputs.get(input_name)
+    if spec is None:
+        return None
+    value = getattr(spec, "type", None)
+    return str(value) if value is not None else None
+
+
+def _schema_for_node(node: VibeNode) -> object | None:
+    schema = node.metadata.get("schema")
+    if schema is not None:
+        return schema
+    try:
+        from vibecomfy.schema import get_authoring_schema_provider
+
+        return get_authoring_schema_provider().get_schema(node.class_type)
+    except Exception:
+        return None
 
 
 def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
@@ -743,3 +847,17 @@ def _drop_unused_positional_aliases(inputs: dict[str, Any]) -> None:
     for key in list(inputs):
         if key.startswith("unused_"):
             inputs.pop(key, None)
+
+
+__all__ = [
+    "OPAQUE_COMPONENT_CLASS_RE",
+    "ValidationIssue",
+    "ValidationReport",
+    "VibeEdge",
+    "VibeInput",
+    "VibeNode",
+    "VibeOutput",
+    "VibeWorkflow",
+    "WorkflowRequirements",
+    "WorkflowSource",
+]

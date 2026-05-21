@@ -4,19 +4,22 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def DualCLIPLoaderGGUF(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip_name1: Any = _UNSET,
-    clip_name2: Any = _UNSET,
-    type_: Any = _UNSET,
+    clip_name1: Any | _Omitted = _UNSET,
+    clip_name2: Any | _Omitted = _UNSET,
+    type_: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -44,7 +47,7 @@ def DualCLIPLoaderGGUF(
 def UnetLoaderGGUF(
     *args: VibeWorkflow,
     _id: str | None = None,
-    unet_name: Any = _UNSET,
+    unet_name: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

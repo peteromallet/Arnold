@@ -29,6 +29,7 @@ _OUTPUT_KIND_HEURISTIC: dict[str, str] = {
 }
 
 _MODEL_DISAGREEMENT_WARNED = False
+_SYMBOLIC_REF_DEPRECATION_WARNED = False
 _FILENAME_KWARGS = frozenset({
     "unet_name",
     "vae_name",
@@ -246,6 +247,15 @@ class SymbolicNodeRef:
 
 
 def ref(label: str) -> SymbolicNodeRef:
+    global _SYMBOLIC_REF_DEPRECATION_WARNED
+    if not _SYMBOLIC_REF_DEPRECATION_WARNED:
+        warnings.warn(
+            "vibecomfy.templates.ref('name') is a legacy generated-template fallback; "
+            "new generated templates bind InputSpec.node to node objects inside build().",
+            PendingDeprecationWarning,
+            stacklevel=2,
+        )
+        _SYMBOLIC_REF_DEPRECATION_WARNED = True
     return SymbolicNodeRef(label)
 
 

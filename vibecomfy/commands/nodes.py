@@ -17,8 +17,7 @@ from vibecomfy.commands._index_files import IndexReadError, print_index_error, r
 from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.registry.pack_resolver import PackResolverError, resolve_pack
-from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
-from vibecomfy.schema.cache import object_info_cache_candidates
+from vibecomfy.schema import SchemaIndexError, get_authoring_schema_provider, get_schema_provider, schemas_for, socket_types_compatible
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
 
@@ -39,22 +38,12 @@ def _cmd_nodes_list(args: argparse.Namespace) -> int:
 def _cmd_nodes_spec(args: argparse.Namespace) -> int:
     if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", args.class_type, re.I):
         return _cmd_nodes_spec_subgraph(args)
-    provider = ObjectInfoSchemaProvider(args.object_info_cache) if args.object_info_cache else get_schema_provider("auto")
+    provider = get_authoring_schema_provider(object_info_cache_path=args.object_info_cache)
     try:
         schema = provider.get_schema(args.class_type)
     except SchemaIndexError as exc:
         print(f"{exc}; run `vibecomfy sources sync` to rebuild indexes.")
         return 1
-    if schema is None:
-        schema = SourceSchemaProvider().get_schema(args.class_type)
-    if schema is None and not args.object_info_cache:
-        for cache_path in object_info_cache_candidates():
-            try:
-                schema = ObjectInfoSchemaProvider(cache_path).get_schema(args.class_type)
-            except SchemaIndexError:
-                continue
-            if schema is not None:
-                break
     if schema is None:
         print(
             f"node schema not found for {args.class_type!r}; run `vibecomfy sources sync`, "
@@ -63,6 +52,106 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(asdict(schema), indent=2, sort_keys=True))
     return 0
+
+
+def _cmd_nodes_compatible_with(args: argparse.Namespace) -> int:
+    provider = get_authoring_schema_provider(object_info_cache_path=getattr(args, "object_info_cache", None))
+    if getattr(args, "to_class", None) is None:
+        payload = _compatible_socket_search(provider, args.type_or_from_class, socket_role=args.socket_role)
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"compatible {args.socket_role} sockets for {args.type_or_from_class}: {payload['compatible_count']}")
+            for match in payload["matches"][:25]:
+                print(f"- {match['class_type']}.{match['socket']} ({match['socket_type']})")
+        return 0
+    if getattr(args, "to_input", None) is None:
+        print("to_input is required when checking a concrete node endpoint", file=sys.stderr)
+        return 2
+    from_schema = provider.get_schema(args.type_or_from_class)
+    to_schema = provider.get_schema(args.to_class)
+    from_output = str(getattr(args, "from_output", "0"))
+    to_input = str(args.to_input)
+    output_type = _schema_output_type(from_schema, from_output)
+    input_type = _schema_input_type(to_schema, to_input)
+    compatible = socket_types_compatible(output_type, input_type)
+    payload = {
+        "from_class": args.type_or_from_class,
+        "from_output": from_output,
+        "from_output_type": output_type,
+        "to_class": args.to_class,
+        "to_input": to_input,
+        "to_input_type": input_type,
+        "compatible": compatible,
+        "known": output_type is not None and input_type is not None,
+    }
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        verdict = "compatible" if compatible else "incompatible"
+        print(f"{args.type_or_from_class}.{from_output} -> {args.to_class}.{to_input}: {verdict}")
+        print(f"output_type={output_type or 'unknown'} input_type={input_type or 'unknown'}")
+    return 0 if compatible else 1
+
+
+def _schema_output_type(schema: object | None, output: str) -> str | None:
+    outputs = getattr(schema, "outputs", None) or []
+    try:
+        index = int(output)
+    except (TypeError, ValueError):
+        index = None
+    if index is not None and 0 <= index < len(outputs):
+        value = getattr(outputs[index], "type", None)
+        return str(value) if value is not None else None
+    for item in outputs:
+        if getattr(item, "name", None) == output:
+            value = getattr(item, "type", None)
+            return str(value) if value is not None else None
+    return None
+
+
+def _schema_input_type(schema: object | None, input_name: str) -> str | None:
+    spec = (getattr(schema, "inputs", {}) or {}).get(input_name)
+    value = getattr(spec, "type", None)
+    return str(value) if value is not None else None
+
+
+def _compatible_socket_search(provider: object, socket_type: str, *, socket_role: str) -> dict[str, object]:
+    schemas = schemas_for(provider) or {}
+    matches: list[dict[str, object]] = []
+    for class_type, schema in sorted(schemas.items()):
+        if socket_role == "input":
+            for input_name, spec in (getattr(schema, "inputs", None) or {}).items():
+                candidate_type = getattr(spec, "type", None)
+                if candidate_type is not None and socket_types_compatible(socket_type, candidate_type):
+                    matches.append(
+                        {
+                            "class_type": str(class_type),
+                            "socket": str(input_name),
+                            "socket_role": "input",
+                            "socket_type": str(candidate_type) if candidate_type is not None else None,
+                        }
+                    )
+        else:
+            for output_index, output in enumerate(getattr(schema, "outputs", None) or []):
+                candidate_type = getattr(output, "type", None)
+                if candidate_type is not None and socket_types_compatible(candidate_type, socket_type):
+                    matches.append(
+                        {
+                            "class_type": str(class_type),
+                            "socket": str(getattr(output, "name", None) or output_index),
+                            "socket_role": "output",
+                            "socket_type": str(candidate_type) if candidate_type is not None else None,
+                        }
+                    )
+    return {
+        "type": socket_type,
+        "as": socket_role,
+        "classes": sorted({str(match["class_type"]) for match in matches}),
+        "matches": matches,
+        "compatible_count": len(matches),
+        "provider": type(provider).__name__,
+    }
 
 
 def _cmd_nodes_spec_subgraph(args: argparse.Namespace) -> int:
@@ -117,30 +206,33 @@ def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    return _print_install_plan(args.path, missing_classes, packs, unresolved, json_output=args.json)
+    payload = build_nodes_install_plan_payload(args.path, missing_classes, packs, unresolved)
+    return _print_install_plan(payload, json_output=args.json)
 
 
-def _print_install_plan(path: str, missing_classes, packs, unresolved, *, json_output: bool) -> int:
+def build_nodes_install_plan_payload(path: str, missing_classes, packs, unresolved) -> dict[str, object]:
+    return {
+        "path": path,
+        "packs": [
+            {
+                "name": pack.name,
+                "repo": pack.repo,
+                "pip_packages": list(pack.pip_packages),
+                "classes": sorted(missing_classes & pack.classes),
+            }
+            for pack in packs
+        ],
+        "unresolved_class_types": unresolved,
+        "missing_class_types": sorted(missing_classes),
+    }
+
+
+def _print_install_plan(payload: dict[str, object], *, json_output: bool) -> int:
+    packs = payload["packs"]
+    unresolved = payload["unresolved_class_types"]
+    missing_classes = payload["missing_class_types"]
     if json_output:
-        print(
-            json.dumps(
-                {
-                    "path": path,
-                    "packs": [
-                        {
-                            "name": pack.name,
-                            "repo": pack.repo,
-                            "pip_packages": list(pack.pip_packages),
-                            "classes": sorted(missing_classes & pack.classes),
-                        }
-                        for pack in packs
-                    ],
-                    "unresolved_class_types": unresolved,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
         return 1 if unresolved else 0
     if not missing_classes:
         print("No missing custom node classes detected from local node_index.json.")
@@ -148,9 +240,9 @@ def _print_install_plan(path: str, missing_classes, packs, unresolved, *, json_o
     if packs:
         print("Suggested custom node packs:")
         for pack in packs:
-            classes = ", ".join(sorted(missing_classes & pack.classes))
-            packages = f" (pip: {', '.join(pack.pip_packages)})" if pack.pip_packages else ""
-            print(f"- {pack.name}: {pack.repo}{packages}")
+            classes = ", ".join(pack["classes"])
+            packages = f" (pip: {', '.join(pack['pip_packages'])})" if pack["pip_packages"] else ""
+            print(f"- {pack['name']}: {pack['repo']}{packages}")
             print(f"  classes: {classes}")
     if unresolved:
         print("Unmapped node classes:")
@@ -230,7 +322,8 @@ def _cmd_nodes_ensure(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     if args.dry_run:
-        return _print_install_plan(path, missing_classes, packs, unresolved, json_output=False)
+        payload = build_nodes_install_plan_payload(path, missing_classes, packs, unresolved)
+        return _print_install_plan(payload, json_output=False)
     if not missing_classes:
         print("No missing custom node classes detected from local node_index.json.")
         return 0
@@ -550,6 +643,15 @@ def register(subparsers) -> None:
         help="Use a captured ComfyUI /object_info JSON file, for example one fetched from a RunPod runtime.",
     )
     nodes_spec.set_defaults(func=_cmd_nodes_spec)
+    nodes_compatible = nodes_sub.add_parser("compatible-with", help="Find or check schema socket compatibility.")
+    nodes_compatible.add_argument("type_or_from_class")
+    nodes_compatible.add_argument("to_class", nargs="?")
+    nodes_compatible.add_argument("to_input", nargs="?")
+    nodes_compatible.add_argument("--as", dest="socket_role", choices=("input", "output"), default="output")
+    nodes_compatible.add_argument("--from-output", default="0")
+    nodes_compatible.add_argument("--object-info-cache")
+    nodes_compatible.add_argument("--json", action="store_true")
+    nodes_compatible.set_defaults(func=_cmd_nodes_compatible_with)
     nodes_install = nodes_sub.add_parser("install-plan")
     nodes_install.add_argument("path")
     nodes_install.add_argument("--json", action="store_true")

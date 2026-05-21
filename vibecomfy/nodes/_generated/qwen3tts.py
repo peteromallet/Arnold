@@ -4,20 +4,23 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def Qwen3AudioCompare(
     *args: VibeWorkflow,
     _id: str | None = None,
-    reference_audio: Any = _UNSET,
-    generated_audio: Any = _UNSET,
-    speaker_encoder_model: Any = _UNSET,
-    local_model_path: Any = _UNSET,
+    reference_audio: Any | _Omitted = _UNSET,
+    generated_audio: Any | _Omitted = _UNSET,
+    speaker_encoder_model: Any | _Omitted = _UNSET,
+    local_model_path: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -47,14 +50,14 @@ def Qwen3AudioCompare(
 def Qwen3CustomVoice(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    text: Any = _UNSET,
-    language: Any = _UNSET,
-    speaker: Any = _UNSET,
-    seed: Any = _UNSET,
-    instruct: Any = _UNSET,
-    custom_speaker_name: Any = _UNSET,
-    max_new_tokens: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    text: str | _Omitted = _UNSET,
+    language: Literal['Auto', 'Chinese', 'English', 'Japanese', 'Korean', 'German', 'French', 'Russian', 'Portuguese', 'Spanish', 'Italian'] | _Omitted = _UNSET,
+    speaker: Literal['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'] | _Omitted = _UNSET,
+    seed: int | _Omitted = _UNSET,
+    instruct: str | _Omitted = _UNSET,
+    custom_speaker_name: str | _Omitted = _UNSET,
+    max_new_tokens: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -92,10 +95,10 @@ def Qwen3CustomVoice(
 def Qwen3DataPrep(
     *args: VibeWorkflow,
     _id: str | None = None,
-    jsonl_path: Any = _UNSET,
-    tokenizer_repo: Any = _UNSET,
-    source: Any = _UNSET,
-    batch_size: Any = _UNSET,
+    jsonl_path: str | _Omitted = _UNSET,
+    tokenizer_repo: Any | _Omitted = _UNSET,
+    source: Literal['HuggingFace', 'ModelScope'] | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -125,9 +128,9 @@ def Qwen3DataPrep(
 def Qwen3DatasetFromFolder(
     *args: VibeWorkflow,
     _id: str | None = None,
-    folder_path: Any = _UNSET,
-    output_filename: Any = _UNSET,
-    ref_audio_path: Any = _UNSET,
+    folder_path: str | _Omitted = _UNSET,
+    output_filename: str | _Omitted = _UNSET,
+    ref_audio_path: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -155,28 +158,28 @@ def Qwen3DatasetFromFolder(
 def Qwen3FineTune(
     *args: VibeWorkflow,
     _id: str | None = None,
-    train_jsonl: Any = _UNSET,
-    init_model: Any = _UNSET,
-    source: Any = _UNSET,
-    output_dir: Any = _UNSET,
-    epochs: Any = _UNSET,
-    batch_size: Any = _UNSET,
-    lr: Any = _UNSET,
-    speaker_name: Any = _UNSET,
-    seed: Any = _UNSET,
-    resume_training: Any = _UNSET,
-    log_every_steps: Any = _UNSET,
-    save_every_epochs: Any = _UNSET,
-    save_every_steps: Any = _UNSET,
-    mixed_precision: Any = _UNSET,
-    gradient_accumulation: Any = _UNSET,
-    gradient_checkpointing: Any = _UNSET,
-    use_8bit_optimizer: Any = _UNSET,
-    weight_decay: Any = _UNSET,
-    max_grad_norm: Any = _UNSET,
-    warmup_steps: Any = _UNSET,
-    warmup_ratio: Any = _UNSET,
-    save_optimizer_state: Any = _UNSET,
+    train_jsonl: str | _Omitted = _UNSET,
+    init_model: Any | _Omitted = _UNSET,
+    source: Literal['HuggingFace', 'ModelScope'] | _Omitted = _UNSET,
+    output_dir: str | _Omitted = _UNSET,
+    epochs: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
+    lr: float | _Omitted = _UNSET,
+    speaker_name: str | _Omitted = _UNSET,
+    seed: int | _Omitted = _UNSET,
+    resume_training: bool | _Omitted = _UNSET,
+    log_every_steps: int | _Omitted = _UNSET,
+    save_every_epochs: int | _Omitted = _UNSET,
+    save_every_steps: int | _Omitted = _UNSET,
+    mixed_precision: Literal['bf16', 'fp32'] | _Omitted = _UNSET,
+    gradient_accumulation: int | _Omitted = _UNSET,
+    gradient_checkpointing: bool | _Omitted = _UNSET,
+    use_8bit_optimizer: bool | _Omitted = _UNSET,
+    weight_decay: float | _Omitted = _UNSET,
+    max_grad_norm: float | _Omitted = _UNSET,
+    warmup_steps: int | _Omitted = _UNSET,
+    warmup_ratio: float | _Omitted = _UNSET,
+    save_optimizer_state: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -242,7 +245,7 @@ def Qwen3FineTune(
 def Qwen3LoadPrompt(
     *args: VibeWorkflow,
     _id: str | None = None,
-    prompt_file: Any = _UNSET,
+    prompt_file: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -266,11 +269,11 @@ def Qwen3LoadPrompt(
 def Qwen3Loader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    repo_id: Any = _UNSET,
-    source: Any = _UNSET,
-    precision: Any = _UNSET,
-    attention: Any = _UNSET,
-    local_model_path: Any = _UNSET,
+    repo_id: Any | _Omitted = _UNSET,
+    source: Literal['HuggingFace', 'ModelScope'] | _Omitted = _UNSET,
+    precision: Literal['fp16', 'bf16', 'fp32'] | _Omitted = _UNSET,
+    attention: Literal['auto', 'flash_attention_2', 'sdpa', 'eager'] | _Omitted = _UNSET,
+    local_model_path: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -302,10 +305,10 @@ def Qwen3Loader(
 def Qwen3PromptMaker(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    ref_audio: Any = _UNSET,
-    ref_text: Any = _UNSET,
-    ref_audio_max_seconds: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    ref_audio: Any | _Omitted = _UNSET,
+    ref_text: str | _Omitted = _UNSET,
+    ref_audio_max_seconds: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -335,8 +338,8 @@ def Qwen3PromptMaker(
 def Qwen3SavePrompt(
     *args: VibeWorkflow,
     _id: str | None = None,
-    prompt: Any = _UNSET,
-    filename: Any = _UNSET,
+    prompt: Any | _Omitted = _UNSET,
+    filename: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -362,15 +365,15 @@ def Qwen3SavePrompt(
 def Qwen3VoiceClone(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    text: Any = _UNSET,
-    seed: Any = _UNSET,
-    language: Any = _UNSET,
-    ref_audio: Any = _UNSET,
-    ref_text: Any = _UNSET,
-    prompt: Any = _UNSET,
-    max_new_tokens: Any = _UNSET,
-    ref_audio_max_seconds: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    text: str | _Omitted = _UNSET,
+    seed: int | _Omitted = _UNSET,
+    language: Literal['Auto', 'Chinese', 'English', 'Japanese', 'Korean', 'German', 'French', 'Russian', 'Portuguese', 'Spanish', 'Italian'] | _Omitted = _UNSET,
+    ref_audio: Any | _Omitted = _UNSET,
+    ref_text: str | _Omitted = _UNSET,
+    prompt: Any | _Omitted = _UNSET,
+    max_new_tokens: int | _Omitted = _UNSET,
+    ref_audio_max_seconds: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -410,11 +413,11 @@ def Qwen3VoiceClone(
 def Qwen3VoiceDesign(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    text: Any = _UNSET,
-    instruct: Any = _UNSET,
-    language: Any = _UNSET,
-    seed: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    text: str | _Omitted = _UNSET,
+    instruct: str | _Omitted = _UNSET,
+    language: Literal['Auto', 'Chinese', 'English', 'Japanese', 'Korean', 'German', 'French', 'Russian', 'Portuguese', 'Spanish', 'Italian'] | _Omitted = _UNSET,
+    seed: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

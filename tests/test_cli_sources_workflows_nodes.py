@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.commands.nodes import (
+    _cmd_nodes_compatible_with,
     _cmd_nodes_coverage,
     _cmd_nodes_drift,
     _cmd_nodes_ensure,
@@ -211,6 +214,65 @@ def test_nodes_spec_reads_object_info_cache(tmp_path: Path, capsys: pytest.Captu
     assert payload["class_type"] == "RuntimeOnlyNode"
     assert payload["inputs"]["latent"]["type"] == "LATENT"
     assert payload["outputs"][0]["name"] == "image"
+
+
+def test_nodes_compatible_with_searches_input_sockets(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_nodes_compatible_with(argparse.Namespace(type_or_from_class="LATENT", to_class=None, to_input=None, socket_role="input", object_info_cache=None, json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["as"] == "input"
+    assert payload["compatible_count"] > 0
+    assert any(match["class_type"] == "KSampler" and match["socket"] == "latent_image" for match in payload["matches"])
+
+
+def test_nodes_compatible_with_searches_output_sockets(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_nodes_compatible_with(argparse.Namespace(type_or_from_class="IMAGE", to_class=None, to_input=None, socket_role="output", object_info_cache=None, json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["as"] == "output"
+    assert payload["compatible_count"] > 0
+    assert any(match["class_type"] == "VAEDecode" for match in payload["matches"])
+
+
+def test_nodes_compatible_with_image_input_subprocess_includes_saveimage() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "nodes", "compatible-with", "IMAGE", "--as", "input", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["type"] == "IMAGE"
+    assert payload["as"] == "input"
+    assert isinstance(payload["matches"], list)
+    assert "SaveImage" in payload["classes"]
+    assert any(
+        match["class_type"] == "SaveImage"
+        and match["socket"] == "images"
+        and match["socket_role"] == "input"
+        for match in payload["matches"]
+    )
+
+
+def test_nodes_compatible_with_output_mode_response_shape() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "nodes", "compatible-with", "IMAGE", "--as", "output", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert set(payload) == {"as", "classes", "compatible_count", "matches", "provider", "type"}
+    assert payload["as"] == "output"
+    assert isinstance(payload["classes"], list)
+    assert payload["matches"]
+    assert {"class_type", "socket", "socket_role", "socket_type"} <= set(payload["matches"][0])
 
 
 def test_nodes_spec_uuid_reads_subgraph_json(

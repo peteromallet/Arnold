@@ -4,17 +4,20 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def VHS_AudioToVHSAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -38,7 +41,7 @@ def VHS_AudioToVHSAudio(
 def VHS_BatchManager(
     *args: VibeWorkflow,
     _id: str | None = None,
-    frames_per_batch: Any = _UNSET,
+    frames_per_batch: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -62,8 +65,8 @@ def VHS_BatchManager(
 def VHS_DuplicateImages(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    multiply_by: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    multiply_by: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -89,8 +92,8 @@ def VHS_DuplicateImages(
 def VHS_DuplicateLatents(
     *args: VibeWorkflow,
     _id: str | None = None,
-    latents: Any = _UNSET,
-    multiply_by: Any = _UNSET,
+    latents: Any | _Omitted = _UNSET,
+    multiply_by: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -116,8 +119,8 @@ def VHS_DuplicateLatents(
 def VHS_DuplicateMasks(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
-    multiply_by: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
+    multiply_by: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -143,7 +146,7 @@ def VHS_DuplicateMasks(
 def VHS_GetImageCount(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -167,7 +170,7 @@ def VHS_GetImageCount(
 def VHS_GetLatentCount(
     *args: VibeWorkflow,
     _id: str | None = None,
-    latents: Any = _UNSET,
+    latents: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -191,7 +194,7 @@ def VHS_GetLatentCount(
 def VHS_GetMaskCount(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -215,9 +218,9 @@ def VHS_GetMaskCount(
 def VHS_LoadAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio_file: Any = _UNSET,
-    seek_seconds: Any = _UNSET,
-    duration: Any = _UNSET,
+    audio_file: str | _Omitted = _UNSET,
+    seek_seconds: float | _Omitted = _UNSET,
+    duration: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -245,9 +248,9 @@ def VHS_LoadAudio(
 def VHS_LoadAudioUpload(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
-    start_time: Any = _UNSET,
-    duration: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
+    start_time: float | _Omitted = _UNSET,
+    duration: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -275,10 +278,10 @@ def VHS_LoadAudioUpload(
 def VHS_LoadImagePath(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    custom_width: Any = _UNSET,
-    custom_height: Any = _UNSET,
-    vae: Any = _UNSET,
+    image: str | _Omitted = _UNSET,
+    custom_width: int | _Omitted = _UNSET,
+    custom_height: int | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -308,11 +311,11 @@ def VHS_LoadImagePath(
 def VHS_LoadImages(
     *args: VibeWorkflow,
     _id: str | None = None,
-    directory: Any = _UNSET,
-    image_load_cap: Any = _UNSET,
-    skip_first_images: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    meta_batch: Any = _UNSET,
+    directory: Literal['3d'] | _Omitted = _UNSET,
+    image_load_cap: int | _Omitted = _UNSET,
+    skip_first_images: int | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -344,11 +347,11 @@ def VHS_LoadImages(
 def VHS_LoadImagesPath(
     *args: VibeWorkflow,
     _id: str | None = None,
-    directory: Any = _UNSET,
-    image_load_cap: Any = _UNSET,
-    skip_first_images: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    meta_batch: Any = _UNSET,
+    directory: str | _Omitted = _UNSET,
+    image_load_cap: int | _Omitted = _UNSET,
+    skip_first_images: int | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -380,16 +383,16 @@ def VHS_LoadImagesPath(
 def VHS_LoadVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video: Any = _UNSET,
-    force_rate: Any = _UNSET,
-    custom_width: Any = _UNSET,
-    custom_height: Any = _UNSET,
-    frame_load_cap: Any = _UNSET,
-    skip_first_frames: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    meta_batch: Any = _UNSET,
-    vae: Any = _UNSET,
-    format: Any = _UNSET,
+    video: Any | _Omitted = _UNSET,
+    force_rate: float | _Omitted = _UNSET,
+    custom_width: int | _Omitted = _UNSET,
+    custom_height: int | _Omitted = _UNSET,
+    frame_load_cap: int | _Omitted = _UNSET,
+    skip_first_frames: int | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    format: Literal['None', 'AnimateDiff', 'Mochi', 'LTXV', 'Hunyuan', 'Cosmos', 'Wan'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -431,15 +434,15 @@ def VHS_LoadVideo(
 def VHS_LoadVideoFFmpeg(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video: Any = _UNSET,
-    force_rate: Any = _UNSET,
-    custom_width: Any = _UNSET,
-    custom_height: Any = _UNSET,
-    frame_load_cap: Any = _UNSET,
-    start_time: Any = _UNSET,
-    meta_batch: Any = _UNSET,
-    vae: Any = _UNSET,
-    format: Any = _UNSET,
+    video: Any | _Omitted = _UNSET,
+    force_rate: float | _Omitted = _UNSET,
+    custom_width: int | _Omitted = _UNSET,
+    custom_height: int | _Omitted = _UNSET,
+    frame_load_cap: int | _Omitted = _UNSET,
+    start_time: float | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    format: Literal['None', 'AnimateDiff', 'Mochi', 'LTXV', 'Hunyuan', 'Cosmos', 'Wan'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -479,15 +482,15 @@ def VHS_LoadVideoFFmpeg(
 def VHS_LoadVideoFFmpegPath(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video: Any = _UNSET,
-    force_rate: Any = _UNSET,
-    custom_width: Any = _UNSET,
-    custom_height: Any = _UNSET,
-    frame_load_cap: Any = _UNSET,
-    start_time: Any = _UNSET,
-    meta_batch: Any = _UNSET,
-    vae: Any = _UNSET,
-    format: Any = _UNSET,
+    video: str | _Omitted = _UNSET,
+    force_rate: float | _Omitted = _UNSET,
+    custom_width: int | _Omitted = _UNSET,
+    custom_height: int | _Omitted = _UNSET,
+    frame_load_cap: int | _Omitted = _UNSET,
+    start_time: float | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    format: Literal['None', 'AnimateDiff', 'Mochi', 'LTXV', 'Hunyuan', 'Cosmos', 'Wan'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -527,16 +530,16 @@ def VHS_LoadVideoFFmpegPath(
 def VHS_LoadVideoPath(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video: Any = _UNSET,
-    force_rate: Any = _UNSET,
-    custom_width: Any = _UNSET,
-    custom_height: Any = _UNSET,
-    frame_load_cap: Any = _UNSET,
-    skip_first_frames: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    meta_batch: Any = _UNSET,
-    vae: Any = _UNSET,
-    format: Any = _UNSET,
+    video: str | _Omitted = _UNSET,
+    force_rate: float | _Omitted = _UNSET,
+    custom_width: int | _Omitted = _UNSET,
+    custom_height: int | _Omitted = _UNSET,
+    frame_load_cap: int | _Omitted = _UNSET,
+    skip_first_frames: int | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    format: Literal['None', 'AnimateDiff', 'Mochi', 'LTXV', 'Hunyuan', 'Cosmos', 'Wan'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -578,11 +581,11 @@ def VHS_LoadVideoPath(
 def VHS_MergeImages(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images_A: Any = _UNSET,
-    images_B: Any = _UNSET,
-    merge_strategy: Any = _UNSET,
-    scale_method: Any = _UNSET,
-    crop: Any = _UNSET,
+    images_A: Any | _Omitted = _UNSET,
+    images_B: Any | _Omitted = _UNSET,
+    merge_strategy: Literal['match A', 'match B', 'match smaller', 'match larger'] | _Omitted = _UNSET,
+    scale_method: Literal['nearest-exact', 'bilinear', 'area', 'bicubic', 'bislerp'] | _Omitted = _UNSET,
+    crop: Literal['disabled', 'center'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -614,11 +617,11 @@ def VHS_MergeImages(
 def VHS_MergeLatents(
     *args: VibeWorkflow,
     _id: str | None = None,
-    latents_A: Any = _UNSET,
-    latents_B: Any = _UNSET,
-    merge_strategy: Any = _UNSET,
-    scale_method: Any = _UNSET,
-    crop: Any = _UNSET,
+    latents_A: Any | _Omitted = _UNSET,
+    latents_B: Any | _Omitted = _UNSET,
+    merge_strategy: Literal['match A', 'match B', 'match smaller', 'match larger'] | _Omitted = _UNSET,
+    scale_method: Literal['nearest-exact', 'bilinear', 'area', 'bicubic', 'bislerp'] | _Omitted = _UNSET,
+    crop: Literal['disabled', 'center'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -650,11 +653,11 @@ def VHS_MergeLatents(
 def VHS_MergeMasks(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask_A: Any = _UNSET,
-    mask_B: Any = _UNSET,
-    merge_strategy: Any = _UNSET,
-    scale_method: Any = _UNSET,
-    crop: Any = _UNSET,
+    mask_A: Any | _Omitted = _UNSET,
+    mask_B: Any | _Omitted = _UNSET,
+    merge_strategy: Literal['match A', 'match B', 'match smaller', 'match larger'] | _Omitted = _UNSET,
+    scale_method: Literal['nearest-exact', 'bilinear', 'area', 'bicubic', 'bislerp'] | _Omitted = _UNSET,
+    crop: Literal['disabled', 'center'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -686,8 +689,8 @@ def VHS_MergeMasks(
 def VHS_PruneOutputs(
     *args: VibeWorkflow,
     _id: str | None = None,
-    filenames: Any = _UNSET,
-    options: Any = _UNSET,
+    filenames: Any | _Omitted = _UNSET,
+    options: Literal['Intermediate', 'Intermediate and Utility'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -713,9 +716,9 @@ def VHS_PruneOutputs(
 def VHS_SelectEveryNthImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    skip_first_images: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    skip_first_images: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -743,9 +746,9 @@ def VHS_SelectEveryNthImage(
 def VHS_SelectEveryNthLatent(
     *args: VibeWorkflow,
     _id: str | None = None,
-    latents: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    skip_first_latents: Any = _UNSET,
+    latents: Any | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    skip_first_latents: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -773,9 +776,9 @@ def VHS_SelectEveryNthLatent(
 def VHS_SelectEveryNthMask(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
-    select_every_nth: Any = _UNSET,
-    skip_first_masks: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
+    select_every_nth: int | _Omitted = _UNSET,
+    skip_first_masks: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -803,8 +806,8 @@ def VHS_SelectEveryNthMask(
 def VHS_SelectFilename(
     *args: VibeWorkflow,
     _id: str | None = None,
-    filenames: Any = _UNSET,
-    index: Any = _UNSET,
+    filenames: Any | _Omitted = _UNSET,
+    index: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -830,10 +833,10 @@ def VHS_SelectFilename(
 def VHS_SelectImages(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    indexes: Any = _UNSET,
-    err_if_missing: Any = _UNSET,
-    err_if_empty: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    indexes: str | _Omitted = _UNSET,
+    err_if_missing: bool | _Omitted = _UNSET,
+    err_if_empty: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -875,10 +878,10 @@ def VHS_SelectImages(
 def VHS_SelectLatents(
     *args: VibeWorkflow,
     _id: str | None = None,
-    latent: Any = _UNSET,
-    indexes: Any = _UNSET,
-    err_if_missing: Any = _UNSET,
-    err_if_empty: Any = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    indexes: str | _Omitted = _UNSET,
+    err_if_missing: bool | _Omitted = _UNSET,
+    err_if_empty: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -920,8 +923,8 @@ def VHS_SelectLatents(
 def VHS_SelectLatest(
     *args: VibeWorkflow,
     _id: str | None = None,
-    filename_prefix: Any = _UNSET,
-    filename_postfix: Any = _UNSET,
+    filename_prefix: str | _Omitted = _UNSET,
+    filename_postfix: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -947,10 +950,10 @@ def VHS_SelectLatest(
 def VHS_SelectMasks(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
-    indexes: Any = _UNSET,
-    err_if_missing: Any = _UNSET,
-    err_if_empty: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
+    indexes: str | _Omitted = _UNSET,
+    err_if_missing: bool | _Omitted = _UNSET,
+    err_if_empty: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -992,8 +995,8 @@ def VHS_SelectMasks(
 def VHS_SplitImages(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    split_index: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    split_index: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1019,8 +1022,8 @@ def VHS_SplitImages(
 def VHS_SplitLatents(
     *args: VibeWorkflow,
     _id: str | None = None,
-    latents: Any = _UNSET,
-    split_index: Any = _UNSET,
+    latents: Any | _Omitted = _UNSET,
+    split_index: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1046,8 +1049,8 @@ def VHS_SplitLatents(
 def VHS_SplitMasks(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
-    split_index: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
+    split_index: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1073,7 +1076,7 @@ def VHS_SplitMasks(
 def VHS_Unbatch(
     *args: VibeWorkflow,
     _id: str | None = None,
-    batched: Any = _UNSET,
+    batched: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1097,9 +1100,9 @@ def VHS_Unbatch(
 def VHS_VAEDecodeBatched(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    vae: Any = _UNSET,
-    per_batch: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    per_batch: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1127,9 +1130,9 @@ def VHS_VAEDecodeBatched(
 def VHS_VAEEncodeBatched(
     *args: VibeWorkflow,
     _id: str | None = None,
-    pixels: Any = _UNSET,
-    vae: Any = _UNSET,
-    per_batch: Any = _UNSET,
+    pixels: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    per_batch: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1157,7 +1160,7 @@ def VHS_VAEEncodeBatched(
 def VHS_VHSAudioToAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vhs_audio: Any = _UNSET,
+    vhs_audio: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1181,16 +1184,16 @@ def VHS_VHSAudioToAudio(
 def VHS_VideoCombine(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    frame_rate: Any = _UNSET,
-    loop_count: Any = _UNSET,
-    filename_prefix: Any = _UNSET,
-    format: Any = _UNSET,
-    pingpong: Any = _UNSET,
-    save_output: Any = _UNSET,
-    audio: Any = _UNSET,
-    meta_batch: Any = _UNSET,
-    vae: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    frame_rate: float | _Omitted = _UNSET,
+    loop_count: int | _Omitted = _UNSET,
+    filename_prefix: str | _Omitted = _UNSET,
+    format: Literal['image/gif', 'image/webp', 'video/16bit-png', 'video/8bit-png', 'video/ProRes', 'video/av1-webm', 'video/ffmpeg-gif', 'video/ffv1-mkv', 'video/h264-mp4', 'video/h265-mp4', 'video/nvenc_av1-mp4', 'video/nvenc_h264-mp4', 'video/nvenc_hevc-mp4', 'video/webm'] | _Omitted = _UNSET,
+    pingpong: bool | _Omitted = _UNSET,
+    save_output: bool | _Omitted = _UNSET,
+    audio: Any | _Omitted = _UNSET,
+    meta_batch: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1232,7 +1235,7 @@ def VHS_VideoCombine(
 def VHS_VideoInfo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video_info: Any = _UNSET,
+    video_info: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1256,7 +1259,7 @@ def VHS_VideoInfo(
 def VHS_VideoInfoLoaded(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video_info: Any = _UNSET,
+    video_info: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1280,7 +1283,7 @@ def VHS_VideoInfoLoaded(
 def VHS_VideoInfoSource(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video_info: Any = _UNSET,
+    video_info: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

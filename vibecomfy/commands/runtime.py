@@ -16,12 +16,28 @@ from vibecomfy.schema import get_schema_provider
 
 
 def _cmd_runtime_doctor(args: argparse.Namespace) -> int:
-    print("runtime modes: embedded, managed, external")
-    print("default `vibecomfy run` mode: auto")
-    print("use `vibecomfy session start` to create a reusable managed HTTP server")
-    print("use `vibecomfy run --runtime server` for one-shot managed HTTP server mode")
-    print("use `vibecomfy run --runtime server --server-url URL` for external HTTP server mode")
+    payload = build_runtime_doctor_payload()
+    if getattr(args, "json", False):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for line in payload["messages"]:
+            print(line)
     return 0
+
+
+def build_runtime_doctor_payload() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "runtime_modes": ["embedded", "managed", "external"],
+        "default_run_mode": "auto",
+        "messages": [
+            "runtime modes: embedded, managed, external",
+            "default `vibecomfy run` mode: auto",
+            "use `vibecomfy session start` to create a reusable managed HTTP server",
+            "use `vibecomfy run --runtime server` for one-shot managed HTTP server mode",
+            "use `vibecomfy run --runtime server --server-url URL` for external HTTP server mode",
+        ],
+    }
 
 
 def _cmd_runtime_smoke(args: argparse.Namespace) -> int:
@@ -153,6 +169,7 @@ def register(subparsers) -> None:
     runtime = subparsers.add_parser("runtime")
     runtime_sub = runtime.add_subparsers(dest="subcmd", required=True)
     runtime_doctor = runtime_sub.add_parser("doctor")
+    runtime_doctor.add_argument("--json", action="store_true")
     runtime_doctor.set_defaults(func=_cmd_runtime_doctor)
     runtime_smoke = runtime_sub.add_parser("smoke")
     runtime_smoke.add_argument("--mode", default="managed")

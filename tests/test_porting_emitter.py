@@ -12,6 +12,7 @@ from vibecomfy.ingest.normalize import convert_to_vibe_format, normalize_to_api
 from vibecomfy.porting.convert import ManualTemplateRefusal, _check_manual_refusal
 from vibecomfy.porting.emitter import (
     EmissionDiagnostic,
+    READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS,
     READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
     READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
     READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL,
@@ -101,7 +102,7 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "READY_REQUIREMENTS =" not in text
     assert "ReadyMetadata.build(" in text
     assert "template_id='image/sample'" not in text
-    assert "from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref" in text
+    assert "from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow" in text
     assert "from vibecomfy.registry.ready_template import" not in text
     assert "def _node" not in text
     assert "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in text
@@ -110,8 +111,11 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "wf.metadata.setdefault('id_map'" not in text
     assert "wf._set_id_map(" not in text
     assert "LoadImage(wf" not in text
-    assert "        return wf.finalize(PUBLIC_INPUTS" in text
-    assert "'prefix': InputSpec(node=ref('saveimage'), field='filename_prefix', default='out/sample')" in text
+    assert "PUBLIC_INPUT_METADATA = {" in text
+    assert "def PUBLIC_INPUTS(**nodes):" in text
+    assert "        return wf.finalize(PUBLIC_INPUTS(**locals())" in text
+    assert "'prefix': InputSpec(node='20', field='filename_prefix', default='out/sample')" in text
+    assert "'prefix': InputSpec(node=saveimage, field='filename_prefix', default='out/sample')" in text
     assert "bind_input(" not in text
     assert "bind_output(" not in text
     assert "artifact_kind='image'" in text
@@ -143,11 +147,128 @@ def test_emit_ready_template_omits_empty_model_and_input_boilerplate() -> None:
 
     assert "MODELS = {}" not in text
     assert "PUBLIC_INPUTS = {}" not in text
+    assert "PUBLIC_INPUT_METADATA" not in text
+    assert "def PUBLIC_INPUTS" not in text
     assert "    inputs=PUBLIC_INPUTS," not in text
     assert "    models=MODELS," not in text
     assert "return wf.finalize({}" in text
     assert "ModelAsset" not in text
     assert "InputSpec" not in text
+
+
+def test_ready_template_public_inputs_bind_actual_node_objects() -> None:
+    text = emit_ready_template_python(
+        _sample_workflow(),
+        ready_metadata={"ready_template": "image/sample", "source_workflow": "workflow_corpus/source.json"},
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="image/sample",
+        registered_inputs={"prefix": ("20", "filename_prefix")},
+    )
+
+    assert "node=ref(" not in text
+    assert "PUBLIC_INPUTS(**locals())" in text
+    namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
+    exec(compile(text, "ready_templates/image/sample.py", "exec"), namespace)  # noqa: S102
+    workflow = namespace["build"]()
+
+    assert workflow.inputs["prefix"].node_id == "2"
+    assert workflow.inputs["image"].node_id == "1"
+
+
+def test_ready_template_public_inputs_survive_variable_suffix_changes() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["10"] = VibeNode("10", "SaveImage", inputs={"filename_prefix": "out/first"})
+    workflow.nodes["20"] = VibeNode("20", "SaveImage", inputs={"filename_prefix": "out/second"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/renamed", "capability": "image"},
+        ready_requirements={},
+        template_id="image/renamed",
+        registered_inputs={"prefix": ("20", "filename_prefix")},
+    )
+
+    assert "saveimage_2 = nodes['saveimage_2']" in text
+    assert "'prefix': InputSpec(node=saveimage_2, field='filename_prefix', default='out/second')" in text
+    namespace: dict[str, object] = {"__file__": "ready_templates/image/renamed.py"}
+    exec(compile(text, "ready_templates/image/renamed.py", "exec"), namespace)  # noqa: S102
+    workflow = namespace["build"]()
+
+    assert workflow.inputs["prefix"].node_id == "2"
+    assert workflow.inputs["prefix"].default == "out/second"
+
+
+def test_ready_template_public_input_refs_do_not_depend_on_model_asset_keys() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode("1", "UNETLoader", inputs={"unet_name": "obscure-file-name.safetensors", "weight_dtype": "default"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={
+            "ready_template": "image/model_key_independent",
+            "capability": "image",
+            "model_assets": [
+                {
+                    "name": "obscure-file-name.safetensors",
+                    "url": "https://example.test/obscure-file-name.safetensors",
+                    "subdir": "diffusion_models",
+                    "field": "unet_name",
+                }
+            ],
+        },
+        ready_requirements={},
+        template_id="image/model_key_independent",
+        registered_inputs={"model": ("1", "unet_name")},
+    )
+
+    assert "'diffusion_model': ModelAsset(" in text
+    assert "'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME)" in text
+    namespace: dict[str, object] = {"__file__": "ready_templates/image/model_key_independent.py"}
+    exec(compile(text, "ready_templates/image/model_key_independent.py", "exec"), namespace)  # noqa: S102
+    workflow = namespace["build"]()
+
+    assert workflow.inputs["model"].node_id == "1"
+    assert workflow.inputs["model"].field == "unet_name"
+
+
+def test_emitter_warns_for_schema_unknown_identifier_kwargs_hidden_by_extras() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "out/sample", "mystery": 3})
+    diagnostics: list[EmissionDiagnostic] = []
+
+    emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/schema_unknown", "capability": "image"},
+        ready_requirements={},
+        template_id="image/schema_unknown",
+        diagnostics=diagnostics,
+    )
+
+    assert any(
+        diagnostic.code == READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS
+        and diagnostic.detail["input"] == "mystery"
+        for diagnostic in diagnostics
+    )
+
+
+def test_emitter_keeps_non_identifier_extras_without_schema_unknown_warning() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode("1", "ImageScaleToTotalPixels", inputs={"megapixels": 1.0, "resize_type.multiple": 3})
+    diagnostics: list[EmissionDiagnostic] = []
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/custom_extra", "capability": "image"},
+        ready_requirements={},
+        template_id="image/custom_extra",
+        diagnostics=diagnostics,
+    )
+
+    assert "**{'resize_type.multiple': 3}" in text
+    assert not any(
+        diagnostic.code == READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS
+        for diagnostic in diagnostics
+    )
 
 
 def test_model_block_uses_role_based_keys_for_model_constants() -> None:
@@ -496,7 +617,7 @@ def test_ready_template_ltx_tail_lines_are_inside_workflow_context() -> None:
     assert "        apply_ltx_lowvram(wf)" in text
     assert "        resolution(384, 256, 9).apply(wf)" in text
     assert "        ensure_custom_nodes(wf, READY_METADATA.get(\"requirements\", {}).get(\"custom_nodes\", []))" in text
-    assert "        return wf.finalize(PUBLIC_INPUTS" in text
+    assert "        return wf.finalize(PUBLIC_INPUTS(**locals())" in text
     assert "\n    apply_ltx_lowvram(wf)" not in text
 
 
@@ -522,7 +643,7 @@ def test_ready_template_build_spacing_for_multiline_and_packed_simple_calls() ->
     assert "\n        image_load, mask_load = LoadImage(" in text
     assert "cliptextencode = CLIPTextEncode(text='short positive')\n        cliptextencode_2 = CLIPTextEncode(text='short negative')" in text
     assert "\n\n        # Conditioning\n" in text
-    assert "\n\n        return wf.finalize(PUBLIC_INPUTS" in text
+    assert "\n\n        return wf.finalize(PUBLIC_INPUTS(**locals())" in text
 
 
 def test_convert_ready_templates_tool_dry_run_remains_compatible() -> None:
