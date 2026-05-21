@@ -115,6 +115,46 @@ def test_setup_replaces_stale_regular_file_with_symlink(tmp_path: Path):
     assert stale_path.resolve() == canonical
 
 
+def test_setup_install_hooks_writes_canonical_pre_commit_hook(tmp_path: Path):
+    repo = tmp_path / "repo"
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+
+    result = cli.handle_setup_hooks(repo)
+
+    hook = hooks_dir / "pre-commit"
+    assert result["success"] is True
+    assert result["path"] == str(hook)
+    assert hook.read_text(encoding="utf-8") == cli._canonical_pre_commit_hook()
+    assert hook.stat().st_mode & 0o111, "installed hook must be executable"
+
+
+def test_setup_install_hooks_refuses_to_overwrite_without_force(tmp_path: Path):
+    repo = tmp_path / "repo"
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    hook = hooks_dir / "pre-commit"
+    hook.write_text("# custom hook\n", encoding="utf-8")
+
+    with pytest.raises(cli.CliError, match="already exists"):
+        cli.handle_setup_hooks(repo)
+
+    assert hook.read_text(encoding="utf-8") == "# custom hook\n"
+
+
+def test_setup_install_hooks_force_replaces_existing_hook(tmp_path: Path):
+    repo = tmp_path / "repo"
+    hooks_dir = repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    hook = hooks_dir / "pre-commit"
+    hook.write_text("# stale hook\n", encoding="utf-8")
+
+    result = cli.handle_setup_hooks(repo, force=True)
+
+    assert result["success"] is True
+    assert hook.read_text(encoding="utf-8") == cli._canonical_pre_commit_hook()
+
+
 def test_canonical_decision_skill_carries_its_own_frontmatter():
     """If the canonical doc loses its frontmatter, bundled_global_file would
     silently install a frontmatter-less skill, and Claude would stop finding
