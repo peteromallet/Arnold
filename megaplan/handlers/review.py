@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import logging
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ from megaplan.types import (
     STATE_FINALIZED,
     STATE_REVIEWED,
     StepResponse,
+    normalize_robustness,
 )
 from megaplan.workers import (
     WorkerResult,
@@ -217,6 +219,7 @@ def _resolve_review_outcome(
 
     rework_requested = review_verdict == "needs_rework"
     if rework_requested:
+        robustness = normalize_robustness(robustness)
         if is_creative_mode(state):
             stop_data = _maker_requested_stop(plan_dir)
             if stop_data is not None:
@@ -264,8 +267,8 @@ _EXPECTED_BY_CHECK_ID = {
     "simplicity": "Remove unjustified changes, or justify each extra line against a concrete issue requirement.",
 }
 
-def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[str, str]]:
-    rework_items: list[dict[str, str]] = []
+def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rework_items: list[dict[str, Any]] = []
     for check in checks:
         check_id = check.get("id", "")
         if not isinstance(check_id, str) or not check_id:
@@ -304,16 +307,30 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
             # a clear "you didn't resolve it" signal without a copy of
             # the detail text.
             actual = f"The diff did not resolve the flagged {check_id} concern above."
-            rework_items.append(
-                {
-                    "task_id": f"REVIEW-{check_id}",
-                    "issue": issue,
-                    "expected": expected,
-                    "actual": actual,
-                    "evidence_file": evidence_file,
-                    "source": f"review_{check_id}",
-                }
-            )
+            concerned_task_ids = check.get("concerned_task_ids", [])
+            if (
+                not isinstance(concerned_task_ids, list)
+                or not concerned_task_ids
+                or not all(isinstance(task_id, str) and task_id for task_id in concerned_task_ids)
+            ):
+                log.warning(
+                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic REVIEW-%s task id.",
+                    check_id,
+                    check_id,
+                )
+                concerned_task_ids = [f"REVIEW-{check_id}"]
+            for task_id in concerned_task_ids:
+                rework_items.append(
+                    {
+                        "task_id": task_id,
+                        "issue": issue,
+                        "expected": expected,
+                        "actual": actual,
+                        "evidence_file": evidence_file,
+                        "flag_id": f"REVIEW-{check_id}",
+                        "source": f"review_{check_id}",
+                    }
+                )
     return rework_items
 
 
@@ -338,6 +355,7 @@ def _finalize_review_outcome(
     """
     issues = list(worker.payload.get("issues", []))
     finalize_data = read_json(plan_dir / "finalize.json")
+    review_projection = deepcopy(finalize_data)
 
     review_verdict = worker.payload.get("review_verdict")
     if review_verdict not in {"approved", "needs_rework"}:
@@ -345,10 +363,11 @@ def _finalize_review_outcome(
         review_verdict = "needs_rework"
 
     verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
-        worker.payload, finalize_data, issues,
+        worker.payload, review_projection, issues,
     )
-    atomic_write_json(plan_dir / "finalize.json", finalize_data)
-    atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="review"))
+    worker.payload["issues"] = issues
+    atomic_write_json(plan_dir / "review.json", worker.payload)
+    atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     finalize_hash = sha256_file(plan_dir / "finalize.json")
 
     result, next_state, next_step = _resolve_review_outcome(
@@ -449,22 +468,10 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
         pre_check_flags: list[dict[str, Any]] = []
         if robustness in {"full", "thorough", "extreme"} and not is_prose_mode(state):
             pre_check_flags = _pkg.run_pre_checks(plan_dir, state, Path(state["config"]["project_dir"]))
-        if robustness in {"full", "light", "thorough"}:
+        if robustness in {"bare", "light"}:
             resolved = None
             prompt_override = None
             prompt_kwargs = None
-            if robustness in {"full", "thorough"}:
-                resolved = _pkg.resolve_agent_mode("review", args)
-                if _supports_prompt_kwargs(worker_module.run_step_with_worker):
-                    prompt_kwargs = {"pre_check_flags": pre_check_flags}
-                else:
-                    prompt_override = _build_review_prompt_override(
-                        resolved[0],
-                        state,
-                        plan_dir,
-                        root=root,
-                        pre_check_flags=pre_check_flags,
-                    )
             worker, agent, mode, refreshed = _run_worker(
                 "review",
                 state,
@@ -475,13 +482,23 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 prompt_override=prompt_override,
                 prompt_kwargs=prompt_kwargs,
             )
-            if robustness in {"full", "thorough"}:
-                worker.payload["pre_check_flags"] = pre_check_flags
-                _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
             atomic_write_json(plan_dir / "review.json", worker.payload)
         else:
             agent_type, mode, refreshed, model = _pkg.resolve_agent_mode("review", args)
             if agent_type != "hermes" or os.getenv(MOCK_ENV_VAR) == "1":
+                prompt_kwargs = None
+                prompt_override = None
+                if robustness in {"full", "thorough", "extreme"}:
+                    if _supports_prompt_kwargs(worker_module.run_step_with_worker):
+                        prompt_kwargs = {"pre_check_flags": pre_check_flags}
+                    else:
+                        prompt_override = _build_review_prompt_override(
+                            agent_type,
+                            state,
+                            plan_dir,
+                            root=root,
+                            pre_check_flags=pre_check_flags,
+                        )
                 worker, agent, mode, refreshed = _run_worker(
                     "review",
                     state,
@@ -489,7 +506,12 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     args,
                     root=root,
                     resolved=(agent_type, mode, refreshed, model),
+                    prompt_override=prompt_override,
+                    prompt_kwargs=prompt_kwargs,
                 )
+                if robustness in {"full", "thorough", "extreme"}:
+                    worker.payload["pre_check_flags"] = pre_check_flags
+                    _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
                 atomic_write_json(plan_dir / "review.json", worker.payload)
                 return _finalize_review_outcome(
                     root=root,
@@ -508,7 +530,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 run_id = set_active_step(state, step="review", agent=agent_type, mode=mode, model=model)
                 _emit_phase_notice("review")
                 save_state_merge_meta(plan_dir, state)
-                checks = review_checks.checks_for_robustness("extreme")
+                checks = review_checks.checks_for_robustness(robustness)
                 parallel_result = _pkg.run_parallel_review(
                     state,
                     plan_dir,
