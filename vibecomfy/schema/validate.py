@@ -47,7 +47,11 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 ValidationIssue(
                     "unknown_class_type",
                     f"Unknown class_type {class_type} on node {node_id}.",
-                    detail={"node_id": str(node_id), "class_type": class_type},
+                    detail={
+                        "node_id": str(node_id),
+                        "class_type": class_type,
+                        "next_action": "vibecomfy schema refresh",
+                    },
                 )
             )
             continue

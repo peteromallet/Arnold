@@ -14,7 +14,7 @@ import pytest
 from vibecomfy.commands.run import _cmd_run
 import vibecomfy.runtime.session as session_module
 from vibecomfy.runtime.session import SessionConfig
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
 
@@ -79,7 +79,7 @@ def test_run_validates_before_queueing(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(runtime_run_module, "comfy_server", fail_if_entered)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
-    with pytest.raises(ValueError, match=r"Workflow validation failed:\n  - \[empty_workflow\]"):
+    with pytest.raises(RuntimeError, match=r"(?s)Workflow validation failed.*empty_workflow"):
         asyncio.run(runtime_run_module.run(VibeWorkflow("empty", WorkflowSource("empty"))))
 
     assert entered_server is True
@@ -687,3 +687,224 @@ def test_cmd_run_memory_profile_rejects_active_session(
     assert _cmd_run(args) == 2
 
     assert "Stop/restart the session" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# T7: eval-node tests
+# ---------------------------------------------------------------------------
+
+
+def _eval_test_workflow(with_vae: bool = True) -> VibeWorkflow:
+    """Build a small workflow for eval-node testing.
+
+    Edges:
+      1 (CheckpointLoaderSimple) → 2 (KSampler)
+      (optional) 3 (VAELoader) → sibling of KSampler
+
+    Notes:
+      - 1 emits MODEL + CLIP + VAE (output 0=MODEL, 1=CLIP, 2=VAE)
+      - 2 emits LATENT
+      - 3 (if present) is a standalone VAELoader not connected upstream of 2
+    """
+    wf = VibeWorkflow("eval-test", WorkflowSource("eval-test"))
+    wf.nodes["1"] = VibeNode(
+        "1", "CheckpointLoaderSimple",
+        inputs={"ckpt_name": "model.safetensors"},
+    )
+    wf.nodes["2"] = VibeNode("2", "KSampler", inputs={"seed": 42, "steps": 20, "cfg": 7.0})
+    # KSampler depends on model from checkpoint
+    wf.edges.append(VibeEdge(from_node="1", from_output="0", to_node="2", to_input="model"))
+    if with_vae:
+        wf.nodes["3"] = VibeNode("3", "VAELoader", inputs={"vae_name": "vae.safetensors"})
+        # NOTE: VAE is NOT connected upstream of KSampler — it's a sibling.
+        # The CheckpointLoaderSimple node 1 already emits VAE at output 2.
+    return wf
+
+
+def test_compile_eval_subgraph_image_preview():
+    """IMAGE output from a VAEDecode node gets PreviewImage injected."""
+    from vibecomfy.runtime.eval import compile_eval_subgraph
+
+    wf = VibeWorkflow("img-test", WorkflowSource("img-test"))
+    wf.nodes["1"] = VibeNode("1", "VAEDecode", inputs={"samples": "latent", "vae": "vae_handle"})
+    # VAEDecode has class_type with "vae" + "decode" → _detect_output_type returns IMAGE
+
+    result = compile_eval_subgraph(wf, "1")
+    assert isinstance(result, dict)
+    # Should have the original node and a preview node
+    assert "1" in result
+    assert result["1"]["class_type"] == "VAEDecode"
+    preview_key = "1_preview"
+    assert preview_key in result, f"Expected {preview_key} in {list(result.keys())}"
+    assert result[preview_key]["class_type"] == "PreviewImage"
+
+
+def test_compile_eval_subgraph_latent_with_vae_from_checkpoint():
+    """LATENT from KSampler with upstream CheckpointLoaderSimple (VAE-emitter)."""
+    from vibecomfy.runtime.eval import compile_eval_subgraph
+
+    wf = _eval_test_workflow(with_vae=False)
+    # CheckpointLoaderSimple is a VAE emitter (output 2)
+    # KSampler depends on CheckpointLoaderSimple for "model" input → upstream
+
+    result = compile_eval_subgraph(wf, "2")
+    assert isinstance(result, dict)
+    # Should have VAEDecode + PreviewImage injected
+    decode_key = "2_vaedecode"
+    preview_key = "2_preview"
+    assert decode_key in result, f"Expected {decode_key} in {list(result.keys())}"
+    assert result[decode_key]["class_type"] == "VAEDecode"
+    assert preview_key in result
+    assert result[preview_key]["class_type"] == "PreviewImage"
+    # KSampler should be wired to VAEDecode
+    assert result[decode_key]["inputs"]["samples"] == ["2", 0]
+
+
+def test_compile_eval_subgraph_latent_without_vae():
+    """LATENT from KSampler with no upstream VAE → metadata fallback (SD1)."""
+    from vibecomfy.runtime.eval import compile_eval_subgraph
+
+    wf = VibeWorkflow("latent-no-vae", WorkflowSource("latent-no-vae"))
+    wf.nodes["1"] = VibeNode("1", "KSampler", inputs={"seed": 42, "steps": 20, "cfg": 7.0})
+    # No upstream nodes, no VAE emitter
+
+    result = compile_eval_subgraph(wf, "1")
+    assert isinstance(result, dict)
+    assert result["type"] == "LATENT"
+    assert result["node_id"] == "1"
+    assert result["class_type"] == "KSampler"
+    assert result["previewable"] is False
+    assert result["plan_only"] is True
+
+
+def test_compile_eval_subgraph_non_visualizable():
+    """Non-visualizable output (e.g., CLIPTextEncode) returns metadata."""
+    from vibecomfy.runtime.eval import compile_eval_subgraph
+
+    wf = VibeWorkflow("non-viz", WorkflowSource("non-viz"))
+    wf.nodes["1"] = VibeNode("1", "CLIPTextEncode", inputs={"text": "hello"})
+
+    result = compile_eval_subgraph(wf, "1")
+    assert isinstance(result, dict)
+    assert result["previewable"] is False
+    assert result["node_id"] == "1"
+    assert result["class_type"] == "CLIPTextEncode"
+
+
+def test_compile_eval_subgraph_absent_node():
+    """Requesting a node not in the workflow raises KeyError."""
+    from vibecomfy.runtime.eval import compile_eval_subgraph
+
+    wf = VibeWorkflow("absent-test", WorkflowSource("absent-test"))
+    wf.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "test"})
+
+    with pytest.raises(KeyError):
+        compile_eval_subgraph(wf, "999")
+
+
+# ---------------------------------------------------------------------------
+# T5: drift tests
+# ---------------------------------------------------------------------------
+
+
+def test_collect_drift_no_lockfile(tmp_path, monkeypatch):
+    """When lockfile is missing, collect_drift reports 'lockfile not found'."""
+    from vibecomfy.runtime.drift import _invalidate_cache_entry, collect_drift
+
+    monkeypatch.chdir(tmp_path)
+    wf = VibeWorkflow("drift-no-lock", WorkflowSource("drift-no-lock"))
+    wf.requirements.custom_nodes = ["some-pack"]
+
+    _invalidate_cache_entry(wf)
+    result = collect_drift(wf)
+    assert result["actual"]["custom_node_packs"] == "lockfile not found"
+    assert result["pinned"]["custom_node_packs"] == ["some-pack"]
+    assert result["mismatches"] == []
+
+
+def test_collect_drift_pinned_comfy_commit(tmp_path, monkeypatch):
+    """Workflow.metadata comfy_commit pinned vs observed."""
+    from vibecomfy.runtime.drift import _invalidate_cache_entry, collect_drift
+
+    monkeypatch.chdir(tmp_path)
+    wf = VibeWorkflow("drift-comfy", WorkflowSource("drift-comfy"))
+    wf.metadata["comfy_commit"] = "abc123def"
+
+    # Mock _comfyui_git_head to return a different commit
+    monkeypatch.setattr(
+        "vibecomfy.runtime.drift._comfyui_git_head",
+        lambda: "xyz789",
+    )
+
+    _invalidate_cache_entry(wf)
+    result = collect_drift(wf)
+    assert result["pinned"]["comfy_commit"] == "abc123def"
+    assert result["actual"]["comfy_commit"] == "xyz789"
+    assert any("ComfyUI commit" in m for m in result["mismatches"])
+
+
+def test_enforce_strict_drift_raises_on_mismatch(tmp_path, monkeypatch):
+    """enforce_strict_drift raises DriftError when mismatches exist."""
+    from vibecomfy.runtime.drift import _invalidate_cache_entry, enforce_strict_drift
+    from vibecomfy.errors import DriftError
+
+    monkeypatch.chdir(tmp_path)
+    wf = VibeWorkflow("drift-strict", WorkflowSource("drift-strict"))
+    wf.metadata["comfy_commit"] = "pinned-commit"
+
+    monkeypatch.setattr(
+        "vibecomfy.runtime.drift._comfyui_git_head",
+        lambda: "different-commit",
+    )
+
+    _invalidate_cache_entry(wf)
+    with pytest.raises(DriftError, match="Pre-queue drift check failed"):
+        enforce_strict_drift(wf)
+
+
+def test_enforce_strict_drift_passes_without_mismatch(tmp_path, monkeypatch):
+    """enforce_strict_drift does nothing when no mismatches exist."""
+    from vibecomfy.runtime.drift import _invalidate_cache_entry, enforce_strict_drift
+
+    monkeypatch.chdir(tmp_path)
+    wf = VibeWorkflow("drift-ok", WorkflowSource("drift-ok"))
+
+    _invalidate_cache_entry(wf)
+    # Should not raise
+    enforce_strict_drift(wf)
+
+
+def test_drift_caching(tmp_path, monkeypatch):
+    """Per-process caching prevents repeated filesystem/git calls."""
+    import vibecomfy.runtime.drift as drift_module
+
+    monkeypatch.chdir(tmp_path)
+    wf = VibeWorkflow("drift-cache", WorkflowSource("drift-cache"))
+
+    call_count = [0]
+    original = getattr(drift_module, "_comfyui_git_head", None)
+
+    def counting_git_head():
+        call_count[0] += 1
+        return None
+
+    monkeypatch.setattr(drift_module, "_comfyui_git_head", counting_git_head)
+    drift_module._invalidate_cache_entry(wf)
+
+    result1 = drift_module.collect_drift(wf)
+    result2 = drift_module.collect_drift(wf)
+    # Second call should hit the cache, so the git head function is called only once
+    assert result1 is result2
+    assert call_count[0] == 1
+
+
+def test_session_config_strict_drift_default():
+    """SessionConfig.strict_drift defaults to False."""
+    config = SessionConfig()
+    assert config.strict_drift is False
+
+
+def test_session_config_strict_drift_explicit():
+    """SessionConfig.strict_drift can be set explicitly."""
+    config = SessionConfig(strict_drift=True)
+    assert config.strict_drift is True

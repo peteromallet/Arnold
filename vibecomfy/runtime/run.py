@@ -7,9 +7,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.errors import QueueError
 from vibecomfy.workflow import VibeWorkflow
 
+from .attempt import build_attempt_bundle, write_attempt_json
 from .client import ComfyClient
+from .drift import enforce_strict_drift
+from vibecomfy.utils import atomic_write_json
 from .model_policy import apply_model_preflight, resolve_model_preflight_policy
 from .server import comfy_server
 from .session import (
@@ -39,6 +43,7 @@ async def run(
     config: SessionConfig | None = None,
     ensure_models: bool = False,
     shared_models_root: str | Path | None = None,
+    strict_drift: bool | None = None,
 ) -> RunResult:
     run_id = f"run-{int(time.time())}"
     run_dir = Path("out/runs") / run_id
@@ -69,10 +74,19 @@ async def run(
             on_unavailable=on_unavailable,
         )
         schema_validation_skipped = list(getattr(api_dict, "schema_validation_skipped", []))
+        # Write attempt.json BEFORE every queue boundary.
+        attempt_bundle = build_attempt_bundle(workflow, api_dict, backend=backend, config=managed_config)
+        write_attempt_json(run_dir, attempt_bundle)
+        resolved_strict = strict_drift if strict_drift is not None else bool(resolved_config.strict_drift)
+        if resolved_strict:
+            enforce_strict_drift(workflow)
         try:
             queued = await ComfyClient(active_url).queue_prompt(api_dict)
         except Exception as exc:
-            raise RuntimeError(_workflow_queue_failure_message(workflow, exc)) from exc
+            raise QueueError(
+                _workflow_queue_failure_message(workflow, exc),
+                next_action="vibecomfy runtime doctor",
+            ) from exc
         prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
         history = await _wait_for_server_history(active_url, prompt_id, config=resolved_config)
         comfy_outputs = _outputs_from_server_history(history, prompt_id)
@@ -91,8 +105,7 @@ async def run(
         config=managed_config,
         schema_validation_skipped=schema_validation_skipped,
     )
-    metadata_path = run_dir / "metadata.json"
-    metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+    metadata_path = atomic_write_json(run_dir / "metadata.json", metadata)
     return RunResult(
         run_id=run_id,
         prompt_id=prompt_id,
@@ -110,6 +123,7 @@ def run_sync(
     config: SessionConfig | None = None,
     ensure_models: bool = False,
     shared_models_root: str | Path | None = None,
+    strict_drift: bool | None = None,
 ) -> RunResult:
     return asyncio.run(
         run(
@@ -119,6 +133,7 @@ def run_sync(
             config=config,
             ensure_models=ensure_models,
             shared_models_root=shared_models_root,
+            strict_drift=strict_drift,
         )
     )
 
@@ -130,10 +145,11 @@ async def run_embedded(
     config: SessionConfig | None = None,
     ensure_packs: bool = False,
     ensure_models: bool = False,
+    strict_drift: bool | None = None,
 ) -> RunResult:
     session = EmbeddedSession(config or SessionConfig.from_workflow_metadata(workflow))
     try:
-        return await session.run(workflow, backend=backend, ensure_packs=ensure_packs, ensure_models=ensure_models)
+        return await session.run(workflow, backend=backend, ensure_packs=ensure_packs, ensure_models=ensure_models, strict_drift=strict_drift)
     finally:
         await session.stop()
 
@@ -145,8 +161,9 @@ def run_embedded_sync(
     config: SessionConfig | None = None,
     ensure_packs: bool = False,
     ensure_models: bool = False,
+    strict_drift: bool | None = None,
 ) -> RunResult:
-    return asyncio.run(run_embedded(workflow, backend=backend, config=config, ensure_packs=ensure_packs, ensure_models=ensure_models))
+    return asyncio.run(run_embedded(workflow, backend=backend, config=config, ensure_packs=ensure_packs, ensure_models=ensure_models, strict_drift=strict_drift))
 
 
 async def smoke_runtime(*, server_url: str | None = None) -> dict[str, Any]:

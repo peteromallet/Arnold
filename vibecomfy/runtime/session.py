@@ -16,10 +16,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from vibecomfy.comfy_command import comfyui_command
+from vibecomfy.errors import ModelAssetError, QueueError, SchemaValidationError, VibeComfyError
 from vibecomfy.memory_profile import MemoryProfile, apply_memory_profile_overrides
+from vibecomfy.utils import atomic_write_json
 from vibecomfy.workflow import VibeWorkflow
 
+from .attempt import build_attempt_bundle, build_shared_fields, write_attempt_json
 from .client import ComfyClient
+from .drift import enforce_strict_drift
 from .model_policy import apply_model_preflight, normalized_models_root, resolve_model_preflight_policy
 from .watchdog import Watchdog, write_report
 
@@ -104,7 +108,7 @@ def _model_assets_from_workflow(workflow: VibeWorkflow) -> list[dict[str, str]]:
             for item in unresolved[:8]
         )
         more = "" if len(unresolved) <= 8 else f" (+{len(unresolved) - 8} more)"
-        raise RuntimeError(f"unresolved workflow model assets: {summary}{more}")
+        raise ModelAssetError(f"unresolved workflow model assets: {summary}{more}", next_action="vibecomfy doctor --models")
     entries: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for entry in [*authored, *resolved]:
@@ -143,6 +147,7 @@ class SessionConfig:
     warm_policy: str = "auto"
     auto_flush_vram_threshold_gb: float = 2.0
     port: int | None = None
+    strict_drift: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -174,7 +179,7 @@ class VibeSession(Protocol):
     async def start(self) -> None:
         ...
 
-    async def run(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+    async def run(self, workflow: VibeWorkflow, *, backend: str = "api", strict_drift: bool | None = None) -> RunResult:
         ...
 
     async def flush(self) -> None:
@@ -219,6 +224,7 @@ class EmbeddedSession:
         backend: str = "api",
         ensure_packs: bool = False,
         ensure_models: bool = False,
+        strict_drift: bool | None = None,
     ) -> RunResult:
         if self._inflight_run is not None and not self._inflight_run.done():
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
@@ -265,12 +271,13 @@ class EmbeddedSession:
         task = asyncio.current_task()
         self._inflight_run = task
         try:
-            return await self._run_untracked(workflow, backend=backend)
+            resolved_strict = strict_drift if strict_drift is not None else self.config.strict_drift
+            return await self._run_untracked(workflow, backend=backend, strict_drift=resolved_strict)
         finally:
             if self._inflight_run is task:
                 self._inflight_run = None
 
-    async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+    async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api", strict_drift: bool = False) -> RunResult:
         total_start = time.monotonic()
         timings: dict[str, float] = {}
         phase_start = time.monotonic()
@@ -313,13 +320,21 @@ class EmbeddedSession:
         phase_start = time.monotonic()
         try:
             try:
+                # Write attempt.json BEFORE every queue boundary.
+                attempt_bundle = build_attempt_bundle(workflow, api_dict, backend=backend, config=self.config)
+                write_attempt_json(run_dir, attempt_bundle)
+                if strict_drift:
+                    enforce_strict_drift(workflow)
                 queued = await self._comfy.queue_prompt_api(api_dict)
             except asyncio.TimeoutError:
                 stop_reason = "timeout"
                 raise
             except Exception as exc:
                 stop_reason = "exception"
-                raise RuntimeError(_workflow_queue_failure_message(workflow, exc)) from exc
+                raise QueueError(
+                    _workflow_queue_failure_message(workflow, exc),
+                    next_action="vibecomfy runtime doctor",
+                ) from exc
         finally:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)
@@ -345,8 +360,7 @@ class EmbeddedSession:
             timings=timings,
             schema_validation_skipped=schema_validation_skipped,
         )
-        metadata_path = run_dir / "metadata.json"
-        metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+        metadata_path = atomic_write_json(run_dir / "metadata.json", metadata)
         return RunResult(
             run_id=run_id,
             prompt_id=getattr(queued, "prompt_id", None),
@@ -436,6 +450,7 @@ class ServerSession:
         backend: str = "api",
         ensure_models: bool = False,
         shared_models_root: str | Path | None = None,
+        strict_drift: bool | None = None,
     ) -> RunResult:
         if self._inflight_run is not None and not self._inflight_run.done():
             raise RuntimeError("session already has a run in flight; concurrent run() is not supported in P1")
@@ -448,12 +463,13 @@ class ServerSession:
         task = asyncio.current_task()
         self._inflight_run = task
         try:
-            return await self._run_untracked(workflow, backend=backend)
+            resolved_strict = strict_drift if strict_drift is not None else self.config.strict_drift
+            return await self._run_untracked(workflow, backend=backend, strict_drift=resolved_strict)
         finally:
             if self._inflight_run is task:
                 self._inflight_run = None
 
-    async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api") -> RunResult:
+    async def _run_untracked(self, workflow: VibeWorkflow, *, backend: str = "api", strict_drift: bool = False) -> RunResult:
         total_start = time.monotonic()
         timings: dict[str, float] = {}
         phase_start = time.monotonic()
@@ -488,13 +504,21 @@ class ServerSession:
         phase_start = time.monotonic()
         try:
             try:
+                # Write attempt.json BEFORE every queue boundary.
+                attempt_bundle = build_attempt_bundle(workflow, api_dict, backend=backend, config=self.config)
+                write_attempt_json(run_dir, attempt_bundle)
+                if strict_drift:
+                    enforce_strict_drift(workflow)
                 queued = await ComfyClient(self.url).queue_prompt(api_dict)
             except asyncio.TimeoutError:
                 stop_reason = "timeout"
                 raise
             except Exception as exc:
                 stop_reason = "exception"
-                raise RuntimeError(_workflow_queue_failure_message(workflow, exc)) from exc
+                raise QueueError(
+                    _workflow_queue_failure_message(workflow, exc),
+                    next_action="vibecomfy runtime doctor",
+                ) from exc
         finally:
             await _finalize_watchdog(watchdog, run_dir=run_dir, reason=stop_reason)
         timings["queue_prompt_sec"] = round(time.monotonic() - phase_start, 3)
@@ -522,8 +546,7 @@ class ServerSession:
             timings=timings,
             schema_validation_skipped=schema_validation_skipped,
         )
-        metadata_path = run_dir / "metadata.json"
-        metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
+        metadata_path = atomic_write_json(run_dir / "metadata.json", metadata)
         return RunResult(
             run_id=run_id,
             prompt_id=prompt_id,
@@ -825,6 +848,10 @@ def _prepare_prompt(
 ) -> dict[str, Any]:
     try:
         return _prepare_runtime_prompt(workflow, backend=backend, schema_provider=schema_provider)
+    except VibeComfyError:
+        # VibeComfyError subclasses carry next_action — re-raise unwrapped
+        # so callers can recover the remediation hint.
+        raise
     except ValueError as exc:
         raise ValueError(f"Workflow build failed: {exc}") from exc
     except RuntimeError as exc:
@@ -852,6 +879,10 @@ async def _prepare_prompt_async(
         if skipped:
             on_unavailable("schema validation skipped for class types: " + ", ".join(skipped))
         return PreparedPrompt(api_dict, schema_validation_skipped=skipped)
+    except VibeComfyError:
+        # VibeComfyError subclasses carry next_action — re-raise unwrapped
+        # so callers can recover the remediation hint.
+        raise
     except ValueError as exc:
         raise ValueError(f"Workflow build failed: {exc}") from exc
     except RuntimeError as exc:
@@ -876,7 +907,10 @@ def _prepare_runtime_prompt(
 ) -> dict[str, Any]:
     structural_report = workflow.validate(schema_provider=None)
     if not structural_report.ok:
-        raise ValueError(_validation_failed_message(structural_report))
+        raise SchemaValidationError(
+            _validation_failed_message(structural_report),
+            next_action="vibecomfy validate <template> --no-schema",
+        )
     api_dict = workflow.compile(backend=backend)
     if backend == "api" and schema_provider is not None:
         from vibecomfy.schema.validate import (
@@ -893,7 +927,10 @@ def _prepare_runtime_prompt(
         if any(issue.severity == "error" for issue in schema_issues):
             from vibecomfy.workflow import ValidationReport
 
-            raise ValueError(_validation_failed_message(ValidationReport(ok=False, issues=schema_issues)))
+            raise SchemaValidationError(
+                _validation_failed_message(ValidationReport(ok=False, issues=schema_issues)),
+                next_action="vibecomfy schema refresh",
+            )
     return api_dict
 
 
@@ -914,6 +951,8 @@ def _run_metadata(
         comfy_outputs = _raw_comfy_outputs(queued)
     serialized = json.dumps(api_dict, sort_keys=True, default=str)
     artifact_manifest = _artifact_manifest(workflow, outputs)
+    # Reuse attempt helper for shared fields so metadata.json agrees with attempt.json.
+    shared = build_shared_fields(workflow, api_dict, config=config)
     metadata = {
         "run_id": run_id,
         "workflow_id": workflow.id,
@@ -922,6 +961,13 @@ def _run_metadata(
         "git_sha": _git_sha(),
         "inputs": {name: item.value for name, item in workflow.inputs.items()},
         "compiled_prompt": api_dict,
+        "id_map": shared.get("id_map"),
+        "node_lookups": shared.get("node_lookups"),
+        "model_manifest": shared.get("model_manifest"),
+        "lockfile_snapshot": shared.get("lockfile_snapshot"),
+        "runtime_version": shared.get("runtime_version"),
+        "comfy_commit": shared.get("comfy_commit"),
+        "drift": shared.get("drift"),
         "queued": queued,
         "comfy_outputs": comfy_outputs,
         "artifact_manifest": artifact_manifest,

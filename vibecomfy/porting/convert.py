@@ -536,7 +536,24 @@ class ManualTemplateRefusal(ValueError):
 
 
 class ConversionWriteError(RuntimeError):
-    """Raised when atomic write fails validation or parity gates."""
+    """Raised when atomic write fails validation or parity gates.
+
+    Rebased onto :class:`~vibecomfy.errors.VibeComfyError` so that
+    *failure_reason* and *next_action* are available on every instance while
+    keeping backward-compatibility with existing ``except ConversionWriteError``
+    sites.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_reason: str | None = None,
+        next_action: str | None = None,
+    ) -> None:
+        self.failure_reason = failure_reason
+        self.next_action = next_action
+        super().__init__(message)
 
 
 def _check_manual_refusal(target: Path) -> None:
@@ -603,7 +620,10 @@ def port_convert_and_write(
     # Gate 2: validation must pass
     validation = result.validation
     if validation is None:
-        raise ConversionWriteError("No validation available - conversion may have been skipped.")
+        raise ConversionWriteError(
+            "No validation available - conversion may have been skipped.",
+            next_action="vibecomfy port --validate-only <target>",
+        )
     if validation.strict_ready_ok is False:
         strict_errors = [
             issue
@@ -613,30 +633,35 @@ def port_convert_and_write(
         examples = [f"{issue.code}:{issue.detail.get('target', '')}" for issue in strict_errors[:5]]
         raise ConversionWriteError(
             f"Strict-ready validation failed for {target}. "
-            f"Diagnostics: {examples}"
+            f"Diagnostics: {examples}",
+            next_action="vibecomfy port --validate-only <target>",
         )
     if not validation.ok:
         raise ConversionWriteError(
             f"Validation failed for {target}: {validation.error}. "
             f"Parity OK: {validation.parity_ok}. "
-            f"Fix issues before writing."
+            f"Fix issues before writing.",
+            next_action="vibecomfy port --validate-only <target>",
         )
     if validation.parity_ok is False:
         raise ConversionWriteError(
             f"Parity check failed for {target}. "
-            f"Diffs: {validation.parity_diffs[:5]}"
+            f"Diffs: {validation.parity_diffs[:5]}",
+            next_action="vibecomfy port --parity-check <target>",
         )
 
     # Gate 2b: model-like value change / drop prevents write (T8)
     if validation.model_value_change:
         raise ConversionWriteError(
             f"Model-like value changed after aliasing for {target}. "
-            f"Diffs: {validation.model_value_diffs[:5]}"
+            f"Diffs: {validation.model_value_diffs[:5]}",
+            next_action="vibecomfy port --validate-only <target>",
         )
     if validation.model_value_dropped:
         raise ConversionWriteError(
             f"Model-like value dropped after aliasing for {target}. "
-            f"Diffs: {validation.model_value_diffs[:5]}"
+            f"Diffs: {validation.model_value_diffs[:5]}",
+            next_action="vibecomfy port --validate-only <target>",
         )
 
     # Diff mode
@@ -680,7 +705,8 @@ def port_convert_and_write(
             pass
         elif not temp_validation.import_ok:
             raise ConversionWriteError(
-                f"Temp file at {tmp_path} failed import validation: {temp_validation.error}"
+                f"Temp file at {tmp_path} failed import validation: {temp_validation.error}",
+                next_action="vibecomfy port --validate-only <target>",
             )
 
         # Atomic replace

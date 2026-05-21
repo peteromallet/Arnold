@@ -198,3 +198,226 @@ def test_inspect_field_text_renders_chain(capsys: pytest.CaptureFixture[str]) ->
     assert "field:" in text
     assert "resolution chain" in text
     assert "bound to:" in text
+
+
+# ── runtime eval-node ───────────────────────────────────────────────────
+
+
+def test_eval_node_non_visualizable_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--json output for a CLIPTextEncode node (non-visualizable)."""
+    import vibecomfy.commands.runtime as runtime_mod
+
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test-eval", WorkflowSource("test-eval"))
+    wf.nodes["1"] = VibeNode("1", "CLIPTextEncode", inputs={"text": "hello"})
+
+    monkeypatch.setattr(runtime_mod, "get_schema_provider", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        runtime_mod, "load_workflow_reference", lambda *a, **kw: wf
+    )
+
+    args = argparse.Namespace(
+        path="test-eval",
+        node="1",
+        runtime="embedded",
+        server_url=None,
+        ready=False,
+        json=True,
+    )
+    code = runtime_mod._cmd_runtime_eval_node(args)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["node_id"] == "1"
+    assert result["class_type"] == "CLIPTextEncode"
+    assert result["previewable"] is False
+    assert result["outputs"]["previewable"] is False
+
+
+def test_eval_node_image_preview_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """--json output for a VAEDecode node (previewable) with mocked embedded runtime."""
+    import vibecomfy.commands.runtime as runtime_mod
+
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("img-test", WorkflowSource("img-test"))
+    wf.nodes["1"] = VibeNode(
+        "1", "VAEDecode", inputs={"samples": ["0", 0], "vae": ["0", 2]}
+    )
+
+    monkeypatch.setattr(runtime_mod, "get_schema_provider", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        runtime_mod, "load_workflow_reference", lambda *a, **kw: wf
+    )
+
+    # Mock the embedded session queue to avoid needing a real ComfyUI
+    async def fake_queue_embedded(api_dict):
+        return {"prompt_id": "fake-prompt-123"}
+
+    monkeypatch.setattr(runtime_mod, "_queue_embedded", fake_queue_embedded)
+
+    monkeypatch.chdir(tmp_path)
+
+    args = argparse.Namespace(
+        path="img-test",
+        node="1",
+        runtime="embedded",
+        server_url=None,
+        ready=False,
+        json=True,
+    )
+    code = runtime_mod._cmd_runtime_eval_node(args)
+
+    assert code == 0
+    out = capsys.readouterr().out
+    result = json.loads(out)
+    assert result["node_id"] == "1"
+    assert result["class_type"] == "VAEDecode"
+    assert result["previewable"] is True
+    assert result["outputs"]["prompt_id"] == "fake-prompt-123"
+
+
+def test_eval_node_runpod_no_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--runtime runpod without credentials emits clear message per FLAG-004."""
+    import vibecomfy.commands.runtime as runtime_mod
+
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test-eval", WorkflowSource("test-eval"))
+    wf.nodes["1"] = VibeNode(
+        "1", "VAEDecode", inputs={"samples": ["0", 0], "vae": ["0", 2]}
+    )
+
+    monkeypatch.setattr(runtime_mod, "get_schema_provider", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        runtime_mod, "load_workflow_reference", lambda *a, **kw: wf
+    )
+
+    # Ensure no RunPod credentials
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+    monkeypatch.delenv("RUNPOD_CONFIG_PATH", raising=False)
+
+    args = argparse.Namespace(
+        path="test-eval",
+        node="1",
+        runtime="runpod",
+        server_url=None,
+        ready=False,
+        json=False,
+    )
+    code = runtime_mod._cmd_runtime_eval_node(args)
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "RunPod eval-node not available without credentials" in err
+    assert "--runtime embedded or --runtime server" in err
+
+
+def test_eval_node_absent_node_keyerror(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Requesting a node not in the workflow raises KeyError → caught, exit 1."""
+    import vibecomfy.commands.runtime as runtime_mod
+
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test-eval", WorkflowSource("test-eval"))
+    wf.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "test"})
+
+    monkeypatch.setattr(runtime_mod, "get_schema_provider", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        runtime_mod, "load_workflow_reference", lambda *a, **kw: wf
+    )
+
+    args = argparse.Namespace(
+        path="test-eval",
+        node="999",  # absent node
+        runtime="embedded",
+        server_url=None,
+        ready=False,
+        json=True,
+    )
+    code = runtime_mod._cmd_runtime_eval_node(args)
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "eval-node failed:" in err
+
+
+def test_eval_node_server_requires_url(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--runtime server without --server-url returns exit code 2."""
+    import vibecomfy.commands.runtime as runtime_mod
+
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test-eval", WorkflowSource("test-eval"))
+    wf.nodes["1"] = VibeNode(
+        "1", "VAEDecode", inputs={"samples": ["0", 0], "vae": ["0", 2]}
+    )
+
+    monkeypatch.setattr(runtime_mod, "get_schema_provider", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        runtime_mod, "load_workflow_reference", lambda *a, **kw: wf
+    )
+
+    args = argparse.Namespace(
+        path="test-eval",
+        node="1",
+        runtime="server",
+        server_url=None,
+        ready=False,
+        json=False,
+    )
+    code = runtime_mod._cmd_runtime_eval_node(args)
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "--server-url is required" in err
+
+
+def test_eval_node_unknown_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Unknown runtime value returns exit code 2."""
+    import vibecomfy.commands.runtime as runtime_mod
+
+    from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+    wf = VibeWorkflow("test-eval", WorkflowSource("test-eval"))
+    wf.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "test"})
+
+    monkeypatch.setattr(runtime_mod, "get_schema_provider", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        runtime_mod, "load_workflow_reference", lambda *a, **kw: wf
+    )
+
+    args = argparse.Namespace(
+        path="test-eval",
+        node="1",
+        runtime="nope",
+        server_url=None,
+        ready=False,
+        json=False,
+    )
+    code = runtime_mod._cmd_runtime_eval_node(args)
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "unknown runtime" in err
