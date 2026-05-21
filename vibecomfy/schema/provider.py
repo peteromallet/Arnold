@@ -208,6 +208,52 @@ class ObjectInfoSchemaProvider:
         return self._schemas
 
 
+class ObjectInfoIndexSchemaProvider:
+    """Schema provider backed by ``object_info/index.json`` class-to-file rows."""
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root)
+        self.index_path = self.root / "index.json"
+        self._index: dict[str, str] | None = None
+        self._file_cache: dict[str, dict[str, Any]] = {}
+        self._schemas: dict[str, NodeSchema | None] = {}
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.get_schema(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        if class_type not in self._schemas:
+            self._schemas[class_type] = self._load_schema(class_type)
+        return self._schemas[class_type]
+
+    def _load_index(self) -> dict[str, str]:
+        if self._index is not None:
+            return self._index
+        data = load_object_info_cache(self.index_path)
+        if data is None:
+            self._index = {}
+        else:
+            self._index = {
+                str(key): str(value)
+                for key, value in data.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        return self._index
+
+    def _load_schema(self, class_type: str) -> NodeSchema | None:
+        filename = self._load_index().get(class_type)
+        if not filename:
+            return None
+        data = self._file_cache.get(filename)
+        if data is None:
+            data = load_object_info_cache(self.root / filename) or {}
+            self._file_cache[filename] = data
+        info = data.get(class_type)
+        if not isinstance(info, dict):
+            return None
+        return _schema_from_object_info(class_type, info)
+
+
 class CompositeSchemaProvider:
     def __init__(self, *providers: SchemaProvider) -> None:
         self.providers = providers
@@ -253,6 +299,7 @@ class ConversionSchemaProvider:
         node_index_path: str | Path = "node_index.json",
         source_roots: list[str | Path] | None = None,
         object_info_cache_path: str | Path | None = None,
+        object_info_index_root: str | Path | None = None,
         widget_schema: dict[str, list[str | None]] | None = None,
         runtime_server_url: str | None = None,
         enable_runtime: bool = False,
@@ -262,6 +309,9 @@ class ConversionSchemaProvider:
         self._object_info: ObjectInfoSchemaProvider | None = None
         if object_info_cache_path is not None:
             self._object_info = ObjectInfoSchemaProvider(object_info_cache_path)
+        self._object_info_index: ObjectInfoIndexSchemaProvider | None = None
+        if object_info_index_root is not None:
+            self._object_info_index = ObjectInfoIndexSchemaProvider(object_info_index_root)
         self._widget_schema: dict[str, list[str | None]] = widget_schema or {}
         self._runtime: RuntimeSchemaProvider | None = None
         if enable_runtime:
@@ -308,6 +358,26 @@ class ConversionSchemaProvider:
                     "schema miss in object_info_cache: %s path=%s",
                     class_type,
                     self._object_info.object_info_path,
+                )
+
+        # 3. Source parser
+        if self._object_info_index is not None:
+            schema = self._object_info_index.get_schema(class_type)
+            if schema is not None:
+                cache_path = self._object_info_index.root / (self._object_info_index._load_index().get(class_type) or "")
+                _logger.info(
+                    "schema hit: %s provider=object_info_index root=%s",
+                    class_type,
+                    self._object_info_index.root,
+                )
+                return self._with_provenance(
+                    schema,
+                    SchemaSourceInfo(
+                        provider_name="object_info_index",
+                        cache_path=str(cache_path),
+                        package=schema.pack,
+                        confidence=0.7,
+                    ),
                 )
 
         # 3. Source parser
@@ -516,17 +586,51 @@ def get_schema_provider(
 
 
 def _schema_from_object_info(class_type: str, info: dict[str, Any]) -> NodeSchema:
-    inputs: dict[str, InputSpec] = {}
-    input_groups = info.get("input", {})
+    parsed_inputs: dict[str, InputSpec] = {}
+    input_groups = info.get("input")
+    if not isinstance(input_groups, dict):
+        input_groups = info.get("inputs", {})
     if isinstance(input_groups, dict):
         for group_name, group in input_groups.items():
             required = group_name == "required"
             if isinstance(group, dict):
                 for name, spec in group.items():
-                    inputs[str(name)] = _parse_input_spec(spec, required=required)
+                    parsed_inputs[str(name)] = _parse_input_spec(spec, required=required)
+    inputs = _order_object_info_inputs(parsed_inputs, info)
     outputs = _parse_outputs(info)
     pack = _first_string(info, "pack", "package", "category")
     return NodeSchema(class_type=class_type, pack=pack, inputs=inputs, outputs=outputs)
+
+
+def _order_object_info_inputs(inputs: dict[str, InputSpec], info: dict[str, Any]) -> dict[str, InputSpec]:
+    ordered: dict[str, InputSpec] = {}
+    for name in _object_info_input_order(info):
+        if name in inputs and name not in ordered:
+            ordered[name] = inputs[name]
+    for name, spec in inputs.items():
+        if name not in ordered:
+            ordered[name] = spec
+    return ordered
+
+
+def _object_info_input_order(info: dict[str, Any]) -> list[str]:
+    widget_order = info.get("object_info_widget_order")
+    if isinstance(widget_order, list):
+        return [str(name) for name in widget_order if isinstance(name, str) and name]
+
+    input_order_all = info.get("input_order_all")
+    if isinstance(input_order_all, list):
+        return [str(name) for name in input_order_all if isinstance(name, str) and name]
+
+    input_order = info.get("input_order")
+    if isinstance(input_order, dict):
+        names: list[str] = []
+        for group in ("required", "optional", "hidden"):
+            values = input_order.get(group)
+            if isinstance(values, list):
+                names.extend(str(name) for name in values if isinstance(name, str) and name)
+        return names
+    return []
 
 
 def _cache_fingerprint_for_path(path: Path) -> str | None:
@@ -609,6 +713,21 @@ def _parse_input_spec(raw: Any, *, required: bool) -> InputSpec:
 
 
 def _parse_outputs(info: dict[str, Any]) -> list[OutputSpec]:
+    normalized_outputs = info.get("outputs")
+    if isinstance(normalized_outputs, list):
+        outputs: list[OutputSpec] = []
+        for item in normalized_outputs:
+            if isinstance(item, dict):
+                outputs.append(
+                    OutputSpec(
+                        type=_first_string(item, "type"),
+                        name=_first_string(item, "name"),
+                    )
+                )
+            elif item is not None:
+                outputs.append(OutputSpec(type=str(item)))
+        return outputs
+
     raw_outputs = info.get("output") or []
     names = info.get("output_name") or info.get("output_names") or []
     outputs: list[OutputSpec] = []

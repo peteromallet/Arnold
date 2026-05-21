@@ -15,8 +15,10 @@ from vibecomfy.ingest.normalize import (
 )
 from vibecomfy.schema import (
     InputSpec,
+    ConversionSchemaProvider,
     LocalSchemaProvider,
     NodeSchema,
+    ObjectInfoSchemaProvider,
     OutputSpec,
     RuntimeSchemaProvider,
     SchemaIndexError,
@@ -84,6 +86,16 @@ def test_schema_validation_reports_missing_required_input() -> None:
     assert issue.code == "missing_required_input"
     assert issue.severity == "error"
     assert "text" in issue.message
+
+
+def test_schema_validation_allows_missing_required_input_with_default() -> None:
+    provider = FakeSchemaProvider(
+        {"PromptNode": _schema("PromptNode", inputs={"text": InputSpec("STRING", required=True, default="")})}
+    )
+    report = _workflow(VibeNode("1", "PromptNode")).validate(schema_provider=provider)
+
+    assert report.ok
+    assert report.issues == []
 
 
 def test_schema_validation_reports_unknown_input() -> None:
@@ -205,6 +217,32 @@ def test_normalize_to_api_uses_widget_only_schema_so_link_inputs_do_not_shift_po
     api = normalize_to_api(raw, schema_provider=provider)
 
     assert api["1"]["inputs"] == {"ckpt_name": "model.safetensors"}
+
+
+def test_normalize_to_api_preserves_ui_only_widget_slots_from_static_schema() -> None:
+    raw = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "widgets_values": [123, "randomize", 30, 6, "uni_pc", "simple", 1],
+                "inputs": [],
+            }
+        ],
+        "links": [],
+    }
+
+    api = normalize_to_api(raw)
+
+    assert api["1"]["inputs"] == {
+        "seed": 123,
+        "unused_widget_1": "randomize",
+        "steps": 30,
+        "cfg": 6,
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "denoise": 1,
+    }
 
 
 def test_normalize_to_api_without_schema_provider_preserves_widget_keys() -> None:
@@ -353,6 +391,35 @@ def test_runtime_schema_provider_reads_cached_object_info(tmp_path) -> None:
     assert schema.inputs["image"].type == "IMAGE"
     assert schema.inputs["image"].required is True
     assert schema.outputs == [OutputSpec(type="LATENT", name="latent")]
+
+
+def test_object_info_schema_provider_reads_normalized_cache_shape(tmp_path) -> None:
+    cache = tmp_path / "normalized_object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "SaveImage": {
+                    "pack": "comfy",
+                    "inputs": {
+                        "required": {
+                            "images": ["IMAGE", {}],
+                            "filename_prefix": ["STRING", {"default": "ComfyUI"}],
+                        }
+                    },
+                    "outputs": [{"type": "IMAGE", "name": "image"}],
+                    "object_info_widget_order": [None, "filename_prefix"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    schema = ObjectInfoSchemaProvider(cache).get_schema("SaveImage")
+
+    assert schema is not None
+    assert list(schema.inputs) == ["filename_prefix", "images"]
+    assert schema.inputs["images"].type == "IMAGE"
+    assert schema.outputs == [OutputSpec(type="IMAGE", name="image")]
 
 
 def test_runtime_schema_provider_fetches_and_writes_object_info_cache(tmp_path, monkeypatch) -> None:
@@ -901,6 +968,47 @@ def test_conversion_schema_provider_falls_back_to_object_info_cache(
     assert schema.inputs["image"].type == "IMAGE"
     assert schema.confidence == 0.4
     assert any(item.startswith("stale_cache_fingerprint:") for item in schema.conflicts)
+
+
+def test_conversion_schema_provider_uses_object_info_index_root(
+    tmp_path,
+) -> None:
+    index = tmp_path / "node_index.json"
+    index.write_text("[]", encoding="utf-8")
+    object_info_root = tmp_path / "object_info"
+    object_info_root.mkdir()
+    (object_info_root / "index.json").write_text(
+        json.dumps({"IndexedNode": "pack.json"}),
+        encoding="utf-8",
+    )
+    (object_info_root / "pack.json").write_text(
+        json.dumps(
+            {
+                "IndexedNode": {
+                    "pack": "indexed-pack",
+                    "inputs": {"required": {"prompt": ["STRING", {}]}},
+                    "outputs": [{"type": "IMAGE", "name": "image"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ConversionSchemaProvider(
+        node_index_path=str(index),
+        source_roots=[],
+        object_info_cache_path=None,
+        object_info_index_root=object_info_root,
+        widget_schema={},
+        enable_runtime=False,
+    )
+
+    schema = provider.get_schema("IndexedNode")
+    assert schema is not None
+    assert schema.source_provider == "object_info_index"
+    assert schema.pack == "indexed-pack"
+    assert schema.inputs["prompt"].type == "STRING"
+    assert schema.outputs == [OutputSpec(type="IMAGE", name="image")]
 
 
 def test_conversion_schema_provider_falls_back_to_widget_schema(

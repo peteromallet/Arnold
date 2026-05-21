@@ -173,7 +173,8 @@ def _is_link(value: Any) -> bool:
 
 def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
     schema = schema_for(schema_provider, class_type)
-    return [name for name in widget_names_from_schema(class_type, schema) if name is not None]
+    names = widget_names_from_schema(class_type, schema)
+    return [name if name is not None else f"unused_widget_{index}" for index, name in enumerate(names)]
 
 
 def _schema_output_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:

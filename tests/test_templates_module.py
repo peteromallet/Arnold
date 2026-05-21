@@ -1081,6 +1081,31 @@ def test_ready_template_metadata_handles_ready_metadata_build_call() -> None:
     assert metadata.get("output_prefix") == "video/ComfyUI"
 
 
+# -- lookup_id on ready-template workflows ------------------------------------
+
+def test_lookup_id_on_ready_template_workflow() -> None:
+    """lookup_id returns variable_name from _id_map for ready-template workflows."""
+    wf = _workflow("image/z_image")
+    wf.source = WorkflowSource(
+        "image/z_image",
+        path="ready_templates/image/z_image.py",
+        source_type="ready_template",
+    )
+    sampler = node(wf, "KSampler", "ksampler", seed=42, steps=20, cfg=8.0)
+    _force_id(wf, sampler, "4")
+    wf._set_id_map({"ksampler": "4"})
+
+    info = wf.lookup_id("4")
+    assert info["class_type"] == "KSampler"
+    assert info["variable_name"] == "ksampler"
+    assert info["source_path"] == "ready_templates/image/z_image.py"
+    # Generated-template node (from templates module) → no source_line
+    assert info["source_line"] is None
+    assert "seed" in info["inputs"]
+    assert "steps" in info["inputs"]
+    assert "cfg" in info["inputs"]
+
+
 def test_readability_inventory_parses_ready_metadata_build_call() -> None:
     """T5(c): _parse_ready_metadata handles ReadyMetadata.build(...) call expressions."""
     from vibecomfy.porting.readability_inventory import _parse_ready_metadata

@@ -9,6 +9,7 @@ import traceback
 from pathlib import Path
 
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.errors import SubgraphFreshnessError
 from vibecomfy.porting.emitter import _build_subgraph_def, _disambiguated_subgraph_slugs
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.schema.format import format_issue
@@ -32,7 +33,10 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         if drift:
             for item in drift:
                 print(f"error: {item}", file=sys.stderr)
-            return 1
+            raise SubgraphFreshnessError(
+                f"Subgraph freshness check failed for {args.path}",
+                next_action="vibecomfy port --reconvert <template>",
+            )
     print("ok")
     return 0
 

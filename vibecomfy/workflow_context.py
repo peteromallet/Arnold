@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextvars
 from typing import TYPE_CHECKING
 
+from vibecomfy.errors import ContextVarBindingError
+
 if TYPE_CHECKING:
     from vibecomfy.workflow import VibeWorkflow
 
@@ -16,9 +18,10 @@ _CURRENT_WORKFLOW: contextvars.ContextVar[VibeWorkflow | None] = contextvars.Con
 def bind_workflow(wf: VibeWorkflow) -> contextvars.Token[VibeWorkflow | None]:
     """Bind ``wf`` as the active workflow for context-bound node wrappers."""
     if _CURRENT_WORKFLOW.get() is not None:
-        raise RuntimeError(
+        raise ContextVarBindingError(
             "Nested workflow contexts not supported. The outer `with new_workflow(...)` "
-            "block is still active."
+            "block is still active.",
+            next_action="vibecomfy doctor",
         )
     return _CURRENT_WORKFLOW.set(wf)
 
@@ -31,9 +34,10 @@ def reset_workflow(token: contextvars.Token[VibeWorkflow | None]) -> None:
 def _current_workflow_or_raise() -> VibeWorkflow:
     wf = _CURRENT_WORKFLOW.get()
     if wf is None:
-        raise RuntimeError(
+        raise ContextVarBindingError(
             "No active workflow. Wrap your build with "
-            "`with new_workflow(READY_METADATA, source_path=__file__) as wf:`."
+            "`with new_workflow(READY_METADATA, source_path=__file__) as wf:`.",
+            next_action="vibecomfy doctor",
         )
     return wf
 

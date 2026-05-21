@@ -598,12 +598,27 @@ def _build_conversion_provider(args: argparse.Namespace) -> ConversionSchemaProv
     object_info_cache = getattr(args, "object_info_cache", None)
     if object_info_cache is None and not getattr(args, "no_object_info_cache", False):
         latest = latest_object_info_cache_path()
-        object_info_cache = str(latest) if latest is not None else None
+        object_info_cache = str(latest) if _object_info_cache_is_useful(latest) else None
     return ConversionSchemaProvider(
         object_info_cache_path=object_info_cache,
+        object_info_index_root=Path(__file__).resolve().parents[1] / "porting" / "cache" / "object_info",
         enable_runtime=runtime_enabled,
         runtime_server_url=server_url,
     )
+
+
+def _object_info_cache_is_useful(path: Path | None) -> bool:
+    """Avoid letting tiny focused runtime caches shadow deterministic fallbacks."""
+    if path is None:
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    core_hits = {"KSampler", "SaveImage", "CLIPLoader"} & set(data)
+    return len(core_hits) >= 2 or len(data) >= 50
 
 
 def _inject_schema_source_metadata(report: Any, args: argparse.Namespace) -> None:

@@ -706,3 +706,137 @@ def test_load_workflow_reference_handles_json_path_index_id_and_scratchpad(tmp_p
     assert from_index.id == "indexed"
     assert from_index.nodes["1"].inputs["text"] == "indexed"
     assert from_scratchpad.id == "scratchpad"
+
+
+# -- lookup_id ----------------------------------------------------------------
+
+class TestLookupId:
+    """VibeWorkflow.lookup_id(node_id) returns a rich info dict for a node."""
+
+    def test_absent_node_raises_keyerror(self) -> None:
+        """lookup_id raises KeyError for absent nodes, not None."""
+        wf = VibeWorkflow("test", WorkflowSource("test"))
+        with pytest.raises(KeyError, match="99"):
+            wf.lookup_id("99")
+
+    def test_absent_node_raises_keyerror_not_none(self) -> None:
+        """KeyError is raised, no None fallback."""
+        wf = VibeWorkflow("test", WorkflowSource("test"))
+        wf.nodes["1"] = VibeNode(id="1", class_type="Dummy")
+        # "2" does not exist
+        with pytest.raises(KeyError):
+            wf.lookup_id("2")
+
+    def test_basic_fields_for_raw_workflow(self) -> None:
+        """Raw workflow (minimal metadata) returns correct basic fields."""
+        wf = VibeWorkflow("test", WorkflowSource("test", path="/fake/workflow.json"))
+        wf.nodes["1"] = VibeNode(
+            id="1",
+            class_type="KSampler",
+            inputs={"seed": 1, "steps": 4, "cfg": 7.0},
+            widgets={"sampler_name": "euler"},
+        )
+
+        info = wf.lookup_id("1")
+
+        assert info["variable_name"] is None
+        assert info["class_type"] == "KSampler"
+        assert info["source_path"] == "/fake/workflow.json"
+        assert info["source_line"] is None
+        assert info["inputs"] == ["seed", "steps", "cfg"]
+        assert info["widgets"] == {"sampler_name": "euler"}
+        assert info["public_bindings"] == []
+        assert info["outputs"] == []
+        assert info["model_assets"] == []
+
+    def test_variable_name_from_id_map(self) -> None:
+        """Reverse lookup from _id_map returns the variable name."""
+        wf = VibeWorkflow("test", WorkflowSource("test"))
+        wf.nodes["5"] = VibeNode(id="5", class_type="CheckpointLoaderSimple")
+        wf._set_id_map({"ckpt": "5"})
+
+        info = wf.lookup_id("5")
+        assert info["variable_name"] == "ckpt"
+
+    def test_source_path_from_provenance(self) -> None:
+        """source_path prefers node metadata provenance over workflow source."""
+        wf = VibeWorkflow("test", WorkflowSource("test", path="/wf/source.json"))
+        wf.nodes["1"] = VibeNode(
+            id="1",
+            class_type="CLIPTextEncode",
+            metadata={"provenance": {"source_path": "/wf/ready_template.py", "source_line": 42}},
+        )
+
+        info = wf.lookup_id("1")
+        assert info["source_path"] == "/wf/ready_template.py"
+        assert info["source_line"] == 42
+
+    def test_source_line_null_for_generated_template_nodes(self) -> None:
+        """SD4: generated-template nodes without source_line get null."""
+        wf = VibeWorkflow("test", WorkflowSource("test"))
+        wf.nodes["1"] = VibeNode(
+            id="1",
+            class_type="KSampler",
+            metadata={"provenance": {"source_path": "/wf/gen.py"}},
+        )
+        # No source_line in provenance → null
+        info = wf.lookup_id("1")
+        assert info["source_line"] is None
+
+    def test_public_bindings(self) -> None:
+        """VibeInput entries targeting this node appear in public_bindings."""
+        from vibecomfy.workflow import VibeInput
+
+        wf = VibeWorkflow("test", WorkflowSource("test"))
+        wf.nodes["3"] = VibeNode(id="3", class_type="KSampler", inputs={"seed": 0})
+        wf.inputs["seed"] = VibeInput(
+            name="seed", node_id="3", field="seed", value=42, type="INT", default=0, required=True,
+        )
+
+        info = wf.lookup_id("3")
+        assert len(info["public_bindings"]) == 1
+        binding = info["public_bindings"][0]
+        assert binding["name"] == "seed"
+        assert binding["field"] == "seed"
+        assert binding["value"] == 42
+        assert binding["type"] == "INT"
+
+    def test_outputs_filtered(self) -> None:
+        """Outputs are filtered to the requested node_id."""
+        from vibecomfy.workflow import VibeOutput
+
+        wf = VibeWorkflow("test", WorkflowSource("test"))
+        wf.nodes["1"] = VibeNode(id="1", class_type="SaveImage")
+        wf.nodes["2"] = VibeNode(id="2", class_type="PreviewImage")
+        wf.outputs = [
+            VibeOutput(node_id="1", output_type="SaveImage"),
+            VibeOutput(node_id="2", output_type="PreviewImage"),
+        ]
+
+        info = wf.lookup_id("1")
+        assert info["outputs"] == ["SaveImage"]
+
+        info2 = wf.lookup_id("2")
+        assert info2["outputs"] == ["PreviewImage"]
+
+    def test_ready_template_workflow_with_provenance(self) -> None:
+        """Ready-template workflow with _id_map and metadata provenance."""
+        wf = VibeWorkflow(
+            "image/z_image",
+            WorkflowSource("image/z_image", path="ready_templates/image/z_image.py", source_type="ready_template"),
+        )
+        wf.nodes["4"] = VibeNode(
+            id="4",
+            class_type="KSampler",
+            inputs={"seed": 42, "steps": 20},
+            metadata={"provenance": {"source_path": "ready_templates/image/z_image.py", "source_line": 68}},
+        )
+        wf._set_id_map({"ksampler": "4"})
+
+        info = wf.lookup_id("4")
+        assert info["class_type"] == "KSampler"
+        assert info["variable_name"] == "ksampler"
+        assert info["source_path"] == "ready_templates/image/z_image.py"
+        assert info["source_line"] == 68
+        assert "seed" in info["inputs"]
+        assert "steps" in info["inputs"]

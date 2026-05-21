@@ -469,6 +469,103 @@ class VibeWorkflow:
         self._id_map = resolved
         return self
 
+    def lookup_id(self, node_id: str) -> dict[str, Any]:
+        """Return a rich info dict for the node identified by *node_id*.
+
+        Raises ``KeyError`` when *node_id* is absent from the workflow —
+        callers asked for a concrete node id.
+        """
+        nid = str(node_id)
+        if nid not in self.nodes:
+            raise KeyError(nid)
+
+        node = self.nodes[nid]
+
+        # --- variable_name: reverse lookup from _id_map --------------------
+        variable_name: str | None = None
+        for name, mapped_id in self._id_map.items():
+            if mapped_id == nid:
+                variable_name = name
+                break
+
+        # --- source_path ---------------------------------------------------
+        provenance = node.metadata.get("provenance")
+        source_path: str | None = None
+        if isinstance(provenance, dict):
+            sp = provenance.get("source_path")
+            if isinstance(sp, str) and sp:
+                source_path = sp
+        if source_path is None:
+            source_path = self.source.path
+
+        # --- source_line (SD4: null for generated-template nodes) ----------
+        source_line: int | None = None
+        if isinstance(provenance, dict):
+            sl = provenance.get("source_line")
+            if isinstance(sl, int) and sl >= 1:
+                source_line = sl
+
+        # --- inputs ---------------------------------------------------------
+        input_names: list[str] = list(node.inputs.keys())
+
+        # --- widgets --------------------------------------------------------
+        widgets: dict[str, Any] = dict(node.widgets)
+
+        # --- public_bindings ------------------------------------------------
+        public_bindings: list[dict[str, Any]] = [
+            {
+                "name": vibe_input.name,
+                "field": vibe_input.field,
+                "value": vibe_input.value,
+                "type": vibe_input.type,
+                "default": vibe_input.default,
+                "required": vibe_input.required,
+            }
+            for vibe_input in self.inputs.values()
+            if str(vibe_input.node_id) == nid
+        ]
+
+        # --- outputs --------------------------------------------------------
+        output_type_names: list[str] = [
+            output.output_type
+            for output in self.outputs
+            if str(output.node_id) == nid
+        ]
+
+        # --- model_assets ---------------------------------------------------
+        model_assets: list[dict[str, Any]] = []
+        try:
+            from vibecomfy.model_assets import (
+                _asset_for_reference,
+                _referenced_model_values,
+            )
+            from vibecomfy.registry.models_loader import load_registry
+
+            registry = load_registry()
+            all_refs = _referenced_model_values(self)
+            for ref in all_refs:
+                if ref.get("node_id") != nid:
+                    continue
+                asset = _asset_for_reference(ref, registry=registry)
+                if asset is not None:
+                    model_assets.append(asset)
+        except Exception:
+            # resolve_referenced_assets may fail when registry is unavailable;
+            # degrade gracefully and return whatever we can.
+            pass
+
+        return {
+            "variable_name": variable_name,
+            "class_type": node.class_type,
+            "source_path": source_path,
+            "source_line": source_line,
+            "inputs": input_names,
+            "widgets": widgets,
+            "public_bindings": public_bindings,
+            "outputs": output_type_names,
+            "model_assets": model_assets,
+        }
+
     def _compile_graphbuilder(self) -> dict[str, Any]:
         try:
             from comfy_execution.graph_utils import GraphBuilder
