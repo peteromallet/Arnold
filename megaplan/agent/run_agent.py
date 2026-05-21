@@ -24,6 +24,7 @@ import atexit
 import asyncio
 import base64
 import concurrent.futures
+import contextlib
 import copy
 import hashlib
 import json
@@ -356,6 +357,198 @@ def _inject_honcho_turn_context(content, turn_context: str):
     return f"{text}\n\n{note}"
 
 
+# ---------------------------------------------------------------------------
+# Logging configuration — called once per process at startup.
+# Must NOT be called from AIAgent.__init__ or any per-worker hot path.
+# ---------------------------------------------------------------------------
+
+_logging_configured: dict = {}
+_logging_config_lock = threading.Lock()
+
+# Canonical keys we use to decide if logging already matches the desired config.
+# If these match a prior call, the function is a no-op.
+_LOG_CONFIG_KEYS = frozenset({"verbose_logging", "quiet_mode", "hermes_home"})
+
+# ---------------------------------------------------------------------------
+# Capture original std streams at module-import time.  Used by the review
+# daemon quieting context manager to guarantee final-state restoration.
+# Constraint: if the host process replaces sys.stdout/stderr post-import,
+# this restore will clobber those replacements — an accepted tradeoff.
+# ---------------------------------------------------------------------------
+
+_ORIGINAL_STDOUT = sys.stdout
+_ORIGINAL_STDERR = sys.stderr
+
+
+@contextlib.contextmanager
+def _review_daemon_quiet():
+    """Context manager that silences stdout/stderr for the review daemon.
+
+    Redirects both streams to os.devnull during the managed block.  On exit
+    the ``finally`` clause restores the module-import captured originals
+    (``_ORIGINAL_STDOUT`` / ``_ORIGINAL_STDERR``), never whatever streams
+    happened to be current at context entry.  This prevents a nested or
+    concurrent quieting from installing another thread's temporary / closed
+    stream as the "restored" value.
+
+    Constraint: if the host process legitimately replaces ``sys.stdout`` or
+    ``sys.stderr`` after importing this module, the restore will clobber
+    those replacements.  This is an accepted tradeoff to keep worker threads
+    and the review daemon free of process-global stream corruption.
+    """
+    import os as _os
+    try:
+        with open(_os.devnull, "w") as _devnull:
+            sys.stdout = _devnull
+            sys.stderr = _devnull
+            yield
+    finally:
+        sys.stdout = _ORIGINAL_STDOUT
+        sys.stderr = _ORIGINAL_STDERR
+
+
+def _resolve_checkpoint_cwd() -> str:
+    """Return the best-known current working directory for checkpoint snapshots.
+
+    Fallback order: active sandbox cwd → TERMINAL_CWD env var → os.getcwd().
+    """
+    try:
+        from megaplan.runtime.sandbox import get_sandbox_cwd
+    except ImportError:
+        get_sandbox_cwd = None  # type: ignore[assignment]
+
+    if get_sandbox_cwd is not None:
+        sandbox_cwd = get_sandbox_cwd()
+        if sandbox_cwd is not None:
+            return str(sandbox_cwd)
+
+    return os.getenv("TERMINAL_CWD", os.getcwd())
+
+
+# ---------------------------------------------------------------------------
+# Honcho exit-flush singleton — one atexit hook per process regardless of
+# how many AIAgent instances are constructed.  Per-instance flags only guard
+# against adding the same instance's manager twice.
+# ---------------------------------------------------------------------------
+
+_HONCHO_EXIT_LOCK = threading.Lock()
+_HONCHO_EXIT_HOOK_REGISTERED = False
+_HONCHO_MANAGERS: weakref.WeakSet = weakref.WeakSet()
+
+
+def _flush_all_honcho_managers() -> None:
+    """atexit callback: iterate live managers and call flush_all() once each."""
+    for manager in list(_HONCHO_MANAGERS):
+        try:
+            manager.flush_all()
+        except Exception as exc:
+            logger.debug("Honcho flush on exit failed (non-fatal): %s", exc)
+
+
+def configure_logging(
+    verbose_logging: bool = False,
+    quiet_mode: bool = False,
+    hermes_home: Path | None = None,
+) -> None:
+    """Configure process-wide logging once.
+
+    Idempotent under repeated calls with the same arguments.  Must be called
+    at process startup (CLI entry, Hermes worker process entry, gateway/ACP
+    entry) before any AIAgent instances are constructed.
+
+    Args:
+        verbose_logging: Enable DEBUG-level logging for debugging.
+        quiet_mode: Suppress tool/infra log noise (CLI default).
+        hermes_home: Path to ``~/.hermes`` (defaults to env var or Path.home()/.hermes).
+    """
+    global _logging_configured
+
+    if hermes_home is None:
+        hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+
+    # Build a key from the arguments so identical calls are no-ops.
+    config_key = (
+        "verbose" if verbose_logging else "normal",
+        "quiet" if quiet_mode else "noisy",
+        str(hermes_home),
+    )
+    with _logging_config_lock:
+        if _logging_configured.get("key") == config_key:
+            return
+        _logging_configured["key"] = config_key
+
+    from logging.handlers import RotatingFileHandler
+    from agent.redact import RedactingFormatter
+
+    # --- Persistent error log ---
+    error_log_dir = hermes_home / "logs"
+    error_log_path = error_log_dir / "errors.log"
+    resolved_error_log_path = error_log_path.resolve()
+
+    root_logger = logging.getLogger()
+    has_errors_log_handler = any(
+        isinstance(handler, RotatingFileHandler)
+        and Path(getattr(handler, "baseFilename", "")).resolve() == resolved_error_log_path
+        for handler in root_logger.handlers
+    )
+    if not has_errors_log_handler:
+        error_log_dir.mkdir(parents=True, exist_ok=True)
+        error_file_handler = RotatingFileHandler(
+            error_log_path, maxBytes=2 * 1024 * 1024, backupCount=2,
+        )
+        error_file_handler.setLevel(logging.WARNING)
+        error_file_handler.setFormatter(RedactingFormatter(
+            '%(asctime)s %(levelname)s %(name)s: %(message)s',
+        ))
+        root_logger.addHandler(error_file_handler)
+
+    # --- Console logging level ---
+    if verbose_logging:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%H:%M:%S',
+            force=False,
+        )
+        for handler in logging.getLogger().handlers:
+            handler.setFormatter(RedactingFormatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                datefmt='%H:%M:%S',
+            ))
+        logging.getLogger('openai').setLevel(logging.WARNING)
+        logging.getLogger('openai._base_client').setLevel(logging.WARNING)
+        logging.getLogger('httpx').setLevel(logging.WARNING)
+        logging.getLogger('httpcore').setLevel(logging.WARNING)
+        logging.getLogger('asyncio').setLevel(logging.WARNING)
+        logging.getLogger('hpack').setLevel(logging.WARNING)
+        logging.getLogger('hpack.hpack').setLevel(logging.WARNING)
+        logging.getLogger('grpc').setLevel(logging.WARNING)
+        logging.getLogger('modal').setLevel(logging.WARNING)
+        logging.getLogger('rex-deploy').setLevel(logging.INFO)
+        logger.info("Verbose logging enabled (third-party library logs suppressed)")
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%H:%M:%S',
+            force=False,
+        )
+        logging.getLogger('openai').setLevel(logging.ERROR)
+        logging.getLogger('openai._base_client').setLevel(logging.ERROR)
+        logging.getLogger('httpx').setLevel(logging.ERROR)
+        logging.getLogger('httpcore').setLevel(logging.ERROR)
+        if quiet_mode:
+            for quiet_logger in [
+                'tools',
+                'minisweagent',
+                'run_agent',
+                'trajectory_compressor',
+                'cron',
+                'hermes_cli',
+            ]:
+                logging.getLogger(quiet_logger).setLevel(logging.ERROR)
+
+
 class AIAgent:
     """
     AI Agent with tool calling capabilities.
@@ -424,6 +617,7 @@ class AIAgent:
         checkpoints_enabled: bool = False,
         checkpoint_max_snapshots: int = 50,
         pass_session_id: bool = False,
+        output_stream=None,
     ):
         """
         Initialize the AI Agent.
@@ -486,6 +680,11 @@ class AIAgent:
         # instead of going directly to stdout where patch_stdout's StdoutProxy
         # would mangle the escape sequences.  None = use builtins.print.
         self._print_fn = None
+        # Injectable output stream for worker contexts (e.g. hermes worker).
+        # When set and _print_fn is None, _safe_print routes output here.
+        # Spinners (KawaiiSpinner) also receive this stream so their animation
+        # goes to the same sink.  Defaults to None (uses sys.stdout).
+        self._output_stream = output_stream
         self.skip_context_files = skip_context_files
         self.pass_session_id = pass_session_id
         self.log_prefix_chars = log_prefix_chars
@@ -498,6 +697,7 @@ class AIAgent:
         self.acp_command = acp_command or command
         self.acp_args = list(acp_args or args or [])
         if api_mode in {"chat_completions", "codex_responses", "anthropic_messages"}:
+
             self.api_mode = api_mode
         elif self.provider == "openai-codex":
             self.api_mode = "codex_responses"
@@ -570,6 +770,7 @@ class AIAgent:
         self.max_tokens = max_tokens  # None = use model default
         self.reasoning_config = reasoning_config  # None = use default (medium for OpenRouter)
         self.prefill_messages = prefill_messages or []  # Prefilled conversation turns
+        self.response_format: Optional[Dict[str, Any]] = None
         
         # Anthropic prompt caching: auto-enabled for Claude models via OpenRouter.
         # Reduces input costs by ~75% on multi-turn conversations by caching the
@@ -593,84 +794,10 @@ class AIAgent:
         self._context_50_warned = False
         self._context_70_warned = False
 
-        # Persistent error log -- always writes WARNING+ to ~/.hermes/logs/errors.log
-        # so tool failures, API errors, etc. are inspectable after the fact.
-        # In gateway mode, each incoming message creates a new AIAgent instance,
-        # while the root logger is process-global. Re-adding the same errors.log
-        # handler would cause each warning/error line to be written multiple times.
-        from logging.handlers import RotatingFileHandler
-        root_logger = logging.getLogger()
-        error_log_dir = _hermes_home / "logs"
-        error_log_path = error_log_dir / "errors.log"
-        resolved_error_log_path = error_log_path.resolve()
-        has_errors_log_handler = any(
-            isinstance(handler, RotatingFileHandler)
-            and Path(getattr(handler, "baseFilename", "")).resolve() == resolved_error_log_path
-            for handler in root_logger.handlers
-        )
-        from agent.redact import RedactingFormatter
-        if not has_errors_log_handler:
-            error_log_dir.mkdir(parents=True, exist_ok=True)
-            error_file_handler = RotatingFileHandler(
-                error_log_path, maxBytes=2 * 1024 * 1024, backupCount=2,
-            )
-            error_file_handler.setLevel(logging.WARNING)
-            error_file_handler.setFormatter(RedactingFormatter(
-                '%(asctime)s %(levelname)s %(name)s: %(message)s',
-            ))
-            root_logger.addHandler(error_file_handler)
+        # Logging configuration is handled once per process via
+        # configure_logging() called at startup — NOT here in the constructor.
+        # This keeps test construction of AIAgent side-effect free.
 
-        if self.verbose_logging:
-            logging.basicConfig(
-                level=logging.DEBUG,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%H:%M:%S'
-            )
-            for handler in logging.getLogger().handlers:
-                handler.setFormatter(RedactingFormatter(
-                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    datefmt='%H:%M:%S',
-                ))
-            # Keep third-party libraries at WARNING level to reduce noise
-            # We have our own retry and error logging that's more informative
-            logging.getLogger('openai').setLevel(logging.WARNING)
-            logging.getLogger('openai._base_client').setLevel(logging.WARNING)
-            logging.getLogger('httpx').setLevel(logging.WARNING)
-            logging.getLogger('httpcore').setLevel(logging.WARNING)
-            logging.getLogger('asyncio').setLevel(logging.WARNING)
-            # Suppress Modal/gRPC related debug spam
-            logging.getLogger('hpack').setLevel(logging.WARNING)
-            logging.getLogger('hpack.hpack').setLevel(logging.WARNING)
-            logging.getLogger('grpc').setLevel(logging.WARNING)
-            logging.getLogger('modal').setLevel(logging.WARNING)
-            logging.getLogger('rex-deploy').setLevel(logging.INFO)  # Keep INFO for sandbox status
-            logger.info("Verbose logging enabled (third-party library logs suppressed)")
-        else:
-            # Set logging to INFO level for important messages only
-            logging.basicConfig(
-                level=logging.INFO,
-                format='%(asctime)s - %(levelname)s - %(message)s',
-                datefmt='%H:%M:%S'
-            )
-            # Suppress noisy library logging
-            logging.getLogger('openai').setLevel(logging.ERROR)
-            logging.getLogger('openai._base_client').setLevel(logging.ERROR)
-            logging.getLogger('httpx').setLevel(logging.ERROR)
-            logging.getLogger('httpcore').setLevel(logging.ERROR)
-            if self.quiet_mode:
-                # In quiet mode (CLI default), suppress all tool/infra log
-                # noise. The TUI has its own rich display for status; logger
-                # INFO/WARNING messages just clutter it.
-                for quiet_logger in [
-                    'tools',               # all tools.* (terminal, browser, web, file, etc.)
-                    'minisweagent',         # mini-swe-agent execution backend
-                    'run_agent',            # agent runner internals
-                    'trajectory_compressor',
-                    'cron',                 # scheduler (only relevant in daemon mode)
-                    'hermes_cli',           # CLI helpers
-                ]:
-                    logging.getLogger(quiet_logger).setLevel(logging.ERROR)
-        
         # Internal stream callback (set during streaming TTS).
         # Initialized here so _vprint can reference it before run_conversation.
         self._stream_callback = None
@@ -1135,14 +1262,18 @@ class AIAgent:
         unavailable mid-session.  A raw ``print()`` raises ``OSError`` which
         can crash cron jobs and lose completed work.
 
-        Internally routes through ``self._print_fn`` (default: builtin
-        ``print``) so callers such as the CLI can inject a renderer that
-        handles ANSI escape sequences properly (e.g. prompt_toolkit's
-        ``print_formatted_text(ANSI(...))``) without touching this method.
+        Routes through ``self._print_fn`` when set (CLI prompt_toolkit).
+        Otherwise uses ``self._output_stream`` when provided (worker contexts).
+        Falls back to builtin ``print`` (sys.stdout).
         """
         try:
-            fn = self._print_fn or print
-            fn(*args, **kwargs)
+            if self._print_fn is not None:
+                self._print_fn(*args, **kwargs)
+            elif self._output_stream is not None:
+                kwargs.setdefault('file', self._output_stream)
+                print(*args, **kwargs)
+            else:
+                print(*args, **kwargs)
         except OSError:
             pass
 
@@ -1408,12 +1539,9 @@ class AIAgent:
             prompt = self._SKILL_REVIEW_PROMPT
 
         def _run_review():
-            import contextlib, os as _os
             review_agent = None
             try:
-                with open(_os.devnull, "w") as _devnull, \
-                     contextlib.redirect_stdout(_devnull), \
-                     contextlib.redirect_stderr(_devnull):
+                with _review_daemon_quiet():
                     review_agent = AIAgent(
                         model=self.model,
                         max_iterations=8,
@@ -2122,23 +2250,25 @@ class AIAgent:
         self._register_honcho_exit_hook()
 
     def _register_honcho_exit_hook(self) -> None:
-        """Register a process-exit flush hook without clobbering signal handlers."""
+        """Register this instance's honcho manager for process-exit flush.
+
+        Per-instance ``_honcho_exit_hook_registered`` prevents adding the
+        same manager twice.  Only one process-wide ``atexit`` hook is ever
+        registered, regardless of how many AIAgent instances are constructed.
+        """
         if self._honcho_exit_hook_registered or not self._honcho:
             return
 
-        honcho_ref = weakref.ref(self._honcho)
-
-        def _flush_honcho_on_exit():
-            manager = honcho_ref()
-            if manager is None:
-                return
-            try:
-                manager.flush_all()
-            except Exception as exc:
-                logger.debug("Honcho flush on exit failed (non-fatal): %s", exc)
-
-        atexit.register(_flush_honcho_on_exit)
+        # Add this instance's manager to the process-wide weak collection.
+        _HONCHO_MANAGERS.add(self._honcho)
         self._honcho_exit_hook_registered = True
+
+        # Register exactly one process-wide atexit hook.
+        with _HONCHO_EXIT_LOCK:
+            global _HONCHO_EXIT_HOOK_REGISTERED
+            if not _HONCHO_EXIT_HOOK_REGISTERED:
+                atexit.register(_flush_all_honcho_managers)
+                _HONCHO_EXIT_HOOK_REGISTERED = True
 
     def _queue_honcho_prefetch(self, user_message: str) -> None:
         """Queue turn-end Honcho prefetch so the next turn can consume cached results."""
@@ -2575,6 +2705,30 @@ class AIAgent:
                 "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
             })
         return converted or None
+
+    def set_response_format(self, schema: Dict[str, Any], *, name: str = "response") -> Dict[str, Any]:
+        """Configure JSON-schema structured output for providers that support it."""
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": name,
+                "strict": True,
+                "schema": schema,
+            },
+        }
+        self.response_format = response_format
+        return response_format
+
+    def _supports_response_format(self) -> bool:
+        """Return whether the active transport accepts OpenAI response_format."""
+        if self.api_mode == "anthropic_messages":
+            return False
+        # DeepSeek's direct OpenAI-compatible endpoint currently rejects
+        # response_format=json_schema. Hermes prompts already include a schema
+        # template and the caller parses/validates JSON, so omit the API hint.
+        if "api.deepseek.com" in self._base_url_lower:
+            return False
+        return True
 
     @staticmethod
     def _split_responses_tool_id(raw_id: Any) -> tuple[Optional[str], Optional[str]]:
@@ -4118,6 +4272,17 @@ class AIAgent:
             if self.max_tokens is not None:
                 kwargs["max_output_tokens"] = self.max_tokens
 
+            if self.response_format and self._supports_response_format():
+                json_schema = self.response_format.get("json_schema", {})
+                kwargs["text"] = {
+                    "format": {
+                        "type": "json_schema",
+                        "name": json_schema.get("name", "response"),
+                        "schema": json_schema.get("schema", {}),
+                        "strict": json_schema.get("strict", True),
+                    }
+                }
+
             return kwargs
 
         sanitized_messages = api_messages
@@ -4179,6 +4344,9 @@ class AIAgent:
 
         if self.max_tokens is not None:
             api_kwargs.update(self._max_tokens_param(self.max_tokens))
+
+        if self.response_format and self._supports_response_format():
+            api_kwargs["response_format"] = self.response_format
 
         extra_body = {}
 
@@ -4787,7 +4955,7 @@ class AIAgent:
                 try:
                     cmd = function_args.get("command", "")
                     if _is_destructive_command(cmd):
-                        cwd = function_args.get("workdir") or os.getenv("TERMINAL_CWD", os.getcwd())
+                        cwd = function_args.get("workdir") or _resolve_checkpoint_cwd()
                         self._checkpoint_mgr.ensure_checkpoint(
                             cwd, f"before terminal: {cmd[:60]}"
                         )
@@ -4837,7 +5005,7 @@ class AIAgent:
         spinner = None
         if self.quiet_mode:
             face = random.choice(KawaiiSpinner.KAWAII_WAITING)
-            spinner = KawaiiSpinner(f"{face} ⚡ running {num_tools} tools concurrently", spinner_type='dots')
+            spinner = KawaiiSpinner(f"{face} ⚡ running {num_tools} tools concurrently", spinner_type='dots', output_stream=self._output_stream)
             spinner.start()
 
         try:
@@ -4992,7 +5160,7 @@ class AIAgent:
                 try:
                     cmd = function_args.get("command", "")
                     if _is_destructive_command(cmd):
-                        cwd = function_args.get("workdir") or os.getenv("TERMINAL_CWD", os.getcwd())
+                        cwd = function_args.get("workdir") or _resolve_checkpoint_cwd()
                         self._checkpoint_mgr.ensure_checkpoint(
                             cwd, f"before terminal: {cmd[:60]}"
                         )
@@ -5063,7 +5231,7 @@ class AIAgent:
                 spinner = None
                 if self.quiet_mode:
                     face = random.choice(KawaiiSpinner.KAWAII_WAITING)
-                    spinner = KawaiiSpinner(f"{face} {spinner_label}", spinner_type='dots')
+                    spinner = KawaiiSpinner(f"{face} {spinner_label}", spinner_type='dots', output_stream=self._output_stream)
                     spinner.start()
                 self._delegate_spinner = spinner
                 _delegate_result = None
@@ -5091,7 +5259,7 @@ class AIAgent:
                 preview = _build_tool_preview(function_name, function_args) or function_name
                 if len(preview) > 30:
                     preview = preview[:27] + "..."
-                spinner = KawaiiSpinner(f"{face} {emoji} {preview}", spinner_type='dots')
+                spinner = KawaiiSpinner(f"{face} {emoji} {preview}", spinner_type='dots', output_stream=self._output_stream)
                 spinner.start()
                 _spinner_result = None
                 try:
@@ -5424,6 +5592,34 @@ class AIAgent:
         return final_response
 
     def run_conversation(
+        self,
+        user_message: str,
+        system_message: str = None,
+        conversation_history: List[Dict[str, Any]] = None,
+        task_id: str = None,
+        stream_callback: Optional[callable] = None,
+        persist_user_message: Optional[str] = None,
+        sync_honcho: bool = True,
+        response_format: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        previous_response_format = self.response_format
+        if response_format is not None:
+            self.response_format = response_format
+        try:
+            return self._run_conversation_impl(
+                user_message=user_message,
+                system_message=system_message,
+                conversation_history=conversation_history,
+                task_id=task_id,
+                stream_callback=stream_callback,
+                persist_user_message=persist_user_message,
+                sync_honcho=sync_honcho,
+            )
+        finally:
+            if response_format is not None:
+                self.response_format = previous_response_format
+
+    def _run_conversation_impl(
         self,
         user_message: str,
         system_message: str = None,
@@ -5773,7 +5969,7 @@ class AIAgent:
                     # Raw KawaiiSpinner only when no streaming consumers
                     # (would conflict with streamed token output)
                     spinner_type = random.choice(['brain', 'sparkle', 'pulse', 'moon', 'star'])
-                    thinking_spinner = KawaiiSpinner(f"{face} {verb}...", spinner_type=spinner_type)
+                    thinking_spinner = KawaiiSpinner(f"{face} {verb}...", spinner_type=spinner_type, output_stream=self._output_stream)
                     thinking_spinner.start()
             
             # Log request details if verbose
@@ -7257,6 +7453,8 @@ def main(
     Toolset Examples:
         - "research": Web search, extract, crawl + vision tools
     """
+    configure_logging(verbose_logging=verbose, quiet_mode=False)
+
     print("🤖 AI Agent with Tool Calling")
     print("=" * 50)
     

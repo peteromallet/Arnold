@@ -473,15 +473,22 @@ def _get_env_config() -> Dict[str, Any]:
     else:
         default_cwd = "/root"
 
-    # Read TERMINAL_CWD but sanity-check it for container backends.
-    # If Docker cwd passthrough is explicitly enabled, remap the host path to
-    # /workspace and track the original host path separately. Otherwise keep the
-    # normal sandbox behavior and discard host paths.
-    cwd = os.getenv("TERMINAL_CWD", default_cwd)
+    # Compute effective cwd:
+    # 1. Active sandbox cwd (ContextVar, set by install_sandbox)
+    # 2. TERMINAL_CWD env var (legacy; may still be used by non-sandbox paths)
+    # 3. Default cwd for the environment type
+    from megaplan.runtime.sandbox import get_sandbox_cwd
+    sandbox_cwd = get_sandbox_cwd()
+    if sandbox_cwd is not None:
+        cwd = str(sandbox_cwd)
+    else:
+        cwd = os.getenv("TERMINAL_CWD", default_cwd)
     host_cwd = None
     host_prefixes = ("/Users/", "/home/", "C:\\", "C:/")
     if env_type == "docker" and mount_docker_cwd:
-        docker_cwd_source = os.getenv("TERMINAL_CWD") or os.getcwd()
+        docker_cwd_source = str(sandbox_cwd) if sandbox_cwd is not None else (
+            os.getenv("TERMINAL_CWD") or os.getcwd()
+        )
         candidate = os.path.abspath(os.path.expanduser(docker_cwd_source))
         if (
             any(candidate.startswith(p) for p in host_prefixes)

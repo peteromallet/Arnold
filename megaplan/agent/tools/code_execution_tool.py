@@ -296,20 +296,13 @@ def _rpc_server_loop(
                         tool_args.pop(param, None)
 
                 # Dispatch through the standard tool handler.
-                # Suppress stdout/stderr from internal tool handlers so
-                # their status prints don't leak into the CLI spinner.
+                # We do NOT suppress stdout/stderr globally — stream
+                # identity is the invariant.  If a tool handler prints
+                # directly, it goes to the real process streams.
                 try:
-                    _real_stdout, _real_stderr = sys.stdout, sys.stderr
-                    devnull = open(os.devnull, "w")
-                    try:
-                        sys.stdout = devnull
-                        sys.stderr = devnull
-                        result = handle_function_call(
-                            tool_name, tool_args, task_id=task_id
-                        )
-                    finally:
-                        sys.stdout, sys.stderr = _real_stdout, _real_stderr
-                        devnull.close()
+                    result = handle_function_call(
+                        tool_name, tool_args, task_id=task_id
+                    )
                 except Exception as exc:
                     logger.error("Tool call failed in sandbox: %s", exc, exc_info=True)
                     result = json.dumps({"error": str(exc)})

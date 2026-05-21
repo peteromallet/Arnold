@@ -15,6 +15,7 @@ import textwrap
 import threading
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -121,8 +122,11 @@ class WorkerResult:
 # the source-code working tree tracked by the subprocess changes.
 # ---------------------------------------------------------------------------
 
-_WORK_DIR_OVERRIDE: Path | None = None
-_WORK_DIR_WARNED: bool = False
+_WORK_DIR_OVERRIDE: ContextVar[Path | None] = ContextVar(
+    "megaplan_work_dir_override", default=None
+)
+_WORK_DIR_WARNED: set[Path] = set()
+_WORK_DIR_WARNED_LOCK = threading.Lock()
 
 
 def set_work_dir_override(path: Path | str | None) -> None:
@@ -131,10 +135,10 @@ def set_work_dir_override(path: Path | str | None) -> None:
     Typically called once from the CLI entry point with either an explicit
     --work-dir value or ``Path.cwd()``. Pass ``None`` to clear the override
     (primarily useful in tests).
+
+    Sets the ContextVar for the current context.
     """
-    global _WORK_DIR_OVERRIDE, _WORK_DIR_WARNED
-    _WORK_DIR_OVERRIDE = Path(path) if path is not None else None
-    _WORK_DIR_WARNED = False
+    _WORK_DIR_OVERRIDE.set(Path(path) if path is not None else None)
 
 
 def resolve_work_dir(state: PlanState) -> Path:
@@ -154,13 +158,13 @@ def resolve_work_dir(state: PlanState) -> Path:
     entry point — this function keeps the log terse because it fires on every
     worker invocation.)
     """
-    global _WORK_DIR_WARNED
     try:
         project_dir = Path(state["config"]["project_dir"]).resolve()
     except Exception:
         project_dir = None
-    if _WORK_DIR_OVERRIDE is not None:
-        work_dir = _WORK_DIR_OVERRIDE
+    override = _WORK_DIR_OVERRIDE.get()
+    if override is not None:
+        work_dir = override
     elif project_dir is not None:
         work_dir = project_dir
     else:
@@ -169,17 +173,15 @@ def resolve_work_dir(state: PlanState) -> Path:
         resolved_work = work_dir.resolve()
     except Exception:
         resolved_work = work_dir
-    if (
-        not _WORK_DIR_WARNED
-        and project_dir is not None
-        and resolved_work != project_dir
-    ):
-        print(
-            f"[megaplan] Using plan's project_dir ({project_dir}) for "
-            f"subprocess --add-dir. Override with --work-dir if needed.",
-            flush=True,
-        )
-        _WORK_DIR_WARNED = True
+    if project_dir is not None and resolved_work != project_dir:
+        with _WORK_DIR_WARNED_LOCK:
+            if resolved_work not in _WORK_DIR_WARNED:
+                _WORK_DIR_WARNED.add(resolved_work)
+                print(
+                    f"[megaplan] Using plan's project_dir ({project_dir}) for "
+                    f"subprocess --add-dir. Override with --work-dir if needed.",
+                    flush=True,
+                )
     return work_dir
 
 

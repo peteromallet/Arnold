@@ -91,7 +91,8 @@ def test_run_check_passes_prior_flags_to_prompt(monkeypatch, tmp_path: Path) -> 
                 }
 
         class FakeSessionDB:
-            pass
+            def __init__(self, db_path=None):
+                pass
 
         return FakeAgent, FakeSessionDB
 

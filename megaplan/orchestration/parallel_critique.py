@@ -14,6 +14,7 @@ from megaplan._core import get_effective, read_json, schemas_root
 from megaplan.workers.hermes import (
     _streaming_run_kwargs,
     _toolsets_for_phase,
+    _worker_db_path,
     clean_parsed_payload,
     parse_agent_output,
 )
@@ -53,11 +54,13 @@ def _run_check(
     model: str | None,
     schema: dict[str, Any],
     project_dir: Path,
+    output_stream: Any | None = None,
 ) -> tuple[int, dict[str, Any], list[str], list[str], float]:
     from megaplan.workers.hermes import _import_hermes_runtime
 
     AIAgent, SessionDB = _import_hermes_runtime()
 
+    _critique_db_path = _worker_db_path(plan_dir, f"critique_{check['id']}")
     output_path = write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json")
     prompt_builder = (
         single_check_critique_joke_prompt
@@ -78,6 +81,7 @@ def _run_check(
     # Cap output tokens to match the main-line hermes worker (Qwen repetition
     # mitigation). Drives the Fireworks streaming gate below.
     agent_max_tokens = 32768
+    _stream = output_stream if output_stream is not None else sys.stderr
 
     def _make_agent(m: str, kw: dict) -> "AIAgent":
         a = AIAgent(
@@ -87,12 +91,12 @@ def _run_check(
             skip_memory=True,
             enabled_toolsets=_toolsets_for_phase("critique"),
             session_id=str(uuid.uuid4()),
-            session_db=SessionDB(),
+            session_db=SessionDB(db_path=_critique_db_path),
             max_tokens=agent_max_tokens,
             reasoning_config=_reasoning_off,
             **kw,
         )
-        a._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=sys.stderr)
+        a._print_fn = lambda *args, **kwargs: print(*args, **kwargs, file=_stream)
         return a
 
     def _failure_reason(exc: Exception) -> str:
@@ -163,10 +167,10 @@ def _run_check(
                 if isinstance(exc, CliError):
                     print(
                         f"[parallel-critique] MiniMax returned bad content ({_failure_reason(exc)}), falling back to OpenRouter",
-                        file=sys.stderr,
+                        file=_stream,
                     )
                 else:
-                    print(f"[parallel-critique] Primary MiniMax failed ({exc}), falling back to OpenRouter", file=sys.stderr)
+                    print(f"[parallel-critique] Primary MiniMax failed ({exc}), falling back to OpenRouter", file=_stream)
                 # Re-write template since the previous agent may have corrupted it
                 output_path = write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json")
                 agent = _make_agent(fallback_model, fallback_kwargs)
@@ -225,34 +229,31 @@ def run_parallel_critique(
     total_completion_tokens = 0
     total_tokens = 0
 
-    real_stdout = sys.stdout
-    sys.stdout = sys.stderr
-    try:
-        concurrency = min(max_concurrent or get_effective("orchestration", "max_critique_concurrency"), len(checks))
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = [
-                executor.submit(
-                    _run_check,
-                    index,
-                    check,
-                    state=state,
-                    plan_dir=plan_dir,
-                    root=root,
-                    model=model,
-                    schema=schema,
-                    project_dir=project_dir,
-                )
-                for index, check in enumerate(checks)
-            ]
-            for future in as_completed(futures):
-                index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = future.result()
-                results[index] = (check_payload, verified_ids, disputed_ids)
-                total_cost += cost_usd
-                total_prompt_tokens += pt
-                total_completion_tokens += ct
-                total_tokens += tt
-    finally:
-        sys.stdout = real_stdout
+    output_stream = sys.stderr
+    concurrency = min(max_concurrent or get_effective("orchestration", "max_critique_concurrency"), len(checks))
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [
+            executor.submit(
+                _run_check,
+                index,
+                check,
+                state=state,
+                plan_dir=plan_dir,
+                root=root,
+                model=model,
+                schema=schema,
+                project_dir=project_dir,
+                output_stream=output_stream,
+            )
+            for index, check in enumerate(checks)
+        ]
+        for future in as_completed(futures):
+            index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = future.result()
+            results[index] = (check_payload, verified_ids, disputed_ids)
+            total_cost += cost_usd
+            total_prompt_tokens += pt
+            total_completion_tokens += ct
+            total_tokens += tt
 
     ordered_checks: list[dict[str, Any]] = []
     verified_groups: list[list[str]] = []

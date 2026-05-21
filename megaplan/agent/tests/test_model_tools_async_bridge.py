@@ -85,30 +85,31 @@ class TestRunAsyncLoopLifecycle:
 
 
 class TestRunAsyncWorkerThread:
-    """Verify worker threads get persistent per-thread loops (delegate_task fix)."""
+    """Verify worker threads use asyncio.run() for clean per-call isolation."""
 
-    def test_worker_thread_loop_not_closed(self):
-        """A worker thread's loop must stay open after _run_async returns,
-        so cached httpx/AsyncOpenAI clients don't crash on GC."""
+    def test_worker_thread_loop_closed_after_call(self):
+        """A worker thread's loop must be closed after _run_async returns.
+        asyncio.run() creates and fully closes a fresh loop per call,
+        preventing cross-task state leakage on reused executor threads."""
         from concurrent.futures import ThreadPoolExecutor
         from model_tools import _run_async
 
         def _run_on_worker():
             loop = _run_async(_get_current_loop())
-            still_open = not loop.is_closed()
-            return loop, still_open
+            is_closed = loop.is_closed()
+            return loop, is_closed
 
         with ThreadPoolExecutor(max_workers=1) as pool:
-            loop, still_open = pool.submit(_run_on_worker).result()
+            loop, is_closed = pool.submit(_run_on_worker).result()
 
-        assert still_open, (
-            "Worker thread's event loop was closed after _run_async — "
-            "cached async clients will crash with 'Event loop is closed'"
+        assert is_closed, (
+            "Worker thread's event loop was NOT closed after _run_async — "
+            "asyncio.run() must close the loop to guarantee isolation"
         )
 
-    def test_worker_thread_reuses_loop_across_calls(self):
-        """Multiple _run_async calls on the same worker thread should
-        reuse the same persistent loop (not create-and-destroy each time)."""
+    def test_worker_thread_gets_new_loop_per_call(self):
+        """Multiple _run_async calls on the same worker thread must create
+        distinct event loops (asyncio.run() creates a fresh loop each call)."""
         from concurrent.futures import ThreadPoolExecutor
         from model_tools import _run_async
 
@@ -120,15 +121,22 @@ class TestRunAsyncWorkerThread:
         with ThreadPoolExecutor(max_workers=1) as pool:
             loop1, loop2 = pool.submit(_run_twice_on_worker).result()
 
-        assert loop1 is loop2, (
-            "Worker thread created different loops for consecutive calls — "
-            "cached clients from the first call would be orphaned"
+        assert loop1 is not loop2, (
+            "Worker thread reused the same event loop across calls — "
+            "asyncio.run() must create a fresh loop each time to prevent "
+            "cross-task state leakage"
         )
-        assert not loop1.is_closed()
+        assert loop1.is_closed(), (
+            "First call's loop was not closed — asyncio.run() must close it"
+        )
+        assert loop2.is_closed(), (
+            "Second call's loop was not closed — asyncio.run() must close it"
+        )
 
     def test_parallel_workers_get_separate_loops(self):
         """Different worker threads must get their own loops to avoid
-        contention (the original reason for the worker-thread branch)."""
+        contention.  asyncio.run() guarantees a fresh loop per call on
+        each thread, fully closed afterwards."""
         import time
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from model_tools import _run_async
@@ -140,7 +148,7 @@ class TestRunAsyncWorkerThread:
             # ensuring the ThreadPoolExecutor actually uses 3 distinct threads.
             loop = _run_async(_get_current_loop())
             barrier.wait()
-            return id(loop), not loop.is_closed(), threading.current_thread().ident
+            return id(loop), loop.is_closed(), threading.current_thread().ident
 
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = [pool.submit(_get_loop_id) for _ in range(3)]
@@ -148,9 +156,12 @@ class TestRunAsyncWorkerThread:
 
         loop_ids = {r[0] for r in results}
         thread_ids = {r[2] for r in results}
-        all_open = all(r[1] for r in results)
+        all_closed = all(r[1] for r in results)
 
-        assert all_open, "At least one worker thread's loop was closed"
+        assert all_closed, (
+            "At least one worker thread's loop remained open — "
+            "asyncio.run() must close loops to guarantee isolation"
+        )
         # The barrier guarantees 3 distinct threads were used
         assert len(thread_ids) == 3, f"Expected 3 threads, got {len(thread_ids)}"
         # Each thread should have its own loop
@@ -298,6 +309,103 @@ class TestVisionDispatchLoopSafety:
         assert r2.get("success") is True
         assert loop_after_first is loop_after_second, "Loop changed between dispatches"
         assert not loop_after_second.is_closed()
+
+
+class TestWorkerThreadLoopIsolation:
+    """Verify two async tool calls on the same reused executor thread
+    have zero cross-task state leakage (pending tasks, loop-local state)."""
+
+    def test_no_cross_task_loop_state_leakage(self):
+        """Submit two async tool calls on the same executor thread.
+        Call A's loop state (pending tasks, loop locals) must not be
+        visible to Call B.  asyncio.run() ensures a fresh loop each time.
+        """
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from model_tools import _run_async
+
+        leakage_detected = []
+
+        async def _tool_with_state():
+            loop = asyncio.get_running_loop()
+            # Store some loop-local state
+            loop._megaplan_test_marker = "call_a"
+            # Create a pending task that should NOT be visible to the next call
+            loop.create_task(asyncio.sleep(0))
+            return id(loop)
+
+        async def _tool_check_state():
+            loop = asyncio.get_running_loop()
+            # Call B's loop must NOT have Call A's marker
+            marker = getattr(loop, '_megaplan_test_marker', None)
+            if marker is not None:
+                leakage_detected.append(f"Loop-local state leaked: {marker}")
+            # Call B's loop must NOT have pending tasks from Call A
+            pending = asyncio.all_tasks(loop)
+            # Only our own task should be pending
+            our_task = asyncio.current_task(loop)
+            other_pending = [t for t in pending if t is not our_task and not t.done()]
+            if other_pending:
+                leakage_detected.append(
+                    f"Pending tasks leaked: {len(other_pending)} tasks from prior call"
+                )
+            return id(loop)
+
+        def _worker():
+            # First call
+            loop_id_a = _run_async(_tool_with_state())
+            # Second call on same thread — must be isolated
+            loop_id_b = _run_async(_tool_check_state())
+            # On the same thread, asyncio.run() creates fresh loops => different IDs
+            assert loop_id_a != loop_id_b, (
+                f"Same thread reused event loop across calls: {loop_id_a}"
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_worker)
+            future.result(timeout=10)
+
+        assert not leakage_detected, (
+            f"Cross-task state leakage detected: {leakage_detected}"
+        )
+
+    def test_no_pending_task_carryover(self):
+        """Two consecutive _run_async calls on a worker thread must not
+        carry pending tasks from the first call into the second."""
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from model_tools import _run_async
+
+        carryover = []
+
+        async def _create_pending():
+            loop = asyncio.get_running_loop()
+            # Create a pending task
+            async def _never_runs():
+                await asyncio.sleep(999)
+            loop.create_task(_never_runs())
+            return "done"
+
+        async def _check_pending():
+            loop = asyncio.get_running_loop()
+            pending = asyncio.all_tasks(loop)
+            own = asyncio.current_task(loop)
+            others = [t for t in pending if t is not own and not t.done()]
+            if others:
+                carryover.append(len(others))
+            return "done"
+
+        def _worker():
+            _run_async(_create_pending())
+            _run_async(_check_pending())
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_worker)
+            future.result(timeout=10)
+
+        assert not carryover, (
+            f"Pending tasks carried over from prior call: {carryover}"
+        )
 
 
 def _write_fake_image(dest):

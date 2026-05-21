@@ -178,7 +178,8 @@ def test_run_check_uses_single_check_prompt_and_review_toolset(
     }
 
     class FakeSessionDB:
-        pass
+        def __init__(self, db_path=None):
+            pass
 
     class FakeAIAgent:
         instances: list["FakeAIAgent"] = []
@@ -262,7 +263,8 @@ def test_run_criteria_verdict_uses_parallel_review_prompt_and_review_toolset(
     payload = _build_mock_payload("review", state, plan_dir, review_verdict="approved")
 
     class FakeSessionDB:
-        pass
+        def __init__(self, db_path=None):
+            pass
 
     class FakeAIAgent:
         instances: list["FakeAIAgent"] = []
