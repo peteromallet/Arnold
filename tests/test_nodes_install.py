@@ -560,9 +560,11 @@ def test_missing_packs_for_workflow_includes_declared_requirements_even_when_sch
     assert unresolved == []
 
 
-def test_known_schema_classes_raises_when_missing(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match=r"node_index\.json not found .*vibecomfy sources sync"):
-        _known_schema_classes(tmp_path / "node_index.json")
+def test_known_schema_classes_falls_back_to_authoring_schema_when_missing(tmp_path: Path) -> None:
+    classes = _known_schema_classes(tmp_path / "node_index.json")
+
+    assert "KSampler" in classes
+    assert "SaveImage" in classes
 
 
 def test_resolve_node_index_path_falls_back_to_repo_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
