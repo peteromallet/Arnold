@@ -1599,6 +1599,244 @@ def test_deepseek_provider_invalid_value_rejected_at_argparse(
 
 
 # ---------------------------------------------------------------------------
+# Model-pin preservation and conflict tests (T11)
+# ---------------------------------------------------------------------------
+
+
+def test_depth_preserves_model_pins_in_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--depth on a spec with an explicit model pin preserves the model
+    and only rewrites effort.  codex:gpt-5.3-codex:low → codex:gpt-5.3-codex:high."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    fake_home_config = tmp_path / ".config" / "megaplan"
+    _write_profiles(
+        fake_home_config / "profiles.toml",
+        """\
+        [profiles.pinned]
+        plan = "codex:gpt-5.3-codex:low"
+        prep = "hermes:deepseek:deepseek-v4-pro"
+        critique = "claude:low"
+        revise = "codex:gpt-5.3-codex:low"
+        gate = "claude:low"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
+        loop_plan = "codex:gpt-5.3-codex:low"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
+        review = "claude:low"
+        tiebreaker_researcher = "codex:gpt-5.3-codex:low"
+        tiebreaker_challenger = "claude:low"
+        """,
+    )
+
+    args = _worker_args(profile="pinned")
+    args.vendor = "codex"  # Stay on codex to avoid vendor-swap conflict on pinned models
+    args.depth = "high"
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    # Model pins preserved, effort upgraded
+    assert resolved["plan"] == "codex:gpt-5.3-codex:high", (
+        f"--depth high should preserve model pin gpt-5.3-codex; "
+        f"got {resolved['plan']!r}"
+    )
+    assert resolved["revise"] == "codex:gpt-5.3-codex:high"
+    assert resolved["loop_plan"] == "codex:gpt-5.3-codex:high"
+    assert resolved["tiebreaker_researcher"] == "codex:gpt-5.3-codex:high"
+    # Non-pinned codex:low (critic phase) — depth does NOT rewrite critic phases
+    assert resolved["critique"] == "codex:low"
+    assert resolved["gate"] == "codex:low"  # gate is NOT an author phase, depth doesn't touch it
+
+
+def test_vendor_swap_raises_conflict_for_model_pinned_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--vendor codex on a profile whose claude phases have explicit model
+    pins must raise vendor_swap_model_conflict naming the phase and spec."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    fake_home_config = tmp_path / ".config" / "megaplan"
+    _write_profiles(
+        fake_home_config / "profiles.toml",
+        """\
+        [profiles.claude-pinned]
+        plan = "claude:sonnet-4.6:high"
+        prep = "hermes:deepseek:deepseek-v4-pro"
+        critique = "codex:high"
+        revise = "claude:sonnet-4.6:high"
+        gate = "claude:high"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
+        loop_plan = "claude:sonnet-4.6:high"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
+        review = "codex:high"
+        tiebreaker_researcher = "claude:sonnet-4.6:high"
+        tiebreaker_challenger = "codex:high"
+        """,
+    )
+
+    args = _worker_args(profile="claude-pinned")
+    args.vendor = "codex"
+
+    with pytest.raises(CliError) as exc_info:
+        apply_profile_expansion(args, None)
+    assert exc_info.value.code == "vendor_swap_model_conflict"
+    # Error should name the offending phase and the spec string
+    message = str(exc_info.value)
+    assert "plan" in message, f"Error should name phase 'plan': {message}"
+    assert "sonnet-4.6" in message, f"Error should name model 'sonnet-4.6': {message}"
+
+
+def test_critic_cross_raises_conflict_for_model_pinned_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--critic cross on a profile whose critique/review have explicit
+    model pins must raise vendor_swap_model_conflict naming the phase."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    fake_home_config = tmp_path / ".config" / "megaplan"
+    _write_profiles(
+        fake_home_config / "profiles.toml",
+        """\
+        [profiles.critic-pinned]
+        plan = "codex:high"
+        prep = "hermes:deepseek:deepseek-v4-pro"
+        critique = "claude:sonnet-4.6:high"
+        revise = "codex:high"
+        gate = "codex:high"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
+        loop_plan = "codex:high"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
+        review = "claude:sonnet-4.6:high"
+        tiebreaker_researcher = "codex:high"
+        tiebreaker_challenger = "claude:high"
+        """,
+    )
+
+    args = _worker_args(profile="critic-pinned")
+    args.vendor = "codex"  # post-vendor vendor is codex, cross → claude... but critique is already claude
+    # Actually we need vendor swap to trigger the cross. Let's try vendor=claude so
+    # post-vendor vendor=claude, cross→codex, but critique/review are claude:sonnet-4.6
+    # which would cross-swap to codex:sonnet-4.6 → conflict!
+    args.vendor = "claude"
+    args.critic = "cross"
+
+    with pytest.raises(CliError) as exc_info:
+        apply_profile_expansion(args, None)
+    assert exc_info.value.code == "vendor_swap_model_conflict"
+    message = str(exc_info.value)
+    # Should name the phase and spec — the conflict is on critique/review, not plan
+    assert ("critique" in message or "review" in message), (
+        f"Error should name phase 'critique' or 'review': {message}"
+    )
+    assert "sonnet-4.6" in message, f"Error should name model 'sonnet-4.6': {message}"
+
+
+def test_reserved_effort_token_disambiguation_in_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reserved effort tokens like 'low', 'high' etc. must be treated as
+    effort, not model, when used in profile specs like claude:low."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    fake_home_config = tmp_path / ".config" / "megaplan"
+    _write_profiles(
+        fake_home_config / "profiles.toml",
+        """\
+        [profiles.effort-only]
+        plan = "claude:low"
+        prep = "hermes:deepseek:deepseek-v4-pro"
+        critique = "codex:low"
+        revise = "claude:low"
+        gate = "claude:low"
+        finalize = "hermes:deepseek:deepseek-v4-pro"
+        execute = "hermes:deepseek:deepseek-v4-pro"
+        loop_plan = "claude:low"
+        loop_execute = "hermes:deepseek:deepseek-v4-pro"
+        review = "codex:low"
+        tiebreaker_researcher = "claude:low"
+        tiebreaker_challenger = "codex:low"
+        """,
+    )
+
+    args = _worker_args(profile="effort-only")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    # claude:low should resolve as agent=claude, model=None, effort=low
+    # The phase_model entry should be like "plan=claude:low"
+    assert resolved["plan"] == "claude:low", (
+        f"claude:low should stay as claude:low (effort-only); got {resolved['plan']!r}"
+    )
+    # codex:low gets vendor-swapped to claude:low when default vendor is claude
+    assert resolved["critique"] == "claude:low"
+    assert resolved["review"] == "claude:low"
+
+    # Now apply --depth high on the same profile with vendor=codex
+    # so the critique codex:low stays codex and plateaus
+    args2 = _worker_args(profile="effort-only")
+    args2.vendor = "codex"
+    args2.depth = "high"
+    apply_profile_expansion(args2, None)
+    resolved2 = _phase_models_to_map(args2.phase_model)
+
+    assert resolved2["plan"] == "codex:high", (
+        f"--depth high on codex:low should produce codex:high; "
+        f"got {resolved2['plan']!r}"
+    )
+    assert resolved2["critique"] == "codex:low", (
+        f"critique should plateau at existing effort:low; got {resolved2['critique']!r}"
+    )
+
+
+def test_builtin_profile_resolution_with_default_model_pins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Built-in profiles (like all-claude) resolve bare claude specs with
+    default models via parse_agent_spec + resolved_default_model_for_agent."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    # all-claude has bare claude specs — these should get default model resolution
+    args = _worker_args(profile="all-claude")
+    apply_profile_expansion(args, None)
+    resolved = _phase_models_to_map(args.phase_model)
+
+    # The spec strings in phase_model should be bare "claude" (not three-part)
+    # but resolve_agent_mode will fill in the default model at runtime
+    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize", "execute", "review"):
+        spec = resolved.get(phase)
+        assert spec is not None, f"Phase '{phase}' missing from resolved map"
+        # Bare claude specs are just "claude" — no model suffix
+        if spec == "claude" or spec == "codex":
+            pass  # valid bare spec
+        else:
+            # If there's a model, parse_agent_spec should handle it
+            from megaplan.types import parse_agent_spec
+            parsed = parse_agent_spec(spec)
+            assert parsed.agent in ("claude", "codex", "hermes", "shannon"), (
+                f"Unexpected agent in spec '{spec}' for phase '{phase}'"
+            )
+
+    # all-deepseek-pro has hermes specs — these are fine
+    args2 = _worker_args(profile="all-deepseek-pro")
+    apply_profile_expansion(args2, None)
+    resolved2 = _phase_models_to_map(args2.phase_model)
+    for phase, spec in resolved2.items():
+        from megaplan.types import parse_agent_spec
+        parsed = parse_agent_spec(spec)
+        assert parsed.agent is not None, (
+            f"Could not parse spec '{spec}' for phase '{phase}'"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Shannon agent spec validation
 # ---------------------------------------------------------------------------
 
@@ -1606,16 +1844,16 @@ def test_deepseek_provider_invalid_value_rejected_at_argparse(
 def test_shannon_accepted_as_valid_agent_spec() -> None:
     """shannon is a valid agent spec for profiles."""
     from megaplan.types import parse_agent_spec
-    agent, model = parse_agent_spec("shannon")
-    assert agent == "shannon"
-    assert model is None
+    spec = parse_agent_spec("shannon")
+    assert spec.agent == "shannon"
+    assert spec.model is None
 
 
 def test_shannon_rejected_when_misspelled() -> None:
     """Misspelled agent specs are rejected."""
     from megaplan.types import parse_agent_spec
-    agent, _ = parse_agent_spec("shanon")  # parse_agent_spec accepts any agent name
-    assert agent == "shanon"  # parser is lenient; validation happens elsewhere
+    spec = parse_agent_spec("shanon")  # parse_agent_spec accepts any agent name
+    assert spec.agent == "shanon"  # parser is lenient; validation happens elsewhere
 
 
 def test_known_agents_includes_shannon() -> None:

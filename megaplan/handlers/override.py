@@ -12,12 +12,17 @@ from megaplan.types import (
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
-    STATE_FINALIZED,
     STATE_FAILED,
+    STATE_FINALIZED,
     STATE_GATED,
     STATE_PLANNED,
     STATE_REVIEWED,
     StepResponse,
+    DEFAULT_AGENT_ROUTING,
+    _PREMIUM_EFFORT_TOKENS,
+    _PREMIUM_VENDORS,
+    parse_agent_spec,
+    format_agent_spec,
 )
 from megaplan._core import (
     add_or_increment_debt,
@@ -604,6 +609,136 @@ def _override_set_profile(
     _attach_next_step_runtime(response)
     return response
 
+def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace) -> StepResponse:
+    """Override: change the model for a specific phase."""
+    phase = getattr(args, "phase", None)
+    model_arg = getattr(args, "model", None)
+    effort = getattr(args, "effort", None)
+
+    # Validate required args
+    if not phase:
+        raise CliError("invalid_args", "override set-model requires --phase PHASE")
+    if not model_arg:
+        raise CliError("invalid_args", "override set-model requires --model MODEL")
+
+    # Validate known phase names
+    if phase not in DEFAULT_AGENT_ROUTING:
+        raise CliError(
+            "invalid_args",
+            f"Unknown phase '{phase}'. Valid phases: {', '.join(sorted(DEFAULT_AGENT_ROUTING))}",
+        )
+
+    # Infer the target agent for this phase
+    # Priority: (1) persisted phase_model entry, (2) active profile, (3) DEFAULT_AGENT_ROUTING
+    agent = _infer_phase_agent(phase, state, root)
+    if agent is None:
+        agent = DEFAULT_AGENT_ROUTING.get(phase, "")
+
+    # set-model only allowed for claude/codex
+    if agent not in _PREMIUM_VENDORS:
+        raise CliError(
+            "invalid_args",
+            f"set-model is only supported for claude/codex phases. "
+            f"Phase '{phase}' resolves to agent '{agent}'.",
+        )
+
+    # Reject reserved effort tokens as --model values
+    if model_arg in _PREMIUM_EFFORT_TOKENS:
+        raise CliError(
+            "invalid_args",
+            f"'{model_arg}' is a reserved effort token and cannot be used as a model name. "
+            f"Use --effort to set effort level.",
+        )
+
+    # Validate effort if provided
+    if effort is not None and effort not in _PREMIUM_EFFORT_TOKENS:
+        raise CliError(
+            "invalid_args",
+            f"Unknown effort level '{effort}'. Valid: {', '.join(sorted(_PREMIUM_EFFORT_TOKENS))}",
+        )
+
+    # Build the new spec string
+    new_spec = format_agent_spec(parse_agent_spec(f"{agent}:{model_arg}" + (f":{effort}" if effort else "")))
+
+    # Find and update the phase_model entry
+    phase_models = list(state["config"].get("phase_model") or [])
+    previous_spec = None
+    found = False
+    for i, pm in enumerate(phase_models):
+        if "=" in pm and pm.split("=", 1)[0] == phase:
+            previous_spec = pm.split("=", 1)[1]
+            phase_models[i] = f"{phase}={new_spec}"
+            found = True
+            break
+    if not found:
+        # No existing entry — append a new one
+        previous_spec = DEFAULT_AGENT_ROUTING.get(phase, "")
+        phase_models.append(f"{phase}={new_spec}")
+
+    state["config"]["phase_model"] = phase_models
+
+    # Append override meta entry
+    _append_to_meta(
+        state,
+        "overrides",
+        {
+            "action": "set-model",
+            "phase": phase,
+            "previous_spec": previous_spec,
+            "new_spec": new_spec,
+            "timestamp": now_utc(),
+            "reason": getattr(args, "reason", "") or "",
+        },
+    )
+    save_state_merge_meta(plan_dir, state)
+
+    next_steps = infer_next_steps(state)
+    summary = (
+        f"Model for phase '{phase}' changed from '{previous_spec}' to '{new_spec}'. "
+        f"Takes effect on the next phase."
+    )
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "summary": summary,
+        "next_step": next_steps[0] if next_steps else None,
+        "state": state["current_state"],
+        "phase": phase,
+        "previous_spec": previous_spec,
+        "new_spec": new_spec,
+    }
+    _attach_next_step_runtime(response)
+    return response
+
+
+def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
+    """Infer the agent for a phase from persisted state or defaults."""
+    # Check persisted phase_model for an explicit spec
+    phase_models = state.get("config", {}).get("phase_model") or []
+    for pm in phase_models:
+        if isinstance(pm, str) and "=" in pm:
+            pm_phase, pm_spec = pm.split("=", 1)
+            if pm_phase == phase:
+                parsed = parse_agent_spec(pm_spec)
+                return parsed.agent
+
+    # Check active profile
+    profile_name = state.get("config", {}).get("profile")
+    if profile_name:
+        try:
+            from megaplan.profiles import load_profiles, resolve_profile
+            project_dir = Path(state["config"].get("project_dir", str(root)))
+            profiles = load_profiles(project_dir=project_dir)
+            resolved = resolve_profile(profile_name, profiles)
+            if phase in resolved:
+                parsed = parse_agent_spec(resolved[phase])
+                return parsed.agent
+        except Exception:
+            pass
+
+    # Fall back to DEFAULT_AGENT_ROUTING
+    return DEFAULT_AGENT_ROUTING.get(phase)
+
 
 _OVERRIDE_ACTIONS: dict[
     str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]
@@ -615,6 +750,7 @@ _OVERRIDE_ACTIONS: dict[
     "recover-blocked": _override_recover_blocked,
     "set-robustness": _override_set_robustness,
     "set-profile": _override_set_profile,
+    "set-model": _override_set_model,
 }
 
 

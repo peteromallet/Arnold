@@ -169,13 +169,13 @@ def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dic
             )
         if not isinstance(raw_spec, str):
             _raise_invalid_profile(path, profile_name, phase, f"expected a string agent spec, got {type(raw_spec).__name__}")
-        agent, _model = parse_agent_spec(raw_spec)
-        if agent not in KNOWN_AGENTS:
+        parsed = parse_agent_spec(raw_spec)
+        if parsed.agent not in KNOWN_AGENTS:
             _raise_invalid_profile(
                 path,
                 profile_name,
                 phase,
-                f"unknown agent '{agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
             )
         validated[str(phase)] = raw_spec
     return validated
@@ -949,16 +949,28 @@ def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
 def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     """Swap claude:X <-> codex:X to match ``target_vendor``.
 
-    Non-premium specs (hermes, anything without a known prefix) are
-    returned unchanged. The effort suffix (e.g. ``:medium``) is
-    preserved verbatim.
+    Non-premium specs (hermes, shannon) are returned unchanged.
+    Effort-only and bare specs are swapped cleanly (claude:low → codex:low).
+    Explicit model pins raise ``vendor_swap_model_conflict`` because
+    a model like ``sonnet-4.6`` cannot be run on the other vendor.
     """
-    agent, model = parse_agent_spec(spec)
-    if agent not in _PREMIUM_VENDORS:
+    parsed = parse_agent_spec(spec)
+    if parsed.agent not in _PREMIUM_VENDORS:
         return spec
-    if agent == target_vendor:
+    if parsed.agent == target_vendor:
         return spec
-    return f"{target_vendor}:{model}" if model is not None else target_vendor
+    # Bare agent (no model, no effort) → just swap vendor
+    if parsed.model is None and parsed.effort is None:
+        return target_vendor
+    # Effort-only → swap vendor, keep effort
+    if parsed.model is None and parsed.effort is not None:
+        return f"{target_vendor}:{parsed.effort}"
+    # Model pinned → cannot swap vendor
+    raise CliError(
+        "vendor_swap_model_conflict",
+        f"Vendor swap would overwrite explicit model pin '{parsed.model}' "
+        f"on spec '{spec}' → refusing to produce '{target_vendor}:{parsed.model}'",
+    )
 
 
 def apply_vendor_rewrite(
@@ -974,6 +986,8 @@ def apply_vendor_rewrite(
 
     When *tier_models* is provided, tier entries are also rewritten in-place
     (mutated) using the same ``_swap_premium_spec`` logic.
+    Raises ``vendor_swap_model_conflict`` when an explicit model pin
+    would be overwritten, naming the offending phase and spec.
     """
     if vendor not in VALID_VENDORS:
         raise CliError(
@@ -984,13 +998,31 @@ def apply_vendor_rewrite(
     if tier_models is not None:
         for phase, tiers in tier_models.items():
             for tier_int, spec in tiers.items():
-                tiers[tier_int] = _swap_premium_spec(spec, vendor)
+                try:
+                    tiers[tier_int] = _swap_premium_spec(spec, vendor)
+                except CliError as e:
+                    if e.code == "vendor_swap_model_conflict":
+                        raise CliError(
+                            "vendor_swap_model_conflict",
+                            f"Vendor swap conflict on phase '{phase}' tier {tier_int}: {e.message}",
+                        ) from e
+                    raise
     # feedback is locked at claude:low for cross-run comparability
-    return {
-        phase: _swap_premium_spec(spec, vendor)
-        for phase, spec in profile.items()
-        if phase != "feedback"
-    } | {"feedback": profile.get("feedback", "claude:low")}
+    result: dict[str, str] = {}
+    for phase, spec in profile.items():
+        if phase == "feedback":
+            continue
+        try:
+            result[phase] = _swap_premium_spec(spec, vendor)
+        except CliError as e:
+            if e.code == "vendor_swap_model_conflict":
+                raise CliError(
+                    "vendor_swap_model_conflict",
+                    f"Vendor swap conflict on phase '{phase}': {e.message}",
+                ) from e
+            raise
+    result["feedback"] = profile.get("feedback", "claude:low")
+    return result
 
 
 def apply_critic_rewrite(
@@ -1032,12 +1064,24 @@ def apply_critic_rewrite(
     other = "codex" if vendor == "claude" else "claude"
     result = dict(profile)
     for phase in ("critique", "review"):
-        agent, model = parse_agent_spec(profile[phase])
-        # Preserve hermes specs as-is when crossing — only premium slots
-        # have a meaningful "other vendor."
-        if agent not in _PREMIUM_VENDORS:
+        parsed = parse_agent_spec(profile[phase])
+        # Preserve hermes/shannon specs as-is when crossing — only premium
+        # slots have a meaningful "other vendor."
+        if parsed.agent not in _PREMIUM_VENDORS:
             continue
-        result[phase] = f"{other}:{model}" if model is not None else other
+        # Bare agent → swap vendor cleanly
+        if parsed.model is None and parsed.effort is None:
+            result[phase] = other
+        # Effort-only → swap vendor, keep effort
+        elif parsed.model is None and parsed.effort is not None:
+            result[phase] = f"{other}:{parsed.effort}"
+        else:
+            # Model pinned → cannot cross-swap
+            raise CliError(
+                "vendor_swap_model_conflict",
+                f"Critic cross-swap would overwrite explicit model pin "
+                f"'{parsed.model}' on phase '{phase}' spec '{profile[phase]}'",
+            )
     return result
 
 
@@ -1051,11 +1095,17 @@ def apply_depth_rewrite(
 
     Only rewrites slots whose agent is claude/codex *and* whose phase is in
     :data:`DEPTH_AUTHOR_PHASES`. Critic phases plateau at their existing
-    depth (asymmetry principle); hermes specs are never touched; bare
-    ``claude`` (no effort suffix) becomes ``claude:<depth>``.
+    depth (asymmetry principle); hermes/shannon specs are never touched.
 
     When *tier_models* is provided, tier entries for author phases are also
     rewritten in-place (mutated). Tiers for non-author phases are skipped.
+
+    Explicit model pins are preserved — only the effort suffix is rewritten.
+    ``codex:gpt-5.3-codex:low`` with ``--depth high`` becomes
+    ``codex:gpt-5.3-codex:high``, not ``codex:high``.
+
+    Bare ``claude`` (no effort suffix) becomes ``claude:<depth>``.
+    Effort-only specs like ``claude:low`` become ``claude:<depth>``.
     """
     if depth not in VALID_DEPTH_CHOICES:
         raise CliError(
@@ -1066,19 +1116,25 @@ def apply_depth_rewrite(
     for phase, spec in profile.items():
         if phase not in DEPTH_AUTHOR_PHASES:
             continue
-        agent, _model = parse_agent_spec(spec)
-        if agent not in _PREMIUM_VENDORS:
+        parsed = parse_agent_spec(spec)
+        if parsed.agent not in _PREMIUM_VENDORS:
             continue
-        result[phase] = f"{agent}:{depth}"
+        if parsed.model is not None:
+            result[phase] = f"{parsed.agent}:{parsed.model}:{depth}"
+        else:
+            result[phase] = f"{parsed.agent}:{depth}"
     if tier_models is not None:
         for phase, tiers in tier_models.items():
             if phase not in DEPTH_AUTHOR_PHASES:
                 continue
             for tier_int, spec in tiers.items():
-                agent, _model = parse_agent_spec(spec)
-                if agent not in _PREMIUM_VENDORS:
+                parsed = parse_agent_spec(spec)
+                if parsed.agent not in _PREMIUM_VENDORS:
                     continue
-                tiers[tier_int] = f"{agent}:{depth}"
+                if parsed.model is not None:
+                    tiers[tier_int] = f"{parsed.agent}:{parsed.model}:{depth}"
+                else:
+                    tiers[tier_int] = f"{parsed.agent}:{depth}"
     return result
 
 
@@ -1124,8 +1180,8 @@ def apply_deepseek_provider_rewrite(
 
 def _profile_has_premium_slots(profile: dict[str, str]) -> bool:
     for spec in profile.values():
-        agent, _model = parse_agent_spec(spec)
-        if agent in _PREMIUM_VENDORS:
+        parsed = parse_agent_spec(spec)
+        if parsed.agent in _PREMIUM_VENDORS:
             return True
     return False
 

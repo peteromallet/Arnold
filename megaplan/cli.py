@@ -3693,6 +3693,7 @@ def build_parser() -> argparse.ArgumentParser:
             "recover-blocked",
             "set-robustness",
             "set-profile",
+            "set-model",
         ],
     )
     override_parser.add_argument("--plan")
@@ -3702,6 +3703,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--robustness", choices=list(ROBUSTNESS_ACCEPTED), default=None
     )
     override_parser.add_argument("--profile", default=None)
+    override_parser.add_argument("--phase", default=None)
+    override_parser.add_argument("--model", default=None)
+    override_parser.add_argument("--effort", default=None)
     # strict-notes plumbing. Only meaningful for specific override_action values, but
     # the override parser is flat (single positional + flags), so the flags live here.
     override_parser.add_argument(
@@ -4923,6 +4927,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise CliError(
                     "invalid_args", "quality-gate resolve requires --resolution"
                 )
+        if args.command == "override" and args.override_action == "set-model" and not args.phase:
+            raise CliError("invalid_args", "override set-model requires --phase PHASE")
+        if args.command == "override" and args.override_action == "set-model" and not args.model:
+            raise CliError("invalid_args", "override set-model requires --model MODEL")
         if args.command == "init" and getattr(args, "from_arnold_epic", None):
             from megaplan.store import DBStore
 

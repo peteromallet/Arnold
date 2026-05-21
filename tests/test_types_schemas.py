@@ -266,11 +266,154 @@ def test_load_plan_migrates_legacy_evaluated_state(tmp_path: Path) -> None:
 
 
 def test_parse_agent_spec_claude_effort_levels() -> None:
-    from megaplan.types import parse_agent_spec
-    assert parse_agent_spec("claude:low") == ("claude", "low")
-    assert parse_agent_spec("claude:high") == ("claude", "high")
-    assert parse_agent_spec("claude") == ("claude", None)
-    assert parse_agent_spec("codex:low") == ("codex", "low")
-    assert parse_agent_spec("codex:high") == ("codex", "high")
-    assert parse_agent_spec("codex") == ("codex", None)
-    assert parse_agent_spec("hermes:openai/gpt-5") == ("hermes", "openai/gpt-5")
+    from megaplan.types import AgentSpec, parse_agent_spec
+    # Effort-only: claude:low, claude:high → model=None, effort=set
+    assert parse_agent_spec("claude:low") == AgentSpec("claude", effort="low")
+    assert parse_agent_spec("claude:high") == AgentSpec("claude", effort="high")
+    assert parse_agent_spec("claude:medium") == AgentSpec("claude", effort="medium")
+    assert parse_agent_spec("claude:xhigh") == AgentSpec("claude", effort="xhigh")
+    assert parse_agent_spec("claude:max") == AgentSpec("claude", effort="max")
+    # Bare claude → model=None, effort=None
+    assert parse_agent_spec("claude") == AgentSpec("claude")
+    # Codex effort-only
+    assert parse_agent_spec("codex:low") == AgentSpec("codex", effort="low")
+    assert parse_agent_spec("codex:high") == AgentSpec("codex", effort="high")
+    assert parse_agent_spec("codex:minimal") == AgentSpec("codex", effort="minimal")
+    assert parse_agent_spec("codex") == AgentSpec("codex")
+    # Hermes passthrough (non-premium)
+    assert parse_agent_spec("hermes:openai/gpt-5") == AgentSpec("hermes", model="openai/gpt-5")
+
+
+def test_parse_agent_spec_bare_specs() -> None:
+    from megaplan.types import AgentSpec, parse_agent_spec
+    assert parse_agent_spec("claude") == AgentSpec("claude")
+    assert parse_agent_spec("codex") == AgentSpec("codex")
+    assert parse_agent_spec("hermes") == AgentSpec("hermes")
+    assert parse_agent_spec("shannon") == AgentSpec("shannon")
+
+
+def test_parse_agent_spec_effort_only() -> None:
+    """Reserved effort tokens for premium agents must parse as effort, not model."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    # claude:low must be effort-only (not model='low')
+    spec = parse_agent_spec("claude:low")
+    assert spec.agent == "claude"
+    assert spec.model is None
+    assert spec.effort == "low"
+    # codex:minimal must be effort-only
+    spec = parse_agent_spec("codex:minimal")
+    assert spec.agent == "codex"
+    assert spec.model is None
+    assert spec.effort == "minimal"
+
+
+def test_parse_agent_spec_model_only() -> None:
+    """Model-only specs for premium agents."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    spec = parse_agent_spec("claude:sonnet-4.6")
+    assert spec.agent == "claude"
+    assert spec.model == "sonnet-4.6"
+    assert spec.effort is None
+
+
+def test_parse_agent_spec_model_plus_effort() -> None:
+    """Model-plus-effort specs for premium agents."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    spec = parse_agent_spec("codex:gpt-5.3-codex:high")
+    assert spec.agent == "codex"
+    assert spec.model == "gpt-5.3-codex"
+    assert spec.effort == "high"
+
+    spec = parse_agent_spec("claude:sonnet-4.6:medium")
+    assert spec.agent == "claude"
+    assert spec.model == "sonnet-4.6"
+    assert spec.effort == "medium"
+
+
+def test_parse_agent_spec_hermes_passthrough_multiple_colons() -> None:
+    """Hermes specs with multiple colons preserve the full model string."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    spec = parse_agent_spec("hermes:fireworks:accounts/foo")
+    assert spec.agent == "hermes"
+    assert spec.model == "fireworks:accounts/foo"
+    assert spec.effort is None
+
+    spec = parse_agent_spec("hermes:fireworks:accounts/fireworks/models/kimi-k2p6")
+    assert spec.agent == "hermes"
+    assert spec.model == "fireworks:accounts/fireworks/models/kimi-k2p6"
+    assert spec.effort is None
+
+
+def test_parse_agent_spec_shannon_legacy() -> None:
+    """Direct shannon specs preserve the full payload as model."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    spec = parse_agent_spec("shannon")
+    assert spec.agent == "shannon"
+    assert spec.model is None
+    assert spec.effort is None
+
+    # shannon:anything → full payload as model (non-premium passthrough)
+    spec = parse_agent_spec("shannon:some-payload")
+    assert spec.agent == "shannon"
+    assert spec.model == "some-payload"
+    assert spec.effort is None
+
+
+def test_parse_agent_spec_shannon_not_model_plus_effort() -> None:
+    """shannon:sonnet-4.6:high is NOT model-plus-effort — it's a non-premium passthrough."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    spec = parse_agent_spec("shannon:sonnet-4.6:high")
+    assert spec.agent == "shannon"
+    # The entire rest after first colon is the model (passthrough)
+    assert spec.model == "sonnet-4.6:high"
+    assert spec.effort is None
+
+
+def test_parse_agent_spec_unknown_agent() -> None:
+    """Unknown agents get passthrough treatment (whole rest after first colon = model)."""
+    from megaplan.types import AgentSpec, parse_agent_spec
+    spec = parse_agent_spec("unknown-agent")
+    assert spec.agent == "unknown-agent"
+    assert spec.model is None
+    assert spec.effort is None
+
+    spec = parse_agent_spec("unknown:foo:bar")
+    assert spec.agent == "unknown"
+    assert spec.model == "foo:bar"
+    assert spec.effort is None
+
+
+def test_parse_agent_spec_round_trip() -> None:
+    """format_agent_spec round-trips correctly through parse_agent_spec."""
+    from megaplan.types import AgentSpec, format_agent_spec, parse_agent_spec
+    cases = [
+        "claude",
+        "claude:low",
+        "claude:sonnet-4.6",
+        "claude:sonnet-4.6:medium",
+        "codex",
+        "codex:high",
+        "codex:gpt-5.3-codex:high",
+        "codex:gpt-5.5",
+        "hermes:fireworks:accounts/foo",
+        "shannon",
+        "shannon:some-payload",
+    ]
+    for case in cases:
+        formatted = format_agent_spec(parse_agent_spec(case))
+        assert formatted == case, f"Round-trip failed: {case!r} → {formatted!r}"
+
+
+def test_reserved_effort_token_disambiguation() -> None:
+    """All reserved effort tokens for claude/codex must NOT be parsed as model names."""
+    from megaplan.types import AgentSpec, _PREMIUM_EFFORT_TOKENS, parse_agent_spec
+    for token in _PREMIUM_EFFORT_TOKENS:
+        spec = parse_agent_spec(f"claude:{token}")
+        assert spec.agent == "claude"
+        assert spec.model is None, f"claude:{token} should be effort-only, not model='{token}'"
+        assert spec.effort == token
+
+        spec = parse_agent_spec(f"codex:{token}")
+        assert spec.agent == "codex"
+        assert spec.model is None, f"codex:{token} should be effort-only, not model='{token}'"
+        assert spec.effort == token

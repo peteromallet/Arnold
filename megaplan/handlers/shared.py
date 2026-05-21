@@ -16,7 +16,7 @@ from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_h
 from megaplan.receipts import build_receipt
 from megaplan.receipts.writer import write_receipt
 from megaplan.execute.step_edit import next_plan_artifact_name
-from megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
+from megaplan.types import AgentMode, CliError, MOCK_ENV_VAR, PlanState, StepResponse
 from megaplan.orchestration.phase_result import (
     _emit_phase_result,
     phase_result_guard,
@@ -162,7 +162,11 @@ def _run_worker(
     from megaplan import handlers as _handlers_pkg
 
     apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
-    agent, mode, refreshed, model = resolved or _handlers_pkg.resolve_agent_mode(step, args)
+    res = resolved or _handlers_pkg.resolve_agent_mode(step, args)
+    agent = res.agent if isinstance(res, AgentMode) else res[0]
+    mode = res.mode if isinstance(res, AgentMode) else res[1]
+    refreshed = res.refreshed if isinstance(res, AgentMode) else res[2]
+    model = res.resolved_model if isinstance(res, AgentMode) else res[3]
     run_id = set_active_step(state, step=step, agent=agent, mode=mode, model=model)
     _emit_phase_notice(step)
     # Phases hold the lock for many minutes; merge meta to avoid clobbering
@@ -172,7 +176,7 @@ def _run_worker(
         with phase_result_guard(plan_dir):
             run_step_kwargs: dict[str, Any] = {
                 "root": root,
-                "resolved": (agent, mode, refreshed, model),
+                "resolved": res,
                 "prompt_override": prompt_override,
             }
             if prompt_kwargs is not None and _supports_prompt_kwargs(worker_module.run_step_with_worker):

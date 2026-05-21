@@ -450,6 +450,7 @@ def apply_session_update(
     *,
     mode: str,
     refreshed: bool,
+    model: str | None = None,
 ) -> None:
     from megaplan.workers import update_session_state
 
@@ -459,6 +460,7 @@ def apply_session_update(
         session_id,
         mode=mode,
         refreshed=refreshed,
+        model=model,
         existing_sessions=state["sessions"],
     )
     if result is not None:

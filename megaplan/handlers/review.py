@@ -461,7 +461,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                     prompt_kwargs = {"pre_check_flags": pre_check_flags}
                 else:
                     prompt_override = _build_review_prompt_override(
-                        resolved[0],
+                        resolved.agent,
                         state,
                         plan_dir,
                         root=root,
@@ -482,7 +482,8 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
                 _pkg.update_flags_after_review(plan_dir, worker.payload, iteration=state["iteration"])
             atomic_write_json(plan_dir / "review.json", worker.payload)
         else:
-            agent_type, mode, refreshed, model = _pkg.resolve_agent_mode("review", args)
+            rev_resolved = _pkg.resolve_agent_mode("review", args)
+            agent_type, mode, refreshed, model = rev_resolved.agent, rev_resolved.mode, rev_resolved.refreshed, rev_resolved.model
             if agent_type != "hermes" or os.getenv(MOCK_ENV_VAR) == "1":
                 worker, agent, mode, refreshed = _run_worker(
                     "review",
