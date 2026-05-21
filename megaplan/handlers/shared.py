@@ -55,6 +55,12 @@ from megaplan.workers import WorkerResult
 log = logging.getLogger("megaplan")
 
 
+def _agent_mode_parts(resolved: AgentMode | tuple[str, str, bool, str | None]) -> tuple[str, str, bool, str | None]:
+    if isinstance(resolved, AgentMode):
+        return resolved.agent, resolved.mode, resolved.refreshed, resolved.model
+    return resolved
+
+
 def _append_to_meta(state: PlanState, field: str, value: Any) -> None:
     state["meta"].setdefault(field, []).append(value)
 

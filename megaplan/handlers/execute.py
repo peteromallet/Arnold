@@ -37,7 +37,7 @@ from megaplan._core import (
 )
 from megaplan.workers import validate_payload, warn_if_work_dir_differs_from_project_dir
 
-from .shared import _emit_phase_notice, attach_agent_fallback, worker_module
+from .shared import _agent_mode_parts, _emit_phase_notice, attach_agent_fallback, worker_module
 from megaplan.orchestration.phase_result import _emit_phase_result, phase_result_guard, BlockedTask, Deviation
 
 
@@ -115,7 +115,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 "Execute requires explicit user approval (--user-approved) when auto-approve is not set. The orchestrator must confirm with the user at the gate checkpoint before proceeding.",
             )
         am = worker_module.resolve_agent_mode("execute", args)
-        agent, mode, refreshed, model = am.agent, am.mode, am.refreshed, am.model
+        agent, mode, refreshed, model = _agent_mode_parts(am)
         # Force fresh session after review kickback or blocked retry to avoid
         # prior-context bias (poisoned environment beliefs, stale task state).
         if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):

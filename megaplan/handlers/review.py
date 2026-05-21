@@ -57,6 +57,7 @@ from megaplan._core import (
 
 from .shared import (
     _attach_next_step_runtime,
+    _agent_mode_parts,
     _emit_phase_notice,
     _run_worker,
     _supports_prompt_kwargs,
@@ -457,11 +458,12 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             prompt_kwargs = None
             if robustness in {"full", "thorough"}:
                 resolved = _pkg.resolve_agent_mode("review", args)
+                agent_type, _mode, _refreshed, _model = _agent_mode_parts(resolved)
                 if _supports_prompt_kwargs(worker_module.run_step_with_worker):
                     prompt_kwargs = {"pre_check_flags": pre_check_flags}
                 else:
                     prompt_override = _build_review_prompt_override(
-                        resolved.agent,
+                        agent_type,
                         state,
                         plan_dir,
                         root=root,
@@ -483,7 +485,7 @@ def handle_review(root: Path, args: argparse.Namespace) -> StepResponse:
             atomic_write_json(plan_dir / "review.json", worker.payload)
         else:
             rev_resolved = _pkg.resolve_agent_mode("review", args)
-            agent_type, mode, refreshed, model = rev_resolved.agent, rev_resolved.mode, rev_resolved.refreshed, rev_resolved.model
+            agent_type, mode, refreshed, model = _agent_mode_parts(rev_resolved)
             if agent_type != "hermes" or os.getenv(MOCK_ENV_VAR) == "1":
                 worker, agent, mode, refreshed = _run_worker(
                     "review",
