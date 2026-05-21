@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import re
@@ -15,6 +16,7 @@ from vibecomfy.commands._output import emit
 from vibecomfy.commands._index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.registry import load_workflow_reference
+from vibecomfy.registry.pack_resolver import PackResolverError, resolve_pack
 from vibecomfy.schema import ObjectInfoSchemaProvider, SchemaIndexError, SourceSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import object_info_cache_candidates
 import vibecomfy.node_packs_install as node_packs_install
@@ -35,6 +37,8 @@ def _cmd_nodes_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_nodes_spec(args: argparse.Namespace) -> int:
+    if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", args.class_type, re.I):
+        return _cmd_nodes_spec_subgraph(args)
     provider = ObjectInfoSchemaProvider(args.object_info_cache) if args.object_info_cache else get_schema_provider("auto")
     try:
         schema = provider.get_schema(args.class_type)
@@ -59,6 +63,49 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(asdict(schema), indent=2, sort_keys=True))
     return 0
+
+
+def _cmd_nodes_spec_subgraph(args: argparse.Namespace) -> int:
+    candidates: list[Path] = []
+    source = getattr(args, "source", None)
+    if source:
+        candidates.append(Path(source))
+    else:
+        candidates.extend(Path("workflow_corpus").rglob("*.json"))
+    for path in candidates:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        definitions = raw.get("definitions") if isinstance(raw, dict) else None
+        subgraphs = definitions.get("subgraphs") if isinstance(definitions, dict) else None
+        if isinstance(subgraphs, dict):
+            iterable = subgraphs.values()
+        elif isinstance(subgraphs, list):
+            iterable = subgraphs
+        else:
+            iterable = ()
+        for subgraph in iterable:
+            if not isinstance(subgraph, dict) or str(subgraph.get("id")) != args.class_type:
+                continue
+            class_counts: dict[str, int] = {}
+            for node in subgraph.get("nodes") or ():
+                if isinstance(node, dict):
+                    class_type = str(node.get("type") or node.get("class_type") or "Unknown")
+                    class_counts[class_type] = class_counts.get(class_type, 0) + 1
+            payload = {
+                "uuid": args.class_type,
+                "name": subgraph.get("name"),
+                "inputs": subgraph.get("inputs") or [],
+                "outputs": subgraph.get("outputs") or [],
+                "inner_node_count": len(subgraph.get("nodes") or []),
+                "inner_node_class_types": dict(sorted(class_counts.items())),
+                "inner_graph": {"edges": subgraph.get("links") or []},
+                "source": str(path),
+            }
+            return emit(payload, json=getattr(args, "json", False), text_renderer=lambda data: data["name"] or data["uuid"])
+    print(f"subgraph UUID not found: {args.class_type}", file=sys.stderr)
+    return 1
 
 
 def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
@@ -124,6 +171,52 @@ def _cmd_nodes_install(args: argparse.Namespace) -> int:
     if result.error:
         print(result.error, file=sys.stderr)
     return 0 if result.status in {"installed", "refreshed"} else 1
+
+
+def _cmd_nodes_lookup(args: argparse.Namespace) -> int:
+    try:
+        resolution = resolve_pack(args.query)
+    except PackResolverError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    payload = {
+        "query": resolution.query,
+        "query_type": resolution.query_type,
+        "pack": resolution.ref.to_dict(),
+        "candidates": [candidate.to_dict() for candidate in resolution.candidates],
+        "cache_hit": resolution.cache_hit,
+        "endpoint": resolution.endpoint,
+    }
+    return emit(payload, json=args.json, text_renderer=lambda data: data["pack"]["slug"])
+
+
+def _cmd_nodes_refresh_template(args: argparse.Namespace) -> int:
+    path = Path(args.file)
+    original = path.read_text(encoding="utf-8")
+    workflow = load_workflow_reference(str(path), allow_scratchpad=True)
+    classes = {str(node.class_type) for node in workflow.nodes.values()}
+    refs = []
+    for entry in read_lockfile():
+        class_set = set(getattr(entry, "class_set", ()) or ())
+        if classes & class_set:
+            refs.append(entry)
+    slugs = sorted({getattr(entry, "slug", None) or entry.name for entry in refs})
+    replacement = original
+    if "custom_node_refs=" not in replacement:
+        marker = "    output_prefix="
+        insert = f"    custom_node_refs={slugs!r},\n"
+        lines = replacement.splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.startswith(marker):
+                lines.insert(index + 1, insert)
+                replacement = "".join(lines)
+                break
+    diff = "".join(difflib.unified_diff(original.splitlines(True), replacement.splitlines(True), fromfile=str(path), tofile=str(path)))
+    status = "dry-run" if args.dry_run else "updated"
+    if not args.dry_run:
+        path.write_text(replacement, encoding="utf-8")
+    payload = {"status": status, "custom_nodes": slugs, "diff": diff if args.diff else ""}
+    return emit(payload, json=args.json, text_renderer=lambda data: data["status"])
 
 
 def _cmd_nodes_ensure(args: argparse.Namespace) -> int:
@@ -466,6 +559,16 @@ def register(subparsers) -> None:
     nodes_install_pack.add_argument("--repo")
     nodes_install_pack.add_argument("--force", action="store_true", default=False)
     nodes_install_pack.set_defaults(func=_cmd_nodes_install)
+    nodes_lookup = nodes_sub.add_parser("lookup")
+    nodes_lookup.add_argument("query")
+    nodes_lookup.add_argument("--json", action="store_true")
+    nodes_lookup.set_defaults(func=_cmd_nodes_lookup)
+    nodes_refresh = nodes_sub.add_parser("refresh-template")
+    nodes_refresh.add_argument("file")
+    nodes_refresh.add_argument("--dry-run", action="store_true")
+    nodes_refresh.add_argument("--diff", action="store_true")
+    nodes_refresh.add_argument("--json", action="store_true")
+    nodes_refresh.set_defaults(func=_cmd_nodes_refresh_template)
     nodes_ensure = nodes_sub.add_parser("ensure")
     ensure_source = nodes_ensure.add_mutually_exclusive_group(required=True)
     ensure_source.add_argument("--template")

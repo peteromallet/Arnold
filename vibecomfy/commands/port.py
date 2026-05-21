@@ -135,6 +135,7 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
             source_hash=report.source_hash,
             workflow_shape=report.workflow_shape,
             schema_provider=schema_provider,
+            raw_workflow=loaded.raw_workflow,
         )
     except Exception as exc:
         return _emit_strict_ready_load_failure(
@@ -243,6 +244,7 @@ def _run_convert_all(args: argparse.Namespace) -> None:
                 loaded.workflow,
                 source_path=str(tpl_path),
                 schema_provider=schema_provider,
+                raw_workflow=loaded.raw_workflow,
             )
         except Exception as exc:
             print(f"{tpl['id']}: error: {type(exc).__name__}: {exc}")
