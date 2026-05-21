@@ -145,6 +145,13 @@ def _override_add_note(
     # this note (and so we don't clobber any concurrent-override appends).
     save_state_merge_meta(plan_dir, state)
     next_steps = infer_next_steps(state)
+    # Emit observability events
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "add-note", "reason": note, "source": source})
+        emit(EventKind.NOTE_ADDED, plan_dir=plan_dir, payload={"note": note, "source": source})
+    except Exception:
+        pass
     response: StepResponse = {
         "success": True,
         "step": "override",
@@ -166,6 +173,11 @@ def _override_abort(
         {"action": "abort", "timestamp": now_utc(), "reason": args.reason},
     )
     save_state_merge_meta(plan_dir, state)
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "abort", "reason": args.reason})
+    except Exception:
+        pass
     return {
         "success": True,
         "step": "override",
@@ -296,6 +308,11 @@ def _override_force_proceed(
         {"action": "force-proceed", "timestamp": now_utc(), "reason": args.reason},
     )
     save_state_merge_meta(plan_dir, state)
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "force-proceed", "reason": args.reason})
+    except Exception:
+        pass
     response: StepResponse = {
         "success": True,
         "step": "override",
@@ -331,6 +348,11 @@ def _override_replan(
     if args.note:
         _append_to_meta(state, "notes", {"timestamp": now_utc(), "note": args.note})
     save_state_merge_meta(plan_dir, state)
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "replan", "reason": reason})
+    except Exception:
+        pass
     next_steps = workflow_next(state)
     response: StepResponse = {
         "success": True,
@@ -498,6 +520,11 @@ def _override_set_robustness(
         },
     )
     save_state_merge_meta(plan_dir, state)
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "set-robustness", "from": previous_level, "to": new_level, "reason": args.reason})
+    except Exception:
+        pass
     next_steps = infer_next_steps(state)
     summary = (
         f"Robustness unchanged at '{new_level}'."
@@ -554,6 +581,11 @@ def _override_set_profile(
         },
     )
     save_state_merge_meta(plan_dir, state)
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "set-profile", "from": previous_profile, "to": new_profile, "reason": args.reason})
+    except Exception:
+        pass
     next_steps = infer_next_steps(state)
     summary = (
         f"Profile unchanged at '{new_profile}'."

@@ -88,6 +88,8 @@ from megaplan.profiles import (
     resolve_profile,
 )
 from megaplan.execute.step_edit import handle_step
+from megaplan.observability.doctor import handle_doctor
+from megaplan.observability.trace import handle_trace
 from megaplan.resolutions import SUPPORTED_USER_ACTION_RESOLUTION_STATES
 from megaplan.user_actions import (
     FALLBACK,
@@ -4018,7 +4020,88 @@ def build_parser() -> argparse.ArgumentParser:
     tb_run_parser.add_argument("--persist", action="store_true")
     tb_run_parser.add_argument("--ephemeral", action="store_true")
 
+    introspect_parser = subparsers.add_parser(
+        "introspect",
+        help="Structured JSON snapshot of a plan's live state",
+    )
+    introspect_parser.add_argument("--plan", required=True, help="Plan name")
+
+    trace_parser = subparsers.add_parser(
+        "trace",
+        help="Event stream over a plan's events.ndjson",
+    )
+    trace_parser.add_argument("--plan", required=True, help="Plan name")
+    trace_parser.add_argument("--phase", default=None, help="Filter events to this phase")
+    trace_parser.add_argument(
+        "--since",
+        default=None,
+        help="Only show events within this duration (e.g. 30s, 5m, 1h)",
+    )
+    trace_parser.add_argument(
+        "--follow",
+        action="store_true",
+        default=False,
+        help="Poll for new events (1Hz, no inotify)",
+    )
+    trace_parser.add_argument(
+        "--format",
+        choices=["json", "pretty", "narrative"],
+        default="pretty",
+        help="Output format (default: pretty)",
+    )
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnostic: plan-level or repo-level health checks",
+    )
+    doctor_group = doctor_parser.add_mutually_exclusive_group(required=True)
+    doctor_group.add_argument("--plan", default=None, help="Plan name to check")
+    doctor_group.add_argument("--repo", action="store_true", default=False, help="Check the repo")
+
+    record_tag_parser = subparsers.add_parser(
+        "record-tag",
+        help="Write a named note into a plan's events.ndjson",
+    )
+    record_tag_parser.add_argument("--plan", required=True, help="Plan name")
+    record_tag_parser.add_argument("--tag", required=True, help="Tag name")
+    record_tag_parser.add_argument("--note", default="", help="Optional tag note")
+
     return parser
+
+
+def _handle_trace(root: Path, args: argparse.Namespace) -> int:
+    return handle_trace(root, args)
+
+
+def _handle_doctor(root: Path, args: argparse.Namespace) -> int:
+    return handle_doctor(root, args)
+
+
+def _handle_introspect(root: Path, args: argparse.Namespace) -> int:
+    from megaplan._core import find_plan_dir
+    from megaplan.observability.introspect import build_introspect_payload
+    import json as _json
+
+    plan_dir = find_plan_dir(Path.cwd(), args.plan)
+    if plan_dir is None:
+        print(f"introspect: plan {args.plan!r} not found", file=sys.stderr)
+        return 1
+
+    print(_json.dumps(build_introspect_payload(plan_dir), indent=2))
+    return 0
+
+
+def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
+    from megaplan._core import find_plan_dir
+    from megaplan.observability.events import EventKind, emit
+
+    plan_dir = find_plan_dir(Path.cwd(), args.plan)
+    if plan_dir is None:
+        print(f"record-tag: plan {args.plan!r} not found", file=sys.stderr)
+        return 1
+
+    emit(EventKind.NOTE_ADDED, plan_dir=plan_dir, payload={"tag": args.tag, "note": args.note})
+    return 0
 
 
 def handle_user_action(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -4321,6 +4404,10 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "verify-human": handle_verify_human,
     "audit-verifiability": handle_audit_verifiability,
     "tiebreaker-run": handle_tiebreaker_run,
+    "introspect": _handle_introspect,
+    "trace": _handle_trace,
+    "doctor": _handle_doctor,
+    "record-tag": _handle_record_tag,
     "user-action": handle_user_action,
     "quality-gate": handle_quality_gate,
 }
@@ -4761,6 +4848,11 @@ def main(argv: list[str] | None = None) -> int:
             return run_tiebreaker_cli(root, args)
         except CliError as error:
             return error_response(error, root=root)
+
+    if args.command in {"introspect", "trace", "doctor", "record-tag"}:
+        handler = COMMAND_HANDLERS.get(args.command)
+        if handler is not None:
+            return handler(root, args)
 
     try:
         handler = COMMAND_HANDLERS.get(args.command)

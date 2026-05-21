@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TextIO
@@ -52,10 +54,165 @@ def _no_op_stream(_text: str) -> None:
 
     AIAgent decides between streaming and non-streaming based on whether a
     stream consumer is registered.  We don't need the deltas, just the side
-    effect of forcing `stream=True` on the underlying chat.completions call.
+    effect of forcing ``stream=True`` on the underlying chat.completions call.
     """
     return None
 _no_op_stream._megaplan_force_stream = True  # type: ignore[attr-defined]
+
+
+class _StreamTracker:
+    """Real streaming chunk consumer that counts tokens for heartbeat emission.
+
+    Replaces the no-op sentinel so we get observable token throughput
+    while still forcing ``stream=True`` on the provider.
+    """
+
+    def __init__(self) -> None:
+        self.tokens_emitted: int = 0
+        self.last_token_at: float = 0.0
+        self.request_id: str | None = None
+
+    def __call__(self, text: str) -> None:
+        import time as _t
+        self.tokens_emitted += 1  # rough: one "token" per chunk; fine-grained enough for heartbeat
+        self.last_token_at = _t.monotonic()
+
+
+_StreamTracker._megaplan_force_stream = True  # type: ignore[attr-defined]
+
+
+def _extract_request_id(result: dict) -> str | None:
+    """Best-effort extraction of provider request_id from a run_conversation result."""
+    # Check common locations where litellm / the agent may stash it
+    for key in ("request_id", "x-request-id", "id"):
+        val = result.get(key)
+        if isinstance(val, str) and val:
+            return val
+    # Check nested in headers / response
+    headers = result.get("headers") or result.get("response_headers") or {}
+    if isinstance(headers, dict):
+        for hdr in ("x-request-id", "request-id", "x-amzn-requestid"):
+            val = headers.get(hdr)
+            if isinstance(val, str) and val:
+                return val
+    return None
+
+
+def _emit_llm_start(
+    plan_dir: Path,
+    step: str,
+    model: str | None,
+    prompt_hash: str | None,
+    is_streaming: bool,
+) -> None:
+    """Emit an llm_call_start event."""
+    try:
+        from megaplan.observability.events import emit, EventKind
+
+        provider = (model or "").split(":")[0] if model else None
+        emit(
+            EventKind.LLM_CALL_START,
+            plan_dir=plan_dir,
+            phase=step,
+            payload={
+                "provider": provider,
+                "model": model,
+                "prompt_hash": prompt_hash,
+                "streaming": is_streaming,
+                "request_id": None,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_llm_end(
+    plan_dir: Path,
+    step: str,
+    tokens_in: int,
+    tokens_out: int,
+    request_id: str | None,
+) -> None:
+    """Emit an llm_call_end event."""
+    try:
+        from megaplan.observability.events import emit, EventKind
+
+        emit(
+            EventKind.LLM_CALL_END,
+            plan_dir=plan_dir,
+            phase=step,
+            payload={
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "request_id": request_id,
+            },
+        )
+    except Exception:
+        pass
+
+
+def _emit_llm_error(
+    plan_dir: Path,
+    step: str,
+    error_message: str,
+    retry_after_s: float | None = None,
+) -> None:
+    """Emit an llm_call_error event."""
+    try:
+        from megaplan.observability.events import emit, EventKind
+
+        error_code = "unknown"
+        if "429" in error_message:
+            error_code = "429"
+        elif "timeout" in error_message.lower():
+            error_code = "timeout"
+        elif "context" in error_message.lower():
+            error_code = "context_length_exceeded"
+        elif "rate" in error_message.lower():
+            error_code = "rate_limit"
+        emit(
+            EventKind.LLM_CALL_ERROR,
+            plan_dir=plan_dir,
+            phase=step,
+            payload={
+                "provider_error_code": error_code,
+                "retry_after_s": retry_after_s or 0,
+                "message": error_message[:500],
+            },
+        )
+    except Exception:
+        pass
+
+
+def _start_heartbeat(
+    plan_dir: Path,
+    step: str,
+    tracker: "_StreamTracker",
+    stop_event: threading.Event,
+) -> None:
+    """Start a daemon thread that emits llm_token_heartbeat every ~1s."""
+
+    def _beat() -> None:
+        import time as _t
+
+        while not stop_event.wait(1.0):
+            try:
+                from megaplan.observability.events import emit, EventKind
+
+                emit(
+                    EventKind.LLM_TOKEN_HEARTBEAT,
+                    plan_dir=plan_dir,
+                    phase=step,
+                    payload={
+                        "tokens_emitted_so_far": tracker.tokens_emitted,
+                        "last_token_at": tracker.last_token_at,
+                    },
+                )
+            except Exception:
+                pass
+
+    t = threading.Thread(target=_beat, daemon=True)
+    t.start()
 
 
 def _provider_requires_streaming(model: str | None, max_tokens: int | None) -> bool:
@@ -74,10 +231,11 @@ def _provider_requires_streaming(model: str | None, max_tokens: int | None) -> b
     return max_tokens > _HIGH_TOKEN_STREAM_MAX_TOKENS
 
 
-def _streaming_run_kwargs(model: str | None, max_tokens: int | None) -> dict:
+def _streaming_run_kwargs(model: str | None, max_tokens: int | None, *, plan_dir: Path | None = None) -> dict:
     """Build the run_conversation kwargs needed to force streaming when required."""
     if _provider_requires_streaming(model, max_tokens):
-        return {"stream_callback": _no_op_stream}
+        tracker = _StreamTracker()
+        return {"stream_callback": tracker, "_megaplan_stream_tracker": tracker}
     return {}
 
 
@@ -601,12 +759,30 @@ def run_hermes_step(
         # The streaming response is reassembled inside run_agent into the
         # same shape non-streaming returns, so the rest of megaplan is
         # unchanged.
-        run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens)
-        current_result = current_agent.run_conversation(
-            user_message=prompt,
-            conversation_history=conversation_history,
-            **run_kwargs,
-        )
+        run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens, plan_dir=plan_dir)
+        tracker = run_kwargs.pop("_megaplan_stream_tracker", None)
+        is_streaming = tracker is not None
+
+        # Emit llm_call_start
+        prompt_text = rendered_prompt or prompt_override or ""
+        prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
+        _emit_llm_start(plan_dir, step, resolved_model, prompt_hash, is_streaming)
+
+        # Heartbeat thread for streaming calls
+        heartbeat_stop = threading.Event()
+        if is_streaming and tracker is not None:
+            _start_heartbeat(plan_dir, step, tracker, heartbeat_stop)
+
+        try:
+            current_result = current_agent.run_conversation(
+                user_message=prompt,
+                conversation_history=conversation_history,
+                **run_kwargs,
+            )
+        finally:
+            if is_streaming:
+                heartbeat_stop.set()
+
         current_payload, current_raw_output = parse_agent_output(
             current_agent,
             current_result,
@@ -620,6 +796,12 @@ def run_hermes_step(
         )
         clean_parsed_payload(current_payload, schema, step)
         messages = current_result.get("messages", [])
+
+        # Emit llm_call_end
+        request_id = _extract_request_id(current_result)
+        tokens_in = int(current_result.get("prompt_tokens", 0) or 0)
+        tokens_out = int(current_result.get("completion_tokens", 0) or 0)
+        _emit_llm_end(plan_dir, step, tokens_in, tokens_out, request_id)
 
         try:
             validate_payload(step, current_payload)
@@ -666,6 +848,8 @@ def run_hermes_step(
         try:
             result, payload, raw_output = _run_attempt(agent, output_path)
         except Exception as exc:
+            # Emit llm_call_error
+            _emit_llm_error(plan_dir, step, str(exc))
             # Report 429 to key pool so it cools down this key
             exc_str = str(exc)
             if "429" in exc_str:
@@ -703,6 +887,7 @@ def run_hermes_step(
                     try:
                         result, payload, raw_output = _run_attempt(agent, output_path)
                     except Exception as fallback_exc:
+                        _emit_llm_error(plan_dir, step, str(fallback_exc))
                         raise CliError(
                             "worker_error",
                             (
@@ -735,6 +920,23 @@ def run_hermes_step(
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     cost_usd, prompt_tokens, completion_tokens, total_tokens = _resolve_hermes_cost(result)
+
+    # Emit cost_recorded
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(
+            EventKind.COST_RECORDED,
+            plan_dir=plan_dir,
+            phase=step,
+            payload={
+                "request_id": _extract_request_id(result),
+                "cost_usd": float(cost_usd),
+                "provider": (resolved_model or "").split(":")[0] if resolved_model else None,
+                "model": result.get("model") or resolved_model,
+            },
+        )
+    except Exception:
+        pass
 
     return WorkerResult(
         payload=payload,

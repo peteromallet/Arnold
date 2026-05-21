@@ -127,10 +127,12 @@ def test_provider_requires_streaming_for_high_token_fireworks_and_direct_deepsee
 
 
 def test_streaming_run_kwargs_returns_callback_only_when_required() -> None:
+    from megaplan.workers.hermes import _streaming_run_kwargs, _StreamTracker
+
     # Fireworks high max_tokens → callback present
     kwargs = _streaming_run_kwargs("fireworks:foo", 8192)
     assert "stream_callback" in kwargs
-    assert kwargs["stream_callback"] is _no_op_stream
+    assert isinstance(kwargs["stream_callback"], _StreamTracker)
 
     # Direct DeepSeek high max_tokens mirrors Fireworks.
     assert "stream_callback" in _streaming_run_kwargs("deepseek:deepseek-v4-pro", 8192)
@@ -221,7 +223,8 @@ def test_run_check_uses_streaming_for_fireworks_high_max_tokens(
     # The call must carry a stream_callback — that's how AIAgent decides to
     # request stream=true on the underlying chat.completions call.
     assert "stream_callback" in agent.calls[0]
-    assert agent.calls[0]["stream_callback"] is _no_op_stream
+    from megaplan.workers.hermes import _StreamTracker
+    assert isinstance(agent.calls[0]["stream_callback"], _StreamTracker)
 
 
 def test_run_check_does_not_force_streaming_for_other_providers(
@@ -416,4 +419,5 @@ def test_parse_agent_output_summary_prompt_carries_streaming_kwargs(tmp_path: Pa
     )
 
     assert len(agent.calls) == 1
-    assert agent.calls[0].get("stream_callback") is _no_op_stream
+    from megaplan.workers.hermes import _StreamTracker
+    assert isinstance(agent.calls[0].get("stream_callback"), _StreamTracker)
