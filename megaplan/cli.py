@@ -1049,6 +1049,10 @@ def handle_audit(root: Path, args: argparse.Namespace) -> StepResponse:
         from megaplan.receipts.query import handle_audit_query
 
         return handle_audit_query(root, args)
+    if getattr(args, "audit_action", None) == "report":
+        from megaplan.receipts.report import handle_audit_report
+
+        return handle_audit_report(root, args)
     plan_dir, state = load_plan(root, args.plan)
     return {
         "success": True,
@@ -3528,6 +3532,12 @@ def build_parser() -> argparse.ArgumentParser:
     audit_query_parser.add_argument("--agg", default="")
     audit_query_parser.add_argument("--json", action="store_true")
     audit_query_parser.add_argument("--audit-dir", default=None)
+    audit_report_parser = audit_sub.add_parser("report", help="Render a plan retrospective from local audit artifacts")
+    audit_report_parser.add_argument("--plan", help="Plan name. May also be passed before the report subcommand.")
+    audit_report_parser.add_argument("--compare", help="Optional prior plan name to compare receipt totals against")
+    audit_report_parser.add_argument("--output", help="Write Markdown report to this path instead of stdout")
+    audit_report_parser.add_argument("--json-output", help="Write the structured report payload to this path")
+    audit_report_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
 
     for name in [
         "plan",
