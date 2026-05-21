@@ -67,6 +67,7 @@ from .io import (
     scrub_stale_staging_files,
     sha256_file,
     sha256_text,
+    split_oversized_batches,
     slugify,
     write_journal_commit_marker,
 )
@@ -147,6 +148,7 @@ from .workflow import (
     configured_robustness,
     infer_next_steps,
     intent_and_notes_block,
+    intent_brief_reference,
     require_state,
     resume_plan,
     robustness_critique_instruction,
@@ -215,6 +217,7 @@ __all__ = [
     "scrub_stale_staging_files",
     "sha256_file",
     "sha256_text",
+    "split_oversized_batches",
     "slugify",
     "write_journal_commit_marker",
     # phase_runtime
@@ -278,6 +281,7 @@ __all__ = [
     "configured_robustness",
     "infer_next_steps",
     "intent_and_notes_block",
+    "intent_brief_reference",
     "require_state",
     "resume_plan",
     "robustness_critique_instruction",

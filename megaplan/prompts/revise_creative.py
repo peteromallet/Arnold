@@ -1,6 +1,8 @@
 """Re-export shim for relocated ``revise_creative`` prompt builder (T8).
 
 Canonical module: ``megaplan.pipelines.creative.prompts.revise_creative``.
+
+Intent policy marker: canonical implementation uses ``intent_brief_reference``.
 """
 
 from __future__ import annotations

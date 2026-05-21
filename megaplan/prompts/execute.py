@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import textwrap
+import re
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +11,9 @@ from megaplan._core import (
     batch_artifact_path,
     compute_task_batches,
     configured_robustness,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
+    latest_plan_path,
     latest_plan_meta_path,
     read_json,
 )
@@ -210,6 +212,56 @@ def _execute_approval_note(state: PlanState) -> str:
     return "Note: Review mode is enabled. Execute should only be running after explicit gate approval."
 
 
+def _brief_text(value: Any, *, limit: int) -> str:
+    text = value if isinstance(value, str) else ""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _render_settled_decisions_brief(gate_carry: dict[str, Any]) -> str:
+    decisions = gate_carry.get("settled_decisions", [])
+    if not isinstance(decisions, list):
+        return "- None provided."
+
+    lines: list[str] = []
+    for index, item in enumerate(decisions[:3], start=1):
+        if isinstance(item, str):
+            decision_id = f"SD{index}"
+            decision = item
+            rationale = ""
+        elif isinstance(item, dict):
+            raw_id = item.get("id")
+            decision_id = raw_id if isinstance(raw_id, str) and raw_id else f"SD{index}"
+            decision = item.get("decision", "")
+            rationale = item.get("rationale", "")
+        else:
+            continue
+        decision_text = _brief_text(decision, limit=180)
+        if not decision_text:
+            continue
+        rationale_text = _brief_text(rationale, limit=220)
+        if rationale_text:
+            lines.append(f"- {decision_id}: {decision_text} - {rationale_text}")
+        else:
+            lines.append(f"- {decision_id}: {decision_text}")
+    return "\n".join(lines) if lines else "- None provided."
+
+
+def _extract_execution_order_summary(latest_plan_text: str) -> str:
+    match = re.search(
+        r"(?ms)^## Execution Order\s*\n(?P<body>.*?)(?=^##\s+|\Z)",
+        latest_plan_text,
+    )
+    if not match:
+        return "(none specified)"
+    body = match.group("body").strip()
+    if not body:
+        return "(none specified)"
+    return body[:800].rstrip()
+
+
 def _format_user_action_guidance(
     finalize_data: dict[str, Any],
     resolutions: dict[str, dict[str, Any]],
@@ -360,7 +412,7 @@ def _execute_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) 
 
         {prep_instruction}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Execution tracking source of truth (`finalize.json`):
         {json_dump(finalize_data).strip()}
@@ -474,6 +526,29 @@ def _execute_batch_prompt(
         if debt_watch_items
         else "Debt watch items (do not make these worse):\n- None."
     )
+    gate_carry = _gate_summary_or_skipped(plan_dir)
+    try:
+        latest_plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+    except (KeyError, OSError):
+        latest_plan_text = ""
+    meta_commentary = finalize_data.get("meta_commentary", "")
+    if not isinstance(meta_commentary, str):
+        meta_commentary = ""
+    execution_context = textwrap.dedent(
+        f"""
+        ## Execution context (settled - DO NOT re-litigate)
+
+        {_render_settled_decisions_brief(gate_carry)}
+
+        ## Plan execution order rationale
+
+        {_extract_execution_order_summary(latest_plan_text)}
+
+        ## Inter-task guidance from finalize
+
+        {meta_commentary[:1500]}
+        """
+    ).strip()
     return textwrap.dedent(
         f"""
         Execute the approved plan in the repository.
@@ -481,7 +556,7 @@ def _execute_batch_prompt(
         Project directory:
         {Path(state["config"]["project_dir"])}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Batch framing:
         - Execute batch {batch_number} of {batch_total}.
@@ -504,8 +579,7 @@ def _execute_batch_prompt(
         Batch-scoped sense checks:
         {json_dump(batch_sense_checks).strip()}
 
-        Full execution tracking source of truth (`finalize.json`):
-        {json_dump(finalize_data).strip()}
+        {execution_context}
 
         {debt_watch_block}
 

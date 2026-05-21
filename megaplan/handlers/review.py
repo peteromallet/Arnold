@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import logging
 import os
 from pathlib import Path
@@ -267,8 +268,8 @@ _EXPECTED_BY_CHECK_ID = {
     "simplicity": "Remove unjustified changes, or justify each extra line against a concrete issue requirement.",
 }
 
-def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[str, str]]:
-    rework_items: list[dict[str, str]] = []
+def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rework_items: list[dict[str, Any]] = []
     for check in checks:
         check_id = check.get("id", "")
         if not isinstance(check_id, str) or not check_id:
@@ -307,16 +308,30 @@ def _synthesize_review_rework_items(checks: list[dict[str, Any]]) -> list[dict[s
             # a clear "you didn't resolve it" signal without a copy of
             # the detail text.
             actual = f"The diff did not resolve the flagged {check_id} concern above."
-            rework_items.append(
-                {
-                    "task_id": f"REVIEW-{check_id}",
-                    "issue": issue,
-                    "expected": expected,
-                    "actual": actual,
-                    "evidence_file": evidence_file,
-                    "source": f"review_{check_id}",
-                }
-            )
+            concerned_task_ids = check.get("concerned_task_ids", [])
+            if (
+                not isinstance(concerned_task_ids, list)
+                or not concerned_task_ids
+                or not all(isinstance(task_id, str) and task_id for task_id in concerned_task_ids)
+            ):
+                log.warning(
+                    "Parallel review check %s omitted concerned_task_ids; falling back to synthetic REVIEW-%s task id.",
+                    check_id,
+                    check_id,
+                )
+                concerned_task_ids = [f"REVIEW-{check_id}"]
+            for task_id in concerned_task_ids:
+                rework_items.append(
+                    {
+                        "task_id": task_id,
+                        "issue": issue,
+                        "expected": expected,
+                        "actual": actual,
+                        "evidence_file": evidence_file,
+                        "flag_id": f"REVIEW-{check_id}",
+                        "source": f"review_{check_id}",
+                    }
+                )
     return rework_items
 
 
@@ -341,6 +356,7 @@ def _finalize_review_outcome(
     """
     issues = list(worker.payload.get("issues", []))
     finalize_data = read_json(plan_dir / "finalize.json")
+    review_projection = deepcopy(finalize_data)
 
     review_verdict = worker.payload.get("review_verdict")
     if review_verdict not in {"approved", "needs_rework"}:
@@ -348,10 +364,11 @@ def _finalize_review_outcome(
         review_verdict = "needs_rework"
 
     verdict_count, total_tasks, check_count, total_checks, missing_evidence = _merge_review_verdicts(
-        worker.payload, finalize_data, issues,
+        worker.payload, review_projection, issues,
     )
-    atomic_write_json(plan_dir / "finalize.json", finalize_data)
-    atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="review"))
+    worker.payload["issues"] = issues
+    atomic_write_json(plan_dir / "review.json", worker.payload)
+    atomic_write_text(plan_dir / "final.md", render_final_md(review_projection, phase="review"))
     finalize_hash = sha256_file(plan_dir / "finalize.json")
 
     result, next_state, next_step = _resolve_review_outcome(

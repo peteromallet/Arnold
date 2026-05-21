@@ -21,14 +21,14 @@ what the prompt says, the model cannot exec or write outside ``project_dir``.
 
 Three knobs:
 
-1. ``TERMINAL_CWD`` env var is pinned to ``project_dir`` so the terminal
-   tool's default cwd is the worktree (mirrors the Claude/CLI happy path
-   at ``cli.py:7260``).
+1. ``SANDBOX_CWD`` ContextVar is set by ``install_sandbox()`` for the
+   duration of the with-block.  Tool wrappers read this at call time.
 
 2. The registered handlers for ``terminal``, ``write_file``, and ``patch``
-   are wrapped to validate / coerce paths before dispatch.  Refusal is a
-   hard error returned to the model so it can correct itself; we don't
-   silently rewrite the call.
+   are wrapped permanently (installed once, idempotent with lock+markers)
+   to validate / coerce paths before dispatch.  Refusal is a hard error
+   returned to the model so it can correct itself; we don't silently
+   rewrite the call.
 
 3. ``read_file`` and ``search_files`` are intentionally **not** sandboxed —
    the model legitimately needs to read e.g. ``/tmp/phase-6-idea.txt`` and
@@ -41,7 +41,9 @@ import json
 import logging
 import os
 import re
+import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterator
 
@@ -77,6 +79,87 @@ _V4A_FILE_DIRECTIVES = re.compile(
     r"^\s*\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+?)\s*$",
     re.MULTILINE,
 )
+
+# ---------------------------------------------------------------------------
+# Context-local sandbox CWD — replaces process-global TERMINAL_CWD env var.
+# ---------------------------------------------------------------------------
+
+SANDBOX_CWD: ContextVar[Path | None] = ContextVar("sandbox_cwd", default=None)
+
+
+def get_sandbox_cwd() -> Path | None:
+    """Return the active sandbox project_dir, or None if no sandbox active."""
+    return SANDBOX_CWD.get()
+
+
+# ---------------------------------------------------------------------------
+# Wrapper installation guard (idempotent with lock + marker attributes)
+# ---------------------------------------------------------------------------
+
+_wrappers_installed = False
+_wrappers_lock = threading.Lock()
+
+
+def _ensure_wrappers_installed():
+    """Install sandbox wrappers on tool registry handlers exactly once.
+
+    Idempotent — safe to call from any thread at any time.  Uses a
+    module-level lock to avoid races during first installation.
+    """
+    global _wrappers_installed
+    if _wrappers_installed:
+        return
+    with _wrappers_lock:
+        if _wrappers_installed:
+            return
+        try:
+            from tools.registry import registry as _registry  # type: ignore
+        except Exception as exc:
+            logger.debug(
+                "sandbox: tool registry unavailable, wrapper installation skipped: %s",
+                exc,
+            )
+            _wrappers_installed = True
+            return
+
+        for name, wrapper_factory in _WRAPPERS.items():
+            entry = _registry._tools.get(name)
+            if entry is None:
+                continue
+            original = entry.handler
+            # Only wrap if not already wrapped (check for our marker)
+            if getattr(entry, "_sandbox_wrapped", False):
+                continue
+            entry.handler = wrapper_factory(original)
+            entry._sandbox_wrapped = True
+        _wrappers_installed = True
+
+
+def _unwrap_all_for_tests():
+    """Remove sandbox wrappers from all registered tool handlers.
+
+    This is a test helper.  It reverts handlers to their originals stored
+    in the ``_sandbox_original`` marker attribute and clears the
+    ``_sandbox_wrapped`` flag so tests that monkeypatch fake registries
+    don't carry stale wrapped state between tests.
+    """
+    global _wrappers_installed
+    try:
+        from tools.registry import registry as _registry  # type: ignore
+    except Exception:
+        _wrappers_installed = False
+        return
+    for name in _WRAPPERS:
+        entry = _registry._tools.get(name)
+        if entry is None:
+            continue
+        original = getattr(entry, "_sandbox_original", None)
+        if original is not None:
+            entry.handler = original
+            delattr(entry, "_sandbox_original")
+        if getattr(entry, "_sandbox_wrapped", False):
+            delattr(entry, "_sandbox_wrapped")
+    _wrappers_installed = False
 
 
 class SandboxViolation(Exception):
@@ -122,7 +205,7 @@ def validate_terminal_command(command: str, project_dir: Path) -> str:
 
     Mid-command ``cd`` calls aren't inspected: they only scope to that one
     shell invocation and don't leak across tool calls.  The terminal
-    backend runs each command in a fresh shell rooted at TERMINAL_CWD.
+    backend runs each command in a fresh shell rooted at the effective cwd.
     """
     if not isinstance(command, str):
         raise SandboxViolation("terminal command must be a string")
@@ -183,7 +266,7 @@ def validate_v4a_patch(patch_content: str, project_dir: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# Handler wrappers
+# Handler wrappers (active only when sandbox cwd is set)
 # --------------------------------------------------------------------------
 
 
@@ -192,8 +275,15 @@ def _refusal(tool: str, message: str) -> str:
     return json.dumps({"error": f"sandbox: {message}"}, ensure_ascii=False)
 
 
-def _wrap_terminal(handler, project_dir: Path):
+def _wrap_terminal(handler):
+    """Wrap a terminal handler so it validates commands against the active
+    sandbox cwd.  If no sandbox cwd is active, delegates to the original
+    handler unchanged.
+    """
     def wrapper(args, **kw):
+        project_dir = get_sandbox_cwd()
+        if project_dir is None:
+            return handler(args, **kw)
         try:
             cmd = args.get("command", "") if isinstance(args, dict) else ""
             new_cmd = validate_terminal_command(cmd, project_dir)
@@ -218,11 +308,19 @@ def _wrap_terminal(handler, project_dir: Path):
             new_args["workdir"] = str(resolved)
         return handler(new_args, **kw)
 
+    # Store the original so tests can unwrap
+    wrapper._sandbox_original = handler
     return wrapper
 
 
-def _wrap_write_file(handler, project_dir: Path):
+def _wrap_write_file(handler):
+    """Wrap a write_file handler to validate paths against the active
+    sandbox cwd.  Delegates unchanged when no sandbox is active.
+    """
     def wrapper(args, **kw):
+        project_dir = get_sandbox_cwd()
+        if project_dir is None:
+            return handler(args, **kw)
         if not isinstance(args, dict):
             return handler(args, **kw)
         raw = args.get("path", "")
@@ -234,11 +332,18 @@ def _wrap_write_file(handler, project_dir: Path):
         new_args["path"] = safe
         return handler(new_args, **kw)
 
+    wrapper._sandbox_original = handler
     return wrapper
 
 
-def _wrap_patch(handler, project_dir: Path):
+def _wrap_patch(handler):
+    """Wrap a patch handler to validate paths against the active sandbox
+    cwd.  Delegates unchanged when no sandbox is active.
+    """
     def wrapper(args, **kw):
+        project_dir = get_sandbox_cwd()
+        if project_dir is None:
+            return handler(args, **kw)
         if not isinstance(args, dict):
             return handler(args, **kw)
         mode = args.get("mode", "replace")
@@ -255,6 +360,7 @@ def _wrap_patch(handler, project_dir: Path):
             return _refusal("patch", str(exc))
         return handler(new_args, **kw)
 
+    wrapper._sandbox_original = handler
     return wrapper
 
 
@@ -269,9 +375,17 @@ _WRAPPERS = {
 def install_sandbox(project_dir: Path) -> Iterator[None]:
     """Pin tool calls to ``project_dir`` for the duration of the with-block.
 
-    Sets ``TERMINAL_CWD`` and wraps the relevant registry handlers in place.
-    Restores both on exit.  Idempotent — safe to nest, but inner uses of
-    the same project_dir are no-ops.
+    Sets the ``SANDBOX_CWD`` ContextVar so that tool wrappers (installed
+    once at first use) validate/coerce paths against the given project_dir.
+
+    Wrappers are installed once (idempotent with lock + markers) and
+    remain permanently installed across sandbox activations.  When no
+    sandbox is active (ContextVar is None), wrappers delegate unchanged
+    to the original handlers.
+
+    This design is concurrent-safe: multiple threads can call
+    ``install_sandbox`` with different ``project_dir`` values and each
+    thread's wrappers will see only its own ContextVar value.
     """
     project_dir = _normalize(Path(project_dir))
     if not project_dir.exists():
@@ -280,36 +394,12 @@ def install_sandbox(project_dir: Path) -> Iterator[None]:
             "Refusing to install sandbox against a missing directory."
         )
 
-    # Snapshot the env var so nested or sequential calls restore correctly.
-    prior_env = os.environ.get("TERMINAL_CWD")
-    os.environ["TERMINAL_CWD"] = str(project_dir)
+    # Install wrappers once, idempotently.
+    _ensure_wrappers_installed()
 
-    # Lazy-import the registry — the agent SDK pulls in heavy modules and
-    # we don't want to require them when running in --mock or non-hermes
-    # paths.  If the registry isn't importable here we still get the
-    # TERMINAL_CWD pin, which is the most important guard.
-    wrapped = []
-    try:
-        from tools.registry import registry as _registry  # type: ignore
-    except Exception as exc:
-        logger.debug("sandbox: tool registry unavailable, env-only mode: %s", exc)
-        _registry = None
-
-    if _registry is not None:
-        for name, wrapper_factory in _WRAPPERS.items():
-            entry = _registry._tools.get(name)
-            if entry is None:
-                continue
-            original = entry.handler
-            entry.handler = wrapper_factory(original, project_dir)
-            wrapped.append((entry, original))
-
+    # Set the ContextVar for this context (thread-safe).
+    token = SANDBOX_CWD.set(project_dir)
     try:
         yield
     finally:
-        for entry, original in wrapped:
-            entry.handler = original
-        if prior_env is None:
-            os.environ.pop("TERMINAL_CWD", None)
-        else:
-            os.environ["TERMINAL_CWD"] = prior_env
+        SANDBOX_CWD.reset(token)

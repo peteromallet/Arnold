@@ -231,7 +231,7 @@ class KawaiiSpinner:
         "analyzing", "computing", "synthesizing", "formulating", "brainstorming",
     ]
 
-    def __init__(self, message: str = "", spinner_type: str = 'dots'):
+    def __init__(self, message: str = "", spinner_type: str = 'dots', output_stream=None):
         self.message = message
         self.spinner_frames = self.SPINNERS.get(spinner_type, self.SPINNERS['dots'])
         self.running = False
@@ -240,9 +240,9 @@ class KawaiiSpinner:
         self.start_time = None
         self.last_line_len = 0
         self._last_flush_time = 0.0  # Rate-limit flushes for patch_stdout compat
-        # Capture stdout NOW, before any redirect_stdout(devnull) from
-        # child agents can replace sys.stdout with a black hole.
-        self._out = sys.stdout
+        # Use the provided output stream, or capture sys.stdout now (before
+        # any redirect_stdout(devnull) from child agents can replace it).
+        self._out = output_stream or sys.stdout
 
     def _write(self, text: str, end: str = '\n', flush: bool = False):
         """Write to the stdout captured at spinner creation time."""

@@ -12,6 +12,7 @@ from megaplan._core import (
     atomic_write_json,
     atomic_write_text,
     collect_git_diff_summary,
+    intent_brief_reference,
     intent_and_notes_block,
     json_dump,
     latest_plan_meta_path,
@@ -28,6 +29,9 @@ from megaplan.prompts.review import (
     _settled_decisions_instruction,
     parallel_criteria_review_prompt,
 )
+from megaplan.prompts.tiebreaker_challenger import challenger_prompt
+from megaplan.prompts.tiebreaker_researcher import researcher_prompt
+from megaplan.prompts._shared import _gate_summary_or_skipped
 from megaplan.prompts import (
     _execute_batch_prompt,
     _execute_doc_batch_prompt,
@@ -259,7 +263,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     execution = read_json(plan_dir / "execution.json")
-    gate = read_json(plan_dir / "gate.json")
+    gate = _gate_summary_or_skipped(plan_dir)
     finalize_data = read_json(plan_dir / "finalize.json")
     settled_decisions_block = _settled_decisions_block(gate)
     settled_decisions_instruction = _settled_decisions_instruction(gate)
@@ -281,7 +285,7 @@ def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> 
         Project directory:
         {project_dir}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Approved plan:
         {latest_plan}
@@ -423,6 +427,20 @@ def _debt_entry(
         "resolved_by": "plan-fixed" if resolved else None,
         "resolved_at": "2026-03-21T00:00:00Z" if resolved else None,
     }
+
+
+def _write_prep_brief(plan_dir: Path) -> None:
+    atomic_write_json(
+        plan_dir / "prep.json",
+        {
+            "task_summary": "PREP_SENTINEL downstream prompts should not broadcast this.",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "Use the prep sentinel only where prep is in scope.",
+        },
+    )
 
 
 def test_plan_prompt_absorbs_clarification_when_missing(tmp_path: Path) -> None:
@@ -607,8 +625,10 @@ def test_plan_prompt_includes_concrete_template(tmp_path: Path) -> None:
 
 def test_critique_prompt_contains_intent_and_robustness(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
+    state["idea"] = "collapse the workflow. VERBATIM_DETAIL_SHOULD_NOT_BROADCAST"
     prompt = create_claude_prompt("critique", state, plan_dir)
-    assert state["idea"] in prompt
+    assert "Brief summary: collapse the workflow" in prompt
+    assert "VERBATIM_DETAIL_SHOULD_NOT_BROADCAST" not in prompt
     assert "Robustness level" in prompt
     assert "standard" in prompt
     assert "simplest approach" in prompt
@@ -666,9 +686,59 @@ def test_critique_light_robustness(tmp_path: Path) -> None:
 
 def test_revise_prompt_contains_intent(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
+    state["idea"] = "collapse the workflow. VERBATIM_DETAIL_SHOULD_NOT_BROADCAST"
     prompt = create_claude_prompt("revise", state, plan_dir)
-    assert state["idea"] in prompt
+    assert "Brief summary: collapse the workflow" in prompt
+    assert "VERBATIM_DETAIL_SHOULD_NOT_BROADCAST" not in prompt
     assert "Gate summary" in prompt
+
+
+def test_downstream_prompts_use_brief_reference_and_trim_prep(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    state["idea"] = "collapse the workflow. VERBATIM_DETAIL_SHOULD_NOT_BROADCAST"
+    _write_prep_brief(plan_dir)
+
+    prompts = {
+        "critique": create_claude_prompt("critique", state, plan_dir),
+        "revise": create_claude_prompt("revise", state, plan_dir),
+        "gate": create_claude_prompt("gate", state, plan_dir),
+        "finalize": create_claude_prompt("finalize", state, plan_dir),
+        "review": create_claude_prompt("review", state, plan_dir),
+        "execute_batch": _execute_batch_prompt(state, plan_dir, ["T1"], set()),
+        "tiebreaker_researcher": researcher_prompt("Pick A or B?", state, plan_dir),
+        "tiebreaker_challenger": challenger_prompt(
+            "Pick A or B?",
+            {"options": [], "preliminary_pick": "A"},
+            state,
+            plan_dir,
+        ),
+    }
+
+    for name, prompt in prompts.items():
+        assert "Brief summary: collapse the workflow" in prompt, name
+        assert "VERBATIM_DETAIL_SHOULD_NOT_BROADCAST" not in prompt, name
+
+    for name in [
+        "critique",
+        "revise",
+        "finalize",
+        "tiebreaker_researcher",
+        "tiebreaker_challenger",
+    ]:
+        assert "PREP_SENTINEL" not in prompts[name], name
+        assert "Engineering brief produced from the codebase" not in prompts[name], name
+
+    plan_prompt = create_claude_prompt("plan", state, plan_dir)
+    execute_prompt = create_claude_prompt("execute", state, plan_dir)
+    assert "PREP_SENTINEL" in plan_prompt
+    assert "PREP_SENTINEL" in execute_prompt
+
+
+def test_revise_prompt_does_not_include_plan_template(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = create_claude_prompt("revise", state, plan_dir)
+    assert "# Implementation Plan: [Title]" not in prompt
+    assert "## Step 1: Audit the current behavior" not in prompt
 
 
 def test_codex_matches_claude_for_shared_steps(tmp_path: Path) -> None:
@@ -770,10 +840,9 @@ def test_finalize_prompt_requests_structured_tracking_fields(tmp_path: Path) -> 
     assert "sense_checks" in prompt
     assert "executor_notes" in prompt
     assert "reviewer_verdict" in prompt
-    assert "validation" in prompt
-    assert "plan_steps_covered" in prompt
-    assert "orphan_tasks" in prompt
-    assert "coverage_complete" in prompt
+    assert "Do not include `validation` or `coverage_complete` fields" in prompt
+    assert "plan_steps_covered" not in prompt
+    assert "orphan_tasks" not in prompt
     assert "final_plan" not in prompt
     assert "_notes:_" not in prompt
     assert "_verdict:_" not in prompt
@@ -1117,7 +1186,7 @@ def test_parallel_criteria_review_prompt_uses_issue_anchored_context_only(
     assert "Execution summary:" not in prompt
     assert "Execution audit" not in prompt
     assert "Gate summary:" not in prompt
-    assert intent_and_notes_block(state) in prompt
+    assert intent_brief_reference(state) in prompt
     assert "diff --git a/app.py b/app.py" in prompt
     assert '"tasks": [' in prompt
     assert "DECISION-001" in prompt

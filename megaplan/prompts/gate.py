@@ -8,7 +8,7 @@ from pathlib import Path
 from megaplan._core import (
     configured_robustness,
     current_iteration_artifact,
-    intent_and_notes_block,
+    intent_brief_reference,
     json_dump,
     latest_plan_meta_path,
     latest_plan_path,
@@ -77,7 +77,7 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         Project directory:
         {project_dir}
 
-        {intent_and_notes_block(state)}
+        {intent_brief_reference(state)}
 
         Plan:
         {latest_plan}
@@ -124,7 +124,7 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         If there are no blocking flags, return `flag_resolutions: []`.
         Always return `accepted_tradeoffs`; use `[]` when none apply.
 
-        Populate `settled_decisions` with design choices that should carry into review without re-litigation. Return `[]` when there are none.
+        Populate `settled_decisions` with design choices that should carry into review without re-litigation. Return typed objects, never bare strings: `[{{"id": "SD1", "decision": "...", "rationale": "..."}}]`. Return `[]` when there are none.
 
         Example:
         ```json
@@ -139,7 +139,9 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
             {{"flag_id": "conventions-1", "action": "accept_tradeoff", "evidence": "", "rationale": "Minor naming inconsistency is confined to this helper and would create churn across generated fixtures; track it as follow-up cleanup instead of blocking this fix."}}
           ],
           "accepted_tradeoffs": [],
-          "settled_decisions": []
+          "settled_decisions": [
+            {{"id": "SD1", "decision": "Keep the migration as a data-only migration", "rationale": "The schema change belongs to the already-approved follow-up and should not be re-litigated during review."}}
+          ]
         }}
         ```
         """

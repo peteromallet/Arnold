@@ -6,6 +6,8 @@ historical ``megaplan.prompts.execute_doc`` import path used by the
 legacy planning + mode-overlay ``--auto-start`` path and by the
 ``megaplan.prompts.__init__`` re-export aggregator.
 
+Intent policy marker: canonical implementation uses ``intent_brief_reference``.
+
 The explicit ``__all__`` enumerates every public symbol the Step 1.4
 grep inventory found — star-imports alone do not carry non-underscore
 symbols consistently across Python versions.

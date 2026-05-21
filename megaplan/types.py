@@ -134,6 +134,8 @@ class ClarificationRecord(TypedDict, total=False):
 
 
 class LastGateRecord(TypedDict, total=False):
+    """Deprecated legacy state cache; prefer plan_dir/gate_carry.json."""
+
     recommendation: str
     rationale: str
     signals_assessment: str
@@ -155,7 +157,6 @@ class PlanState(TypedDict):
     plan_versions: list[PlanVersionRecord]
     history: list[HistoryEntry]
     meta: PlanMeta
-    last_gate: LastGateRecord
     active_step: NotRequired[ActiveStep]
     clarification: NotRequired[ClarificationRecord]
     latest_failure: NotRequired[dict[str, Any] | None]
@@ -616,6 +617,7 @@ DEFAULTS = {
     "execution.max_review_rework_cycles": 3,
     "execution.max_robust_review_rework_cycles": 2,
     "execution.max_execute_no_progress": 3,
+    "execution.max_tasks_per_batch": 5,
     "orchestration.max_critique_concurrency": 5,
     "orchestration.mode": "subagent",
 }
@@ -634,6 +636,7 @@ _SETTABLE_NUMERIC = {
     "execution.max_review_rework_cycles",
     "execution.max_robust_review_rework_cycles",
     "execution.max_execute_no_progress",
+    "execution.max_tasks_per_batch",
     "orchestration.max_critique_concurrency",
 }
 

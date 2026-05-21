@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,7 @@ from megaplan._core import (
     atomic_write_text,
     configured_robustness,
     is_creative_mode,
+    latest_plan_path,
     load_plan_locked,
     render_final_md,
     require_state,
@@ -19,6 +22,40 @@ from megaplan._core import (
 )
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker, shutil, subprocess
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _strict_finalize_validation_enabled() -> bool:
+    return os.getenv("MEGAPLAN_FINALIZE_STRICT_VALIDATION", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _task_is_test_verification(task: dict[str, Any]) -> bool:
+    if task.get("kind") == "test":
+        return True
+    description = (task.get("description") or "").lower()
+    test_keywords = (
+        "pytest",
+        "run test",
+        "run the test",
+        "test suite",
+        "run existing test",
+        "verify",
+        "verification",
+    )
+    return any(keyword in description for keyword in test_keywords)
+
+
+def _final_task_is_test_verification(tasks: list[Any]) -> bool:
+    if not tasks or not isinstance(tasks[-1], dict):
+        return False
+    return _task_is_test_verification(tasks[-1])
+
 
 def _reconcile_validation_after_mutation(payload: dict[str, Any]) -> None:
     """Ensure validation block is consistent with the (possibly mutated) task list.
@@ -87,6 +124,98 @@ def _append_plan_step_coverage(payload: dict[str, Any], summary: str, item_id: s
         "finalize_item_ids": [item_id],
     })
 
+
+_PATH_PATTERN = re.compile(r"(?:[\w.-]+/)+[\w.-]+|[\w.-]+\.[A-Za-z0-9]{1,8}")
+_PLAN_STEP_PATTERN = re.compile(
+    r"^##\s+Step\s+\d+\s*:\s*(?P<title>.+?)\s*$"
+    r"(?P<body>.*?)(?=^##\s+Step\s+\d+\s*:|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_STOPWORDS = {
+    "add",
+    "and",
+    "change",
+    "create",
+    "for",
+    "from",
+    "implement",
+    "into",
+    "make",
+    "modify",
+    "move",
+    "update",
+    "the",
+    "this",
+    "that",
+    "with",
+}
+
+
+def _extract_plan_steps(plan_text: str) -> list[dict[str, Any]]:
+    steps: list[dict[str, Any]] = []
+    for match in _PLAN_STEP_PATTERN.finditer(plan_text):
+        title = " ".join(match.group("title").split())
+        step_text = f"{title}\n{match.group('body')}"
+        paths = {path.lower() for path in _PATH_PATTERN.findall(step_text)}
+        keywords = {
+            token.lower()
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9_/-]{3,}", title)
+            if token.lower() not in _STOPWORDS
+        }
+        steps.append({"summary": title, "paths": paths, "keywords": keywords})
+    return steps
+
+
+def _task_covers_plan_step(task: dict[str, Any], step: dict[str, Any]) -> bool:
+    description = (task.get("description") or "").lower()
+    if any(path in description for path in step["paths"]):
+        return True
+    return any(keyword in description for keyword in step["keywords"])
+
+
+def _apply_programmatic_coverage(payload: dict[str, Any], plan_dir: Path, state: PlanState) -> None:
+    if not state.get("plan_versions"):
+        payload["validation"] = {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "No plan steps found for programmatic coverage.",
+            "coverage_complete": True,
+        }
+        return
+    plan_text = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+    steps = _extract_plan_steps(plan_text)
+    tasks = [task for task in payload.get("tasks", []) if isinstance(task, dict)]
+    covered_entries: list[dict[str, Any]] = []
+    uncovered: list[str] = []
+
+    for step in steps:
+        task_ids = [
+            task["id"]
+            for task in tasks
+            if isinstance(task.get("id"), str) and _task_covers_plan_step(task, step)
+        ]
+        if not task_ids:
+            uncovered.append(step["summary"])
+        covered_entries.append({
+            "plan_step_summary": step["summary"],
+            "finalize_item_ids": task_ids,
+        })
+
+    if uncovered:
+        notes = "; ".join(f"auto-detected uncovered step: {summary}" for summary in uncovered)
+        coverage_complete = False
+    else:
+        notes = "All detected plan steps mapped to tasks."
+        coverage_complete = True
+
+    payload["validation"] = {
+        "plan_steps_covered": covered_entries,
+        "orphan_tasks": [],
+        "completeness_notes": notes,
+        "coverage_complete": coverage_complete,
+    }
+
+
 def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerResult) -> None:
     payload = worker.payload
 
@@ -131,6 +260,13 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
             _reject(f"Finalize task {tid} is missing a non-empty `description`.")
         if task.get("status") != "pending":
             _reject(f"Finalize task {tid} must start with status `pending`.")
+    if (
+        state["config"].get("mode", "code") == "code"
+        and _strict_finalize_validation_enabled()
+        and not _final_task_is_test_verification(tasks)
+    ):
+        LOGGER.warning("Finalize output rejected: final task is not a test verification task.")
+        _reject("Finalize output final task must run tests or otherwise verify the change.")
     validation = payload.get("validation")
     if isinstance(validation, dict):
         for index, entry in enumerate(validation.get("plan_steps_covered", []), start=1):
@@ -429,6 +565,7 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_verification_task(payload, state)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
+    _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "finalize.json", payload)

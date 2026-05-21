@@ -6,10 +6,8 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import json_dump
+from megaplan._core import intent_brief_reference, json_dump
 from megaplan.types import PlanState
-
-from ._shared import _render_prep_block
 
 
 def challenger_prompt(
@@ -21,7 +19,6 @@ def challenger_prompt(
     root: Path | None = None,
 ) -> str:
     project_dir = Path(state["config"]["project_dir"])
-    prep_block, prep_instruction = _render_prep_block(plan_dir)
 
     return textwrap.dedent(f"""\
 You are a senior engineer stress-testing a colleague's architectural research.
@@ -32,8 +29,7 @@ they assumed without evidence, and where their reasoning breaks under pressure.
 Project directory:
 {project_dir}
 
-{prep_block}
-{prep_instruction}
+{intent_brief_reference(state)}
 
 ## Decision Question
 

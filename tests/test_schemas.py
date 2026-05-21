@@ -298,11 +298,12 @@ def test_review_schema_accepts_parallel_mode_extensions_in_both_copies() -> None
     payload = {
         "review_verdict": "needs_rework",
         "checks": [
-            {
-                "id": "coverage",
-                "question": "Does the diff cover the issue?",
-                "guidance": "Inspect the changed module for missing review follow-up.",
-                "findings": [
+                {
+                    "id": "coverage",
+                    "question": "Does the diff cover the issue?",
+                    "guidance": "Inspect the changed module for missing review follow-up.",
+                    "concerned_task_ids": ["T1"],
+                    "findings": [
                     {
                         "detail": "Coverage review found one concrete issue example that the diff still does not handle.",
                         "flagged": True,
@@ -504,7 +505,14 @@ def test_schema_registry_covers_the_six_strict_mode_required_fixes() -> None:
     assert {"checks", "pre_check_flags", "verified_flag_ids", "disputed_flag_ids"}.issubset(
         review["properties"]
     )
-    assert set(review_check["required"]) == {"id", "question", "guidance", "findings", "prior_findings"}
+    assert set(review_check["required"]) == {
+        "id",
+        "question",
+        "guidance",
+        "findings",
+        "prior_findings",
+        "concerned_task_ids",
+    }
     assert set(review_finding["required"]) == {"detail", "flagged", "status", "evidence_file"}
     assert set(pre_check_flag["required"]) == {"id", "check", "detail", "severity", "evidence_file"}
 
