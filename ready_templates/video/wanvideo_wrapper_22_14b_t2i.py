@@ -36,7 +36,7 @@ MODELS = {
 
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('wanvideovaeloader'), field='model_name', default=MODEL_NAME_3),
-    'seed': InputSpec(node=ref('wanvideosampler'), field='seed', default=DEFAULT_SEED),
+    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
     'width': InputSpec(node=ref('wanvideoemptyembeds'), field='width', default=832),
     'height': InputSpec(node=ref('wanvideoemptyembeds'), field='height', default=480),
 }
@@ -57,11 +57,10 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        wanvideotextencodecached = WanVideoTextEncodeCached(
+        text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
             model_name=MODEL_NAME,
             positive_prompt=DEFAULT_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE,
-            _outputs=('TEXT_EMBEDS', 'NEGATIVE_TEXT_EMBEDS', 'POSITIVE_PROMPT'),
         )
 
         wanvideomodelloader = WanVideoModelLoader(
@@ -70,9 +69,9 @@ def build() -> VibeWorkflow:
             quantization=QUANTIZATION,
             widget_1='fp16',
         )
-
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
         wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
+
         wanvideoemptyembeds = WanVideoEmptyEmbeds(
             height=480,
             num_frames=DEFAULT_FRAMES,
@@ -121,7 +120,7 @@ def build() -> VibeWorkflow:
             model=wanvideosetloras_2,
         )
 
-        wanvideosampler = WanVideoSampler(
+        samples, denoised_samples = WanVideoSampler(
             steps=6,
             cfg=GUIDE_STRENGTH,
             seed=DEFAULT_SEED,
@@ -130,11 +129,10 @@ def build() -> VibeWorkflow:
             end_step=2,
             image_embeds=wanvideoemptyembeds,
             model=wanvideosetblockswap,
-            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+            text_embeds=text_embeds,
         )
 
-        wanvideosampler_2 = WanVideoSampler(
+        samples_wan, denoised_samples_wan = WanVideoSampler(
             steps=6,
             cfg=GUIDE_STRENGTH_2,
             seed=DEFAULT_SEED,
@@ -143,21 +141,18 @@ def build() -> VibeWorkflow:
             start_step=2,
             image_embeds=wanvideoemptyembeds,
             model=wanvideosetblockswap_2,
-            samples=wanvideosampler.out('SAMPLES'),
-            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+            samples=samples,
+            text_embeds=text_embeds,
         )
 
         wanvideodecode = WanVideoDecode(
             normalization='default',
-            samples=wanvideosampler_2.out('SAMPLES'),
+            samples=samples_wan,
             vae=wanvideovaeloader,
         )
 
         # Outputs
         saveimage = SaveImage(filename_prefix='Wan-2-2-T2I', images=wanvideodecode)
-
-        wf._set_id_map({name: node.node.id for name, node in (('wanvideotextencodecached', wanvideotextencodecached), ('wanvideomodelloader', wanvideomodelloader), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoblockswap', wanvideoblockswap), ('wanvideoemptyembeds', wanvideoemptyembeds), ('wanvideomodelloader_2', wanvideomodelloader_2), ('wanvideoloraselectmulti', wanvideoloraselectmulti), ('wanvideoloraselectmulti_2', wanvideoloraselectmulti_2), ('wanvideosetloras', wanvideosetloras), ('wanvideosetloras_2', wanvideosetloras_2), ('wanvideosetblockswap', wanvideosetblockswap), ('wanvideosetblockswap_2', wanvideosetblockswap_2), ('wanvideosampler', wanvideosampler), ('wanvideosampler_2', wanvideosampler_2), ('wanvideodecode', wanvideodecode), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
 

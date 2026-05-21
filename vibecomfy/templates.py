@@ -87,18 +87,41 @@ def new_workflow(metadata: Mapping[str, Any], *, source_path: str | None = None)
 
 
 def node(
-    wf: VibeWorkflow,
-    class_type: str,
+    *args: Any,
     _id: str | None = None,
     _extras: Mapping[str, Any] | None = None,
     **kwargs: Any,
 ) -> Any:
     """Create a ready-template node.
 
-    Supports both legacy ``node(wf, class_type, source_id, ...)`` and the
-    v2.5 id-free ``node(wf, class_type, ...)`` form. When a source id is
-    supplied it is preserved as the runtime node id for back-compat.
+    v2.6.4 Fix 5: ``wf`` is now optional — reads from the ContextVar set by
+    ``new_workflow(...)`` when omitted. This matches the typed-wrapper
+    convention, so ``raw_call('<uuid>', '<id>', ...)`` works inside a
+    ``with new_workflow(...) as wf:`` block without passing ``wf`` explicitly.
+
+    Backward compat: legacy ``node(wf, class_type, source_id, ...)`` and the
+    v2.5 id-free ``node(wf, class_type, ...)`` forms still work — the first
+    positional arg can be either a VibeWorkflow or the class_type str.
     """
+    # Disambiguate: first positional may be a VibeWorkflow (legacy) or the
+    # class_type (new ContextVar form).
+    if args and isinstance(args[0], VibeWorkflow):
+        wf = args[0]
+        rest = args[1:]
+    else:
+        wf = _current_workflow_or_raise()
+        rest = args
+    if not rest:
+        raise TypeError("node() requires a class_type argument")
+    class_type = rest[0]
+    if not isinstance(class_type, str):
+        raise TypeError(f"node() class_type must be str, got {type(class_type).__name__}")
+    # Optional positional source id (legacy form: node(wf, class_type, source_id, ...))
+    if len(rest) >= 2 and _id is None:
+        _id = str(rest[1]) if rest[1] is not None else None
+    elif len(rest) > 2:
+        raise TypeError(f"node() got too many positional args: {len(rest)}")
+
     explicit_outputs = kwargs.pop("_outputs", None)
     pass_raw = bool(kwargs.pop("pass_raw", False))
     outputs = tuple(explicit_outputs) if explicit_outputs is not None else _normalized_output_names(class_type)

@@ -15,8 +15,8 @@ MODELS = {
 }
 
 PUBLIC_INPUTS = {
-    'image': InputSpec(node=ref('loadimage'), field='image', default='bold_outfit_woman.jpeg'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='bold_outfit_woman.jpeg'),
+    'image': InputSpec(node=ref('image'), field='image', default='bold_outfit_woman.jpeg'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='bold_outfit_woman.jpeg'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -31,29 +31,23 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        loadimage = LoadImage(
-            image='bold_outfit_woman.jpeg',
-            _outputs=('IMAGE', 'MASK'),
+        image, mask = LoadImage(image='bold_outfit_woman.jpeg')
+        image_load, mask_load = LoadImage(image='handbag_white.png')
+
+        subgraph_7b34ab90 = raw_call('7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
+            image=image,
         )
 
-        loadimage_2 = LoadImage(image='handbag_white.png', _outputs=('IMAGE', 'MASK'))
-        n_7b34ab90_36f9_45ba_a665_71d418f0df18 = raw_call(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
-            image=loadimage.out('IMAGE'),
-        )
-
-        n_65c22b29_59aa_496b_89c6_55a603658670 = raw_call(wf, '65c22b29-59aa-496b-89c6-55a603658670', '92',
-            image=loadimage.out('IMAGE'),
-            image_1=loadimage_2.out('IMAGE'),
+        subgraph_65c22b29 = raw_call('65c22b29-59aa-496b-89c6-55a603658670', '92',
+            image=image,
+            image_1=image_load,
         )
 
         saveimage = SaveImage(
             filename_prefix='Flux2-Klein',
-            images=n_7b34ab90_36f9_45ba_a665_71d418f0df18.out(0),
+            images=subgraph_7b34ab90.out(0),
         )
-
-        saveimage_2 = SaveImage(images=n_65c22b29_59aa_496b_89c6_55a603658670.out(0))
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('loadimage_2', loadimage_2), ('n_7b34ab90_36f9_45ba_a665_71d418f0df18', n_7b34ab90_36f9_45ba_a665_71d418f0df18), ('n_65c22b29_59aa_496b_89c6_55a603658670', n_65c22b29_59aa_496b_89c6_55a603658670), ('saveimage', saveimage), ('saveimage_2', saveimage_2))})
+        saveimage_2 = SaveImage(images=subgraph_65c22b29.out(0))
 
         return wf.finalize(PUBLIC_INPUTS, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

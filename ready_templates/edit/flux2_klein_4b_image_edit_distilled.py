@@ -25,8 +25,8 @@ PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
     'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
     'prompt': InputSpec(node=ref('cliptextencode'), field='text', default='Change the bag color to blue.'),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='handbag_white.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='handbag_white.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='handbag_white.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='handbag_white.png'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -53,8 +53,8 @@ def build() -> VibeWorkflow:
         randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
 
         # Inputs
-        loadimage = LoadImage(image='handbag_white.png', _outputs=('IMAGE', 'MASK'))
-        loadimage_2 = LoadImage(image='comfy_logo_blue.png', _outputs=('IMAGE', 'MASK'))
+        image, mask = LoadImage(image='handbag_white.png')
+        image_load, mask_load = LoadImage(image='comfy_logo_blue.png')
 
         # Conditioning
         cliptextencode = CLIPTextEncode(
@@ -64,28 +64,15 @@ def build() -> VibeWorkflow:
 
         imagescaletototalpixels = ImageScaleToTotalPixels(
             upscale_method='nearest-exact',
-            image=loadimage.out('IMAGE'),
+            image=image,
         )
-
         conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
-        getimagesize = GetImageSize(
-            image=imagescaletototalpixels,
-            _outputs=('WIDTH', 'HEIGHT', 'BATCH_SIZE'),
-        )
-
+        width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
         vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
 
         # Sampling
-        flux2scheduler = Flux2Scheduler(
-            steps=4,
-            height=getimagesize.out('HEIGHT'),
-            width=getimagesize.out('WIDTH'),
-        )
-
-        emptyflux2latentimage = EmptyFlux2LatentImage(
-            width=getimagesize.out('WIDTH'),
-            height=getimagesize.out('HEIGHT'),
-        )
+        flux2scheduler = Flux2Scheduler(steps=4, height=height, width=width)
+        emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
 
         referencelatent = ReferenceLatent(
             conditioning=conditioningzeroout,
@@ -106,25 +93,19 @@ def build() -> VibeWorkflow:
         )
 
         # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
+        output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=emptyflux2latentimage,
             noise=randomnoise,
             sampler=ksamplerselect,
             sigmas=flux2scheduler,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
         # Decode
-        vaedecode = VAEDecode(
-            samples=samplercustomadvanced.out('OUTPUT'),
-            vae=vaeloader,
-        )
+        vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
         # Outputs
         saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
-
-        wf._set_id_map({name: node.node.id for name, node in (('ksamplerselect', ksamplerselect), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('randomnoise', randomnoise), ('loadimage', loadimage), ('loadimage_2', loadimage_2), ('cliptextencode', cliptextencode), ('imagescaletototalpixels', imagescaletototalpixels), ('conditioningzeroout', conditioningzeroout), ('getimagesize', getimagesize), ('vaeencode', vaeencode), ('flux2scheduler', flux2scheduler), ('emptyflux2latentimage', emptyflux2latentimage), ('referencelatent', referencelatent), ('referencelatent_2', referencelatent_2), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('vaedecode', vaedecode), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

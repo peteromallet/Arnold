@@ -27,8 +27,8 @@ PUBLIC_INPUTS = {
     'prompt': InputSpec(node=ref('positive'), field='text', default=DEFAULT_PROMPT),
     'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
     'steps': InputSpec(node=ref('ksampler'), field='steps', default=12),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='image_z_image_img2img_input.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='image_z_image_img2img_input.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='image_z_image_img2img_input.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='image_z_image_img2img_input.png'),
     'width': InputSpec(node=ref('imagescale'), field='width', default=1024),
     'height': InputSpec(node=ref('imagescale'), field='height', default=1024),
 }
@@ -48,10 +48,7 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Inputs
-        loadimage = LoadImage(
-            image='image_z_image_img2img_input.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
+        image, mask = LoadImage(image='image_z_image_img2img_input.png')
 
         # Loaders
         unetloader = UNETLoader(unet_name=MODEL_NAME)
@@ -62,14 +59,14 @@ def build() -> VibeWorkflow:
         # Conditioning
         positive = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
         negative = CLIPTextEncode(text='', clip=cliploader)
+
         imagescale = ImageScale(
             upscale_method='lanczos',
             width=1024,
             height=1024,
             crop='center',
-            image=loadimage.out('IMAGE'),
+            image=image,
         )
-
         vaeencode = VAEEncode(pixels=imagescale, vae=vaeloader)
 
         # Sampling
@@ -90,8 +87,6 @@ def build() -> VibeWorkflow:
 
         # Outputs
         saveimage = SaveImage(filename_prefix='z-image-img2img', images=vaedecode)
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('modelsamplingauraflow', modelsamplingauraflow), ('positive', positive), ('negative', negative), ('imagescale', imagescale), ('vaeencode', vaeencode), ('ksampler', ksampler), ('vaedecode', vaedecode), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image-img2img')
 

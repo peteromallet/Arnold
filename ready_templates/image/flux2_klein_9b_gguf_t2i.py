@@ -52,11 +52,12 @@ def build() -> VibeWorkflow:
         randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
 
         # Inputs
-        primitiveint = raw_call(wf, 'PrimitiveInt', '75:68', value=1024)
-        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '75:69', value=1024)
+        primitiveint = raw_call('PrimitiveInt', '75:68', value=1024)
+        primitiveint_2 = raw_call('PrimitiveInt', '75:69', value=1024)
 
         # Sampling
         flux2scheduler = Flux2Scheduler(height=primitiveint_2, width=primitiveint)
+
         emptyflux2latentimage = EmptyFlux2LatentImage(
             width=primitiveint,
             height=primitiveint_2,
@@ -65,6 +66,7 @@ def build() -> VibeWorkflow:
         # Conditioning
         negative = CLIPTextEncode(text=TEXT, clip=cliploader)
         positive = CLIPTextEncode(text=TEXT, clip=cliploader)
+
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=unetloader,
@@ -73,25 +75,19 @@ def build() -> VibeWorkflow:
         )
 
         # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
+        output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=emptyflux2latentimage,
             noise=randomnoise,
             sampler=ksamplerselect,
             sigmas=flux2scheduler,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
         # Decode
-        vaedecode = VAEDecode(
-            samples=samplercustomadvanced.out('OUTPUT'),
-            vae=vaeloader,
-        )
+        vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
         # Outputs
         saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
-
-        wf._set_id_map({name: node.node.id for name, node in (('ksamplerselect', ksamplerselect), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('randomnoise', randomnoise), ('flux2scheduler', flux2scheduler), ('emptyflux2latentimage', emptyflux2latentimage), ('negative', negative), ('positive', positive), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('vaedecode', vaedecode), ('saveimage', saveimage), ('primitiveint', primitiveint), ('primitiveint_2', primitiveint_2))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

@@ -23,7 +23,7 @@ MODELS = {}
 
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('loadwanvideot5textencoder'), field='model_name', default=MODEL_NAME),
-    'seed': InputSpec(node=ref('wanvideosampler'), field='seed', default=DEFAULT_SEED),
+    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -44,6 +44,7 @@ def build() -> VibeWorkflow:
         loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+
         wanvideoteacache = WanVideoTeaCache(
             widget_0=0.1,
             widget_1=1,
@@ -51,14 +52,13 @@ def build() -> VibeWorkflow:
             widget_3='offload_device',
             widget_4='true',
         )
-
         wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
-        vhs_loadvideo = VHS_LoadVideo(
-            video='wolf_interpolated.mp4',
-            _outputs=('IMAGE', 'FRAME_COUNT', 'AUDIO', 'VIDEO_INFO'),
-        )
 
+        image, frame_count, audio, video_info = VHS_LoadVideo(
+            video='wolf_interpolated.mp4',
+        )
         wanvideoloraselect = WanVideoLoraSelect(lora=MODEL_NAME_3)
+
         wanvideotextencode = WanVideoTextEncode(
             positive_prompt='video of a wolf',
             negative_prompt=DEFAULT_NEGATIVE,
@@ -70,8 +70,8 @@ def build() -> VibeWorkflow:
             base_precision='fp16',
             lora=wanvideoloraselect,
         )
+        imageblur = ImageBlur(widget_0=4, widget_1=1, image=image)
 
-        imageblur = ImageBlur(widget_0=4, widget_1=1, image=vhs_loadvideo.out('IMAGE'))
         wanvideoencode = WanVideoEncode(
             widget_0=False,
             widget_1=272,
@@ -90,7 +90,7 @@ def build() -> VibeWorkflow:
             latents=wanvideoencode,
         )
 
-        wanvideosampler = WanVideoSampler(
+        samples, denoised_samples = WanVideoSampler(
             steps=1,
             seed=DEFAULT_SEED,
             batched_cfg='',
@@ -98,13 +98,8 @@ def build() -> VibeWorkflow:
             image_embeds=wanvideocontrolembeds,
             model=wanvideomodelloader,
             text_embeds=wanvideotextencode,
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
-
-        wanvideodecode = WanVideoDecode(
-            samples=wanvideosampler.out('SAMPLES'),
-            vae=wanvideovaeloader,
-        )
+        wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
 
         imageconcatmulti = ImageConcatMulti(
             unused_3=None,
@@ -114,8 +109,6 @@ def build() -> VibeWorkflow:
 
         # Outputs
         vhs_videocombine = VHS_VideoCombine(images=imageconcatmulti)
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadwanvideot5textencoder', loadwanvideot5textencoder), ('wanvideotorchcompilesettings', wanvideotorchcompilesettings), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoteacache', wanvideoteacache), ('wanvideotorchcompilesettings_2', wanvideotorchcompilesettings_2), ('vhs_loadvideo', vhs_loadvideo), ('wanvideoloraselect', wanvideoloraselect), ('wanvideotextencode', wanvideotextencode), ('wanvideomodelloader', wanvideomodelloader), ('imageblur', imageblur), ('wanvideoencode', wanvideoencode), ('wanvideocontrolembeds', wanvideocontrolembeds), ('wanvideosampler', wanvideosampler), ('wanvideodecode', wanvideodecode), ('imageconcatmulti', imageconcatmulti), ('vhs_videocombine', vhs_videocombine))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

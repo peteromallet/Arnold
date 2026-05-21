@@ -60,11 +60,12 @@ def build() -> VibeWorkflow:
         emptysd3latentimage = EmptySD3LatentImage(width=768, height=768)
 
         # Inputs
-        primitivefloat = raw_call(wf, 'PrimitiveFloat', '238:218', value=1.0)
-        primitivefloat_2 = raw_call(wf, 'PrimitiveFloat', '238:223', value=1)
-        primitiveint = raw_call(wf, 'PrimitiveInt', '238:224', value=4)
-        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '238:225', value=4)
-        primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '238:229', value=True)
+        primitivefloat = raw_call('PrimitiveFloat', '238:218', value=1.0)
+        primitivefloat_2 = raw_call('PrimitiveFloat', '238:223', value=1)
+        primitiveint = raw_call('PrimitiveInt', '238:224', value=4)
+        primitiveint_2 = raw_call('PrimitiveInt', '238:225', value=4)
+        primitiveboolean = raw_call('PrimitiveBoolean', '238:229', value=True)
+
         loraloadermodelonly = LoraLoaderModelOnly(
             lora_name=MODEL_NAME_4,
             model=unetloader,
@@ -73,6 +74,7 @@ def build() -> VibeWorkflow:
         # Conditioning
         positive = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
         negative = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+
         comfyswitchnode = ComfySwitchNode(
             on_false=primitiveint,
             on_true=primitiveint_2,
@@ -113,8 +115,6 @@ def build() -> VibeWorkflow:
 
         # Outputs
         saveimage = SaveImage(filename_prefix='Qwen-Image-2512', images=vaedecode)
-
-        wf._set_id_map({name: node.node.id for name, node in (('cliploader', cliploader), ('vaeloader', vaeloader), ('unetloader', unetloader), ('emptysd3latentimage', emptysd3latentimage), ('loraloadermodelonly', loraloadermodelonly), ('positive', positive), ('negative', negative), ('comfyswitchnode', comfyswitchnode), ('comfyswitchnode_2', comfyswitchnode_2), ('comfyswitchnode_3', comfyswitchnode_3), ('modelsamplingauraflow', modelsamplingauraflow), ('ksampler', ksampler), ('vaedecode', vaedecode), ('saveimage', saveimage), ('primitivefloat', primitivefloat), ('primitivefloat_2', primitivefloat_2), ('primitiveint', primitiveint), ('primitiveint_2', primitiveint_2), ('primitiveboolean', primitiveboolean))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

@@ -28,12 +28,11 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         emptyimage = EmptyImage(color=16711680, height=64, width=64)
+
         saveimage = SaveImage(
             filename_prefix='vibecomfy_ready_smoke_red',
             images=emptyimage,
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('emptyimage', emptyimage), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='vibecomfy_ready_smoke_red')
 

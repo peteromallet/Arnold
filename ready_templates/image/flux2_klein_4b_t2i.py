@@ -58,8 +58,8 @@ def build() -> VibeWorkflow:
         )
 
         # Inputs
-        primitiveint = raw_call(wf, 'PrimitiveInt', '75:68', value=1024)
-        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '75:69', value=1024)
+        primitiveint = raw_call('PrimitiveInt', '75:68', value=1024)
+        primitiveint_2 = raw_call('PrimitiveInt', '75:69', value=1024)
 
         # Sampling
         flux2scheduler = Flux2Scheduler(height=primitiveint_2, width=primitiveint)

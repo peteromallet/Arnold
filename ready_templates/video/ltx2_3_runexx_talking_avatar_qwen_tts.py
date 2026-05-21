@@ -60,8 +60,8 @@ PUBLIC_INPUTS = {
     'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
     'steps': InputSpec(node=ref('basicscheduler'), field='steps', default=8),
     'use_lora': InputSpec(node=ref('primitiveboolean'), field='value', default=False),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='17745317855d08.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='17745317855d08.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='17745317855d08.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='17745317855d08.png'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -81,156 +81,145 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        getnode = raw_call(wf, 'GetNode', '413', widget_0=WIDGET_0)
+        getnode = raw_call('GetNode', '413', widget_0=WIDGET_0)
 
         # Inputs
-        loadimage = LoadImage(image='17745317855d08.png', _outputs=('IMAGE', 'MASK'))
+        image, mask = LoadImage(image='17745317855d08.png')
 
         # Loaders
         vaeloader = VAELoader(vae_name=MODEL_NAME)
         latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME_2)
+
         dualcliploader = DualCLIPLoader(
             clip_name1=MODEL_NAME_3,
             clip_name2=MODEL_NAME_4,
             type_='ltxv',
             device='default',
         )
-
         ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME_5)
         vaeloader_2 = VAELoader(vae_name=MODEL_NAME_6)
         unetloader = UNETLoader(unet_name=MODEL_NAME_7)
         unetloadergguf = UnetLoaderGGUF(unet_name=MODEL_NAME_8)
+
         dualcliploadergguf = DualCLIPLoaderGGUF(
             clip_name1=MODEL_NAME_9,
             clip_name2=MODEL_NAME_4,
             type_='sdxl',
         )
-
         intconstant = INTConstant(value=10)
 
         # Inputs
-        primitivefloat = raw_call(wf, 'PrimitiveFloat', '1586', value=8)
+        primitivefloat = raw_call('PrimitiveFloat', '1586', value=8)
         intconstant_2 = INTConstant(value=960)
         intconstant_3 = INTConstant(value=544)
-        getnode_2 = raw_call(wf, 'GetNode', '1619', widget_0=WIDGET_0_2)
-        getnode_3 = raw_call(wf, 'GetNode', '1622', widget_0=WIDGET_0_2)
+        getnode_2 = raw_call('GetNode', '1619', widget_0=WIDGET_0_2)
+        getnode_3 = raw_call('GetNode', '1622', widget_0=WIDGET_0_2)
+
         primitivestringmultiline = PrimitiveStringMultiline(
             value="A video from a TV broadcast with a male and a female news achor. They both stay in frame all the time.\n\nThe dialog from the male and female is as follows:\n\nSpaker_1 is the woman, and Speaker_2 is the man.\n\n[speaker_1][confused]: This is awkward! I guess the prompter ran out of ideas, and put us in this odd situation.\n[speaker_2][embarrassed] : But hey,  just because we are here, in a new video, doesn't mean our voices change. \n[speaker_1][excited]: Aber ich möchte mit dir schlafen.\n[speaker_2][happy]: I still have no idea what she said! Might be for the best [laughing]\n\nThe dialog with perfect lip-sync to the audio\n\n\nThey both smile at the end.\n\n\n",
         )
+        getnode_4 = raw_call('GetNode', '1628', widget_0=WIDGET_0_3)
+        getnode_5 = raw_call('GetNode', '1629', widget_0=WIDGET_0_4)
+        getnode_6 = raw_call('GetNode', '1635', widget_0=WIDGET_0_5)
+        getnode_7 = raw_call('GetNode', '1636', widget_0=WIDGET_0_6)
+        getnode_8 = raw_call('GetNode', '1784', widget_0=WIDGET_0_7)
+        getnode_9 = raw_call('GetNode', '1807', widget_0=WIDGET_0_8)
+        getnode_10 = raw_call('GetNode', '1808', widget_0=WIDGET_0_9)
+        getnode_11 = raw_call('GetNode', '1809', widget_0=WIDGET_0_10)
+        getnode_12 = raw_call('GetNode', '1814', widget_0=WIDGET_0)
+        getnode_13 = raw_call('GetNode', '1815', widget_0=WIDGET_0_11)
+        getnode_14 = raw_call('GetNode', '1816', widget_0=WIDGET_0)
+        getnode_15 = raw_call('GetNode', '1817', widget_0=WIDGET_0_12)
+        getnode_16 = raw_call('GetNode', '1820', widget_0=WIDGET_0_13)
+        getnode_17 = raw_call('GetNode', '1821', widget_0=WIDGET_0_14)
+        getnode_18 = raw_call('GetNode', '1822', widget_0=WIDGET_0_6)
+        getnode_19 = raw_call('GetNode', '1823', widget_0=WIDGET_0_15)
+        getnode_20 = raw_call('GetNode', '1824', widget_0=WIDGET_0_10)
+        getnode_21 = raw_call('GetNode', '1828', widget_0=WIDGET_0_16)
+        getnode_22 = raw_call('GetNode', '1829', widget_0=WIDGET_0_13)
+        getnode_23 = raw_call('GetNode', '1830', widget_0=WIDGET_0_14)
+        getnode_24 = raw_call('GetNode', '1831', widget_0=WIDGET_0_17)
 
-        getnode_4 = raw_call(wf, 'GetNode', '1628', widget_0=WIDGET_0_3)
-        getnode_5 = raw_call(wf, 'GetNode', '1629', widget_0=WIDGET_0_4)
-        getnode_6 = raw_call(wf, 'GetNode', '1635', widget_0=WIDGET_0_5)
-        getnode_7 = raw_call(wf, 'GetNode', '1636', widget_0=WIDGET_0_6)
-        getnode_8 = raw_call(wf, 'GetNode', '1784', widget_0=WIDGET_0_7)
-        getnode_9 = raw_call(wf, 'GetNode', '1807', widget_0=WIDGET_0_8)
-        getnode_10 = raw_call(wf, 'GetNode', '1808', widget_0=WIDGET_0_9)
-        getnode_11 = raw_call(wf, 'GetNode', '1809', widget_0=WIDGET_0_10)
-        getnode_12 = raw_call(wf, 'GetNode', '1814', widget_0=WIDGET_0)
-        getnode_13 = raw_call(wf, 'GetNode', '1815', widget_0=WIDGET_0_11)
-        getnode_14 = raw_call(wf, 'GetNode', '1816', widget_0=WIDGET_0)
-        getnode_15 = raw_call(wf, 'GetNode', '1817', widget_0=WIDGET_0_12)
-        getnode_16 = raw_call(wf, 'GetNode', '1820', widget_0=WIDGET_0_13)
-        getnode_17 = raw_call(wf, 'GetNode', '1821', widget_0=WIDGET_0_14)
-        getnode_18 = raw_call(wf, 'GetNode', '1822', widget_0=WIDGET_0_6)
-        getnode_19 = raw_call(wf, 'GetNode', '1823', widget_0=WIDGET_0_15)
-        getnode_20 = raw_call(wf, 'GetNode', '1824', widget_0=WIDGET_0_10)
-        getnode_21 = raw_call(wf, 'GetNode', '1828', widget_0=WIDGET_0_16)
-        getnode_22 = raw_call(wf, 'GetNode', '1829', widget_0=WIDGET_0_13)
-        getnode_23 = raw_call(wf, 'GetNode', '1830', widget_0=WIDGET_0_14)
-        getnode_24 = raw_call(wf, 'GetNode', '1831', widget_0=WIDGET_0_17)
         randomnoise = RandomNoise(
             noise_seed=DEFAULT_SEED,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
+        getnode_25 = raw_call('GetNode', '1833', widget_0=WIDGET_0_18)
+        getnode_26 = raw_call('GetNode', '1834', widget_0=WIDGET_0_17)
+        getnode_27 = raw_call('GetNode', '1835', widget_0=WIDGET_0_16)
+        getnode_28 = raw_call('GetNode', '1841', widget_0=WIDGET_0_16)
 
-        getnode_25 = raw_call(wf, 'GetNode', '1833', widget_0=WIDGET_0_18)
-        getnode_26 = raw_call(wf, 'GetNode', '1834', widget_0=WIDGET_0_17)
-        getnode_27 = raw_call(wf, 'GetNode', '1835', widget_0=WIDGET_0_16)
-        getnode_28 = raw_call(wf, 'GetNode', '1841', widget_0=WIDGET_0_16)
         randomnoise_2 = RandomNoise(
             noise_seed=DEFAULT_SEED_2,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
-
-        getnode_29 = raw_call(wf, 'GetNode', '1843', widget_0=WIDGET_0_13)
+        getnode_29 = raw_call('GetNode', '1843', widget_0=WIDGET_0_13)
         manualsigmas = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_cfg_pp')
         ksamplerselect_2 = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
-        getnode_30 = raw_call(wf, 'GetNode', '1855', widget_0=WIDGET_0_19)
+        getnode_30 = raw_call('GetNode', '1855', widget_0=WIDGET_0_19)
+
         manualsigmas_2 = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
+        primitiveboolean = raw_call('PrimitiveBoolean', '1862', value=False)
+        reroute = raw_call('Reroute', '1865')
+        getnode_31 = raw_call('GetNode', '1878', widget_0=WIDGET_0_16)
+        getnode_32 = raw_call('GetNode', '1887', widget_0=WIDGET_0_4)
+        getnode_33 = raw_call('GetNode', '1888', widget_0=WIDGET_0_3)
+        getnode_34 = raw_call('GetNode', '1889', widget_0=WIDGET_0_11)
+        getnode_35 = raw_call('GetNode', '1894', widget_0=WIDGET_0_20)
+        getnode_36 = raw_call('GetNode', '1898', widget_0=WIDGET_0_6)
+        primitiveboolean_2 = raw_call('PrimitiveBoolean', '1929', value=True)
+        getnode_37 = raw_call('GetNode', '1931', widget_0=WIDGET_0_21)
+        getnode_38 = raw_call('GetNode', '1935', widget_0=WIDGET_0_15)
 
-        primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '1862', value=False)
-        reroute = raw_call(wf, 'Reroute', '1865')
-        getnode_31 = raw_call(wf, 'GetNode', '1878', widget_0=WIDGET_0_16)
-        getnode_32 = raw_call(wf, 'GetNode', '1887', widget_0=WIDGET_0_4)
-        getnode_33 = raw_call(wf, 'GetNode', '1888', widget_0=WIDGET_0_3)
-        getnode_34 = raw_call(wf, 'GetNode', '1889', widget_0=WIDGET_0_11)
-        getnode_35 = raw_call(wf, 'GetNode', '1894', widget_0=WIDGET_0_20)
-        getnode_36 = raw_call(wf, 'GetNode', '1898', widget_0=WIDGET_0_6)
-        primitiveboolean_2 = raw_call(wf, 'PrimitiveBoolean', '1929', value=True)
-        getnode_37 = raw_call(wf, 'GetNode', '1931', widget_0=WIDGET_0_21)
-        getnode_38 = raw_call(wf, 'GetNode', '1935', widget_0=WIDGET_0_15)
-        melbandroformermodelloader = raw_call(wf, 'MelBandRoFormerModelLoader', '1937',
+        melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937',
             widget_0=MODEL_NAME_10,
         )
-
         primitivestringmultiline_2 = PrimitiveStringMultiline(value='')
         loadaudio = LoadAudio(audio='d1b26d5a32db420183fa17af9c699278.mp3')
+
         primitivestringmultiline_3 = PrimitiveStringMultiline(
             value='So what if you just want to prompt. Text to video works fine as well. Go generate some while I enjoy my coffee. ',
         )
 
-        setnode_4 = raw_call(wf, 'SetNode', '1555',
+        setnode_4 = raw_call('SetNode', '1555',
             widget_0=WIDGET_0_12,
             LATENT_UPSCALE_MODEL=latentupscalemodelloader,
         )
 
-        setnode_5 = raw_call(wf, 'SetNode', '1556',
+        setnode_5 = raw_call('SetNode', '1556',
             widget_0=WIDGET_0_11,
             VAE=ltxvaudiovaeloader,
         )
+        setnode_6 = raw_call('SetNode', '1557', widget_0=WIDGET_0, VAE=vaeloader)
 
-        setnode_6 = raw_call(wf, 'SetNode', '1557', widget_0=WIDGET_0, VAE=vaeloader)
-        setnode_7 = raw_call(wf, 'SetNode', '1558',
+        setnode_7 = raw_call('SetNode', '1558',
             widget_0=WIDGET_0_2,
             CLIP=dualcliploader,
         )
+        setnode_8 = raw_call('SetNode', '1568', widget_0=WIDGET_0_18, VAE=vaeloader_2)
+        setnode_9 = raw_call('SetNode', '1575', widget_0=WIDGET_0_4, INT=intconstant_2)
+        setnode_10 = raw_call('SetNode', '1576', widget_0=WIDGET_0_3, INT=intconstant_3)
 
-        setnode_8 = raw_call(wf, 'SetNode', '1568',
-            widget_0=WIDGET_0_18,
-            VAE=vaeloader_2,
-        )
-
-        setnode_9 = raw_call(wf, 'SetNode', '1575',
-            widget_0=WIDGET_0_4,
-            INT=intconstant_2,
-        )
-
-        setnode_10 = raw_call(wf, 'SetNode', '1576',
-            widget_0=WIDGET_0_3,
-            INT=intconstant_3,
-        )
-
-        setnode_11 = raw_call(wf, 'SetNode', '1577',
+        setnode_11 = raw_call('SetNode', '1577',
             widget_0=WIDGET_0_6,
             FLOAT=primitivefloat,
         )
 
-        setnode_19 = raw_call(wf, 'SetNode', '1861',
+        setnode_19 = raw_call('SetNode', '1861',
             widget_0=WIDGET_0_15,
             BOOLEAN=primitiveboolean,
         )
 
-        n_63e8c999_0a69_4f62_af3f_8b77f0095971 = raw_call(wf, '63e8c999-0a69-4f62-af3f-8b77f0095971', '1920',
+        subgraph_63e8c999 = raw_call('63e8c999-0a69-4f62-af3f-8b77f0095971', '1920',
             audio=reroute.out(0),
         )
 
-        setnode_22 = raw_call(wf, 'SetNode', '1930',
+        setnode_22 = raw_call('SetNode', '1930',
             widget_0=WIDGET_0_21,
             BOOLEAN=primitiveboolean_2,
         )
@@ -241,17 +230,16 @@ def build() -> VibeWorkflow:
             length=getnode_6.out(0),
         )
 
-        imageresizekjv2 = ImageResizeKJv2(
+        image_image, width, height, mask_image = ImageResizeKJv2(
             upscale_method='lanczos',
             keep_proportion='crop',
             device='cpu',
             width=getnode_4.out(0),
             height=getnode_5.out(0),
-            image=loadimage.out('IMAGE'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'MASK'),
+            image=image,
         )
-
         ltxvpreprocess = LTXVPreprocess(img_compression=18, image=getnode_11.out(0))
+
         loraloadermodelonly = LoraLoaderModelOnly(
             lora_name=MODEL_NAME_11,
             strength_model=GUIDE_STRENGTH,
@@ -260,6 +248,7 @@ def build() -> VibeWorkflow:
 
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=getnode_3.out(0))
+
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH_2,
             model=getnode_27.out(0),
@@ -279,8 +268,8 @@ def build() -> VibeWorkflow:
             negative=getnode_22.out(0),
             positive=getnode_23.out(0),
         )
-
         modelsamplingsd3 = ModelSamplingSD3(shift=13, model=getnode_31.out(0))
+
         solidmask = SolidMask(
             widget_0=0,
             widget_1=512,
@@ -294,35 +283,22 @@ def build() -> VibeWorkflow:
             audio_vae=getnode_34.out(0),
         )
 
-        simplecalculatorkj = SimpleCalculatorKJ(
+        float, int, boolean = SimpleCalculatorKJ(
             expression='((round((a * b -1) / 8)) * 8) + 1 ',
-            _outputs=('FLOAT', 'INT', 'BOOLEAN'),
             **{'variables.a': intconstant, 'variables.b': getnode_36.out(0)},
         )
-
         modelsamplingsd3_2 = ModelSamplingSD3(shift=13, model=getnode_27.out(0))
         trimaudioduration = TrimAudioDuration(widget_0=0, widget_1=15, audio=loadaudio)
-        setnode_3 = raw_call(wf, 'SetNode', '650',
-            widget_0=WIDGET_0_10,
-            IMAGE=imageresizekjv2.out('IMAGE'),
-        )
+        setnode_3 = raw_call('SetNode', '650', widget_0=WIDGET_0_10, IMAGE=image_image)
 
-        setnode_12 = raw_call(wf, 'SetNode', '1578',
+        setnode_12 = raw_call('SetNode', '1578',
             widget_0=WIDGET_0_5,
-            _extras={'*': n_63e8c999_0a69_4f62_af3f_8b77f0095971.out(0)},
+            _extras={'*': subgraph_63e8c999.out(0)},
         )
+        setnode_17 = raw_call('SetNode', '1840', widget_0=WIDGET_0_16, MODEL=ltx2_nag)
+        setnode_21 = raw_call('SetNode', '1918', widget_0='frames_seconds', INT=int)
 
-        setnode_17 = raw_call(wf, 'SetNode', '1840',
-            widget_0=WIDGET_0_16,
-            MODEL=ltx2_nag,
-        )
-
-        setnode_21 = raw_call(wf, 'SetNode', '1918',
-            widget_0='frames_seconds',
-            INT=simplecalculatorkj.out('INT'),
-        )
-
-        melbandroformersampler = raw_call(wf, 'MelBandRoFormerSampler', '1936',
+        melbandroformersampler = raw_call('MelBandRoFormerSampler', '1936',
             audio=trimaudioduration,
             model=melbandroformermodelloader.out(0),
         )
@@ -334,17 +310,16 @@ def build() -> VibeWorkflow:
 
         resizeimagemasknode = ResizeImageMaskNode(
             resize_type='scale by multiplier',
-            input=imageresizekjv2.out('IMAGE'),
+            input=image_image,
         )
 
         # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
+        output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider_2,
             latent_image=getnode_30.out(0),
             noise=randomnoise_2,
             sampler=ksamplerselect_2,
             sigmas=manualsigmas_2,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
         basicscheduler = BasicScheduler(
@@ -375,12 +350,12 @@ def build() -> VibeWorkflow:
             vae=getnode.out(0),
         )
 
-        setnode_20 = raw_call(wf, 'SetNode', '1891',
+        setnode_20 = raw_call('SetNode', '1891',
             widget_0=WIDGET_0_20,
             LATENT=setlatentnoisemask,
         )
 
-        a8d7fd9f_52aa_447a_9766_53cb91c0ef18 = raw_call(wf, 'a8d7fd9f-52aa-447a-9766-53cb91c0ef18', '1926',
+        subgraph_a8d7fd9f = raw_call('a8d7fd9f-52aa-447a-9766-53cb91c0ef18', '1926',
             _1=primitivestringmultiline,
             clip=getnode_2.out(0),
             image=resizeimagemasknode,
@@ -390,17 +365,9 @@ def build() -> VibeWorkflow:
             audio_latent=getnode_35.out(0),
             video_latent=ltxvimgtovideoinplace,
         )
-
         ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
-        getimagesize = GetImageSize(
-            image=resizeimagemasknode,
-            _outputs=('WIDTH', 'HEIGHT', 'BATCH_SIZE'),
-        )
-
-        ltxvseparateavlatent = LTXVSeparateAVLatent(
-            av_latent=samplercustomadvanced.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
-        )
+        width_get, height_get, batch_size = GetImageSize(image=resizeimagemasknode)
+        video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
         ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
             widget_0='Hello, this is a cloned voice.',
@@ -415,23 +382,15 @@ def build() -> VibeWorkflow:
             reference_text=primitivestringmultiline_2,
             target_text=primitivestringmultiline_3,
         )
+        setnode_14 = raw_call('SetNode', '1633', widget_0=WIDGET_0_9, INT=width_get)
+        setnode_15 = raw_call('SetNode', '1634', widget_0=WIDGET_0_8, INT=height_get)
 
-        setnode_14 = raw_call(wf, 'SetNode', '1633',
-            widget_0=WIDGET_0_9,
-            INT=getimagesize.out('WIDTH'),
-        )
-
-        setnode_15 = raw_call(wf, 'SetNode', '1634',
-            widget_0=WIDGET_0_8,
-            INT=getimagesize.out('HEIGHT'),
-        )
-
-        setnode_18 = raw_call(wf, 'SetNode', '1860',
+        setnode_18 = raw_call('SetNode', '1860',
             widget_0=WIDGET_0_19,
             LATENT=ltxvconcatavlatent,
         )
 
-        audionormalizelufs = raw_call(wf, 'AudioNormalizeLUFS', '1916',
+        audionormalizelufs = raw_call('AudioNormalizeLUFS', '1916',
             widget_0=-20,
             widget_1=0,
             widget_2=0,
@@ -446,7 +405,7 @@ def build() -> VibeWorkflow:
 
         # Conditioning
         cliptextencode_2 = CLIPTextEncode(
-            text=a8d7fd9f_52aa_447a_9766_53cb91c0ef18.out(0),
+            text=subgraph_a8d7fd9f.out(0),
             clip=getnode_3.out(0),
         )
 
@@ -455,17 +414,17 @@ def build() -> VibeWorkflow:
             widget_1=False,
             bypass=getnode_19.out(0),
             image=getnode_20.out(0),
-            latent=ltxvseparateavlatent.out('VIDEO_LATENT'),
+            latent=video_latent,
             vae=getnode_14.out(0),
         )
 
-        power_lora_loader__rgthree_ = raw_call(wf, 'Power Lora Loader (rgthree)', '1627',
+        power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '1627',
             _outputs=('MODEL', 'CLIP'),
             widget_4='',
             model=ltx2attentiontunerpatch,
         )
 
-        audioenhancementnode = raw_call(wf, 'AudioEnhancementNode', '1904',
+        audioenhancementnode = raw_call('AudioEnhancementNode', '1904',
             widget_0='manual',
             widget_1=0.7,
             widget_10=5,
@@ -483,82 +442,76 @@ def build() -> VibeWorkflow:
             audio=audionormalizelufs.out(0),
         )
 
-        ltxvconditioning = LTXVConditioning(
+        positive, negative = LTXVConditioning(
             frame_rate=getnode_7.out(0),
             negative=cliptextencode,
             positive=cliptextencode_2,
-            _outputs=('POSITIVE', 'NEGATIVE'),
         )
 
         ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-            audio_latent=ltxvseparateavlatent.out('AUDIO_LATENT'),
+            audio_latent=audio_latent,
             video_latent=ltxvimgtovideoinplace_2,
         )
 
-        setnode = raw_call(wf, 'SetNode', '645',
+        setnode = raw_call('SetNode', '645',
             widget_0=WIDGET_0_14,
-            CONDITIONING=ltxvconditioning.out('POSITIVE'),
+            CONDITIONING=positive,
         )
 
-        setnode_2 = raw_call(wf, 'SetNode', '646',
+        setnode_2 = raw_call('SetNode', '646',
             widget_0=WIDGET_0_13,
-            CONDITIONING=ltxvconditioning.out('NEGATIVE'),
+            CONDITIONING=negative,
         )
 
-        setnode_13 = raw_call(wf, 'SetNode', '1617',
+        setnode_13 = raw_call('SetNode', '1617',
             widget_0=WIDGET_0_17,
             MODEL=power_lora_loader__rgthree_.out('MODEL'),
         )
 
-        setnode_16 = raw_call(wf, 'SetNode', '1758',
+        setnode_16 = raw_call('SetNode', '1758',
             widget_0=WIDGET_0_7,
             AUDIO=audioenhancementnode.out(0),
         )
 
         # Sampling
-        samplercustomadvanced_2 = SamplerCustomAdvanced(
+        output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=ltxvconcatavlatent_2,
             noise=randomnoise,
             sampler=ksamplerselect,
             sigmas=manualsigmas,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-
         previewaudio = PreviewAudio(audio=audioenhancementnode.out(0))
-        ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
-            av_latent=samplercustomadvanced_2.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
+
+        video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+            av_latent=output_sampler,
         )
 
         # Decode
         vaedecodetiled = VAEDecodeTiled(
             temporal_size=4096,
-            samples=ltxvseparateavlatent_2.out('VIDEO_LATENT'),
+            samples=video_latent_ltxv,
             vae=getnode_12.out(0),
         )
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(
             audio_vae=getnode_13.out(0),
-            samples=ltxvseparateavlatent_2.out('AUDIO_LATENT'),
+            samples=audio_latent_ltxv,
         )
 
-        vram_debug = VRAM_Debug(
+        any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
             widget_0=True,
             widget_1=True,
             widget_2=True,
             image_pass=vaedecodetiled,
-            _outputs=('ANY_OUTPUT', 'IMAGE_PASS', 'MODEL_PASS', 'FREEMEM_BEFORE', 'FREEMEM_AFTER'),
         )
 
         # Outputs
         vhs_videocombine = VHS_VideoCombine(
             frame_rate=getnode_18.out(0),
             audio=ltxvaudiovaedecode,
-            images=vram_debug.out('IMAGE_PASS'),
+            images=image_pass,
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('getnode', getnode), ('loadimage', loadimage), ('vaeloader', vaeloader), ('latentupscalemodelloader', latentupscalemodelloader), ('dualcliploader', dualcliploader), ('ltxvaudiovaeloader', ltxvaudiovaeloader), ('vaeloader_2', vaeloader_2), ('unetloader', unetloader), ('unetloadergguf', unetloadergguf), ('dualcliploadergguf', dualcliploadergguf), ('intconstant', intconstant), ('setnode', setnode), ('setnode_2', setnode_2), ('setnode_3', setnode_3), ('setnode_4', setnode_4), ('setnode_5', setnode_5), ('setnode_6', setnode_6), ('setnode_7', setnode_7), ('setnode_8', setnode_8), ('setnode_9', setnode_9), ('setnode_10', setnode_10), ('setnode_11', setnode_11), ('setnode_12', setnode_12), ('primitivefloat', primitivefloat), ('intconstant_2', intconstant_2), ('intconstant_3', intconstant_3), ('setnode_13', setnode_13), ('getnode_2', getnode_2), ('getnode_3', getnode_3), ('primitivestringmultiline', primitivestringmultiline), ('power_lora_loader__rgthree_', power_lora_loader__rgthree_), ('getnode_4', getnode_4), ('getnode_5', getnode_5), ('setnode_14', setnode_14), ('setnode_15', setnode_15), ('getnode_6', getnode_6), ('getnode_7', getnode_7), ('setnode_16', setnode_16), ('getnode_8', getnode_8), ('getnode_9', getnode_9), ('getnode_10', getnode_10), ('getnode_11', getnode_11), ('getnode_12', getnode_12), ('getnode_13', getnode_13), ('getnode_14', getnode_14), ('getnode_15', getnode_15), ('getnode_16', getnode_16), ('getnode_17', getnode_17), ('getnode_18', getnode_18), ('getnode_19', getnode_19), ('getnode_20', getnode_20), ('getnode_21', getnode_21), ('getnode_22', getnode_22), ('getnode_23', getnode_23), ('getnode_24', getnode_24), ('randomnoise', randomnoise), ('getnode_25', getnode_25), ('getnode_26', getnode_26), ('getnode_27', getnode_27), ('setnode_17', setnode_17), ('getnode_28', getnode_28), ('randomnoise_2', randomnoise_2), ('getnode_29', getnode_29), ('manualsigmas', manualsigmas), ('ksamplerselect', ksamplerselect), ('ksamplerselect_2', ksamplerselect_2), ('getnode_30', getnode_30), ('manualsigmas_2', manualsigmas_2), ('setnode_18', setnode_18), ('setnode_19', setnode_19), ('primitiveboolean', primitiveboolean), ('reroute', reroute), ('getnode_31', getnode_31), ('getnode_32', getnode_32), ('getnode_33', getnode_33), ('getnode_34', getnode_34), ('setnode_20', setnode_20), ('getnode_35', getnode_35), ('getnode_36', getnode_36), ('audioenhancementnode', audioenhancementnode), ('audionormalizelufs', audionormalizelufs), ('setnode_21', setnode_21), ('n_63e8c999_0a69_4f62_af3f_8b77f0095971', n_63e8c999_0a69_4f62_af3f_8b77f0095971), ('a8d7fd9f_52aa_447a_9766_53cb91c0ef18', a8d7fd9f_52aa_447a_9766_53cb91c0ef18), ('primitiveboolean_2', primitiveboolean_2), ('setnode_22', setnode_22), ('getnode_37', getnode_37), ('getnode_38', getnode_38), ('melbandroformersampler', melbandroformersampler), ('melbandroformermodelloader', melbandroformermodelloader), ('primitivestringmultiline_2', primitivestringmultiline_2), ('loadaudio', loadaudio), ('primitivestringmultiline_3', primitivestringmultiline_3), ('emptyltxvlatentvideo', emptyltxvlatentvideo), ('imageresizekjv2', imageresizekjv2), ('ltxvpreprocess', ltxvpreprocess), ('loraloadermodelonly', loraloadermodelonly), ('cliptextencode', cliptextencode), ('cfgguider', cfgguider), ('ltx2_nag', ltx2_nag), ('cfgguider_2', cfgguider_2), ('modelsamplingsd3', modelsamplingsd3), ('solidmask', solidmask), ('ltxvaudiovaeencode', ltxvaudiovaeencode), ('simplecalculatorkj', simplecalculatorkj), ('modelsamplingsd3_2', modelsamplingsd3_2), ('trimaudioduration', trimaudioduration), ('pathchsageattentionkj', pathchsageattentionkj), ('resizeimagemasknode', resizeimagemasknode), ('samplercustomadvanced', samplercustomadvanced), ('basicscheduler', basicscheduler), ('setlatentnoisemask', setlatentnoisemask), ('basicscheduler_2', basicscheduler_2), ('ltxvimgtovideoinplace', ltxvimgtovideoinplace), ('ltxvconcatavlatent', ltxvconcatavlatent), ('ltxvchunkfeedforward', ltxvchunkfeedforward), ('getimagesize', getimagesize), ('ltxvseparateavlatent', ltxvseparateavlatent), ('ailab_qwen3ttsvoiceclone', ailab_qwen3ttsvoiceclone), ('ltx2attentiontunerpatch', ltx2attentiontunerpatch), ('cliptextencode_2', cliptextencode_2), ('ltxvimgtovideoinplace_2', ltxvimgtovideoinplace_2), ('ltxvconditioning', ltxvconditioning), ('ltxvconcatavlatent_2', ltxvconcatavlatent_2), ('samplercustomadvanced_2', samplercustomadvanced_2), ('previewaudio', previewaudio), ('ltxvseparateavlatent_2', ltxvseparateavlatent_2), ('vaedecodetiled', vaedecodetiled), ('ltxvaudiovaedecode', ltxvaudiovaedecode), ('vram_debug', vram_debug), ('vhs_videocombine', vhs_videocombine))})
 
         return wf.finalize(PUBLIC_INPUTS, output_node=previewaudio)
 

@@ -29,7 +29,7 @@ MODELS = {
 
 PUBLIC_INPUTS = {
     'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'model': InputSpec(node=ref('lowvramcheckpointloader'), field='ckpt_name', default=MODEL_NAME_2),
+    'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME_2),
     'prompt': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT),
     'negative_prompt': InputSpec(node=ref('cliptextencode'), field='text', default='blurry, distorted, low quality'),
     'negative': InputSpec(node=ref('cliptextencode'), field='text', default='blurry, distorted, low quality'),
@@ -42,18 +42,18 @@ PUBLIC_INPUTS = {
     'output_fps': InputSpec(node=ref('primitivefloat'), field='value', default=16),
     'fps': InputSpec(node=ref('primitivefloat'), field='value', default=16),
     'fps_int': InputSpec(node=ref('primitiveint_4'), field='value', default=16),
-    'first_strength': InputSpec(node=ref('ltxvaddguide'), field='strength', default=1.0),
-    'last_strength': InputSpec(node=ref('ltxvaddguide_2'), field='strength', default=1.0),
-    'first_frame_strength': InputSpec(node=ref('ltxvaddguide_3'), field='strength', default=1.0),
-    'last_frame_strength': InputSpec(node=ref('ltxvaddguide_4'), field='strength', default=1.0),
-    'first_image': InputSpec(node=ref('loadimage'), field='image', default='example_start.png'),
-    'last_image': InputSpec(node=ref('loadimage_2'), field='image', default='example_end.png'),
-    'start_image': InputSpec(node=ref('loadimage'), field='image', default='example_start.png'),
-    'end_image': InputSpec(node=ref('loadimage_2'), field='image', default='example_end.png'),
+    'first_strength': InputSpec(node=ref('positive_ltxv'), field='strength', default=1.0),
+    'last_strength': InputSpec(node=ref('positive_ltxv_2'), field='strength', default=1.0),
+    'first_frame_strength': InputSpec(node=ref('positive_ltxv_4'), field='strength', default=1.0),
+    'last_frame_strength': InputSpec(node=ref('positive_ltxv_5'), field='strength', default=1.0),
+    'first_image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
+    'last_image': InputSpec(node=ref('image_load'), field='image', default='example_end.png'),
+    'start_image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
+    'end_image': InputSpec(node=ref('image_load'), field='image', default='example_end.png'),
     'length': InputSpec(node=ref('primitiveint_2'), field='value', default=81),
     'frames': InputSpec(node=ref('primitiveint_2'), field='value', default=81),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='example_start.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='example_start.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -76,37 +76,33 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Inputs
-        loadimage = LoadImage(image='example_start.png', _outputs=('image', 'mask'))
-        loadimage_2 = LoadImage(image='example_end.png', _outputs=('image', 'mask'))
-        primitiveint = raw_call(wf, 'PrimitiveInt', '98', value=480)
+        image, mask = LoadImage(image='example_start.png')
+        image_load, mask_load = LoadImage(image='example_end.png')
+        primitiveint = raw_call('PrimitiveInt', '98', value=480)
         randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
         randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED)
-        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '102', value=81)
+        primitiveint_2 = raw_call('PrimitiveInt', '102', value=81)
+
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
             text_encoder=MODEL_NAME,
             ckpt_name=MODEL_NAME_2,
             device='default',
         )
-
-        primitiveint_3 = raw_call(wf, 'PrimitiveInt', '113', value=832)
-        primitiveint_4 = raw_call(wf, 'PrimitiveInt', '114', value=16)
-        primitivefloat = raw_call(wf, 'PrimitiveFloat', '123', value=16)
+        primitiveint_3 = raw_call('PrimitiveInt', '113', value=832)
+        primitiveint_4 = raw_call('PrimitiveInt', '114', value=16)
+        primitivefloat = raw_call('PrimitiveFloat', '123', value=16)
         ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME_2)
-        lowvramcheckpointloader = LowVRAMCheckpointLoader(
-            ckpt_name=MODEL_NAME_2,
-            _outputs=('model', 'clip', 'vae'),
-        )
-
+        model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=MODEL_NAME_2)
         latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME_3)
-        primitiveint_5 = raw_call(wf, 'PrimitiveInt', '981', value=480)
-        primitiveint_6 = raw_call(wf, 'PrimitiveInt', '1131', value=832)
+        primitiveint_5 = raw_call('PrimitiveInt', '981', value=480)
+        primitiveint_6 = raw_call('PrimitiveInt', '1131', value=832)
 
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
-
         ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
         manualsigmas_2 = ManualSigmas(sigmas='0.909375, 0.725, 0.421875, 0.0')
 
@@ -119,14 +115,14 @@ def build() -> VibeWorkflow:
         resizeimagemasknode = ResizeImageMaskNode(
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
-            input=loadimage.out('image'),
+            input=image,
             **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint, 'resize_type.width': primitiveint_3},
         )
 
         resizeimagemasknode_2 = ResizeImageMaskNode(
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
-            input=loadimage_2.out('image'),
+            input=image_load,
             **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint, 'resize_type.width': primitiveint_3},
         )
 
@@ -136,7 +132,7 @@ def build() -> VibeWorkflow:
         )
 
         ltx2memoryefficientsageattentionpatch = LTX2MemoryEfficientSageAttentionPatch(
-            model=lowvramcheckpointloader.out('model'),
+            model=model,
         )
 
         ltxvemptylatentaudio = LTXVEmptyLatentAudio(
@@ -148,30 +144,25 @@ def build() -> VibeWorkflow:
         resizeimagemasknode_3 = ResizeImageMaskNode(
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
-            input=loadimage.out('image'),
+            input=image,
             **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint_5, 'resize_type.width': primitiveint_6},
         )
 
         resizeimagemasknode_4 = ResizeImageMaskNode(
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
-            input=loadimage_2.out('image'),
+            input=image_load,
             **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint_5, 'resize_type.width': primitiveint_6},
         )
-
         ltxvpreprocess = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_2)
         ltxvpreprocess_2 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode)
-        ltxvconditioning = LTXVConditioning(
+
+        positive, negative = LTXVConditioning(
             frame_rate=primitivefloat,
             negative=cliptextencode,
             positive=cliptextencode_2,
-            _outputs=('positive', 'negative'),
         )
-
-        getimagesize = GetImageSize(
-            image=resizeimagemasknode_3,
-            _outputs=('width', 'height', 'batch_size'),
-        )
+        width, height, batch_size = GetImageSize(image=resizeimagemasknode_3)
 
         ltxvpreprocess_3 = LTXVPreprocess(
             img_compression=25,
@@ -185,146 +176,132 @@ def build() -> VibeWorkflow:
 
         # Sampling
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-            width=getimagesize.out('width'),
-            height=getimagesize.out('height'),
+            width=width,
+            height=height,
             length=primitiveint_2,
         )
 
-        ltxvaddguide = LTXVAddGuide(
+        positive_ltxv, negative_ltxv, latent = LTXVAddGuide(
             strength=1.0,
             image=ltxvpreprocess_4,
             latent=emptyltxvlatentvideo,
-            negative=ltxvconditioning.out('negative'),
-            positive=ltxvconditioning.out('positive'),
-            vae=lowvramcheckpointloader.out('vae'),
-            _outputs=('positive', 'negative', 'latent'),
+            negative=negative,
+            positive=positive,
+            vae=vae,
         )
 
-        ltxvaddguide_2 = LTXVAddGuide(
+        positive_ltxv_2, negative_ltxv_2, latent_ltxv = LTXVAddGuide(
             frame_idx=-1,
             strength=1.0,
             image=ltxvpreprocess_3,
-            latent=ltxvaddguide.out('latent'),
-            negative=ltxvaddguide.out('negative'),
-            positive=ltxvaddguide.out('positive'),
-            vae=lowvramcheckpointloader.out('vae'),
-            _outputs=('positive', 'negative', 'latent'),
+            latent=latent,
+            negative=negative_ltxv,
+            positive=positive_ltxv,
+            vae=vae,
         )
 
         ltxvconcatavlatent = LTXVConcatAVLatent(
             audio_latent=ltxvemptylatentaudio,
-            video_latent=ltxvaddguide_2.out('latent'),
+            video_latent=latent_ltxv,
         )
 
         # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=ltx2memoryefficientsageattentionpatch,
-            negative=ltxvaddguide_2.out('negative'),
-            positive=ltxvaddguide_2.out('positive'),
+            negative=negative_ltxv_2,
+            positive=positive_ltxv_2,
         )
 
         # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
+        output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=ltxvconcatavlatent,
             noise=randomnoise,
             sampler=ksamplerselect,
             sigmas=manualsigmas,
-            _outputs=('output', 'denoised_output'),
         )
-
-        ltxvseparateavlatent = LTXVSeparateAVLatent(
-            av_latent=samplercustomadvanced.out('denoised_output'),
-            _outputs=('video_latent', 'audio_latent'),
-        )
+        video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
 
         ltxvlatentupsampler = LTXVLatentUpsampler(
-            samples=ltxvseparateavlatent.out('video_latent'),
+            samples=video_latent,
             upscale_model=latentupscalemodelloader,
-            vae=lowvramcheckpointloader.out('vae'),
+            vae=vae,
         )
 
-        vram_debug = VRAM_Debug(
+        any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
             unload_all_models=True,
             any_input=ltxvlatentupsampler,
-            _outputs=('any_output', 'image_pass', 'model_pass', 'freemem_before', 'freemem_after'),
         )
 
-        ltxvcropguides = LTXVCropGuides(
-            latent=vram_debug.out('any_output'),
-            negative=ltxvaddguide_2.out('negative'),
-            positive=ltxvaddguide_2.out('positive'),
-            _outputs=('positive', 'negative', 'latent'),
+        positive_ltxv_3, negative_ltxv_3, latent_ltxv_2 = LTXVCropGuides(
+            latent=any_output,
+            negative=negative_ltxv_2,
+            positive=positive_ltxv_2,
         )
 
-        ltxvaddguide_3 = LTXVAddGuide(
+        positive_ltxv_4, negative_ltxv_4, latent_ltxv_3 = LTXVAddGuide(
             strength=1.0,
             image=ltxvpreprocess_2,
-            latent=ltxvcropguides.out('latent'),
-            negative=ltxvcropguides.out('negative'),
-            positive=ltxvcropguides.out('positive'),
-            vae=lowvramcheckpointloader.out('vae'),
-            _outputs=('positive', 'negative', 'latent'),
+            latent=latent_ltxv_2,
+            negative=negative_ltxv_3,
+            positive=positive_ltxv_3,
+            vae=vae,
         )
 
-        ltxvaddguide_4 = LTXVAddGuide(
+        positive_ltxv_5, negative_ltxv_5, latent_ltxv_4 = LTXVAddGuide(
             frame_idx=-1,
             strength=1.0,
             image=ltxvpreprocess,
-            latent=ltxvaddguide_3.out('latent'),
-            negative=ltxvaddguide_3.out('negative'),
-            positive=ltxvaddguide_3.out('positive'),
-            vae=lowvramcheckpointloader.out('vae'),
-            _outputs=('positive', 'negative', 'latent'),
+            latent=latent_ltxv_3,
+            negative=negative_ltxv_4,
+            positive=positive_ltxv_4,
+            vae=vae,
         )
 
         ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-            audio_latent=ltxvseparateavlatent.out('audio_latent'),
-            video_latent=ltxvaddguide_4.out('latent'),
+            audio_latent=audio_latent,
+            video_latent=latent_ltxv_4,
         )
 
         # Conditioning
         cfgguider_2 = CFGGuider(
             cfg=GUIDE_STRENGTH,
             model=ltx2memoryefficientsageattentionpatch,
-            negative=ltxvaddguide_4.out('negative'),
-            positive=ltxvaddguide_4.out('positive'),
+            negative=negative_ltxv_5,
+            positive=positive_ltxv_5,
         )
 
         # Sampling
-        samplercustomadvanced_2 = SamplerCustomAdvanced(
+        output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
             guider=cfgguider_2,
             latent_image=ltxvconcatavlatent_2,
             noise=randomnoise_2,
             sampler=ksamplerselect_2,
             sigmas=manualsigmas_2,
-            _outputs=('output', 'denoised_output'),
         )
 
-        ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
-            av_latent=samplercustomadvanced_2.out('denoised_output'),
-            _outputs=('video_latent', 'audio_latent'),
+        video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+            av_latent=denoised_output_sampler,
         )
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(
             audio_vae=ltxvaudiovaeloader,
-            samples=ltxvseparateavlatent_2.out('audio_latent'),
+            samples=audio_latent_ltxv,
         )
 
-        ltxvcropguides_2 = LTXVCropGuides(
-            latent=ltxvseparateavlatent_2.out('video_latent'),
-            negative=ltxvaddguide_4.out('negative'),
-            positive=ltxvaddguide_4.out('positive'),
-            _outputs=('positive', 'negative', 'latent'),
+        positive_ltxv_6, negative_ltxv_6, latent_ltxv_5 = LTXVCropGuides(
+            latent=video_latent_ltxv,
+            negative=negative_ltxv_5,
+            positive=positive_ltxv_5,
         )
 
         ltxvtiledvaedecode = LTXVTiledVAEDecode(
             horizontal_tiles=2,
             vertical_tiles=2,
             overlap=6,
-            latents=ltxvcropguides_2.out('latent'),
-            vae=lowvramcheckpointloader.out('vae'),
+            latents=latent_ltxv_5,
+            vae=vae,
         )
 
         createvideo = CreateVideo(
@@ -335,8 +312,6 @@ def build() -> VibeWorkflow:
 
         # Outputs
         savevideo = SaveVideo(filename_prefix='output', video=createvideo)
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('loadimage_2', loadimage_2), ('primitiveint', primitiveint), ('randomnoise', randomnoise), ('randomnoise_2', randomnoise_2), ('primitiveint_2', primitiveint_2), ('ltxavtextencoderloader', ltxavtextencoderloader), ('primitiveint_3', primitiveint_3), ('primitiveint_4', primitiveint_4), ('primitivefloat', primitivefloat), ('ltxvaudiovaeloader', ltxvaudiovaeloader), ('lowvramcheckpointloader', lowvramcheckpointloader), ('latentupscalemodelloader', latentupscalemodelloader), ('primitiveint_5', primitiveint_5), ('primitiveint_6', primitiveint_6), ('ksamplerselect', ksamplerselect), ('manualsigmas', manualsigmas), ('ksamplerselect_2', ksamplerselect_2), ('manualsigmas_2', manualsigmas_2), ('cliptextencode', cliptextencode), ('resizeimagemasknode', resizeimagemasknode), ('resizeimagemasknode_2', resizeimagemasknode_2), ('cliptextencode_2', cliptextencode_2), ('ltx2memoryefficientsageattentionpatch', ltx2memoryefficientsageattentionpatch), ('ltxvemptylatentaudio', ltxvemptylatentaudio), ('resizeimagemasknode_3', resizeimagemasknode_3), ('resizeimagemasknode_4', resizeimagemasknode_4), ('ltxvpreprocess', ltxvpreprocess), ('ltxvpreprocess_2', ltxvpreprocess_2), ('ltxvconditioning', ltxvconditioning), ('getimagesize', getimagesize), ('ltxvpreprocess_3', ltxvpreprocess_3), ('ltxvpreprocess_4', ltxvpreprocess_4), ('emptyltxvlatentvideo', emptyltxvlatentvideo), ('ltxvaddguide', ltxvaddguide), ('ltxvaddguide_2', ltxvaddguide_2), ('ltxvconcatavlatent', ltxvconcatavlatent), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('ltxvseparateavlatent', ltxvseparateavlatent), ('ltxvlatentupsampler', ltxvlatentupsampler), ('vram_debug', vram_debug), ('ltxvcropguides', ltxvcropguides), ('ltxvaddguide_3', ltxvaddguide_3), ('ltxvaddguide_4', ltxvaddguide_4), ('ltxvconcatavlatent_2', ltxvconcatavlatent_2), ('cfgguider_2', cfgguider_2), ('samplercustomadvanced_2', samplercustomadvanced_2), ('ltxvseparateavlatent_2', ltxvseparateavlatent_2), ('ltxvaudiovaedecode', ltxvaudiovaedecode), ('ltxvcropguides_2', ltxvcropguides_2), ('ltxvtiledvaedecode', ltxvtiledvaedecode), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

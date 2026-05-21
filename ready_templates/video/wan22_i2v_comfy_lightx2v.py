@@ -38,12 +38,12 @@ PUBLIC_INPUTS = {
     'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
     'seed': InputSpec(node=ref('ksampleradvanced'), field='noise_seed', default=DEFAULT_SEED),
     'steps': InputSpec(node=ref('ksampleradvanced'), field='steps', default=4),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
     'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'width': InputSpec(node=ref('wanimagetovideo'), field='width', default=720),
-    'height': InputSpec(node=ref('wanimagetovideo'), field='height', default=720),
-    'frames': InputSpec(node=ref('wanimagetovideo'), field='length', default=DEFAULT_FRAMES),
+    'width': InputSpec(node=ref('positive'), field='width', default=720),
+    'height': InputSpec(node=ref('positive'), field='height', default=720),
+    'frames': InputSpec(node=ref('positive'), field='length', default=DEFAULT_FRAMES),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -74,9 +74,8 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Inputs
-        loadimage = LoadImage(
+        image, mask = LoadImage(
             image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png',
-            _outputs=('IMAGE', 'MASK'),
         )
 
         # Loaders
@@ -88,6 +87,7 @@ def build() -> VibeWorkflow:
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
         cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+
         loraloadermodelonly = LoraLoaderModelOnly(
             lora_name=MODEL_NAME_5,
             strength_model=GUIDE_STRENGTH,
@@ -110,19 +110,18 @@ def build() -> VibeWorkflow:
             model=loraloadermodelonly_2,
         )
 
-        wanimagetovideo = WanImageToVideo(
+        positive, negative, latent = WanImageToVideo(
             height=720,
             length=DEFAULT_FRAMES,
             width=720,
             negative=cliptextencode_2,
             positive=cliptextencode,
-            start_image=loadimage.out('IMAGE'),
+            start_image=image,
             vae=vaeloader,
-            _outputs=('POSITIVE', 'NEGATIVE', 'LATENT'),
         )
 
         # Sampling
-        ksampleradvanced = raw_call(wf, 'KSamplerAdvanced', '130:110',
+        ksampleradvanced = raw_call('KSamplerAdvanced', '130:110',
             add_noise='enable',
             noise_seed=DEFAULT_SEED,
             steps=4,
@@ -130,13 +129,13 @@ def build() -> VibeWorkflow:
             sampler_name=SAMPLER_NAME,
             end_at_step=2,
             return_with_leftover_noise='enable',
-            latent_image=wanimagetovideo.out('LATENT'),
+            latent_image=latent,
             model=modelsamplingsd3,
-            negative=wanimagetovideo.out('NEGATIVE'),
-            positive=wanimagetovideo.out('POSITIVE'),
+            negative=negative,
+            positive=positive,
         )
 
-        ksampleradvanced_2 = raw_call(wf, 'KSamplerAdvanced', '130:111',
+        ksampleradvanced_2 = raw_call('KSamplerAdvanced', '130:111',
             add_noise='disable',
             steps=4,
             cfg=GUIDE_STRENGTH_2,
@@ -146,8 +145,8 @@ def build() -> VibeWorkflow:
             return_with_leftover_noise='disable',
             latent_image=ksampleradvanced,
             model=modelsamplingsd3_2,
-            negative=wanimagetovideo.out('NEGATIVE'),
-            positive=wanimagetovideo.out('POSITIVE'),
+            negative=negative,
+            positive=positive,
         )
 
         # Decode
@@ -159,8 +158,6 @@ def build() -> VibeWorkflow:
             filename_prefix='video/Wan2.2_image_to_video',
             video=createvideo,
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('cliploader', cliploader), ('vaeloader', vaeloader), ('unetloader', unetloader), ('unetloader_2', unetloader_2), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('loraloadermodelonly', loraloadermodelonly), ('loraloadermodelonly_2', loraloadermodelonly_2), ('modelsamplingsd3', modelsamplingsd3), ('modelsamplingsd3_2', modelsamplingsd3_2), ('wanimagetovideo', wanimagetovideo), ('vaedecode', vaedecode), ('createvideo', createvideo), ('savevideo', savevideo), ('ksampleradvanced', ksampleradvanced), ('ksampleradvanced_2', ksampleradvanced_2))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
 

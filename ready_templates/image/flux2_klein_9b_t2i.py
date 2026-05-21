@@ -28,15 +28,12 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        n_7b34ab90_36f9_45ba_a665_71d418f0df18 = raw_call(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
-        )
+        subgraph_7b34ab90 = raw_call('7b34ab90-36f9-45ba-a665-71d418f0df18', '75')
 
         saveimage = SaveImage(
             filename_prefix='Flux2-Klein',
-            images=n_7b34ab90_36f9_45ba_a665_71d418f0df18.out(0),
+            images=subgraph_7b34ab90.out(0),
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('n_7b34ab90_36f9_45ba_a665_71d418f0df18', n_7b34ab90_36f9_45ba_a665_71d418f0df18), ('saveimage', saveimage))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

@@ -29,9 +29,9 @@ PUBLIC_INPUTS = {
     'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
     'use_lora': InputSpec(node=ref('primitiveboolean'), field='value', default=False),
     'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='euler'),
-    'source_image': InputSpec(node=ref('loadimage'), field='image', default='image_qwen_image_edit_input_image.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='image_qwen_image_edit_input_image.png'),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='image_qwen_image_edit_input_image.png'),
+    'source_image': InputSpec(node=ref('image'), field='image', default='image_qwen_image_edit_input_image.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='image_qwen_image_edit_input_image.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='image_qwen_image_edit_input_image.png'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -46,10 +46,7 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Inputs
-        loadimage = LoadImage(
-            image='image_qwen_image_edit_input_image.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
+        image, mask = LoadImage(image='image_qwen_image_edit_input_image.png')
 
         # Loaders
         unetloader = UNETLoader(unet_name=MODEL_NAME)
@@ -57,32 +54,33 @@ def build() -> VibeWorkflow:
         vaeloader = VAELoader(vae_name=MODEL_NAME_3)
 
         # Inputs
-        primitiveint = raw_call(wf, 'PrimitiveInt', '102:103', value=4)
-        primitivefloat = raw_call(wf, 'PrimitiveFloat', '102:105', value=1)
-        primitiveint_2 = raw_call(wf, 'PrimitiveInt', '102:106', value=20)
-        primitivefloat_2 = raw_call(wf, 'PrimitiveFloat', '102:107', value=2.5)
-        primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '102:111', value=False)
+        primitiveint = raw_call('PrimitiveInt', '102:103', value=4)
+        primitivefloat = raw_call('PrimitiveFloat', '102:105', value=1)
+        primitiveint_2 = raw_call('PrimitiveInt', '102:106', value=20)
+        primitivefloat_2 = raw_call('PrimitiveFloat', '102:107', value=2.5)
+        primitiveboolean = raw_call('PrimitiveBoolean', '102:111', value=False)
+
         imagescaletototalpixels = ImageScaleToTotalPixels(
             upscale_method='lanczos',
             megapixels=1.5,
-            image=loadimage.out('IMAGE'),
+            image=image,
         )
 
         textencodeqwenimageedit = TextEncodeQwenImageEdit(
             prompt=DEFAULT_PROMPT,
             clip=cliploader,
-            image=loadimage.out('IMAGE'),
+            image=image,
             vae=vaeloader,
         )
 
         textencodeqwenimageedit_2 = TextEncodeQwenImageEdit(
             prompt='',
             clip=cliploader,
-            image=loadimage.out('IMAGE'),
+            image=image,
             vae=vaeloader,
         )
+        vaeencode = VAEEncode(pixels=image, vae=vaeloader)
 
-        vaeencode = VAEEncode(pixels=loadimage.out('IMAGE'), vae=vaeloader)
         loraloadermodelonly = LoraLoaderModelOnly(
             lora_name=MODEL_NAME_4,
             model=unetloader,
@@ -105,7 +103,6 @@ def build() -> VibeWorkflow:
             on_true=loraloadermodelonly,
             switch=primitiveboolean,
         )
-
         modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=comfyswitchnode_3)
         cfgnorm = CFGNorm(model=modelsamplingauraflow)
 
@@ -126,8 +123,6 @@ def build() -> VibeWorkflow:
 
         # Outputs
         saveimage = SaveImage(images=vaedecode)
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('imagescaletototalpixels', imagescaletototalpixels), ('textencodeqwenimageedit', textencodeqwenimageedit), ('textencodeqwenimageedit_2', textencodeqwenimageedit_2), ('vaeencode', vaeencode), ('loraloadermodelonly', loraloadermodelonly), ('comfyswitchnode', comfyswitchnode), ('comfyswitchnode_2', comfyswitchnode_2), ('comfyswitchnode_3', comfyswitchnode_3), ('modelsamplingauraflow', modelsamplingauraflow), ('cfgnorm', cfgnorm), ('ksampler', ksampler), ('vaedecode', vaedecode), ('saveimage', saveimage), ('primitiveint', primitiveint), ('primitivefloat', primitivefloat), ('primitiveint_2', primitiveint_2), ('primitivefloat_2', primitivefloat_2), ('primitiveboolean', primitiveboolean))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

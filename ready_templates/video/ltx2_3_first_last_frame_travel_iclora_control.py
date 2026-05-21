@@ -131,19 +131,19 @@ def build() -> VibeWorkflow:
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
         # Inputs
-        primitivefloat = raw_call(wf, 'PrimitiveFloat', '2076', value=8)
+        primitivefloat = raw_call('PrimitiveFloat', '2076', value=8)
         intconstant = INTConstant(value=9)
         intconstant_2 = INTConstant(value=256)
         intconstant_3 = INTConstant(value=256)
-        primitivefloat_2 = raw_call(wf, 'PrimitiveFloat', '2108', value=0.8)
-        primitivefloat_3 = raw_call(wf, 'PrimitiveFloat', '2110', value=0.8)
+        primitivefloat_2 = raw_call('PrimitiveFloat', '2108', value=0.8)
+        primitivefloat_3 = raw_call('PrimitiveFloat', '2110', value=0.8)
         loadvideo = LoadVideo(file='ltx_smoke_guide.mp4', video='ltx_smoke_guide.mp4')
 
         downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
             model=MODEL_NAME_7,
             precision='fp32',
         )
-        primitivestring = raw_call(wf, 'PrimitiveString', '6000', value='canny')
+        primitivestring = raw_call('PrimitiveString', '6000', value='canny')
 
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
@@ -214,7 +214,7 @@ def build() -> VibeWorkflow:
             image=images,
         )
 
-        dwpreprocessor = raw_call(wf, 'DWPreprocessor', '4986',
+        dwpreprocessor = raw_call('DWPreprocessor', '4986',
             detect_hand='enable',
             detect_body='enable',
             detect_face='enable',
@@ -225,7 +225,7 @@ def build() -> VibeWorkflow:
             image=image_image_3,
         )
 
-        cannyedgepreprocessor = raw_call(wf, 'CannyEdgePreprocessor', '4991',
+        cannyedgepreprocessor = raw_call('CannyEdgePreprocessor', '4991',
             low_threshold=92,
             high_threshold=200,
             resolution=256,

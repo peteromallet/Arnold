@@ -37,11 +37,11 @@ MODELS = {
 
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('wanvideovaeloader'), field='model_name', default=MODEL_NAME_2),
-    'seed': InputSpec(node=ref('wanvideosampler'), field='seed', default=DEFAULT_SEED),
+    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
     'width': InputSpec(node=ref('wanvideovaceencode'), field='width', default=832),
     'height': InputSpec(node=ref('wanvideovaceencode'), field='height', default=480),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='vace_start.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='vace_start.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='vace_start.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='vace_start.png'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -60,14 +60,13 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        wanvideotextencodecached = WanVideoTextEncodeCached(
+        text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
             model_name=MODEL_NAME,
             positive_prompt=DEFAULT_PROMPT,
             negative_prompt=DEFAULT_NEGATIVE,
-            _outputs=('TEXT_EMBEDS', 'NEGATIVE_TEXT_EMBEDS', 'POSITIVE_PROMPT'),
         )
-
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+
         wanvideoblockswap = WanVideoBlockSwap(
             blocks_to_swap=30,
             offload_img_emb=True,
@@ -77,7 +76,8 @@ def build() -> VibeWorkflow:
         )
 
         # Inputs
-        loadimage = LoadImage(image='vace_start.png', _outputs=('IMAGE', 'MASK'))
+        image, mask = LoadImage(image='vace_start.png')
+
         wanvideoloraselectmulti = WanVideoLoraSelectMulti(
             lora_0=MODEL_NAME_3,
             merge_loras=False,
@@ -87,19 +87,18 @@ def build() -> VibeWorkflow:
             lora_0=MODEL_NAME_3,
             merge_loras=False,
         )
+        image_load, mask_load = LoadImage(image='vace_end.png')
 
-        loadimage_2 = LoadImage(image='vace_end.png', _outputs=('IMAGE', 'MASK'))
-        vhs_loadvideo = VHS_LoadVideo(
+        image_load_2, frame_count, audio, video_info = VHS_LoadVideo(
             custom_height=480,
             custom_width=832,
             force_rate=16,
             frame_load_cap=81,
             video='vace_control.mp4',
-            _outputs=('IMAGE', 'FRAME_COUNT', 'AUDIO', 'VIDEO_INFO'),
             **{'choose video to upload': 'image'},
         )
-
         wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=MODEL_NAME_4)
+
         wanvideomodelloader = WanVideoModelLoader(
             model=MODEL_NAME_5,
             base_precision=BASE_PRECISION,
@@ -114,19 +113,18 @@ def build() -> VibeWorkflow:
             extra_model=wanvideovacemodelselect,
         )
 
-        wanvideovacestarttoendframe = WanVideoVACEStartToEndFrame(
-            control_images=vhs_loadvideo.out('IMAGE'),
-            end_image=loadimage_2.out('IMAGE'),
-            start_image=loadimage.out('IMAGE'),
-            _outputs=('IMAGES', 'MASKS'),
+        images, masks = WanVideoVACEStartToEndFrame(
+            control_images=image_load_2,
+            end_image=image_load,
+            start_image=image,
         )
 
         wanvideovaceencode = WanVideoVACEEncode(
             height=480,
             width=832,
-            input_frames=wanvideovacestarttoendframe.out('IMAGES'),
-            input_masks=wanvideovacestarttoendframe.out('MASKS'),
-            ref_images=loadimage.out('IMAGE'),
+            input_frames=images,
+            input_masks=masks,
+            ref_images=image,
             vae=wanvideovaeloader,
         )
 
@@ -150,7 +148,7 @@ def build() -> VibeWorkflow:
             model=wanvideosetloras_2,
         )
 
-        wanvideosampler = WanVideoSampler(
+        samples, denoised_samples = WanVideoSampler(
             steps=6,
             cfg=GUIDE_STRENGTH,
             seed=DEFAULT_SEED,
@@ -158,11 +156,10 @@ def build() -> VibeWorkflow:
             end_step=2,
             image_embeds=wanvideovaceencode,
             model=wanvideosetblockswap,
-            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+            text_embeds=text_embeds,
         )
 
-        wanvideosampler_2 = WanVideoSampler(
+        samples_wan, denoised_samples_wan = WanVideoSampler(
             steps=6,
             cfg=GUIDE_STRENGTH_2,
             seed=DEFAULT_SEED,
@@ -171,12 +168,11 @@ def build() -> VibeWorkflow:
             end_step=4,
             image_embeds=wanvideovaceencode,
             model=wanvideosetblockswap,
-            samples=wanvideosampler.out('SAMPLES'),
-            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+            samples=samples,
+            text_embeds=text_embeds,
         )
 
-        wanvideosampler_3 = WanVideoSampler(
+        samples_wan_2, denoised_samples_wan_2 = WanVideoSampler(
             steps=6,
             cfg=GUIDE_STRENGTH_2,
             seed=DEFAULT_SEED,
@@ -184,14 +180,13 @@ def build() -> VibeWorkflow:
             start_step=4,
             image_embeds=wanvideovaceencode,
             model=wanvideosetblockswap_2,
-            samples=wanvideosampler_2.out('SAMPLES'),
-            text_embeds=wanvideotextencodecached.out('TEXT_EMBEDS'),
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
+            samples=samples_wan,
+            text_embeds=text_embeds,
         )
 
         wanvideodecode = WanVideoDecode(
             normalization='default',
-            samples=wanvideosampler_3.out('SAMPLES'),
+            samples=samples_wan_2,
             vae=wanvideovaeloader,
         )
 
@@ -206,8 +201,6 @@ def build() -> VibeWorkflow:
             trim_to_audio=False,
             images=wanvideodecode,
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('wanvideotextencodecached', wanvideotextencodecached), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoblockswap', wanvideoblockswap), ('loadimage', loadimage), ('wanvideoloraselectmulti', wanvideoloraselectmulti), ('wanvideoloraselectmulti_2', wanvideoloraselectmulti_2), ('loadimage_2', loadimage_2), ('vhs_loadvideo', vhs_loadvideo), ('wanvideovacemodelselect', wanvideovacemodelselect), ('wanvideomodelloader', wanvideomodelloader), ('wanvideomodelloader_2', wanvideomodelloader_2), ('wanvideovacestarttoendframe', wanvideovacestarttoendframe), ('wanvideovaceencode', wanvideovaceencode), ('wanvideosetloras', wanvideosetloras), ('wanvideosetloras_2', wanvideosetloras_2), ('wanvideosetblockswap', wanvideosetblockswap), ('wanvideosetblockswap_2', wanvideosetblockswap_2), ('wanvideosampler', wanvideosampler), ('wanvideosampler_2', wanvideosampler_2), ('wanvideosampler_3', wanvideosampler_3), ('wanvideodecode', wanvideodecode), ('vhs_videocombine', vhs_videocombine))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='Wan-2-2-VACE')
 

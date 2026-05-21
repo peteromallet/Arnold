@@ -28,16 +28,10 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        vhs_loadvideo = VHS_LoadVideo(
+        image, frame_count, audio, video_info = VHS_LoadVideo(
             video='video_enhance_input.mp4',
-            _outputs=('IMAGE', 'FRAME_COUNT', 'AUDIO', 'VIDEO_INFO'),
         )
-
-        imagescaleby = ImageScaleBy(
-            upscale_method='lanczos',
-            scale_by=2.0,
-            image=vhs_loadvideo.out('IMAGE'),
-        )
+        imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
 
         vhs_videocombine = VHS_VideoCombine(
             frame_rate=16,
@@ -47,11 +41,9 @@ def build() -> VibeWorkflow:
             pix_fmt='yuv420p',
             save_metadata=True,
             trim_to_audio=False,
-            audio=vhs_loadvideo.out('AUDIO'),
+            audio=audio,
             images=imagescaleby,
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('vhs_loadvideo', vhs_loadvideo), ('imagescaleby', imagescaleby), ('vhs_videocombine', vhs_videocombine))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video-enhance')
 

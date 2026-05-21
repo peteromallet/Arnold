@@ -28,11 +28,11 @@ WIDGET_0 = ''
 MODELS = {}
 
 PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('lowvramcheckpointloader'), field='ckpt_name', default=MODEL_NAME),
+    'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME),
     'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
     'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'image': InputSpec(node=ref('loadimage'), field='image', default=IMAGE),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default=IMAGE),
+    'image': InputSpec(node=ref('image'), field='image', default=IMAGE),
+    'input_image': InputSpec(node=ref('image'), field='image', default=IMAGE),
     'width': InputSpec(node=ref('emptyltxvlatentvideo'), field='width', default=256),
     'height': InputSpec(node=ref('emptyltxvlatentvideo'), field='height', default=256),
 }
@@ -57,21 +57,13 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Inputs
-        loadimage = LoadImage(
-            image=IMAGE,
-            widget_0='example.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-
-        lowvramcheckpointloader = LowVRAMCheckpointLoader(
-            ckpt_name=MODEL_NAME,
-            _outputs=('MODEL', 'CLIP', 'VAE'),
-        )
-
+        image, mask = LoadImage(image=IMAGE, widget_0='example.png')
+        model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=MODEL_NAME)
         lowvramaudiovaeloader = LowVRAMAudioVAELoader(ckpt_name=MODEL_NAME)
 
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+
         randomnoise = RandomNoise(
             noise_seed=DEFAULT_SEED,
             control_after_generate=CONTROL_AFTER_GENERATE,
@@ -81,11 +73,11 @@ def build() -> VibeWorkflow:
             noise_seed=DEFAULT_SEED_2,
             control_after_generate=CONTROL_AFTER_GENERATE,
         )
-
         ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
 
         # Inputs
-        primitivestring = raw_call(wf, 'PrimitiveString', '4979', value='')
+        primitivestring = raw_call('PrimitiveString', '4979', value='')
+
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
             text_encoder=MODEL_NAME_2,
             ckpt_name=MODEL_NAME,
@@ -97,11 +89,10 @@ def build() -> VibeWorkflow:
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
-
         manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
-        primitiveboolean = raw_call(wf, 'PrimitiveBoolean', '4987', value=True)
-        primitiveint = raw_call(wf, 'PrimitiveInt', '4988', value=5, widget_1='fixed')
-        primitivefloat = raw_call(wf, 'PrimitiveFloat', '4989', value=8)
+        primitiveboolean = raw_call('PrimitiveBoolean', '4987', value=True)
+        primitiveint = raw_call('PrimitiveInt', '4988', value=5, widget_1='fixed')
+        primitivefloat = raw_call('PrimitiveFloat', '4989', value=8)
 
         # Conditioning
         cliptextencode = CLIPTextEncode(
@@ -127,7 +118,7 @@ def build() -> VibeWorkflow:
         loraloadermodelonly = LoraLoaderModelOnly(
             lora_name=MODEL_NAME_3,
             strength_model=GUIDE_STRENGTH,
-            model=lowvramcheckpointloader.out('MODEL'),
+            model=model,
         )
 
         gemmaapitextencode = GemmaAPITextEncode(
@@ -149,19 +140,18 @@ def build() -> VibeWorkflow:
         resizeimagemasknode = ResizeImageMaskNode(
             resize_type='scale longer dimension',
             scale_method='lanczos',
-            input=loadimage.out('IMAGE'),
+            input=image,
         )
-
         ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
-        ltxvconditioning = LTXVConditioning(
+
+        positive, negative = LTXVConditioning(
             widget_0=8,
             frame_rate=primitivefloat,
             negative=cliptextencode_2,
             positive=cliptextencode,
-            _outputs=('POSITIVE', 'NEGATIVE'),
         )
-
         ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagemasknode)
+
         ltxvemptylatentaudio = LTXVEmptyLatentAudio(
             widget_0=5,
             widget_1=8,
@@ -176,22 +166,22 @@ def build() -> VibeWorkflow:
             bypass=primitiveboolean,
             image=ltxvpreprocess,
             latent=emptyltxvlatentvideo,
-            vae=lowvramcheckpointloader.out('VAE'),
+            vae=vae,
         )
 
         # Conditioning
         cfgguider = CFGGuider(
             cfg=GUIDE_STRENGTH_2,
             model=loraloadermodelonly,
-            negative=ltxvconditioning.out('NEGATIVE'),
-            positive=ltxvconditioning.out('POSITIVE'),
+            negative=negative,
+            positive=positive,
         )
 
         cfgguider_2 = CFGGuider(
             cfg=GUIDE_STRENGTH_2,
             model=loraloadermodelonly,
-            negative=ltxvconditioning.out('NEGATIVE'),
-            positive=ltxvconditioning.out('POSITIVE'),
+            negative=negative,
+            positive=positive,
         )
 
         ltxvconcatavlatent = LTXVConcatAVLatent(
@@ -200,58 +190,51 @@ def build() -> VibeWorkflow:
         )
 
         # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
+        output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=ltxvconcatavlatent,
             noise=randomnoise,
             sampler=ksamplerselect,
             sigmas=manualsigmas,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
-
-        ltxvseparateavlatent = LTXVSeparateAVLatent(
-            av_latent=samplercustomadvanced.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
-        )
+        video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
         ltxvimgtovideoconditiononly_2 = LTXVImgToVideoConditionOnly(
             widget_1=False,
             bypass=primitiveboolean,
             image=resizeimagemasknode,
-            latent=ltxvseparateavlatent.out('VIDEO_LATENT'),
-            vae=lowvramcheckpointloader.out('VAE'),
+            latent=video_latent,
+            vae=vae,
         )
 
         ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-            audio_latent=ltxvseparateavlatent.out('AUDIO_LATENT'),
+            audio_latent=audio_latent,
             video_latent=ltxvimgtovideoconditiononly_2,
         )
 
-        samplercustomadvanced_2 = SamplerCustomAdvanced(
+        output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
             guider=cfgguider_2,
             latent_image=ltxvconcatavlatent_2,
             noise=randomnoise_2,
             sampler=ksamplerselect_2,
             sigmas=manualsigmas_2,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
         )
 
-        ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
-            av_latent=samplercustomadvanced_2.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
+        video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+            av_latent=output_sampler,
         )
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(
             audio_vae=lowvramaudiovaeloader,
-            samples=ltxvseparateavlatent_2.out('AUDIO_LATENT'),
+            samples=audio_latent_ltxv,
         )
 
         ltxvtiledvaedecode = LTXVTiledVAEDecode(
             horizontal_tiles=2,
             vertical_tiles=2,
             overlap=6,
-            latents=ltxvseparateavlatent_2.out('VIDEO_LATENT'),
-            vae=lowvramcheckpointloader.out('VAE'),
+            latents=video_latent_ltxv,
+            vae=vae,
         )
 
         createvideo = CreateVideo(
@@ -263,8 +246,6 @@ def build() -> VibeWorkflow:
 
         # Outputs
         savevideo = SaveVideo(filename_prefix='output', video=createvideo)
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('lowvramcheckpointloader', lowvramcheckpointloader), ('lowvramaudiovaeloader', lowvramaudiovaeloader), ('ksamplerselect', ksamplerselect), ('randomnoise', randomnoise), ('randomnoise_2', randomnoise_2), ('ksamplerselect_2', ksamplerselect_2), ('primitivestring', primitivestring), ('ltxavtextencoderloader', ltxavtextencoderloader), ('manualsigmas', manualsigmas), ('manualsigmas_2', manualsigmas_2), ('primitiveboolean', primitiveboolean), ('primitiveint', primitiveint), ('primitivefloat', primitivefloat), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('emptyltxvlatentvideo', emptyltxvlatentvideo), ('loraloadermodelonly', loraloadermodelonly), ('gemmaapitextencode', gemmaapitextencode), ('gemmaapitextencode_2', gemmaapitextencode_2), ('resizeimagemasknode', resizeimagemasknode), ('ltxfloattoint', ltxfloattoint), ('ltxvconditioning', ltxvconditioning), ('ltxvpreprocess', ltxvpreprocess), ('ltxvemptylatentaudio', ltxvemptylatentaudio), ('ltxvimgtovideoconditiononly', ltxvimgtovideoconditiononly), ('cfgguider', cfgguider), ('cfgguider_2', cfgguider_2), ('ltxvconcatavlatent', ltxvconcatavlatent), ('samplercustomadvanced', samplercustomadvanced), ('ltxvseparateavlatent', ltxvseparateavlatent), ('ltxvimgtovideoconditiononly_2', ltxvimgtovideoconditiononly_2), ('ltxvconcatavlatent_2', ltxvconcatavlatent_2), ('samplercustomadvanced_2', samplercustomadvanced_2), ('ltxvseparateavlatent_2', ltxvseparateavlatent_2), ('ltxvaudiovaedecode', ltxvaudiovaedecode), ('ltxvtiledvaedecode', ltxvtiledvaedecode), ('createvideo', createvideo), ('savevideo', savevideo))})
 
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

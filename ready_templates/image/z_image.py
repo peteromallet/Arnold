@@ -74,7 +74,5 @@ def build() -> VibeWorkflow:
         # Outputs
         saveimage = SaveImage(filename_prefix='z-image', images=vaedecode)
 
-        wf._set_id_map({name: node.node.id for name, node in (('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('emptysd3latentimage', emptysd3latentimage), ('modelsamplingauraflow', modelsamplingauraflow), ('positive', positive), ('negative', negative), ('ksampler', ksampler), ('vaedecode', vaedecode), ('saveimage', saveimage))})
-
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image')
 

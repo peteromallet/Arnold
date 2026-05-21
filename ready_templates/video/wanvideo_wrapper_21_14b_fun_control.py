@@ -33,9 +33,9 @@ MODELS = {}
 PUBLIC_INPUTS = {
     'model': InputSpec(node=ref('loadwanvideot5textencoder'), field='model_name', default=MODEL_NAME),
     'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT_2),
-    'seed': InputSpec(node=ref('wanvideosampler'), field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='pasted/image (758).png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='pasted/image (758).png'),
+    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
+    'image': InputSpec(node=ref('image'), field='image', default='pasted/image (758).png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='pasted/image (758).png'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -62,6 +62,7 @@ def build() -> VibeWorkflow:
 
         # Loaders
         cliploader = CLIPLoader(clip_name=MODEL_NAME_4, type_='wan')
+
         wanvideoteacache = WanVideoTeaCache(
             widget_0=0.08,
             widget_1=1,
@@ -72,40 +73,32 @@ def build() -> VibeWorkflow:
         )
 
         # Inputs
-        loadimage = LoadImage(
-            image='pasted/image (758).png',
-            widget_2='',
-            _outputs=('IMAGE', 'MASK'),
-        )
+        image, mask = LoadImage(image='pasted/image (758).png', widget_2='')
 
         # Loaders
         clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_5)
-        vhs_loadvideo = VHS_LoadVideo(
+
+        image_load, frame_count, audio, video_info = VHS_LoadVideo(
             video='wolf_interpolated.mp4',
-            _outputs=('IMAGE', 'FRAME_COUNT', 'AUDIO', 'VIDEO_INFO'),
         )
 
         downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
             widget_0=MODEL_NAME_6,
         )
+        reroute = raw_call('Reroute', '79')
+        reroute_2 = raw_call('Reroute', '80')
+        getnode = raw_call('GetNode', '84', widget_0=WIDGET_0)
+        getnode_2 = raw_call('GetNode', '85', widget_0=WIDGET_0)
+        getnode_3 = raw_call('GetNode', '86', widget_0=WIDGET_0)
+        getnode_4 = raw_call('GetNode', '89', widget_0=WIDGET_0_2)
 
-        reroute = raw_call(wf, 'Reroute', '79')
-        reroute_2 = raw_call(wf, 'Reroute', '80')
-        getnode = raw_call(wf, 'GetNode', '84', widget_0=WIDGET_0)
-        getnode_2 = raw_call(wf, 'GetNode', '85', widget_0=WIDGET_0)
-        getnode_3 = raw_call(wf, 'GetNode', '86', widget_0=WIDGET_0)
-        getnode_4 = raw_call(wf, 'GetNode', '89', widget_0=WIDGET_0_2)
         wanvideoexperimentalargs = WanVideoExperimentalArgs(
             widget_0='',
             widget_1=True,
             widget_2=False,
             widget_3=0,
         )
-
-        setnode = raw_call(wf, 'SetNode', '83',
-            widget_0=WIDGET_0,
-            WANVAE=wanvideovaeloader,
-        )
+        setnode = raw_call('SetNode', '83', widget_0=WIDGET_0, WANVAE=wanvideovaeloader)
 
         wanvideotextencode = WanVideoTextEncode(
             positive_prompt=DEFAULT_PROMPT,
@@ -117,7 +110,8 @@ def build() -> VibeWorkflow:
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
         cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
-        imageresizekj = ImageResizeKJ(
+
+        image_image, width, height = ImageResizeKJ(
             widget_0=640,
             widget_1=640,
             widget_2=WIDGET_2,
@@ -126,11 +120,10 @@ def build() -> VibeWorkflow:
             widget_5=0,
             widget_6=0,
             widget_7='disabled',
-            image=vhs_loadvideo.out('IMAGE'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT'),
+            image=image_load,
         )
 
-        wanvideosampler = WanVideoSampler(
+        samples, denoised_samples = WanVideoSampler(
             steps=1,
             seed=DEFAULT_SEED,
             batched_cfg='',
@@ -139,7 +132,6 @@ def build() -> VibeWorkflow:
             image_embeds=reroute.out(0),
             model=wanvideomodelloader,
             text_embeds=wanvideotextencode,
-            _outputs=('SAMPLES', 'DENOISED_SAMPLES'),
         )
 
         wanvideotextembedbridge = WanVideoTextEmbedBridge(
@@ -149,25 +141,20 @@ def build() -> VibeWorkflow:
 
         depthanything_v2 = DepthAnything_V2(
             da_model=downloadandloaddepthanythingv2model,
-            images=imageresizekj.out('IMAGE'),
+            images=image_image,
         )
 
-        setnode_2 = raw_call(wf, 'SetNode', '88',
+        setnode_2 = raw_call('SetNode', '88',
             widget_0=WIDGET_0_2,
             IMAGE=depthanything_v2,
         )
+        wanvideodecode = WanVideoDecode(samples=samples, vae=getnode_3.out(0))
 
-        wanvideodecode = WanVideoDecode(
-            samples=wanvideosampler.out('SAMPLES'),
-            vae=getnode_3.out(0),
-        )
-
-        getimagesizeandcount = GetImageSizeAndCount(
+        image_get, width_get, height_get, count = GetImageSizeAndCount(
             image=depthanything_v2,
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT', 'COUNT'),
         )
 
-        imageresizekj_2 = ImageResizeKJ(
+        image_image_2, width_image, height_image = ImageResizeKJ(
             widget_0=624,
             widget_1=624,
             widget_2=WIDGET_2,
@@ -176,10 +163,9 @@ def build() -> VibeWorkflow:
             widget_5=0,
             widget_6=0,
             widget_7='center',
-            height=getimagesizeandcount.out('HEIGHT'),
-            image=loadimage.out('IMAGE'),
-            width=getimagesizeandcount.out('WIDTH'),
-            _outputs=('IMAGE', 'WIDTH', 'HEIGHT'),
+            height=height_get,
+            image=image,
+            width=width_get,
         )
 
         wanvideoencode = WanVideoEncode(
@@ -190,23 +176,24 @@ def build() -> VibeWorkflow:
             widget_4=128,
             widget_5=0,
             widget_6=1,
-            image=getimagesizeandcount.out('IMAGE'),
+            image=image_get,
             vae=getnode.out(0),
         )
 
         # Outputs
         vhs_videocombine = VHS_VideoCombine(images=setnode_2.out(0))
+
         imageconcatmulti = ImageConcatMulti(
             unused_3=None,
             image_1=getnode_4.out(0),
             image_2=wanvideodecode,
         )
-
         vhs_videocombine_2 = VHS_VideoCombine(images=imageconcatmulti)
+
         wanvideoclipvisionencode = WanVideoClipVisionEncode(
             ratio=0.2,
             clip_vision=clipvisionloader,
-            image_1=imageresizekj_2.out('IMAGE'),
+            image_1=image_image_2,
         )
 
         wanvideocontrolembeds = WanVideoControlEmbeds(
@@ -218,12 +205,12 @@ def build() -> VibeWorkflow:
         wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
             noise_aug_strength=0.03,
             tiled_vae=True,
-            width=imageresizekj_2.out('WIDTH'),
-            height=imageresizekj_2.out('HEIGHT'),
-            num_frames=getimagesizeandcount.out('COUNT'),
+            width=width_image,
+            height=height_image,
+            num_frames=count,
             clip_embeds=wanvideoclipvisionencode,
             control_embeds=wanvideocontrolembeds,
-            start_image=imageresizekj_2.out('IMAGE'),
+            start_image=image_image_2,
             vae=getnode_2.out(0),
         )
 
@@ -232,12 +219,10 @@ def build() -> VibeWorkflow:
             widget_1=256,
             widget_2=5,
             control_embeds=wanvideocontrolembeds,
-            height=getimagesizeandcount.out('HEIGHT'),
-            num_frames=getimagesizeandcount.out('COUNT'),
-            width=getimagesizeandcount.out('WIDTH'),
+            height=height_get,
+            num_frames=count,
+            width=width_get,
         )
-
-        wf._set_id_map({name: node.node.id for name, node in (('loadwanvideot5textencoder', loadwanvideot5textencoder), ('wanvideomodelloader', wanvideomodelloader), ('wanvideotorchcompilesettings', wanvideotorchcompilesettings), ('wanvideovaeloader', wanvideovaeloader), ('wanvideoblockswap', wanvideoblockswap), ('wanvideovrammanagement', wanvideovrammanagement), ('cliploader', cliploader), ('wanvideoteacache', wanvideoteacache), ('loadimage', loadimage), ('clipvisionloader', clipvisionloader), ('vhs_loadvideo', vhs_loadvideo), ('downloadandloaddepthanythingv2model', downloadandloaddepthanythingv2model), ('reroute', reroute), ('reroute_2', reroute_2), ('setnode', setnode), ('getnode', getnode), ('getnode_2', getnode_2), ('getnode_3', getnode_3), ('setnode_2', setnode_2), ('getnode_4', getnode_4), ('wanvideoexperimentalargs', wanvideoexperimentalargs), ('wanvideotextencode', wanvideotextencode), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('imageresizekj', imageresizekj), ('wanvideosampler', wanvideosampler), ('wanvideotextembedbridge', wanvideotextembedbridge), ('depthanything_v2', depthanything_v2), ('wanvideodecode', wanvideodecode), ('getimagesizeandcount', getimagesizeandcount), ('imageresizekj_2', imageresizekj_2), ('wanvideoencode', wanvideoencode), ('vhs_videocombine', vhs_videocombine), ('imageconcatmulti', imageconcatmulti), ('vhs_videocombine_2', vhs_videocombine_2), ('wanvideoclipvisionencode', wanvideoclipvisionencode), ('wanvideocontrolembeds', wanvideocontrolembeds), ('wanvideoimagetovideoencode', wanvideoimagetovideoencode), ('wanvideoemptyembeds', wanvideoemptyembeds))})
 
         return wf.finalize(PUBLIC_INPUTS, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

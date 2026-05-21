@@ -1334,8 +1334,10 @@ def _emit_build_function(
                 call_args = ", ".join(kwarg_lines)
                 single_line = f"{body_indent}{assignment_target} = {call_name}({call_args})"
             else:
+                # v2.6.4 Fix 5: raw_call reads wf from ContextVar (set by
+                # new_workflow context manager); no need to pass wf positional.
                 call_args = ", ".join([repr(node.class_type), repr(nid), *kwarg_lines])
-                single_line = f"{body_indent}{assignment_target} = raw_call(wf, {call_args})"
+                single_line = f"{body_indent}{assignment_target} = raw_call({call_args})"
 
             # -- readability diagnostic: long one-line node call ----------
             if diagnostics is not None and len(single_line) > 120:
@@ -1365,7 +1367,8 @@ def _emit_build_function(
                 if use_wrapper:
                     lines = [f"{body_indent}{assignment_target} = {call_name}("]
                 else:
-                    lines = [f"{body_indent}{assignment_target} = raw_call(wf, {node.class_type!r}, {nid!r},"]
+                    # v2.6.4 Fix 5: drop wf positional from raw_call (ContextVar).
+                    lines = [f"{body_indent}{assignment_target} = raw_call({node.class_type!r}, {nid!r},"]
                 for key, expr in all_args:
                     if key == "**":
                         lines.append(f"{continuation_indent}**{expr},")
@@ -1614,7 +1617,21 @@ def _is_link(value: Any) -> bool:
     return all(part.isdigit() for part in str(nid).split(":"))
 
 
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
 def _safe_var(class_type: str) -> str:
+    # v2.6.4 Fix 6: UUID class types (ComfyUI subgraphs) get a short, readable
+    # variable name based on the first 8 chars of the UUID rather than the
+    # full 36-char hyphen-replaced string. So
+    # `7b34ab90-36f9-45ba-a665-71d418f0df18` becomes `subgraph_7b34ab90`
+    # instead of `n_7b34ab90_36f9_45ba_a665_71d418f0df18`.
+    if _UUID_RE.match(class_type):
+        short = class_type.split("-", 1)[0].lower()
+        return f"subgraph_{short}"
     name = re.sub(r"[^a-zA-Z0-9_]", "_", class_type.lower())
     if not name or name[0].isdigit():
         name = f"n_{name}"

@@ -34,23 +34,23 @@ def build() -> VibeWorkflow:
         image, mask = LoadImage(image='car_interior_white.jpeg')
         image_load, mask_load = LoadImage(image='comfy_logo_blue.png')
 
-        n_7b34ab90_36f9_45ba_a665_71d418f0df18 = raw_call(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
+        subgraph_7b34ab90 = raw_call('7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
             image=image,
         )
 
-        n_65c22b29_59aa_496b_89c6_55a603658670 = raw_call(wf, '65c22b29-59aa-496b-89c6-55a603658670', '92',
+        subgraph_65c22b29 = raw_call('65c22b29-59aa-496b-89c6-55a603658670', '92',
             image=image,
             image_1=image_load,
         )
 
         saveimage = SaveImage(
             filename_prefix='Flux2-Klein-4b-base',
-            images=n_7b34ab90_36f9_45ba_a665_71d418f0df18.out(0),
+            images=subgraph_7b34ab90.out(0),
         )
 
         saveimage_2 = SaveImage(
             filename_prefix='Flux2-Klein-4b-base',
-            images=n_65c22b29_59aa_496b_89c6_55a603658670.out(0),
+            images=subgraph_65c22b29.out(0),
         )
 
         return wf.finalize(PUBLIC_INPUTS, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein-4b-base')
