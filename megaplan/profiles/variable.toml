@@ -1,0 +1,49 @@
+# `variable` — tier-route execute by task complexity. Unlocked; Claude as
+# premium base; honors --vendor codex (flips premium tier entries).
+#
+# Non-execute phases use a partnered-style layout: Claude for reasoning
+# (plan, critique, revise, review, loop_plan, tiebreakers, feedback),
+# DeepSeek V4 Pro for mechanical phases (prep, gate, finalize, loop_execute).
+#
+# Execute dispatch picks the cheapest safe model per batch using the
+# [tier_models.execute] table below.  The flat ``execute`` entry is the
+# fallback when tier routing is disabled (e.g. --phase-model execute=...).
+#
+# Tier rubric:
+#   1 = trivial single-file mechanical change
+#   2 = simple change with tests to update
+#   3 = multi-file change with non-trivial logic
+#   4 = cross-cutting change with architecture implications
+#   5 = fundamental system change with high regression risk
+#
+# Flag interactions:
+#   * `--vendor codex` — flips premium tier entries 4-5 from claude→codex;
+#     DeepSeek tiers 1-3 stay put.
+#   * `--critic cross` — overrides critique+review to the *other* premium
+#     relative to the resolved vendor.
+#   * `--phase-model execute=...` — disables tier routing entirely; the
+#     explicit spec wins for every batch.
+#   * `--deepseek-provider direct` — flips hermes:fireworks:… DeepSeek specs
+#     to hermes:deepseek:… (tiers 1-3).
+[profiles.variable]
+default = "partnered"
+plan                  = "claude:low"
+prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique              = "claude:low"
+revise                = "claude:low"
+gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+execute               = "hermes:deepseek:deepseek-v4-flash"
+feedback              = "claude:low"
+loop_plan             = "claude:low"
+loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+review                = "claude:low"
+tiebreaker_researcher = "claude:low"
+tiebreaker_challenger = "claude:low"
+
+[profiles.variable.tier_models.execute]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "claude:low"
+5 = "claude"

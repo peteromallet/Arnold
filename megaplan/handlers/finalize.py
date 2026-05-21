@@ -401,6 +401,23 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
         "baseline_test_command": cmd_string,
     }
 
+def _normalize_task_complexity(payload: dict[str, Any]) -> None:
+    """Normalize every task's ``complexity`` field to a valid 1..5 integer.
+
+    Missing, non-integer, or out-of-range (not 1..5) values are coerced to
+    5 (fail-safe: expensive model).  Valid 1..5 values pass through unchanged.
+    """
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        complexity = task.get("complexity")
+        if not isinstance(complexity, int) or complexity < 1 or complexity > 5:
+            task["complexity"] = 5
+
+
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
@@ -412,6 +429,7 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_verification_task(payload, state)
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
+    _normalize_task_complexity(payload)
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
