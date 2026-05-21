@@ -115,9 +115,8 @@ class _SubgraphDef:
 
 
 GENERATED_HEADER = (
-    "# vibecomfy: generated - converted by tools/convert_ready_templates.py\n"
-    "# Edits will be overwritten on regeneration. Put the manual opt-out\n"
-    "# marker on the first line if hand-editing is required.\n"
+    "# vibecomfy: generated\n"
+    "# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>\n"
 )
 
 UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset({"Note", "MarkdownNote"})
@@ -993,7 +992,7 @@ def emit_ready_template_python(
 
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
-    out_lines.append('"""Auto-generated ready_template - see tools/convert_ready_templates.py."""')
+    out_lines.append('"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""')
     out_lines.append("from __future__ import annotations")
     out_lines.append("")
     out_lines.append(

@@ -739,7 +739,7 @@ def test_write_emitted_include_manual_override_replaces_manual_template(tmp_path
         tmod.READY_ROOT = tmp_path / "ready_templates"
         _write_emitted(
             manual_path,
-            "# vibecomfy: generated - converted by tools/convert_ready_templates.py\ndef build():\n    return None\n",
+            "# vibecomfy: generated\n# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>\ndef build():\n    return None\n",
             dry_run=False,
             include_manual=True,
         )

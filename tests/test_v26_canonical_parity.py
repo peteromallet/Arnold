@@ -64,7 +64,7 @@ def _write_ready_template(
     *,
     template_id: str = "image/example",
     literal: int,
-    marker: str = "# vibecomfy: generated - converted by tools/convert_ready_templates.py",
+    marker: str = "# vibecomfy: generated\n# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>",
 ) -> Path:
     ready_root = tmp_path / "ready_templates"
     path = ready_root / f"{template_id}.py"

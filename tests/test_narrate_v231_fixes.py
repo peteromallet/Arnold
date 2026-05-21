@@ -45,7 +45,7 @@ def _generate(template: str, out_path: Path) -> str:
 
 
 def _assert_v26_ready_shape(source: str) -> None:
-    assert "# vibecomfy: generated - converted by tools/convert_ready_templates.py" in source
+    assert "# vibecomfy: generated" in source
     assert "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in source
     assert "wf = new_workflow(READY_METADATA, source_path=__file__)" not in source
     assert "return wf.finalize(" in source
