@@ -2,6 +2,11 @@
 
 Verifies pause file shape, resume with choice, fresh artifact
 re-reads after disk edits, and cleanup after resume.
+
+Pipelines under test are constructed via the canonical
+:meth:`Pipeline.builder` API (T16): the YAML compiler / PipelineSpec
+path is gone, ``inject_pipeline_context`` is not needed because the
+builder threads ``_pipeline_name`` onto each step directly.
 """
 
 from __future__ import annotations
@@ -11,26 +16,16 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.compiler import compile_pipeline, inject_pipeline_context
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.resume import check_awaiting_user, with_entry
-from megaplan._pipeline.schema import PipelineSpec
 from megaplan._pipeline.steps.human_gate import HumanGateStep
 from megaplan._pipeline.types import (
     Edge,
-    ParallelStage,
     Pipeline,
     Stage,
     StepContext,
     StepResult,
 )
-
-
-def _make_worker(response: str = "worker output"):
-    def worker(**kwargs) -> str:
-        return response
-
-    return worker
 
 
 def _minimal_ctx(plan_dir: Path, inputs: dict | None = None) -> StepContext:
@@ -43,12 +38,54 @@ def _minimal_ctx(plan_dir: Path, inputs: dict | None = None) -> StepContext:
     )
 
 
-def _ensure_prompt_file(pipeline_dir: Path, prompt_ref: str, content: str = "test prompt") -> None:
-    """Create a .md prompt file if the ref is a .md path."""
-    if prompt_ref.endswith(".md"):
-        prompt_path = pipeline_dir / prompt_ref
-        prompt_path.parent.mkdir(parents=True, exist_ok=True)
-        prompt_path.write_text(content)
+def _build_pause_resume_pipeline(
+    pipeline_name: str,
+    *,
+    worker,
+    pipeline_dir: Path,
+    on_continue_target: str = "write",
+    options: tuple[str, ...] = ("again", "stop"),
+) -> Pipeline:
+    """Build the canonical ``write → decide`` pause/resume pipeline via
+    :meth:`Pipeline.builder`.
+
+    The ``write`` stage is an :class:`AgentStep` whose worker callback
+    supplies the per-iteration content; the ``decide`` stage is a
+    :class:`HumanGateStep` whose ``options`` map to either a loop-back
+    target or ``"halt"``."""
+    (pipeline_dir / "prompts").mkdir(parents=True, exist_ok=True)
+    (pipeline_dir / "prompts" / "write.md").write_text("write prompt")
+
+    edges_map = {opt: (on_continue_target if opt == options[0] else "halt") for opt in options}
+
+    builder = (
+        Pipeline.builder(
+            pipeline_name,
+            pipeline_dir=pipeline_dir,
+            worker=worker,
+            pipeline_version=1,
+        )
+        .agent("write", prompt="prompts/write.md", inputs=[])
+        .human_gate(
+            "decide",
+            artifact="write",
+            options=list(options),
+            edges=edges_map,
+        )
+    )
+    return builder.build()
+
+
+def _make_iteration_worker():
+    """Return a worker callable that emits ``"iteration N"`` for the
+    Nth invocation, plus a counter visible to the caller."""
+    state = {"calls": 0}
+
+    def worker(prompt, step_name, pipeline_name, inputs, mode):  # noqa: ANN001
+        state["calls"] += 1
+        return f"iteration {state['calls']}"
+
+    return worker, state
 
 
 # ── HumanGateStep direct tests ─────────────────────────────────────────
@@ -268,158 +305,93 @@ class TestCheckAwaitingUser:
 
 
 class TestPauseResumeInPipeline:
-    """Human gate within a pipeline executed via run_pipeline."""
+    """Human gate within a Pipeline.builder()-constructed pipeline executed
+    via run_pipeline.
+
+    Asserts the full pause/resume protocol end-to-end:
+
+    * ``awaiting_user.json`` written on pause
+    * ``_pipeline_paused: True`` state patch lands in ``state.json``
+    * :func:`with_entry` re-entry on resume
+    * input-swap-on-continue semantics (disk edits visible after resume)
+    """
 
     def test_human_gate_pauses_pipeline(self, tmp_path: Path):
         """When run_pipeline hits a human_gate stage in pause mode,
         it returns halt_reason='awaiting_user'."""
-        _ensure_prompt_file(tmp_path, "prompts/write.md")
-
-        # Build pipeline manually: agent → human_gate
-        # The agent must NOT return "halt" (or executor terminates before
-        # reaching human_gate). We build a custom agent-like step that
-        # returns a label matching the edge.
-        from dataclasses import dataclass
-
-        @dataclass
-        class ChainedAgentStep:
-            name: str
-            kind: str = "produce"
-            prompt_key: str | None = None
-            slot: str | None = None
-
-            def run(self, ctx: StepContext) -> StepResult:
-                output_dir = ctx.plan_dir / self.name
-                output_dir.mkdir(parents=True, exist_ok=True)
-                output_path = output_dir / "v1.md"
-                output_path.write_text("produced content")
-                return StepResult(
-                    outputs={self.name: output_path},
-                    next="continue",  # Non-halt label for edge dispatch
-                )
-
-        write_stage = Stage(
-            name="write",
-            step=ChainedAgentStep(name="write"),
-            edges=(Edge(label="continue", target="decide"),),
-        )
-
-        gate_step = HumanGateStep(
-            name="decide",
-            kind="decide",
-            _artifact_stage="write",
-            _choices=["again", "stop"],
-            _pipeline_name="pause-test",
-            _pipeline_version=1,
-            _resume_choice=None,  # Pause mode
-        )
-        gate_stage = Stage(
-            name="decide",
-            step=gate_step,
-            edges=(
-                Edge(label="again", target="write"),
-                Edge(label="stop", target="halt"),
-            ),
-        )
-
-        pipeline = Pipeline(
-            stages={"write": write_stage, "decide": gate_stage},
-            entry="write",
-        )
-
         plan_dir = tmp_path / "plan"
-        ctx = _minimal_ctx(plan_dir)
-        ctx = inject_pipeline_context(ctx, "pause-test")
+        pipeline_dir = tmp_path / "pipeline"
 
+        worker, _ = _make_iteration_worker()
+        pipeline = _build_pause_resume_pipeline(
+            "pause-test",
+            worker=worker,
+            pipeline_dir=pipeline_dir,
+        )
+        # Builder-locked invariants: human_gate stage owns its edges
+        # and the agent auto-links via the natural "done" label.
+        decide_stage = pipeline.stages["decide"]
+        assert isinstance(decide_stage, Stage)
+        assert isinstance(decide_stage.step, HumanGateStep)
+        write_stage = pipeline.stages["write"]
+        assert any(
+            e.label == "done" and e.target == "decide"
+            for e in write_stage.edges
+        )
+
+        ctx = _minimal_ctx(plan_dir)
         result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
 
         assert result["halt_reason"] == "awaiting_user"
         assert result["final_stage"] == "decide"
         assert (plan_dir / "awaiting_user.json").exists()
 
+        # State patch lands in state.json on pause.
+        state_data = json.loads((plan_dir / "state.json").read_text())
+        assert state_data.get("_pipeline_paused") is True
+        assert state_data.get("_pipeline_paused_stage") == "decide"
+
+        # awaiting_user.json shape carries the canonical fields.
+        data = json.loads((plan_dir / "awaiting_user.json").read_text())
+        assert data["pipeline"] == "pause-test"
+        assert data["stage"] == "decide"
+        assert data["choices"] == ["again", "stop"]
+
     def test_resume_continue_loops_back(self, tmp_path: Path):
-        """Resume with 'again' loops back to write stage, which produces
-        a new artifact version. Uses disk-based resume_choice so the
-        HumanGateStep consumes it once and pauses on the second encounter."""
+        """Resume with 'again' uses :func:`with_entry` to re-enter at the
+        decide stage, then loops back to write, producing a new artifact
+        version. Verifies input-swap-on-continue semantics: the on-disk
+        v1 edit is visible after resume."""
         plan_dir = tmp_path / "plan"
+        pipeline_dir = tmp_path / "pipeline"
 
-        from dataclasses import dataclass
-
-        @dataclass
-        class ChainedAgentStep:
-            name: str
-            kind: str = "produce"
-            prompt_key: str | None = None
-            slot: str | None = None
-
-            def run(self, ctx: StepContext) -> StepResult:
-                output_dir = ctx.plan_dir / self.name
-                output_dir.mkdir(parents=True, exist_ok=True)
-                existing = [
-                    int(f.stem[1:]) for f in output_dir.glob("v*.md")
-                    if f.stem[1:].isdigit()
-                ]
-                version = (max(existing) + 1) if existing else 1
-                output_path = output_dir / f"v{version}.md"
-                output_path.write_text(f"iteration {version}")
-                return StepResult(
-                    outputs={self.name: output_path},
-                    next="continue",
-                )
-
-        write_stage = Stage(
-            name="write",
-            step=ChainedAgentStep(name="write"),
-            edges=(Edge(label="continue", target="decide"),),
+        worker, worker_state = _make_iteration_worker()
+        pipeline = _build_pause_resume_pipeline(
+            "loop-test",
+            worker=worker,
+            pipeline_dir=pipeline_dir,
         )
-
-        def make_gate_stage(resume_choice=None):
-            """Build a decide stage. If resume_choice is None, the step
-            checks awaiting_user.json on disk (one-shot)."""
-            gate_step = HumanGateStep(
-                name="decide",
-                kind="decide",
-                _artifact_stage="write",
-                _choices=["again", "stop"],
-                _pipeline_name="loop-test",
-                _pipeline_version=1,
-                _resume_choice=resume_choice,
-            )
-            return Stage(
-                name="decide",
-                step=gate_step,
-                edges=(
-                    Edge(label="again", target="write"),
-                    Edge(label="stop", target="halt"),
-                ),
-            )
 
         # ── First run: write → pause at decide ──
-        pipeline = Pipeline(
-            stages={"write": write_stage, "decide": make_gate_stage()},
-            entry="write",
-        )
         ctx = _minimal_ctx(plan_dir)
-        ctx = inject_pipeline_context(ctx, "loop-test")
-
         result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
         assert result["halt_reason"] == "awaiting_user"
         assert (plan_dir / "write" / "v1.md").read_text() == "iteration 1"
+        assert worker_state["calls"] == 1
 
-        # ── Edit artifact on disk ──
+        # ── Edit artifact on disk (input-swap) ──
         (plan_dir / "write" / "v1.md").write_text("USER EDITED v1")
 
         # ── Resume with 'again' via disk ──
-        # Write _resume_choice into awaiting_user.json so HumanGateStep
-        # reads it from disk and cleans up the file after use.
         awaiting_data = json.loads((plan_dir / "awaiting_user.json").read_text())
         awaiting_data["_resume_choice"] = "again"
         (plan_dir / "awaiting_user.json").write_text(json.dumps(awaiting_data))
 
-        pipeline2 = Pipeline(
-            stages={"write": write_stage, "decide": make_gate_stage()},
-            entry="decide",
-        )
+        # Use with_entry() to re-enter at the decide stage on resume.
+        resumed = with_entry(pipeline, "decide")
+        assert resumed.entry == "decide"
+        # with_entry preserves the rest of the graph identity.
+        assert set(resumed.stages) == set(pipeline.stages)
 
         state2 = dict(result["state"])
         state2.pop("_pipeline_paused", None)
@@ -432,26 +404,25 @@ class TestPauseResumeInPipeline:
             mode="test",
             inputs={},
         )
-        ctx2 = inject_pipeline_context(ctx2, "loop-test")
+        result2 = run_pipeline(resumed, ctx2, artifact_root=plan_dir)
 
-        result2 = run_pipeline(pipeline2, ctx2, artifact_root=plan_dir)
-        # Write runs again, producing v2
+        # The 'again' resume routed decide→write; the write worker fired
+        # a second time and produced v2.
         assert (plan_dir / "write" / "v2.md").exists()
         assert (plan_dir / "write" / "v2.md").read_text() == "iteration 2"
-        # Should pause again (awaiting_user.json was cleaned up by resume,
-        # and _resume_choice is not set, so second pass through decide pauses)
+        assert worker_state["calls"] == 2
+        # Input-swap visible: the edited v1 still holds the user's edit
+        # (the executor did not clobber it).
+        assert (plan_dir / "write" / "v1.md").read_text() == "USER EDITED v1"
+        # Should pause again at decide (decide's _resume_choice is single-use).
         assert result2["halt_reason"] == "awaiting_user"
 
-        # ── Resume with 'stop' → complete ──
+        # ── Resume with 'stop' via disk → complete ──
         awaiting_data2 = json.loads((plan_dir / "awaiting_user.json").read_text())
         awaiting_data2["_resume_choice"] = "stop"
         (plan_dir / "awaiting_user.json").write_text(json.dumps(awaiting_data2))
 
-        pipeline3 = Pipeline(
-            stages={"write": write_stage, "decide": make_gate_stage()},
-            entry="decide",
-        )
-
+        resumed2 = with_entry(pipeline, "decide")
         state3 = dict(result2["state"])
         state3.pop("_pipeline_paused", None)
         state3.pop("_pipeline_paused_stage", None)
@@ -463,11 +434,11 @@ class TestPauseResumeInPipeline:
             mode="test",
             inputs={},
         )
-        ctx3 = inject_pipeline_context(ctx3, "loop-test")
-
-        result3 = run_pipeline(pipeline3, ctx3, artifact_root=plan_dir)
+        result3 = run_pipeline(resumed2, ctx3, artifact_root=plan_dir)
         assert result3.get("halt_reason") is None
         assert result3["final_stage"] == "decide"
+        # 'stop' routed to halt without firing the worker again.
+        assert worker_state["calls"] == 2
 
 
 # ── Fresh artifact re-read on resume ───────────────────────────────────
@@ -509,7 +480,7 @@ class TestFreshArtifactReRead:
         (artifact_dir / "v2.md").write_text("Fresh re-revised version v2")
 
         # Now the _latest_artifact function should pick up v2
-        from megaplan._pipeline.steps.agent import _latest_artifact
+        from megaplan._pipeline.step_helpers import latest_artifact as _latest_artifact
         latest = _latest_artifact(artifact_dir)
         assert latest is not None
         assert latest.name == "v2.md"
@@ -521,7 +492,7 @@ class TestFreshArtifactReRead:
         d.mkdir()
         (d / "v1.md").write_text("original")
 
-        from megaplan._pipeline.steps.agent import _latest_artifact
+        from megaplan._pipeline.step_helpers import latest_artifact as _latest_artifact
         first = _latest_artifact(d)
         assert first is not None
         assert first.read_text() == "original"
@@ -551,50 +522,19 @@ class TestStateSnapshotThroughPauseResume:
     """Pipeline identity persists in state across pause/resume."""
 
     def test_state_preserves_pipeline_identity(self, tmp_path: Path):
-        """State with pipeline identity survives pause and is present after resume."""
+        """State with pipeline identity survives pause and is present after resume.
+        Verifies the ``_pipeline_paused: True`` state patch on pause AND the
+        :func:`with_entry` re-entry path on resume."""
         plan_dir = tmp_path / "plan"
+        pipeline_dir = tmp_path / "pipeline"
 
-        from dataclasses import dataclass
-
-        @dataclass
-        class ChainedAgentStep:
-            name: str
-            kind: str = "produce"
-            prompt_key: str | None = None
-            slot: str | None = None
-
-            def run(self, ctx: StepContext) -> StepResult:
-                output_dir = ctx.plan_dir / self.name
-                output_dir.mkdir(parents=True, exist_ok=True)
-                (output_dir / "v1.md").write_text("done")
-                return StepResult(
-                    outputs={self.name: output_dir / "v1.md"},
-                    next="continue",
-                )
-
-        write_stage = Stage(
-            name="write",
-            step=ChainedAgentStep(name="write"),
-            edges=(Edge(label="continue", target="decide"),),
-        )
-        gate_step = HumanGateStep(
-            name="decide",
-            kind="decide",
-            _artifact_stage="write",
-            _choices=["stop"],
-            _pipeline_name="identity-preserve",
-            _pipeline_version=3,
-            _resume_choice=None,
-        )
-        gate_stage = Stage(
-            name="decide",
-            step=gate_step,
-            edges=(Edge(label="stop", target="halt"),),
-        )
-
-        pipeline = Pipeline(
-            stages={"write": write_stage, "decide": gate_stage},
-            entry="write",
+        worker, _ = _make_iteration_worker()
+        pipeline = _build_pause_resume_pipeline(
+            "identity-preserve",
+            worker=worker,
+            pipeline_dir=pipeline_dir,
+            options=("stop",),
+            on_continue_target="halt",
         )
 
         state = {
@@ -609,36 +549,25 @@ class TestStateSnapshotThroughPauseResume:
             mode="test",
             inputs={},
         )
-        ctx = inject_pipeline_context(ctx, "identity-preserve")
 
         result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
         assert result["halt_reason"] == "awaiting_user"
 
-        # State identity preserved
+        # State identity preserved AND pause patch present.
         state_data = json.loads((plan_dir / "state.json").read_text())
         assert state_data.get("_pipeline_name") == "identity-preserve"
         assert state_data.get("_pipeline_version") == 3
         assert state_data.get("_content_hash") == "hash789"
+        assert state_data.get("_pipeline_paused") is True
+        assert state_data.get("_pipeline_paused_stage") == "decide"
 
-        # Now resume with stop
-        gate_step2 = HumanGateStep(
-            name="decide",
-            kind="decide",
-            _artifact_stage="write",
-            _choices=["stop"],
-            _pipeline_name="identity-preserve",
-            _pipeline_version=3,
-            _resume_choice="stop",
-        )
-        gate_stage2 = Stage(
-            name="decide",
-            step=gate_step2,
-            edges=(Edge(label="stop", target="halt"),),
-        )
-        pipeline2 = Pipeline(
-            stages={"write": write_stage, "decide": gate_stage2},
-            entry="decide",
-        )
+        # Resume via disk-based _resume_choice and with_entry() re-entry.
+        awaiting_data = json.loads((plan_dir / "awaiting_user.json").read_text())
+        awaiting_data["_resume_choice"] = "stop"
+        (plan_dir / "awaiting_user.json").write_text(json.dumps(awaiting_data))
+
+        resumed = with_entry(pipeline, "decide")
+        assert resumed.entry == "decide"
 
         state2 = dict(result["state"])
         state2.pop("_pipeline_paused", None)
@@ -651,9 +580,8 @@ class TestStateSnapshotThroughPauseResume:
             mode="test",
             inputs={},
         )
-        ctx2 = inject_pipeline_context(ctx2, "identity-preserve")
 
-        result2 = run_pipeline(pipeline2, ctx2, artifact_root=plan_dir)
+        result2 = run_pipeline(resumed, ctx2, artifact_root=plan_dir)
         assert result2.get("halt_reason") is None
 
         state_data2 = json.loads((plan_dir / "state.json").read_text())

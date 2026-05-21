@@ -8,6 +8,17 @@ resolution time, robustness customisation moves to the Step layer).
 What this module pins now: every mode produces a valid Pipeline whose
 canonical phase-node set survives composition, and the mode overlay
 correctly names the requested mode for downstream introspection.
+
+T14 (0.23): this module's coverage of ``compile_pipeline_for(mode=…)``
+is RETAINED per USER DECISION 2 — the new 0.23 doc/creative pipelines
+do NOT flow through ``compile_pipeline_for``; they reach users via
+``megaplan run <pipeline>`` and live under ``tests/pipelines/`` (see
+``tests/pipelines/test_doc_pipeline.py`` and
+``tests/pipelines/test_creative_pipeline.py``). The assertions below
+exercise the legacy planning + mode-overlay path used by
+``megaplan init --mode <X> --auto-start`` in 0.23, which remains in
+place for backward compatibility. Marked ``# TODO(0.24)`` alongside
+the source ``compile_pipeline_for`` creative/joke branch.
 """
 
 from __future__ import annotations
