@@ -83,7 +83,7 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "LoadImage(image='input.png')" in text
     assert "_id='10'" not in text
     assert "wf.metadata.setdefault('id_map'" not in text
-    assert "wf._set_id_map(" in text
+    assert "wf._set_id_map(" not in text
     assert "LoadImage(wf" not in text
     assert "        return wf.finalize(PUBLIC_INPUTS" in text
     assert "'prefix': InputSpec(node=ref('saveimage'), field='filename_prefix', default='out/sample')" in text
@@ -100,7 +100,7 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert workflow.source.source_type == "ready_template"
     assert sorted(workflow.nodes) == ["1", "2"]
     assert workflow.metadata["ready_template"] == "image/sample"
-    assert workflow.id_map() == {"loadimage": "1", "saveimage": "2"}
+    assert workflow.id_map() == {}
     assert workflow.inputs["prefix"].node_id == "2"
     assert workflow.inputs["prefix"].default == "out/sample"
     assert workflow.outputs[0].artifact_kind == "image"
@@ -154,23 +154,23 @@ def test_tools_format_as_python_remains_ready_template_wrapper() -> None:
 
 
 def test_ready_template_id_map_contract_for_representative_emissions() -> None:
-    cases: list[tuple[VibeWorkflow, dict[str, str]]] = []
+    cases: list[VibeWorkflow] = []
 
     image = _sample_workflow()
-    cases.append((image, {"loadimage": "1", "saveimage": "2"}))
+    cases.append(image)
 
     typed = VibeWorkflow("typed", WorkflowSource("typed"))
     typed.nodes["1"] = VibeNode("1", "UNETLoader", inputs={"unet_name": "model.safetensors"})
     typed.nodes["2"] = VibeNode("2", "CLIPLoader", inputs={"clip_name": "clip.safetensors", "type": "wan"})
     typed.nodes["3"] = VibeNode("3", "SaveImage", inputs={"filename_prefix": "out/typed"})
-    cases.append((typed, {"unetloader": "1", "cliploader": "2", "saveimage": "3"}))
+    cases.append(typed)
 
     audio = VibeWorkflow("audio", WorkflowSource("audio"))
     audio.nodes["4"] = VibeNode("4", "LoadAudio", inputs={"audio": "input.wav"})
     audio.nodes["9"] = VibeNode("9", "SaveAudio", inputs={"filename_prefix": "out/audio"})
-    cases.append((audio, {"loadaudio": "1", "saveaudio": "9"}))
+    cases.append(audio)
 
-    for workflow, expected in cases:
+    for workflow in cases:
         text = emit_ready_template_python(
             workflow,
             ready_metadata={"ready_template": workflow.id},
@@ -181,10 +181,7 @@ def test_ready_template_id_map_contract_for_representative_emissions() -> None:
         exec(compile(text, f"{workflow.id} emitted", "exec"), namespace)  # noqa: S102 - generated code under test
         emitted = namespace["build"]()
         assert isinstance(emitted, VibeWorkflow)
-        assert emitted.id_map() == expected
-        copied = emitted.id_map()
-        copied[next(iter(copied))] = "mutated"
-        assert emitted.id_map() == expected
+        assert emitted.id_map() == {}
 
 
 def test_ready_template_ltx_tail_lines_are_inside_workflow_context() -> None:
@@ -222,8 +219,8 @@ def test_ready_template_build_spacing_for_multiline_and_packed_simple_calls() ->
         template_id="test/spacing",
     )
 
-    assert "\n        # Inputs\n        loadimage = LoadImage(" in text
-    assert "        )\n\n        loadimage_2 = LoadImage(" in text
+    assert "\n        # Inputs\n        image, mask = LoadImage(" in text
+    assert "\n        image_load, mask_load = LoadImage(" in text
     assert "cliptextencode = CLIPTextEncode(text='short positive')\n        cliptextencode_2 = CLIPTextEncode(text='short negative')" in text
     assert "\n\n        # Conditioning\n" in text
     assert "\n\n        return wf.finalize(PUBLIC_INPUTS" in text
@@ -576,6 +573,52 @@ def test_missing_output_names_does_not_emit_outputs() -> None:
     # _outputs= keyword arg should NOT appear in the _node() builder call;
     # the helper function definition itself contains "_outputs" but that's fine.
     assert "_outputs=" not in text
+
+
+def test_ready_template_emits_unpacking_for_typed_multi_output_node() -> None:
+    wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    wf.nodes["1"] = VibeNode("1", "WanImageToVideo")
+    wf.nodes["1"].metadata["output_names"] = ["POSITIVE", "NEGATIVE", "LATENT"]
+    wf.nodes["2"] = VibeNode("2", "KSampler")
+    wf.connect("1.0", "2.positive")
+    wf.connect("1.1", "2.negative")
+    wf.connect("1.2", "2.latent_image")
+
+    text = emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "video/test", "capability": "video"},
+        ready_requirements={},
+        template_id="video/test",
+    )
+
+    assert "positive, negative, latent = WanImageToVideo()" in text
+    assert "positive=positive" in text
+    assert "negative=negative" in text
+    assert "latent_image=latent" in text
+    assert "wanimagetovideo.out" not in text
+
+
+def test_ready_template_unpacked_output_names_use_collision_suffix() -> None:
+    wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    wf.nodes["1"] = VibeNode("1", "CLIPTextEncode", inputs={"text": "prompt"})
+    wf.nodes["2"] = VibeNode("2", "WanImageToVideo")
+    wf.nodes["2"].metadata["output_names"] = ["POSITIVE", "NEGATIVE", "LATENT"]
+    wf.nodes["3"] = VibeNode("3", "KSampler")
+    wf.connect("1.0", "3.positive")
+    wf.connect("2.1", "3.negative")
+    wf.connect("2.2", "3.latent_image")
+
+    text = emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "video/test", "capability": "video"},
+        ready_requirements={},
+        template_id="video/test",
+    )
+
+    assert "positive = CLIPTextEncode(text='prompt')" in text
+    assert "positive_wan, negative, latent = WanImageToVideo()" in text
+    assert "negative=negative" in text
+    assert "latent_image=latent" in text
 
 
 def test_out_of_range_slot_falls_back_to_numeric() -> None:

@@ -36,15 +36,15 @@ PUBLIC_INPUTS = {
     'negative': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT_2),
     'output_fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
     'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'width': InputSpec(node=ref('wanimagetovideo'), field='width', default=512),
-    'height': InputSpec(node=ref('wanimagetovideo'), field='height', default=512),
-    'length': InputSpec(node=ref('wanimagetovideo'), field='length', default=DEFAULT_FRAMES),
+    'width': InputSpec(node=ref('positive'), field='width', default=512),
+    'height': InputSpec(node=ref('positive'), field='height', default=512),
+    'length': InputSpec(node=ref('positive'), field='length', default=DEFAULT_FRAMES),
     'cfg': InputSpec(node=ref('ksampler'), field='cfg', default=GUIDE_STRENGTH),
     'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='uni_pc'),
-    'start_image': InputSpec(node=ref('loadimage'), field='image', default='image_to_video_wan_start_image.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='image_to_video_wan_start_image.png'),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='image_to_video_wan_start_image.png'),
-    'frames': InputSpec(node=ref('wanimagetovideo'), field='length', default=DEFAULT_FRAMES),
+    'start_image': InputSpec(node=ref('image'), field='image', default='image_to_video_wan_start_image.png'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='image_to_video_wan_start_image.png'),
+    'image': InputSpec(node=ref('image'), field='image', default='image_to_video_wan_start_image.png'),
+    'frames': InputSpec(node=ref('positive'), field='length', default=DEFAULT_FRAMES),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -66,7 +66,7 @@ def build() -> VibeWorkflow:
         clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_4)
 
         # Inputs
-        loadimage = LoadImage(image='image_to_video_wan_start_image.png')
+        image, mask = LoadImage(image='image_to_video_wan_start_image.png')
 
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
@@ -75,18 +75,18 @@ def build() -> VibeWorkflow:
         clipvisionencode = CLIPVisionEncode(
             crop='none',
             clip_vision=clipvisionloader,
-            image=loadimage.out('IMAGE'),
+            image=image,
         )
         modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
 
-        wanimagetovideo = WanImageToVideo(
+        positive, negative, latent = WanImageToVideo(
             height=512,
             length=DEFAULT_FRAMES,
             width=512,
             clip_vision_output=clipvisionencode,
             negative=cliptextencode_2,
             positive=cliptextencode,
-            start_image=loadimage.out('IMAGE'),
+            start_image=image,
             vae=vaeloader,
         )
 
@@ -96,10 +96,10 @@ def build() -> VibeWorkflow:
             steps=20,
             cfg=GUIDE_STRENGTH,
             sampler_name='uni_pc',
-            latent_image=wanimagetovideo.out('LATENT'),
+            latent_image=latent,
             model=modelsamplingsd3,
-            negative=wanimagetovideo.out('NEGATIVE'),
-            positive=wanimagetovideo.out('POSITIVE'),
+            negative=negative,
+            positive=positive,
         )
 
         # Decode

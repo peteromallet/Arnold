@@ -81,7 +81,7 @@ def build() -> VibeWorkflow:
         )
 
         # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
+        output, denoised_output = SamplerCustomAdvanced(
             guider=cfgguider,
             latent_image=emptyflux2latentimage,
             noise=randomnoise,
@@ -90,10 +90,7 @@ def build() -> VibeWorkflow:
         )
 
         # Decode
-        vaedecode = VAEDecode(
-            samples=samplercustomadvanced.out('OUTPUT'),
-            vae=vaeloader,
-        )
+        vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
         # Outputs
         saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)

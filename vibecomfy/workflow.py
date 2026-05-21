@@ -529,6 +529,18 @@ class _NodeBuilder:
             ) from exc
         return Handle(node_id=self.node.id, output_slot=output_slot)
 
+    def __iter__(self):
+        output_names = self.node.metadata.get("output_names")
+        if isinstance(output_names, (list, tuple)) and output_names:
+            for index, name in enumerate(output_names):
+                yield Handle(
+                    node_id=self.node.id,
+                    output_slot=index,
+                    name=str(name) if isinstance(name, str) and name else None,
+                )
+            return
+        yield self.out(0)
+
 
 def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
     inputs = dict(node.widgets)

@@ -15,8 +15,8 @@ MODELS = {
 }
 
 PUBLIC_INPUTS = {
-    'image': InputSpec(node=ref('loadimage'), field='image', default='car_interior_white.jpeg'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='car_interior_white.jpeg'),
+    'image': InputSpec(node=ref('image'), field='image', default='car_interior_white.jpeg'),
+    'input_image': InputSpec(node=ref('image'), field='image', default='car_interior_white.jpeg'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -31,16 +31,16 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        loadimage = LoadImage(image='car_interior_white.jpeg')
-        loadimage_2 = LoadImage(image='comfy_logo_blue.png')
+        image, mask = LoadImage(image='car_interior_white.jpeg')
+        image_load, mask_load = LoadImage(image='comfy_logo_blue.png')
 
         n_7b34ab90_36f9_45ba_a665_71d418f0df18 = raw_call(wf, '7b34ab90-36f9-45ba-a665-71d418f0df18', '75',
-            image=loadimage.out('IMAGE'),
+            image=image,
         )
 
         n_65c22b29_59aa_496b_89c6_55a603658670 = raw_call(wf, '65c22b29-59aa-496b-89c6-55a603658670', '92',
-            image=loadimage.out('IMAGE'),
-            image_1=loadimage_2.out('IMAGE'),
+            image=image,
+            image_1=image_load,
         )
 
         saveimage = SaveImage(

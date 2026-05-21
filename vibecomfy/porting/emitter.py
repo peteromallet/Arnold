@@ -14,6 +14,7 @@ from typing import Any, Literal, Mapping
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.porting.widget_aliases import resolve_widget_name
 from vibecomfy.porting.object_info import class_defaults, class_has_list_output, class_output_count
+from vibecomfy.porting.object_info import output_names as class_output_names
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 
 # -- readability warning codes ------------------------------------------------
@@ -557,6 +558,7 @@ def _public_input_specs(
     workflow_nodes: dict[str, Any],
     edges_in: dict[str, list[Any]],
     var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
     *,
     registered_inputs: dict[str, tuple[str, str]] | None,
     constant_map: dict[tuple[str, str], str],
@@ -576,7 +578,7 @@ def _public_input_specs(
         default_expr = constant_map.get((str(binding.node_id), binding.field))
         if default_expr is None:
             default_expr = _format_value(field_values[binding.field])
-        node_var = var_names.get(str(binding.node_id))
+        node_var = _first_output_var(output_var_names.get(str(binding.node_id))) or var_names.get(str(binding.node_id))
         node_ref = f"ref({node_var!r})" if node_var is not None else repr(str(binding.node_id))
         specs.append(
             _PublicInputSpec(
@@ -866,10 +868,12 @@ def emit_ready_template_python(
     constant_lines, constant_map = _drop_output_prefix_constants(constant_lines, constant_map)
     section_groups = _build_section_groups(workflow_nodes, edges_in)
     wrapper_imports = _wrapper_imports_for_nodes(workflow_nodes)
+    output_var_names = prepared["output_var_names"]
     public_inputs = _public_input_specs(
         workflow_nodes,
         edges_in,
         var_names,
+        output_var_names,
         registered_inputs=registered_inputs,
         constant_map=constant_map,
     )
@@ -917,7 +921,14 @@ def emit_ready_template_python(
             source_provenance=None,
             registered_inputs=registered_inputs,
             public_inputs=public_inputs,
-            tail_lines=_ready_template_tail_lines(has_ltx_tail, workflow_nodes, edges_in, var_names, metadata),
+            tail_lines=_ready_template_tail_lines(
+                has_ltx_tail,
+                workflow_nodes,
+                edges_in,
+                var_names,
+                output_var_names,
+                metadata,
+            ),
             diagnostics=diagnostics,
             use_shared_helpers=True,
             constant_map=constant_map,
@@ -1007,7 +1018,17 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
         workflow_nodes,
         [edge for edges in edges_in.values() for edge in edges] + extracted_edges_for_naming,
     )
-    return {"nodes": workflow_nodes, "edges_in": edges_in, "var_names": var_names}
+    output_var_names = _compute_output_variable_names(
+        workflow_nodes,
+        var_names,
+        [edge for edges in edges_in.values() for edge in edges] + extracted_edges_for_naming,
+    )
+    return {
+        "nodes": workflow_nodes,
+        "edges_in": edges_in,
+        "var_names": var_names,
+        "output_var_names": output_var_names,
+    }
 
 
 def _infer_public_input_bindings(
@@ -1161,12 +1182,16 @@ def _emit_build_function(
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
     var_names = prepared["var_names"]
+    output_var_names = prepared.get("output_var_names", {}) if use_shared_helpers else {}
 
     if constant_map is None:
         constant_map = {}
     if section_groups is None:
         section_groups = {}
     var_to_nid = {var: nid for nid, var in var_names.items()}
+    for output_nid, slot_vars in output_var_names.items():
+        for output_var in slot_vars.values():
+            var_to_nid[str(output_var)] = str(output_nid)
     public_preserve_fields: dict[str, set[str]] = {}
     for spec in public_inputs or []:
         node_ref = spec.node_ref
@@ -1258,6 +1283,7 @@ def _emit_build_function(
         kwargs = _node_kwargs(
             node, edges_in, var_names,
             workflow_nodes=workflow_nodes,
+            output_var_names=output_var_names,
             diagnostics=diagnostics,
             constant_map=constant_map,
             use_ui_widget_aliases=use_shared_helpers,
@@ -1291,6 +1317,7 @@ def _emit_build_function(
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))
                 call_name = str(node.class_type)
+                assignment_target = _assignment_target(var, output_var_names.get(str(nid)))
             else:
                 all_args = []
                 if outputs_expr is not None:
@@ -1299,15 +1326,16 @@ def _emit_build_function(
                 if extras_expr is not None:
                     all_args.append(("_extras", extras_expr))
                 call_name = "node"
+                assignment_target = var
 
             # Multi-line formatting: use multi-line when >3 kwargs or any line would exceed ~88 chars
             kwarg_lines = [f"**{expr}" if key == "**" else f"{key}={expr}" for key, expr in all_args]
             if use_wrapper:
                 call_args = ", ".join(kwarg_lines)
-                single_line = f"{body_indent}{var} = {call_name}({call_args})"
+                single_line = f"{body_indent}{assignment_target} = {call_name}({call_args})"
             else:
                 call_args = ", ".join([repr(node.class_type), repr(nid), *kwarg_lines])
-                single_line = f"{body_indent}{var} = raw_call(wf, {call_args})"
+                single_line = f"{body_indent}{assignment_target} = raw_call(wf, {call_args})"
 
             # -- readability diagnostic: long one-line node call ----------
             if diagnostics is not None and len(single_line) > 120:
@@ -1335,9 +1363,9 @@ def _emit_build_function(
                 if out_lines and prev != "" and not is_section_comment:
                     out_lines.append("")
                 if use_wrapper:
-                    lines = [f"{body_indent}{var} = {call_name}("]
+                    lines = [f"{body_indent}{assignment_target} = {call_name}("]
                 else:
-                    lines = [f"{body_indent}{var} = raw_call(wf, {node.class_type!r}, {nid!r},"]
+                    lines = [f"{body_indent}{assignment_target} = raw_call(wf, {node.class_type!r}, {nid!r},"]
                 for key, expr in all_args:
                     if key == "**":
                         lines.append(f"{continuation_indent}**{expr},")
@@ -1420,9 +1448,10 @@ def _ready_template_tail_lines(
     workflow_nodes: dict[str, Any],
     edges_in: dict[str, list[Any]],
     var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
     metadata: Mapping[str, Any],
 ) -> list[str]:
-    finalize_args = _finalize_args(workflow_nodes, edges_in, var_names, metadata)
+    finalize_args = _finalize_args(workflow_nodes, edges_in, var_names, output_var_names, metadata)
     call = f"    return wf.finalize(PUBLIC_INPUTS{finalize_args})"
     if has_ltx_tail:
         return [
@@ -1438,13 +1467,15 @@ def _finalize_args(
     workflow_nodes: dict[str, Any],
     edges_in: dict[str, list[Any]],
     var_names: dict[str, str],
+    output_var_names: dict[str, dict[int, str]],
     metadata: Mapping[str, Any],
 ) -> str:
     output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
     args: list[str] = []
     selected_id: str | None = output_node_ids[0] if output_node_ids else None
     if len(output_node_ids) > 1 and selected_id is not None:
-        args.append(f"output_node={var_names.get(selected_id, repr(selected_id))}")
+        output_var = _first_output_var(output_var_names.get(selected_id))
+        args.append(f"output_node={output_var or var_names.get(selected_id, repr(selected_id))}")
     if selected_id is not None:
         node = workflow_nodes[selected_id]
         output_contract = _OUTPUT_CLASSES.get(str(node.class_type))
@@ -1688,12 +1719,96 @@ def _compute_variable_names(workflow_nodes: dict[str, Any], edges: list[Any]) ->
     return var_names
 
 
+def _compute_output_variable_names(
+    workflow_nodes: dict[str, Any],
+    var_names: dict[str, str],
+    edges: list[Any],
+) -> dict[str, dict[int, str]]:
+    unpackable: dict[str, list[str]] = {}
+    for nid, node in sorted(workflow_nodes.items(), key=lambda item: _id_sort_key(item[0])):
+        if _wrapper_module_for_class(str(node.class_type)) is None:
+            continue
+        names = _schema_output_names_for_unpack(node)
+        if len(names) <= 1:
+            continue
+        if _has_out_of_range_edge(str(nid), len(names), edges):
+            continue
+        unpackable[str(nid)] = names
+
+    used = {
+        var
+        for nid, var in var_names.items()
+        if str(nid) not in unpackable
+    }
+    output_vars: dict[str, dict[int, str]] = {}
+    for nid, names in unpackable.items():
+        node = workflow_nodes[nid]
+        suffix = _class_collision_suffix(str(node.class_type))
+        slot_vars: dict[int, str] = {}
+        for index, name in enumerate(names):
+            base = _safe_var(str(name).lower())
+            candidate = base
+            if candidate in used:
+                candidate = f"{base}_{suffix}"
+            if candidate in used:
+                ordinal = 2
+                while f"{candidate}_{ordinal}" in used:
+                    ordinal += 1
+                candidate = f"{candidate}_{ordinal}"
+            used.add(candidate)
+            slot_vars[index] = candidate
+        output_vars[nid] = slot_vars
+    return output_vars
+
+
+def _schema_output_names_for_unpack(node: Any) -> list[str]:
+    metadata_names = _node_output_names(node)
+    if metadata_names:
+        return metadata_names
+    try:
+        return [str(name) for name in class_output_names(str(node.class_type)) if str(name)]
+    except Exception:
+        return []
+
+
+def _has_out_of_range_edge(node_id: str, output_count: int, edges: list[Any]) -> bool:
+    for edge in edges:
+        if str(getattr(edge, "from_node", "")) != node_id:
+            continue
+        try:
+            slot = int(getattr(edge, "from_output"))
+        except (TypeError, ValueError):
+            return True
+        if slot < 0 or slot >= output_count:
+            return True
+    return False
+
+
+def _class_collision_suffix(class_type: str) -> str:
+    parts = re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|\d+", class_type)
+    return _safe_var(parts[0] if parts else class_type)
+
+
+def _assignment_target(var: str, output_vars: dict[int, str] | None) -> str:
+    if not output_vars:
+        return var
+    return ", ".join(output_vars[index] for index in sorted(output_vars))
+
+
+def _first_output_var(output_vars: dict[int, str] | None) -> str | None:
+    if not output_vars:
+        return None
+    first_slot = min(output_vars)
+    return output_vars[first_slot]
+
+
 def _node_kwargs(
     node: Any,
     edges_in: dict[str, list[Any]],
     var_names: dict[str, str],
     *,
     workflow_nodes: dict[str, Any] | None = None,
+    output_var_names: dict[str, dict[int, str]] | None = None,
     diagnostics: list[EmissionDiagnostic] | None = None,
     constant_map: dict[tuple[str, str], str] | None = None,
     use_ui_widget_aliases: bool = False,
@@ -1810,7 +1925,10 @@ def _node_kwargs(
         from_node, from_slot = incoming[to_input]
         from_node_str = str(from_node)
         if from_node_str in var_names:
-            if bare_single_output_refs and _is_single_output_ref(workflow_nodes, from_node_str, from_slot):
+            unpacked_ref = (output_var_names or {}).get(from_node_str, {}).get(from_slot)
+            if unpacked_ref is not None:
+                expr = unpacked_ref
+            elif bare_single_output_refs and _is_single_output_ref(workflow_nodes, from_node_str, from_slot):
                 expr = var_names[from_node_str]
             else:
                 safe_name = _safe_output_name(workflow_nodes, from_node_str, from_slot)

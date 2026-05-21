@@ -225,6 +225,8 @@ def ref(label: str) -> SymbolicNodeRef:
 
 
 def _node_id_from_binding(value: Any) -> str | None:
+    if isinstance(value, Handle):
+        return str(value.node_id)
     node = getattr(value, "node", None)
     if node is not None and hasattr(node, "id"):
         return str(node.id)
