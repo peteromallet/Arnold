@@ -43,6 +43,10 @@ vibecomfy = "vibecomfy.comfy_nodes"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vibecomfy"]
+artifacts = [
+  "vibecomfy/py.typed",
+  "vibecomfy/**/*.pyi",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

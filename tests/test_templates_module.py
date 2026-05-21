@@ -47,6 +47,29 @@ def test_node_preserves_source_id_extras_and_rewrites_edges() -> None:
     assert any(edge.from_node == "source" and edge.to_node == "scaled" and edge.to_input == "image" for edge in wf.edges)
 
 
+def test_legacy_string_ref_warns_and_still_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(templates, "_SYMBOLIC_REF_DEPRECATION_WARNED", False)
+
+    def build() -> VibeWorkflow:
+        wf = new_workflow({"ready_template": "image/legacy_ref"}, source_path="ready_templates/image/legacy_ref.py")
+        saved = node(wf, "SaveImage", filename_prefix="out/legacy")
+        with pytest.warns(PendingDeprecationWarning, match="legacy generated-template fallback"):
+            public_inputs = {
+                "prefix": InputSpec(
+                    node=templates.ref("saved"),
+                    field="filename_prefix",
+                    default="out/legacy",
+                    type="STRING",
+                )
+            }
+        return finalize(wf, public_inputs, {"ready_template": "image/legacy_ref"}, output_node=saved, output_type="SaveImage")
+
+    workflow = build()
+
+    assert workflow.inputs["prefix"].node_id == "1"
+    assert workflow.metadata["id_map"]["saved"] == "1"
+
+
 def test_node_allows_id_free_creation_and_legacy_source_ids() -> None:
     wf = _workflow()
 

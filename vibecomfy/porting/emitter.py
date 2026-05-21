@@ -28,6 +28,7 @@ READABILITY_WARNING_LONG_ONE_LINE_NODE_CALL = "long_one_line_node_call"
 READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED = "generated_template_not_formatted"
 READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG = "generated_variable_name_too_long"
 READABILITY_WARNING_SUBGRAPH_INPUT_UNBOUND = "subgraph_input_unbound"
+READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS = "schema_unknown_kwarg_hidden_by_extras"
 
 READABILITY_WARNING_CODES: frozenset[str] = frozenset(
     {
@@ -40,6 +41,7 @@ READABILITY_WARNING_CODES: frozenset[str] = frozenset(
         READABILITY_WARNING_GENERATED_TEMPLATE_NOT_FORMATTED,
         READABILITY_WARNING_GENERATED_VARIABLE_NAME_TOO_LONG,
         READABILITY_WARNING_SUBGRAPH_INPUT_UNBOUND,
+        READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS,
     }
 )
 
@@ -80,6 +82,7 @@ class _PublicInputBinding:
 class _PublicInputSpec:
     name: str
     node_ref: str
+    metadata_node_ref: str
     field: str
     default_expr: str
     type: str | None = None
@@ -605,11 +608,13 @@ def _public_input_specs(
         if default_expr is None:
             default_expr = _format_value(field_values[binding.field])
         node_var = _first_output_var(output_var_names.get(str(binding.node_id))) or var_names.get(str(binding.node_id))
-        node_ref = f"ref({node_var!r})" if node_var is not None else repr(str(binding.node_id))
+        node_ref = node_var if node_var is not None else repr(str(binding.node_id))
+        metadata_node_ref = repr(str(binding.node_id))
         specs.append(
             _PublicInputSpec(
                 name=binding.name,
                 node_ref=node_ref,
+                metadata_node_ref=metadata_node_ref,
                 field=binding.field,
                 default_expr=default_expr,
                 type=binding.type,
@@ -638,13 +643,14 @@ def _public_input_specs(
     return specs
 
 
-def _format_public_inputs_block(specs: list[_PublicInputSpec]) -> list[str]:
+def _format_public_inputs_block(specs: list[_PublicInputSpec], *, metadata: bool = False) -> list[str]:
     if not specs:
         return []
-    lines = ["PUBLIC_INPUTS = {"]
+    lines = ["PUBLIC_INPUT_METADATA = {" if metadata else "    return {"]
     for spec in specs:
+        node_ref = spec.metadata_node_ref if metadata else spec.node_ref
         args = [
-            f"node={spec.node_ref}",
+            f"node={node_ref}",
             f"field={spec.field!r}",
             f"default={spec.default_expr}",
         ]
@@ -657,7 +663,18 @@ def _format_public_inputs_block(specs: list[_PublicInputSpec]) -> list[str]:
         if spec.media_semantics is not None:
             args.append(f"media_semantics={spec.media_semantics!r}")
         lines.append(f"    {spec.name!r}: InputSpec({', '.join(args)}),")
-    lines.append("}")
+    lines.append("}" if metadata else "    }")
+    return lines
+
+
+def _format_public_inputs_factory(specs: list[_PublicInputSpec]) -> list[str]:
+    if not specs:
+        return []
+    lines = ["def PUBLIC_INPUTS(**nodes):"]
+    for spec in specs:
+        if spec.node_ref.isidentifier():
+            lines.append(f"    {spec.node_ref} = nodes[{spec.node_ref!r}]")
+    lines.extend(_format_public_inputs_block(specs))
     return lines
 
 
@@ -888,7 +905,7 @@ def _format_ready_metadata_build(
         f"    capability={capability!r},",
     ]
     if has_public_inputs:
-        lines.append("    inputs=PUBLIC_INPUTS,")
+        lines.append("    inputs=PUBLIC_INPUT_METADATA,")
     if has_models:
         lines.append("    models=MODELS,")
     if output_prefix != template_id:
@@ -997,10 +1014,15 @@ def emit_ready_template_python(
         out_lines.append("")
         out_lines.extend(model_lines)
         out_lines.append("")
-    public_input_lines = _format_public_inputs_block(public_inputs)
-    if public_input_lines:
+    public_input_metadata_lines = _format_public_inputs_block(public_inputs, metadata=True)
+    if public_input_metadata_lines:
         out_lines.append("")
-        out_lines.extend(public_input_lines)
+        out_lines.extend(public_input_metadata_lines)
+        out_lines.append("")
+    public_input_factory_lines = _format_public_inputs_factory(public_inputs)
+    if public_input_factory_lines:
+        out_lines.append("")
+        out_lines.extend(public_input_factory_lines)
         out_lines.append("")
     out_lines.extend(
         _format_ready_metadata_build(
@@ -2307,7 +2329,7 @@ def _ready_template_tail_lines(
     metadata: Mapping[str, Any],
 ) -> list[str]:
     finalize_args = _finalize_args(workflow_nodes, edges_in, var_names, output_var_names, metadata)
-    input_expr = "PUBLIC_INPUTS" if metadata.get("_has_public_inputs_for_emit") else "{}"
+    input_expr = "PUBLIC_INPUTS(**locals())" if metadata.get("_has_public_inputs_for_emit") else "{}"
     call = f"    return wf.finalize({input_expr}{finalize_args})"
     if has_ltx_tail:
         return [
@@ -2829,6 +2851,20 @@ def _node_kwargs(
         if not _is_python_ident(key) and not (emit_reserved_keyword_args and key in RESERVED_WRAPPER_INPUT_NAMES):
             extras.append((key, _format_static_value(key, static_inputs[key])))
             continue
+        if diagnostics is not None and schema and key not in schema_set and emit_reserved_keyword_args:
+            diagnostics.append(
+                EmissionDiagnostic(
+                    code=READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS,
+                    message=(
+                        f"Node {getattr(node, 'id', None)} ({cls}) emits schema-unknown kwarg {key!r}; "
+                        "typed wrappers accept it through **_extras, so verify the field is intentional."
+                    ),
+                    severity="warning",
+                    node_id=str(getattr(node, "id", "")),
+                    class_type=cls,
+                    detail={"input": key, "schema_inputs": sorted(schema_set)},
+                )
+            )
         out.append((key, _format_static_value(key, static_inputs[key])))
 
     all_incoming_keys = set(incoming) | set(incoming_exprs)
@@ -2858,6 +2894,20 @@ def _node_kwargs(
         if not _is_python_ident(to_input) and not (emit_reserved_keyword_args and to_input in RESERVED_WRAPPER_INPUT_NAMES):
             extras.append((to_input, expr))
             continue
+        if diagnostics is not None and schema and to_input not in schema_set and emit_reserved_keyword_args:
+            diagnostics.append(
+                EmissionDiagnostic(
+                    code=READABILITY_WARNING_SCHEMA_UNKNOWN_KWARG_HIDDEN_BY_EXTRAS,
+                    message=(
+                        f"Node {getattr(node, 'id', None)} ({cls}) emits schema-unknown linked kwarg {to_input!r}; "
+                        "typed wrappers accept it through **_extras, so verify the field is intentional."
+                    ),
+                    severity="warning",
+                    node_id=str(getattr(node, "id", "")),
+                    class_type=cls,
+                    detail={"input": to_input, "schema_inputs": sorted(schema_set), "linked": True},
+                )
+            )
         out.append((to_input, expr))
 
     # -- readability diagnostics: positional output detection ------------

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
+_OutputT = TypeVar("_OutputT", covariant=True)
 
 @dataclass(frozen=True)
-class Handle:
+class Handle(Generic[_OutputT]):
     node_id: str
     output_slot: int | str = 0
     output_type: str | None = None
@@ -24,3 +26,6 @@ class Handle:
 
     def __hash__(self) -> int:
         return hash((self.node_id, str(self.output_slot)))
+
+
+__all__ = ["Handle"]

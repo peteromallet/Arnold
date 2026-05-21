@@ -4,19 +4,22 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def AudioConcat(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio1: Any = _UNSET,
-    audio2: Any = _UNSET,
-    direction: Any = _UNSET,
+    audio1: Any | _Omitted = _UNSET,
+    audio2: Any | _Omitted = _UNSET,
+    direction: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -44,8 +47,8 @@ def AudioConcat(
 def AudioEncoderEncode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio_encoder: Any = _UNSET,
-    audio: Any = _UNSET,
+    audio_encoder: Any | _Omitted = _UNSET,
+    audio: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -69,7 +72,7 @@ def AudioEncoderEncode(
 def AudioEncoderLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio_encoder_name: Any = _UNSET,
+    audio_encoder_name: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -91,10 +94,10 @@ def AudioEncoderLoader(
 def BasicScheduler(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    scheduler: Any = _UNSET,
-    steps: Any = _UNSET,
-    denoise: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    scheduler: Any | _Omitted = _UNSET,
+    steps: int | _Omitted = _UNSET,
+    denoise: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -122,10 +125,10 @@ def BasicScheduler(
 def CFGGuider(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    cfg: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    cfg: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -153,8 +156,8 @@ def CFGGuider(
 def CFGNorm(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    strength: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    strength: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -178,9 +181,9 @@ def CFGNorm(
 def CLIPLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip_name: Any = _UNSET,
-    type_: Any = _UNSET,
-    device: Any = _UNSET,
+    clip_name: Literal['ViT-L-14-BEST-smooth-GmP-TE-only-HF-format.safetensors', 'ViT-L-14-TEXT-detail-improved-hiT-GmP-TE-only-HF.safetensors', 'byt5_small_glyphxl_fp16.safetensors', 'clip_g.safetensors', 'clip_g_hidream.safetensors', 'clip_l.safetensors', 'clip_l_hidream.safetensors', 'ernie-image-prompt-enhancer.safetensors', 'full_encoder_small_decoder.safetensors', 'gemma_2_2b_fp16.safetensors', 'gemma_3_12B_it.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors', 'gemma_3_12B_it_fp8_scaled.safetensors', 'gemma_3_4b_it_bf16.safetensors', 'jina_clip_v2_bf16.safetensors', 'llama_3.1_8b_instruct_fp8_scaled.safetensors', 'llava_llama3_fp16.safetensors', 'llava_llama3_fp8_scaled.safetensors', 'ltx-2-19b-embeddings_connector_distill_bf16.safetensors', 'ltx-2.3_text_projection_bf16.safetensors', 'ministral-3-3b.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'mistral_3_small_flux2_fp8.safetensors', 'oldt5_xxl_fp16.safetensors', 'oldt5_xxl_fp8_e4m3fn_scaled.safetensors', 'ovis_2.5.safetensors', 'qwen3.5_4b_bf16.safetensors', 'qwen_0.6b_ace15.safetensors', 'qwen_1.7b_ace15.safetensors', 'qwen_2.5_vl_7b.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_2.5_vl_fp16.safetensors', 'qwen_3_06b_base.safetensors', 'qwen_3_4b.safetensors', 'qwen_3_8b.safetensors', 'qwen_3_8b_fp8mixed.safetensors', 'qwen_4b_ace15.safetensors', 't5-base.safetensors', 't5_base.safetensors', 't5xxl_fp16.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5xxl_fp8_e4m3fn_scaled.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'] | _Omitted = _UNSET,
+    type_: Literal['stable_diffusion', 'stable_cascade', 'sd3', 'stable_audio', 'mochi', 'ltxv', 'pixart', 'cosmos', 'lumina2', 'wan', 'hidream', 'chroma', 'ace', 'omnigen2', 'qwen_image', 'hunyuan_image', 'flux2', 'ovis', 'longcat_image'] | _Omitted = _UNSET,
+    device: Literal['default', 'cpu'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -219,8 +222,8 @@ def CLIPLoader(
 def CLIPTextEncode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    text: Any = _UNSET,
-    clip: Any = _UNSET,
+    text: str | _Omitted = _UNSET,
+    clip: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -246,9 +249,9 @@ def CLIPTextEncode(
 def CLIPVisionEncode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip_vision: Any = _UNSET,
-    image: Any = _UNSET,
-    crop: Any = _UNSET,
+    clip_vision: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    crop: Literal['center', 'none'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -276,7 +279,7 @@ def CLIPVisionEncode(
 def CLIPVisionLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip_name: Any = _UNSET,
+    clip_name: Literal['CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors', 'clip_vision_g.safetensors', 'clip_vision_h.safetensors', 'llava_llama3_vision.safetensors', 'sigclip_vision_patch14_384.safetensors'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -300,7 +303,7 @@ def CLIPVisionLoader(
 def CheckpointLoaderSimple(
     *args: VibeWorkflow,
     _id: str | None = None,
-    ckpt_name: Any = _UNSET,
+    ckpt_name: Literal['AOM2-Hard.safetensors', 'AOM3A3.safetensors', 'Chroma1-Base.safetensors', 'LTX23_audio_vae_bf16.safetensors', 'Realistic_Vision_V5.1_fp16-no-ema.safetensors', 'Realistic_Vision_V6.0_NV_B1_fp16.safetensors', 'ace_step_1.5_turbo_aio.safetensors', 'ace_step_v1_3.5b.safetensors', 'albedobaseXL_v21.safetensors', 'anyloraCheckpoint_bakedvaeBlessedFp16.safetensors', 'aura_flow_0.1.safetensors', 'aura_flow_0.2.safetensors', 'cosxl.safetensors', 'cosxl_edit.safetensors', 'counterfeitV30_v30.safetensors', 'dreamshaperXL_v21TurboDPMSDE.safetensors', 'dreamshaper_8.safetensors', 'fantexiRealistic_v10.safetensors', 'flux1-dev-bnb-nf4-v2.safetensors', 'flux1-dev-bnb-nf4.safetensors', 'flux1-dev-fp8.safetensors', 'flux1-schnell-bnb-nf4.safetensors', 'flux1-schnell-fp8.safetensors', 'hunyuan_dit_1.0.safetensors', 'hunyuan_dit_1.1.safetensors', 'hunyuan_dit_1.2.safetensors', 'juggernautXL_v9Rundiffusionphoto2.safetensors', 'ltx-2-19b-dev-fp8.safetensors', 'ltx-2-19b-dev.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-dev.safetensors', 'ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-distilled.safetensors', 'ltx-video-2b-v0.9.1.safetensors', 'ltx-video-2b-v0.9.5.safetensors', 'ltx-video-2b-v0.9.safetensors', 'lumina_2.safetensors', 'mochi_preview_fp8_scaled.safetensors', 'noosphere_v42.safetensors', 'picxReal_10.safetensors', 'realvisxlV40_v40Bakedvae.safetensors', 'revAnimated_v2Rebirth.safetensors', 'sd3.5_large.safetensors', 'sd3.5_large_fp8_scaled.safetensors', 'sd3.5_large_turbo.safetensors', 'sd3.5_medium.safetensors', 'sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors', 'sd3_medium.safetensors', 'sd3_medium_incl_clips.safetensors', 'sd3_medium_incl_clips_t5xxlfp8.safetensors', 'sd_xl_base_1.0.safetensors', 'sd_xl_refiner_1.0.safetensors', 'sd_xl_turbo_1.0_fp16.safetensors', 'sdpose_wholebody_fp16.safetensors', 'stable-audio-open-1.0.safetensors', 'stable_cascade_stage_b.safetensors', 'stable_cascade_stage_c.safetensors', 'svd.safetensors', 'svd_xt.safetensors', 'v1-5-pruned-emaonly-fp16.safetensors', 'v1-5-pruned-emaonly.safetensors', 'v2-inpainting-pruned-ema.safetensors'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -324,8 +327,8 @@ def CheckpointLoaderSimple(
 def ComfyMathExpression(
     *args: VibeWorkflow,
     _id: str | None = None,
-    expression: Any = _UNSET,
-    values: Any = _UNSET,
+    expression: str | _Omitted = _UNSET,
+    values: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -351,9 +354,9 @@ def ComfyMathExpression(
 def ComfySwitchNode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    switch: Any = _UNSET,
-    on_false: Any = _UNSET,
-    on_true: Any = _UNSET,
+    switch: bool | _Omitted = _UNSET,
+    on_false: Any | _Omitted = _UNSET,
+    on_true: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -381,7 +384,7 @@ def ComfySwitchNode(
 def ConditioningZeroOut(
     *args: VibeWorkflow,
     _id: str | None = None,
-    conditioning: Any = _UNSET,
+    conditioning: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -405,9 +408,9 @@ def ConditioningZeroOut(
 def CreateVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    fps: Any = _UNSET,
-    audio: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    fps: float | _Omitted = _UNSET,
+    audio: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -435,10 +438,10 @@ def CreateVideo(
 def DualCLIPLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip_name1: Any = _UNSET,
-    clip_name2: Any = _UNSET,
-    type_: Any = _UNSET,
-    device: Any = _UNSET,
+    clip_name1: Literal['ViT-L-14-BEST-smooth-GmP-TE-only-HF-format.safetensors', 'ViT-L-14-TEXT-detail-improved-hiT-GmP-TE-only-HF.safetensors', 'byt5_small_glyphxl_fp16.safetensors', 'clip_g.safetensors', 'clip_g_hidream.safetensors', 'clip_l.safetensors', 'clip_l_hidream.safetensors', 'ernie-image-prompt-enhancer.safetensors', 'flux1-dev-Q4_K_S.gguf', 'flux1-dev-Q8_0.gguf', 'flux1-schnell-Q4_K_S.gguf', 'flux1-schnell-Q8_0.gguf', 'full_encoder_small_decoder.safetensors', 'gemma_2_2b_fp16.safetensors', 'gemma_3_12B_it.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors', 'gemma_3_12B_it_fp8_scaled.safetensors', 'gemma_3_4b_it_bf16.safetensors', 'jina_clip_v2_bf16.safetensors', 'llama_3.1_8b_instruct_fp8_scaled.safetensors', 'llava_llama3_fp16.safetensors', 'llava_llama3_fp8_scaled.safetensors', 'ltx-2-19b-embeddings_connector_distill_bf16.safetensors', 'ltx-2.3_text_projection_bf16.safetensors', 'ministral-3-3b.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'mistral_3_small_flux2_fp8.safetensors', 'oldt5_xxl_fp16.safetensors', 'oldt5_xxl_fp8_e4m3fn_scaled.safetensors', 'ovis_2.5.safetensors', 'qwen3.5_4b_bf16.safetensors', 'qwen_0.6b_ace15.safetensors', 'qwen_1.7b_ace15.safetensors', 'qwen_2.5_vl_7b.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_2.5_vl_fp16.safetensors', 'qwen_3_06b_base.safetensors', 'qwen_3_4b.safetensors', 'qwen_3_8b.safetensors', 'qwen_3_8b_fp8mixed.safetensors', 'qwen_4b_ace15.safetensors', 't5-base.safetensors', 't5-v1_1-xxl-encoder-Q4_K_M.gguf', 't5-v1_1-xxl-encoder-Q8_0.gguf', 't5_base.safetensors', 't5xxl_fp16.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5xxl_fp8_e4m3fn_scaled.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'] | _Omitted = _UNSET,
+    clip_name2: Literal['ViT-L-14-BEST-smooth-GmP-TE-only-HF-format.safetensors', 'ViT-L-14-TEXT-detail-improved-hiT-GmP-TE-only-HF.safetensors', 'byt5_small_glyphxl_fp16.safetensors', 'clip_g.safetensors', 'clip_g_hidream.safetensors', 'clip_l.safetensors', 'clip_l_hidream.safetensors', 'ernie-image-prompt-enhancer.safetensors', 'flux1-dev-Q4_K_S.gguf', 'flux1-dev-Q8_0.gguf', 'flux1-schnell-Q4_K_S.gguf', 'flux1-schnell-Q8_0.gguf', 'full_encoder_small_decoder.safetensors', 'gemma_2_2b_fp16.safetensors', 'gemma_3_12B_it.safetensors', 'gemma_3_12B_it_fp4_mixed.safetensors', 'gemma_3_12B_it_fp8_scaled.safetensors', 'gemma_3_4b_it_bf16.safetensors', 'jina_clip_v2_bf16.safetensors', 'llama_3.1_8b_instruct_fp8_scaled.safetensors', 'llava_llama3_fp16.safetensors', 'llava_llama3_fp8_scaled.safetensors', 'ltx-2-19b-embeddings_connector_distill_bf16.safetensors', 'ltx-2.3_text_projection_bf16.safetensors', 'ministral-3-3b.safetensors', 'mistral_3_small_flux2_bf16.safetensors', 'mistral_3_small_flux2_fp8.safetensors', 'oldt5_xxl_fp16.safetensors', 'oldt5_xxl_fp8_e4m3fn_scaled.safetensors', 'ovis_2.5.safetensors', 'qwen3.5_4b_bf16.safetensors', 'qwen_0.6b_ace15.safetensors', 'qwen_1.7b_ace15.safetensors', 'qwen_2.5_vl_7b.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_2.5_vl_fp16.safetensors', 'qwen_3_06b_base.safetensors', 'qwen_3_4b.safetensors', 'qwen_3_8b.safetensors', 'qwen_3_8b_fp8mixed.safetensors', 'qwen_4b_ace15.safetensors', 't5-base.safetensors', 't5-v1_1-xxl-encoder-Q4_K_M.gguf', 't5-v1_1-xxl-encoder-Q8_0.gguf', 't5_base.safetensors', 't5xxl_fp16.safetensors', 't5xxl_fp8_e4m3fn.safetensors', 't5xxl_fp8_e4m3fn_scaled.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'] | _Omitted = _UNSET,
+    type_: Literal['sdxl', 'sd3', 'flux', 'hunyuan_video', 'hidream', 'hunyuan_image', 'hunyuan_video_15', 'kandinsky5', 'kandinsky5_image', 'ltxv', 'newbie', 'ace'] | _Omitted = _UNSET,
+    device: Literal['default', 'cpu'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -475,8 +478,8 @@ def DualCLIPLoader(
 def EmptyAceStep1_5LatentAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    seconds: Any = _UNSET,
-    batch_size: Any = _UNSET,
+    seconds: float | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -502,9 +505,9 @@ def EmptyAceStep1_5LatentAudio(
 def EmptyAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    duration: Any = _UNSET,
-    sample_rate: Any = _UNSET,
-    channels: Any = _UNSET,
+    duration: float | _Omitted = _UNSET,
+    sample_rate: int | _Omitted = _UNSET,
+    channels: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -532,9 +535,9 @@ def EmptyAudio(
 def EmptyFlux2LatentImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    batch_size: Any = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -562,10 +565,10 @@ def EmptyFlux2LatentImage(
 def EmptyHunyuanLatentVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    length: Any = _UNSET,
-    batch_size: Any = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    length: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -595,10 +598,10 @@ def EmptyHunyuanLatentVideo(
 def EmptyImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    batch_size: Any = _UNSET,
-    color: Any = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
+    color: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -628,10 +631,10 @@ def EmptyImage(
 def EmptyLTXVLatentVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    length: Any = _UNSET,
-    batch_size: Any = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    length: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -659,9 +662,9 @@ def EmptyLTXVLatentVideo(
 def EmptySD3LatentImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    batch_size: Any = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -687,9 +690,9 @@ def EmptySD3LatentImage(
 def Flux2Scheduler(
     *args: VibeWorkflow,
     _id: str | None = None,
-    steps: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
+    steps: int | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -715,10 +718,10 @@ def Flux2Scheduler(
 def GetImageRangeFromBatch(
     *args: VibeWorkflow,
     _id: str | None = None,
-    start_index: Any = _UNSET,
-    num_frames: Any = _UNSET,
-    images: Any = _UNSET,
-    masks: Any = _UNSET,
+    start_index: int | _Omitted = _UNSET,
+    num_frames: int | _Omitted = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    masks: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -748,7 +751,7 @@ def GetImageRangeFromBatch(
 def GetImageSize(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -772,7 +775,7 @@ def GetImageSize(
 def GetVideoComponents(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video: Any = _UNSET,
+    video: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -796,9 +799,9 @@ def GetVideoComponents(
 def GrowMask(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
-    expand: Any = _UNSET,
-    tapered_corners: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
+    expand: int | _Omitted = _UNSET,
+    tapered_corners: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -826,10 +829,10 @@ def GrowMask(
 def ImageBlend(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image1: Any = _UNSET,
-    image2: Any = _UNSET,
-    blend_factor: Any = _UNSET,
-    blend_mode: Any = _UNSET,
+    image1: Any | _Omitted = _UNSET,
+    image2: Any | _Omitted = _UNSET,
+    blend_factor: float | _Omitted = _UNSET,
+    blend_mode: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -859,9 +862,9 @@ def ImageBlend(
 def ImageBlur(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    blur_radius: Any = _UNSET,
-    sigma: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    blur_radius: int | _Omitted = _UNSET,
+    sigma: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -889,9 +892,9 @@ def ImageBlur(
 def ImageFromBatch(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    batch_index: Any = _UNSET,
-    length: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    batch_index: int | _Omitted = _UNSET,
+    length: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -917,11 +920,11 @@ def ImageFromBatch(
 def ImageScale(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    upscale_method: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    crop: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    upscale_method: Literal['nearest-exact', 'bilinear', 'area', 'bicubic', 'lanczos'] | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    crop: Literal['disabled', 'center'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -953,9 +956,9 @@ def ImageScale(
 def ImageScaleBy(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    upscale_method: Any = _UNSET,
-    scale_by: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    upscale_method: Literal['nearest-exact', 'bilinear', 'area', 'bicubic', 'lanczos'] | _Omitted = _UNSET,
+    scale_by: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -983,10 +986,10 @@ def ImageScaleBy(
 def ImageScaleToTotalPixels(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    upscale_method: Any = _UNSET,
-    megapixels: Any = _UNSET,
-    resolution_steps: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    upscale_method: Any | _Omitted = _UNSET,
+    megapixels: float | _Omitted = _UNSET,
+    resolution_steps: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1014,16 +1017,16 @@ def ImageScaleToTotalPixels(
 def KSampler(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    seed: Any = _UNSET,
-    steps: Any = _UNSET,
-    cfg: Any = _UNSET,
-    sampler_name: Any = _UNSET,
-    scheduler: Any = _UNSET,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    latent_image: Any = _UNSET,
-    denoise: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    seed: int | _Omitted = _UNSET,
+    steps: int | _Omitted = _UNSET,
+    cfg: float | _Omitted = _UNSET,
+    sampler_name: Literal['euler', 'euler_cfg_pp', 'euler_ancestral', 'euler_ancestral_cfg_pp', 'heun', 'heunpp2', 'exp_heun_2_x0', 'exp_heun_2_x0_sde', 'dpm_2', 'dpm_2_ancestral', 'lms', 'dpm_fast', 'dpm_adaptive', 'dpmpp_2s_ancestral', 'dpmpp_2s_ancestral_cfg_pp', 'dpmpp_sde', 'dpmpp_sde_gpu', 'dpmpp_2m', 'dpmpp_2m_cfg_pp', 'dpmpp_2m_sde', 'dpmpp_2m_sde_gpu', 'dpmpp_2m_sde_heun', 'dpmpp_2m_sde_heun_gpu', 'dpmpp_3m_sde', 'dpmpp_3m_sde_gpu', 'ddpm', 'lcm', 'ipndm', 'ipndm_v', 'deis', 'res_multistep', 'res_multistep_cfg_pp', 'res_multistep_ancestral', 'res_multistep_ancestral_cfg_pp', 'gradient_estimation', 'gradient_estimation_cfg_pp', 'er_sde', 'seeds_2', 'seeds_3', 'sa_solver', 'sa_solver_pece', 'ddim', 'uni_pc', 'uni_pc_bh2'] | _Omitted = _UNSET,
+    scheduler: Literal['normal', 'karras', 'exponential', 'sgm_uniform', 'simple', 'ddim_uniform', 'beta', 'linear_quadratic', 'kl_optimal'] | _Omitted = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    latent_image: Any | _Omitted = _UNSET,
+    denoise: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1065,7 +1068,7 @@ def KSampler(
 def KSamplerSelect(
     *args: VibeWorkflow,
     _id: str | None = None,
-    sampler_name: Any = _UNSET,
+    sampler_name: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1087,9 +1090,9 @@ def KSamplerSelect(
 def LTXAVTextEncoderLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    text_encoder: Any = _UNSET,
-    ckpt_name: Any = _UNSET,
-    device: Any = _UNSET,
+    text_encoder: Any | _Omitted = _UNSET,
+    ckpt_name: Any | _Omitted = _UNSET,
+    device: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1119,13 +1122,13 @@ def LTXAVTextEncoderLoader(
 def LTXVAddGuide(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    vae: Any = _UNSET,
-    latent: Any = _UNSET,
-    image: Any = _UNSET,
-    frame_idx: Any = _UNSET,
-    strength: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    frame_idx: int | _Omitted = _UNSET,
+    strength: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1159,11 +1162,11 @@ def LTXVAddGuide(
 def LTXVAddGuideMulti(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    vae: Any = _UNSET,
-    latent: Any = _UNSET,
-    num_guides: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    num_guides: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1195,8 +1198,8 @@ def LTXVAddGuideMulti(
 def LTXVAudioVAEDecode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    audio_vae: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    audio_vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1222,8 +1225,8 @@ def LTXVAudioVAEDecode(
 def LTXVAudioVAEEncode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
-    audio_vae: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
+    audio_vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1249,7 +1252,7 @@ def LTXVAudioVAEEncode(
 def LTXVAudioVAELoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    ckpt_name: Any = _UNSET,
+    ckpt_name: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1273,8 +1276,8 @@ def LTXVAudioVAELoader(
 def LTXVConcatAVLatent(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video_latent: Any = _UNSET,
-    audio_latent: Any = _UNSET,
+    video_latent: Any | _Omitted = _UNSET,
+    audio_latent: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1298,9 +1301,9 @@ def LTXVConcatAVLatent(
 def LTXVConditioning(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    frame_rate: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    frame_rate: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1326,9 +1329,9 @@ def LTXVConditioning(
 def LTXVCropGuides(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    latent: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1354,10 +1357,10 @@ def LTXVCropGuides(
 def LTXVEmptyLatentAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    frames_number: Any = _UNSET,
-    frame_rate: Any = _UNSET,
-    batch_size: Any = _UNSET,
-    audio_vae: Any = _UNSET,
+    frames_number: int | _Omitted = _UNSET,
+    frame_rate: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
+    audio_vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1387,11 +1390,11 @@ def LTXVEmptyLatentAudio(
 def LTXVImgToVideoInplace(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vae: Any = _UNSET,
-    image: Any = _UNSET,
-    latent: Any = _UNSET,
-    strength: Any = _UNSET,
-    bypass: Any = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    strength: float | _Omitted = _UNSET,
+    bypass: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1421,9 +1424,9 @@ def LTXVImgToVideoInplace(
 def LTXVLatentUpsampler(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    upscale_model: Any = _UNSET,
-    vae: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    upscale_model: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1451,8 +1454,8 @@ def LTXVLatentUpsampler(
 def LTXVPreprocess(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    img_compression: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    img_compression: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1476,12 +1479,12 @@ def LTXVPreprocess(
 def LTXVScheduler(
     *args: VibeWorkflow,
     _id: str | None = None,
-    steps: Any = _UNSET,
-    max_shift: Any = _UNSET,
-    base_shift: Any = _UNSET,
-    stretch: Any = _UNSET,
-    terminal: Any = _UNSET,
-    latent: Any = _UNSET,
+    steps: int | _Omitted = _UNSET,
+    max_shift: float | _Omitted = _UNSET,
+    base_shift: float | _Omitted = _UNSET,
+    stretch: bool | _Omitted = _UNSET,
+    terminal: float | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1513,7 +1516,7 @@ def LTXVScheduler(
 def LTXVSeparateAVLatent(
     *args: VibeWorkflow,
     _id: str | None = None,
-    av_latent: Any = _UNSET,
+    av_latent: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1537,7 +1540,7 @@ def LTXVSeparateAVLatent(
 def LatentUpscaleModelLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model_name: Any = _UNSET,
+    model_name: Literal['hunyuanvideo15_latent_upsampler_1080p.safetensors', 'ltx-2-spatial-upscaler-x2-1.0.safetensors', 'ltx-2.3-spatial-upscaler-x1.5-1.0.safetensors', 'ltx-2.3-spatial-upscaler-x2-1.0.safetensors', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'ltx-2.3-temporal-upscaler-x2-1.0.safetensors'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1561,7 +1564,7 @@ def LatentUpscaleModelLoader(
 def LoadAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1585,7 +1588,7 @@ def LoadAudio(
 def LoadImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1609,7 +1612,7 @@ def LoadImage(
 def LoadVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    file: Any = _UNSET,
+    file: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1633,9 +1636,9 @@ def LoadVideo(
 def LoraLoaderModelOnly(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    lora_name: Any = _UNSET,
-    strength_model: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    lora_name: Literal['Flux2TurboComfyv2.safetensors', 'Flux_2-Turbo-LoRA_comfyui.safetensors', 'GoodHands-beta2.safetensors', 'Hyper-SD15-12steps-CFG-lora.safetensors', 'Hyper-SDXL-12steps-CFG-lora.safetensors', 'LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors', 'PixelArtRedmond15V-PixelArt-PIXARFK.safetensors', 'Qwen-Edit-2509-Multiple-angles.safetensors', 'Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors', 'Qwen-Image-Edit-2509-Anything2RealAlpha.safetensors', 'Qwen-Image-Edit-2509-Fusion.safetensors', 'Qwen-Image-Edit-2509-Light-Migration.safetensors', 'Qwen-Image-Edit-2509-Lightning-4steps-V1.0-bf16.safetensors', 'Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors', 'Qwen-Image-Edit-2509-Relight.safetensors', 'Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors', 'Qwen-Image-Edit-Lightning-4steps-V1.0.safetensors', 'Qwen-Image-Edit-Lightning-8steps-V1.0.safetensors', 'Qwen-Image-Lightning-4steps-V2.0.safetensors', 'Qwen-Image-Lightning-8steps-V2.0-bf16.safetensors', 'Qwen-Image-Lightning-8steps-V2.0.safetensors', 'WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors', 'WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors', 'Wuli-Qwen-Image-2512-Turbo-LoRA-2steps-V1.0-bf16.safetensors', 'blur_control_xl_v1.safetensors', 'chronoedit_distill_lora.safetensors', 'flux1-canny-dev-lora.safetensors', 'flux1-depth-dev-lora.safetensors', 'gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors', 'gummycandy_qwen.safetensors', 'illustration-1.0-qwen-image.safetensors', 'ip-adapter-faceid-plus_sd15_lora.safetensors', 'ip-adapter-faceid-plusv2_sd15_lora.safetensors', 'ip-adapter-faceid-plusv2_sdxl_lora.safetensors', 'ip-adapter-faceid_sd15_lora.safetensors', 'ip-adapter-faceid_sdxl_lora.safetensors', 'lcm_lora_sdxl.safetensors', 'lightx2v_14B_T2V_cfg_step_distill_lora_adaptive_rank_quantile_0.15_bf16.safetensors', 'ltx-2-19b-distilled-lora-384.safetensors', 'ltx-2-19b-ic-lora-canny-control.safetensors', 'ltx-2-19b-ic-lora-depth-control.safetensors', 'ltx-2-19b-ic-lora-pose-control.safetensors', 'ltx-2-19b-lora-camera-control-dolly-left.safetensors', 'ltx-2.3-22b-distilled-lora-384.safetensors', 'ltx-2.3-id-lora-talkvid-3k.safetensors', 'ltx2-squish.safetensors', 'ltx2.3-transition.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors', 'openxl_handsfix.safetensors', 'qwen-image-edit-2511-multiple-angles-lora.safetensors', 'qwen_image_union_diffsynth_lora.safetensors', 'uso-flux1-dit-lora-v1.safetensors', 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors', 'wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors', 'wan2.2_t2v_lightx2v_4steps_lora_v1.1_high_noise.safetensors', 'wan2.2_t2v_lightx2v_4steps_lora_v1.1_low_noise.safetensors', 'wan_alpha_2.1_rgba_lora.safetensors'] | _Omitted = _UNSET,
+    strength_model: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1663,7 +1666,7 @@ def LoraLoaderModelOnly(
 def ManualSigmas(
     *args: VibeWorkflow,
     _id: str | None = None,
-    sigmas: Any = _UNSET,
+    sigmas: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1685,7 +1688,7 @@ def ManualSigmas(
 def MaskPreview(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1709,7 +1712,7 @@ def MaskPreview(
 def MaskToImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    mask: Any = _UNSET,
+    mask: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1733,8 +1736,8 @@ def MaskToImage(
 def ModelSamplingAuraFlow(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    shift: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    shift: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1760,8 +1763,8 @@ def ModelSamplingAuraFlow(
 def ModelSamplingSD3(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    shift: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    shift: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1787,10 +1790,10 @@ def ModelSamplingSD3(
 def PixelPerfectResolution(
     *args: VibeWorkflow,
     _id: str | None = None,
-    original_image: Any = _UNSET,
-    image_gen_width: Any = _UNSET,
-    image_gen_height: Any = _UNSET,
-    resize_mode: Any = _UNSET,
+    original_image: Any | _Omitted = _UNSET,
+    image_gen_width: int | _Omitted = _UNSET,
+    image_gen_height: int | _Omitted = _UNSET,
+    resize_mode: Literal['Just Resize', 'Crop and Resize', 'Resize and Fill'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1820,7 +1823,7 @@ def PixelPerfectResolution(
 def PreviewAny(
     *args: VibeWorkflow,
     _id: str | None = None,
-    source: Any = _UNSET,
+    source: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1844,7 +1847,7 @@ def PreviewAny(
 def PreviewAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1868,7 +1871,7 @@ def PreviewAudio(
 def PreviewImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1892,7 +1895,7 @@ def PreviewImage(
 def PrimitiveStringMultiline(
     *args: VibeWorkflow,
     _id: str | None = None,
-    value: Any = _UNSET,
+    value: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1916,7 +1919,7 @@ def PrimitiveStringMultiline(
 def RandomNoise(
     *args: VibeWorkflow,
     _id: str | None = None,
-    noise_seed: Any = _UNSET,
+    noise_seed: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1938,8 +1941,8 @@ def RandomNoise(
 def ReferenceLatent(
     *args: VibeWorkflow,
     _id: str | None = None,
-    conditioning: Any = _UNSET,
-    latent: Any = _UNSET,
+    conditioning: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1965,8 +1968,8 @@ def ReferenceLatent(
 def RepeatImageBatch(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    amount: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    amount: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -1990,9 +1993,9 @@ def RepeatImageBatch(
 def ResizeImageMaskNode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    input: Any = _UNSET,
-    resize_type: Any = _UNSET,
-    scale_method: Any = _UNSET,
+    input: Any | _Omitted = _UNSET,
+    resize_type: Any | _Omitted = _UNSET,
+    scale_method: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2020,8 +2023,8 @@ def ResizeImageMaskNode(
 def ResizeImagesByLongerEdge(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    longer_edge: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    longer_edge: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2047,11 +2050,11 @@ def ResizeImagesByLongerEdge(
 def SamplerCustomAdvanced(
     *args: VibeWorkflow,
     _id: str | None = None,
-    noise: Any = _UNSET,
-    guider: Any = _UNSET,
-    sampler: Any = _UNSET,
-    sigmas: Any = _UNSET,
-    latent_image: Any = _UNSET,
+    noise: Any | _Omitted = _UNSET,
+    guider: Any | _Omitted = _UNSET,
+    sampler: Any | _Omitted = _UNSET,
+    sigmas: Any | _Omitted = _UNSET,
+    latent_image: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2081,8 +2084,8 @@ def SamplerCustomAdvanced(
 def SamplerEulerAncestral(
     *args: VibeWorkflow,
     _id: str | None = None,
-    eta: Any = _UNSET,
-    s_noise: Any = _UNSET,
+    eta: float | _Omitted = _UNSET,
+    s_noise: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2106,9 +2109,9 @@ def SamplerEulerAncestral(
 def SaveAudioMP3(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
-    filename_prefix: Any = _UNSET,
-    quality: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
+    filename_prefix: str | _Omitted = _UNSET,
+    quality: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2136,8 +2139,8 @@ def SaveAudioMP3(
 def SaveImage(
     *args: VibeWorkflow,
     _id: str | None = None,
-    images: Any = _UNSET,
-    filename_prefix: Any = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    filename_prefix: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2163,10 +2166,10 @@ def SaveImage(
 def SaveVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    video: Any = _UNSET,
-    filename_prefix: Any = _UNSET,
-    format: Any = _UNSET,
-    codec: Any = _UNSET,
+    video: Any | _Omitted = _UNSET,
+    filename_prefix: str | _Omitted = _UNSET,
+    format: Any | _Omitted = _UNSET,
+    codec: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2196,8 +2199,8 @@ def SaveVideo(
 def SetLatentNoiseMask(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    mask: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    mask: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2223,10 +2226,10 @@ def SetLatentNoiseMask(
 def SimpleMath(
     *args: VibeWorkflow,
     _id: str | None = None,
-    value: Any = _UNSET,
-    a: Any = _UNSET,
-    b: Any = _UNSET,
-    c: Any = _UNSET,
+    value: str | _Omitted = _UNSET,
+    a: Any | _Omitted = _UNSET,
+    b: Any | _Omitted = _UNSET,
+    c: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2256,9 +2259,9 @@ def SimpleMath(
 def SolidMask(
     *args: VibeWorkflow,
     _id: str | None = None,
-    value: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
+    value: float | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2284,9 +2287,9 @@ def SolidMask(
 def StringConcatenate(
     *args: VibeWorkflow,
     _id: str | None = None,
-    string_a: Any = _UNSET,
-    string_b: Any = _UNSET,
-    delimiter: Any = _UNSET,
+    string_a: str | _Omitted = _UNSET,
+    string_b: str | _Omitted = _UNSET,
+    delimiter: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2314,21 +2317,21 @@ def StringConcatenate(
 def TextEncodeAceStepAudio1_5(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip: Any = _UNSET,
-    tags: Any = _UNSET,
-    lyrics: Any = _UNSET,
-    seed: Any = _UNSET,
-    bpm: Any = _UNSET,
-    duration: Any = _UNSET,
-    timesignature: Any = _UNSET,
-    language: Any = _UNSET,
-    keyscale: Any = _UNSET,
-    generate_audio_codes: Any = _UNSET,
-    cfg_scale: Any = _UNSET,
-    temperature: Any = _UNSET,
-    top_p: Any = _UNSET,
-    top_k: Any = _UNSET,
-    min_p: Any = _UNSET,
+    clip: Any | _Omitted = _UNSET,
+    tags: str | _Omitted = _UNSET,
+    lyrics: str | _Omitted = _UNSET,
+    seed: int | _Omitted = _UNSET,
+    bpm: int | _Omitted = _UNSET,
+    duration: float | _Omitted = _UNSET,
+    timesignature: Any | _Omitted = _UNSET,
+    language: Any | _Omitted = _UNSET,
+    keyscale: Any | _Omitted = _UNSET,
+    generate_audio_codes: bool | _Omitted = _UNSET,
+    cfg_scale: float | _Omitted = _UNSET,
+    temperature: float | _Omitted = _UNSET,
+    top_p: float | _Omitted = _UNSET,
+    top_k: int | _Omitted = _UNSET,
+    min_p: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2378,10 +2381,10 @@ def TextEncodeAceStepAudio1_5(
 def TextEncodeQwenImageEdit(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip: Any = _UNSET,
-    prompt: Any = _UNSET,
-    vae: Any = _UNSET,
-    image: Any = _UNSET,
+    clip: Any | _Omitted = _UNSET,
+    prompt: str | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2409,12 +2412,12 @@ def TextEncodeQwenImageEdit(
 def TextGenerateLTX2Prompt(
     *args: VibeWorkflow,
     _id: str | None = None,
-    clip: Any = _UNSET,
-    prompt: Any = _UNSET,
-    max_length: Any = _UNSET,
-    sampling_mode: Any = _UNSET,
-    image: Any = _UNSET,
-    thinking: Any = _UNSET,
+    clip: Any | _Omitted = _UNSET,
+    prompt: str | _Omitted = _UNSET,
+    max_length: int | _Omitted = _UNSET,
+    sampling_mode: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    thinking: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2446,9 +2449,9 @@ def TextGenerateLTX2Prompt(
 def TrimAudioDuration(
     *args: VibeWorkflow,
     _id: str | None = None,
-    audio: Any = _UNSET,
-    start_index: Any = _UNSET,
-    duration: Any = _UNSET,
+    audio: Any | _Omitted = _UNSET,
+    start_index: float | _Omitted = _UNSET,
+    duration: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2476,8 +2479,8 @@ def TrimAudioDuration(
 def TrimVideoLatent(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    trim_amount: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    trim_amount: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2501,8 +2504,8 @@ def TrimVideoLatent(
 def UNETLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    unet_name: Any = _UNSET,
-    weight_dtype: Any = _UNSET,
+    unet_name: Any | _Omitted = _UNSET,
+    weight_dtype: Literal['default', 'fp8_e4m3fn', 'fp8_e5m2', 'fp8_e4m3fn_fast'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2528,8 +2531,8 @@ def UNETLoader(
 def VAEDecode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    vae: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2555,8 +2558,8 @@ def VAEDecode(
 def VAEDecodeAudio(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    vae: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2582,12 +2585,12 @@ def VAEDecodeAudio(
 def VAEDecodeTiled(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    vae: Any = _UNSET,
-    tile_size: Any = _UNSET,
-    overlap: Any = _UNSET,
-    temporal_size: Any = _UNSET,
-    temporal_overlap: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    tile_size: int | _Omitted = _UNSET,
+    overlap: int | _Omitted = _UNSET,
+    temporal_size: int | _Omitted = _UNSET,
+    temporal_overlap: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2621,8 +2624,8 @@ def VAEDecodeTiled(
 def VAEEncode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    pixels: Any = _UNSET,
-    vae: Any = _UNSET,
+    pixels: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2648,7 +2651,7 @@ def VAEEncode(
 def VAELoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vae_name: Any = _UNSET,
+    vae_name: Literal['LTX23_video_vae_bf16.safetensors', 'Wan2_1_VAE_bf16.safetensors', 'Wan2_2_VAE_bf16.safetensors', 'ace_1.5_vae.safetensors', 'ae.safetensors', 'cosmos_cv8x8x8_1.0.safetensors', 'flux2-vae.safetensors', 'hunyuan_image_2.1_vae_fp16.safetensors', 'hunyuan_image_refiner_vae_fp16.safetensors', 'hunyuan_video_vae_bf16.safetensors', 'hunyuanvideo15_vae_fp16.safetensors', 'lumina_image_2.0-ae.safetensors', 'mochi_vae.safetensors', 'qwen_image_layered_vae.safetensors', 'qwen_image_vae.safetensors', 'sdxl_vae.safetensors', 'taeltx2_3.safetensors', 'vae-ft-mse-840000-ema-pruned.safetensors', 'wan2.2_vae.safetensors', 'wan_2.1_vae.safetensors', 'wan_alpha_2.1_vae_alpha_channel.safetensors', 'wan_alpha_2.1_vae_rgb_channel.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors', 'z_image_turbo_vae.safetensors', 'pixel_space'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2672,22 +2675,22 @@ def VAELoader(
 def WanAnimateToVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    vae: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    length: Any = _UNSET,
-    batch_size: Any = _UNSET,
-    continue_motion_max_frames: Any = _UNSET,
-    video_frame_offset: Any = _UNSET,
-    clip_vision_output: Any = _UNSET,
-    reference_image: Any = _UNSET,
-    face_video: Any = _UNSET,
-    pose_video: Any = _UNSET,
-    background_video: Any = _UNSET,
-    character_mask: Any = _UNSET,
-    continue_motion: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    length: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
+    continue_motion_max_frames: int | _Omitted = _UNSET,
+    video_frame_offset: int | _Omitted = _UNSET,
+    clip_vision_output: Any | _Omitted = _UNSET,
+    reference_image: Any | _Omitted = _UNSET,
+    face_video: Any | _Omitted = _UNSET,
+    pose_video: Any | _Omitted = _UNSET,
+    background_video: Any | _Omitted = _UNSET,
+    character_mask: Any | _Omitted = _UNSET,
+    continue_motion: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -2739,15 +2742,15 @@ def WanAnimateToVideo(
 def WanImageToVideo(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    vae: Any = _UNSET,
-    width: Any = _UNSET,
-    height: Any = _UNSET,
-    length: Any = _UNSET,
-    batch_size: Any = _UNSET,
-    clip_vision_output: Any = _UNSET,
-    start_image: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    width: int | _Omitted = _UNSET,
+    height: int | _Omitted = _UNSET,
+    length: int | _Omitted = _UNSET,
+    batch_size: int | _Omitted = _UNSET,
+    clip_vision_output: Any | _Omitted = _UNSET,
+    start_image: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

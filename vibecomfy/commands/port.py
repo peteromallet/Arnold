@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
+import time
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +35,10 @@ from vibecomfy.porting.strict_ready import (
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.porting.workbench import analyze_source, load_port_source
-from vibecomfy.registry.ready import repo_ready_template_paths
-from vibecomfy.schema import ConversionSchemaProvider, get_schema_provider
+from vibecomfy.registry import load_workflow_reference
+from vibecomfy.schema import ConversionSchemaProvider, get_authoring_schema_provider, get_schema_provider, validate_node_call
 from vibecomfy.schema.cache import latest_object_info_cache_path
+from vibecomfy.commands.nodes import build_nodes_install_plan_payload
 
 
 PORT_HELP = """Cheap preflight and Python materialization for ComfyUI workflow ports.
@@ -49,17 +53,8 @@ custom node install planning, and `fetch` for URL-backed models. Use
 
 
 def _cmd_port_check(args: argparse.Namespace) -> int:
-    schema_provider = _build_conversion_provider(args)
-    port_mode: str = "strict_ready" if getattr(args, "strict_ready_template", False) else "auto"
     try:
-        report = analyze_source(
-            args.workflow,
-            schema_provider=schema_provider,
-            head_check_models=args.head_check_models,
-            mode=port_mode,
-        )
-        if getattr(args, "strict_ready_template", False):
-            _apply_strict_ready_template_gate(report)
+        payload, report = build_port_check_payload(args)
     except Exception as exc:
         return _emit_strict_ready_load_failure(
             args,
@@ -67,15 +62,30 @@ def _cmd_port_check(args: argparse.Namespace) -> int:
             operation="check",
             strict_enabled=getattr(args, "strict_ready_template", False),
         )
-    _inject_schema_source_metadata(report, args)
-    payload = report.to_json()
-    _attach_contract_fields(payload)
-    _attach_report_strict_ready(payload)
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         print(_render_check(report))
     return 1 if report.has_errors else 0
+
+
+def build_port_check_payload(args: argparse.Namespace) -> tuple[dict[str, Any], Any]:
+    schema_provider = _build_authoring_provider(args)
+    setattr(args, "_schema_provider_name", type(schema_provider).__name__)
+    port_mode: str = "strict_ready" if getattr(args, "strict_ready_template", False) else "auto"
+    report = analyze_source(
+        args.workflow,
+        schema_provider=schema_provider,
+        head_check_models=args.head_check_models,
+        mode=port_mode,
+    )
+    if getattr(args, "strict_ready_template", False):
+        _apply_strict_ready_template_gate(report)
+    _inject_schema_source_metadata(report, args)
+    payload = report.to_json()
+    _attach_contract_fields(payload)
+    _attach_report_strict_ready(payload)
+    return payload, report
 
 
 def _cmd_port_convert(args: argparse.Namespace) -> int:
@@ -378,7 +388,8 @@ def _emit_strict_ready_load_failure(
 
 
 def _cmd_port_widgets(args: argparse.Namespace) -> int:
-    schema_provider = get_schema_provider("local")
+    schema_provider = _build_authoring_provider(args)
+    setattr(args, "_schema_provider_name", type(schema_provider).__name__)
     try:
         loaded = load_port_source(
             args.workflow,
@@ -404,6 +415,310 @@ def _cmd_port_widgets(args: argparse.Namespace) -> int:
     else:
         print(_render_widgets(payload))
     return 0
+
+
+def _cmd_port_export(args: argparse.Namespace) -> int:
+    if args.to != "json":
+        print(f"unsupported export target: {args.to!r}; supported values: json", file=sys.stderr)
+        return 2
+    try:
+        schema_provider = _build_authoring_provider(args)
+        workflow = load_workflow_reference(
+            args.workflow,
+            schema_provider=schema_provider,
+            allow_scratchpad=True,
+            ready=getattr(args, "ready", False),
+        )
+        payload = {
+            "status": "ok",
+            "workflow": args.workflow,
+            "format": "api",
+            "api": workflow.export_to_json(format="api"),
+        }
+    except Exception as exc:
+        print(f"port export failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(json.dumps(payload["api"], indent=2, sort_keys=True))
+    return 0
+
+
+def _cmd_port_validate_call(args: argparse.Namespace) -> int:
+    try:
+        kwargs = json.loads(args.kwargs)
+    except json.JSONDecodeError as exc:
+        payload = {
+            "status": "error",
+            "class_type": args.class_type,
+            "ok": False,
+            "errors": [
+                {
+                    "code": "invalid_kwargs_json",
+                    "message": str(exc),
+                    "input": None,
+                    "detail": {"position": exc.pos},
+                }
+            ],
+            "provider": None,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"invalid --kwargs JSON: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(kwargs, dict):
+        payload = {
+            "status": "error",
+            "class_type": args.class_type,
+            "ok": False,
+            "errors": [
+                {
+                    "code": "invalid_kwargs_json",
+                    "message": "--kwargs must decode to a JSON object",
+                    "input": None,
+                    "detail": {"decoded_type": type(kwargs).__name__},
+                }
+            ],
+            "provider": None,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print("--kwargs must decode to a JSON object", file=sys.stderr)
+        return 2
+    provider = _build_validate_call_provider(args)
+    report = validate_node_call(args.class_type, kwargs, provider=provider)
+    payload = report.to_json()
+    payload["status"] = "ok" if report.ok else "error"
+    payload["provider"] = type(provider).__name__
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        if report.ok:
+            print("ok")
+        else:
+            for issue in report.issues:
+                print(f"{issue.code}: {issue.message}", file=sys.stderr)
+    return 0 if report.ok else 1
+
+
+def _cmd_port_doctor_all(args: argparse.Namespace) -> int:
+    if not getattr(args, "json", False):
+        print("port doctor-all currently emits machine-readable output; pass --json", file=sys.stderr)
+        return 2
+    sections = [
+        _doctor_all_port_check,
+        _doctor_all_nodes_install_plan,
+        _doctor_all_validate,
+        _doctor_all_doctor,
+        _doctor_all_runtime_doctor,
+    ]
+    started = time.perf_counter()
+    results = [section(args) for section in sections]
+    findings = [finding for result in results for finding in result.get("findings", [])]
+    payload = {
+        "status": "ok" if not any(result["status"] == "error" for result in results) else "error",
+        "workflow": args.workflow,
+        "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+        "sections": results,
+        "summary": {
+            "section_count": len(results),
+            "ok_sections": sum(1 for result in results if result["status"] == "ok"),
+            "warning_sections": sum(1 for result in results if result["status"] == "warning"),
+            "error_sections": sum(1 for result in results if result["status"] == "error"),
+            "finding_count": len(findings),
+        },
+        "findings": findings,
+        "next_action": _first_next_action(findings) or f"vibecomfy port check {args.workflow} --json",
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 1 if payload["status"] == "error" else 0
+
+
+def _doctor_all_section(name: str, func) -> dict[str, Any]:
+    started = time.perf_counter()
+    stdout = StringIO()
+    stderr = StringIO()
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            payload, exit_code = func()
+        status = "ok" if exit_code == 0 else "error"
+        if isinstance(payload, dict) and payload.get("status") == "warning":
+            status = "warning"
+        return {
+            "name": name,
+            "status": status,
+            "exit_code": exit_code,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+            "payload": payload,
+            "findings": _normalize_findings(name, payload),
+            "stderr": stderr.getvalue(),
+            "captured_stdout": stdout.getvalue(),
+            "next_action": _payload_next_action(payload),
+        }
+    except Exception as exc:
+        return {
+            "name": name,
+            "status": "error",
+            "exit_code": 1,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+            "payload": None,
+            "findings": [
+                {
+                    "section": name,
+                    "severity": "error",
+                    "code": "section_exception",
+                    "message": f"{type(exc).__name__}: {exc}",
+                    "next_action": None,
+                }
+            ],
+            "stderr": stderr.getvalue(),
+            "captured_stdout": stdout.getvalue(),
+            "next_action": None,
+        }
+
+
+def _doctor_all_port_check(args: argparse.Namespace) -> dict[str, Any]:
+    def run() -> tuple[dict[str, Any], int]:
+        payload, report = build_port_check_payload(
+            argparse.Namespace(
+                workflow=args.workflow,
+                json=True,
+                head_check_models=False,
+                strict_ready_template=False,
+                runtime_object_info=False,
+                object_info_cache=getattr(args, "object_info_cache", None),
+                no_object_info_cache=False,
+                server_url=None,
+            )
+        )
+        return payload, 1 if report.has_errors else 0
+
+    return _doctor_all_section(
+        "port_check",
+        run,
+    )
+
+
+def _doctor_all_nodes_install_plan(args: argparse.Namespace) -> dict[str, Any]:
+    def run() -> tuple[dict[str, Any], int]:
+        import vibecomfy.node_packs_install as node_packs_install
+
+        workflow = load_workflow_reference(args.workflow, schema_provider=get_schema_provider("auto"), allow_scratchpad=True, ready=getattr(args, "ready", False))
+        missing_classes = node_packs_install.missing_class_types_for_workflow(workflow)
+        authoring_provider = get_authoring_schema_provider()
+        missing_classes = {
+            class_type
+            for class_type in missing_classes
+            if authoring_provider.get_schema(str(class_type)) is None
+        }
+        packs, unresolved = node_packs_install.missing_packs_for_workflow(workflow)
+        unresolved = [class_type for class_type in unresolved if class_type in missing_classes]
+        packs = [pack for pack in packs if missing_classes & pack.classes]
+        payload = {
+            "status": "ok" if not unresolved else "error",
+            **build_nodes_install_plan_payload(
+                args.workflow,
+                missing_classes,
+                packs,
+                unresolved,
+            ),
+        }
+        return payload, 1 if unresolved else 0
+
+    return _doctor_all_section("nodes_install_plan", run)
+
+
+def _doctor_all_validate(args: argparse.Namespace) -> dict[str, Any]:
+    def run() -> tuple[dict[str, Any], int]:
+        from vibecomfy.commands.validate import build_validate_payload
+
+        payload = build_validate_payload(args.workflow)
+        return payload, 0 if payload.get("status") == "ok" else 1
+
+    return _doctor_all_section("validate", run)
+
+
+def _doctor_all_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    def run() -> tuple[dict[str, Any], int]:
+        from vibecomfy.commands.doctor import _cmd_doctor
+
+        stdout = StringIO()
+        stderr = StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = _cmd_doctor(argparse.Namespace(path=args.workflow, json=True, lint=False, allow_drift=False))
+        text = stdout.getvalue().strip()
+        payload = json.loads(text) if text else {"status": "error", "errors": ["doctor emitted no JSON"]}
+        payload["_captured_stderr"] = stderr.getvalue()
+        return payload, exit_code
+
+    return _doctor_all_section("doctor", run)
+
+
+def _doctor_all_runtime_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    def run() -> tuple[dict[str, Any], int]:
+        from vibecomfy.commands.runtime import build_runtime_doctor_payload
+
+        payload = build_runtime_doctor_payload()
+        return payload, 0 if payload.get("status") == "ok" else 1
+
+    return _doctor_all_section("runtime_doctor", run)
+
+
+def _normalize_findings(section: str, payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    findings: list[dict[str, Any]] = []
+    for item in payload.get("diagnostics") or []:
+        if isinstance(item, dict):
+            findings.append(
+                {
+                    "section": section,
+                    "severity": item.get("severity", "warning"),
+                    "code": item.get("code", "diagnostic"),
+                    "message": item.get("message", ""),
+                    "next_action": item.get("recommendation") or payload.get("recommended_command"),
+                }
+            )
+    for key, severity in (("errors", "error"), ("warnings", "warning"), ("missing_models", "error"), ("nodepack_warnings", "warning")):
+        for item in payload.get(key) or []:
+            findings.append(
+                {
+                    "section": section,
+                    "severity": severity,
+                    "code": key.rstrip("s"),
+                    "message": str(item),
+                    "next_action": payload.get("recommended_command"),
+                }
+            )
+    for item in payload.get("issues") or []:
+        if isinstance(item, dict):
+            findings.append(
+                {
+                    "section": section,
+                    "severity": item.get("severity", "error"),
+                    "code": item.get("code", "issue"),
+                    "message": item.get("message", ""),
+                    "next_action": payload.get("recommended_command"),
+                }
+            )
+    return findings
+
+
+def _payload_next_action(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("recommended_command") or payload.get("next_action")
+
+
+def _first_next_action(findings: list[dict[str, Any]]) -> str | None:
+    for finding in findings:
+        action = finding.get("next_action")
+        if action:
+            return str(action)
+    return None
 
 
 def _cmd_port_inventory(args: argparse.Namespace) -> int:
@@ -607,6 +922,20 @@ def _build_conversion_provider(args: argparse.Namespace) -> ConversionSchemaProv
     )
 
 
+def _build_authoring_provider(args: argparse.Namespace):
+    object_info_cache = getattr(args, "object_info_cache", None)
+    return get_authoring_schema_provider(
+        object_info_cache_path=object_info_cache,
+        object_info_index_root=Path(__file__).resolve().parents[1] / "porting" / "cache" / "object_info",
+    )
+
+
+def _build_validate_call_provider(args: argparse.Namespace):
+    """Provider hook for the schema-only ``port validate-call`` command."""
+
+    return _build_authoring_provider(args)
+
+
 def _object_info_cache_is_useful(path: Path | None) -> bool:
     """Avoid letting tiny focused runtime caches shadow deterministic fallbacks."""
     if path is None:
@@ -625,7 +954,7 @@ def _inject_schema_source_metadata(report: Any, args: argparse.Namespace) -> Non
     runtime_enabled = getattr(args, "runtime_object_info", False)
     server_url: str | None = getattr(args, "server_url", None)
     report.metadata["schema_source"] = {
-        "provider": "ConversionSchemaProvider",
+        "provider": getattr(args, "_schema_provider_name", "ConversionSchemaProvider"),
         "runtime_enabled": runtime_enabled,
         "server_url": server_url,
         "object_info_cache": getattr(args, "object_info_cache", None)
@@ -922,6 +1251,28 @@ def register(subparsers) -> None:
     widgets.add_argument("--json", action="store_true")
     widgets.set_defaults(func=_cmd_port_widgets)
 
+    export = port_subparsers.add_parser("export", help="Export a loaded workflow as API JSON.")
+    export.add_argument("workflow")
+    export.add_argument("--ready", action="store_true")
+    export.add_argument("--to", default="json")
+    export.add_argument("--json", action="store_true")
+    export.add_argument("--object-info-cache")
+    export.set_defaults(func=_cmd_port_export)
+
+    validate_call = port_subparsers.add_parser("validate-call", help="Validate one node call against authoring schema.")
+    validate_call.add_argument("class_type")
+    validate_call.add_argument("--kwargs", required=True, help="JSON object of node kwargs to validate.")
+    validate_call.add_argument("--json", action="store_true")
+    validate_call.add_argument("--object-info-cache")
+    validate_call.set_defaults(func=_cmd_port_validate_call)
+
+    doctor_all = port_subparsers.add_parser("doctor-all", help="Run port, install-plan, validate, doctor, and runtime doctor sections.")
+    doctor_all.add_argument("workflow")
+    doctor_all.add_argument("--ready", action="store_true")
+    doctor_all.add_argument("--json", action="store_true")
+    doctor_all.add_argument("--object-info-cache")
+    doctor_all.set_defaults(func=_cmd_port_doctor_all)
+
     inventory = port_subparsers.add_parser(
         "inventory",
         help="Repo-only readability inventory for checked-in ready templates.",
@@ -983,6 +1334,9 @@ __all__ = [
     "_cmd_port_inventory",
     "_cmd_port_repair",
     "_cmd_port_widgets",
+    "_cmd_port_export",
+    "_cmd_port_validate_call",
+    "_cmd_port_doctor_all",
     "_cmd_port_lint",
     "_cmd_port_rules",
     "_cmd_port_simulate",

@@ -190,7 +190,7 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 continue
             output_type = _edge_output_type(from_schema, from_output)
             input_type = _edge_input_type(to_schema, input_name)
-            if output_type and input_type and not _types_compatible(output_type, input_type):
+            if output_type and input_type and not socket_types_compatible(output_type, input_type):
                 issues.append(
                     ValidationIssue(
                         "type_mismatch",
@@ -404,10 +404,16 @@ def _normalize_type(value: Any) -> str | None:
     return text
 
 
-def _types_compatible(output_type: str, input_type: str) -> bool:
-    if output_type == input_type:
+def socket_types_compatible(output_type: Any, input_type: Any) -> bool:
+    """Return whether a Comfy output socket type can connect to an input type."""
+
+    normalized_output = _normalize_type(output_type)
+    normalized_input = _normalize_type(input_type)
+    if normalized_output is None or normalized_input is None:
         return True
-    if output_type in {"*", "ANY"} or input_type in {"*", "ANY"}:
+    if normalized_output == normalized_input:
+        return True
+    if normalized_output in {"*", "ANY"} or normalized_input in {"*", "ANY"}:
         return True
     return False
 

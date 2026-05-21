@@ -1,8 +1,39 @@
 {
-  "75:61": {
+  "1": {
     "class_type": "KSamplerSelect",
     "inputs": {
       "sampler_name": "euler"
+    }
+  },
+  "2": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux-2-klein-base-4b.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "flux2"
+    }
+  },
+  "4": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    }
+  },
+  "6": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n"
     }
   },
   "75:68": {
@@ -17,38 +48,7 @@
       "value": 1024
     }
   },
-  "75:70": {
-    "class_type": "UNETLoader",
-    "inputs": {
-      "unet_name": "flux-2-klein-base-4b.safetensors"
-    }
-  },
-  "75:71": {
-    "class_type": "CLIPLoader",
-    "inputs": {
-      "clip_name": "qwen_3_4b.safetensors",
-      "type": "flux2"
-    }
-  },
-  "75:72": {
-    "class_type": "VAELoader",
-    "inputs": {
-      "vae_name": "flux2-vae.safetensors"
-    }
-  },
-  "75:73": {
-    "class_type": "RandomNoise",
-    "inputs": {
-      "noise_seed": 0
-    }
-  },
-  "76": {
-    "class_type": "PrimitiveStringMultiline",
-    "inputs": {
-      "value": "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n"
-    }
-  },
-  "75:62": {
+  "7": {
     "class_type": "Flux2Scheduler",
     "inputs": {
       "width": [
@@ -61,7 +61,7 @@
       ]
     }
   },
-  "75:66": {
+  "8": {
     "class_type": "EmptyFlux2LatentImage",
     "inputs": {
       "width": [
@@ -74,91 +74,91 @@
       ]
     }
   },
-  "75:67": {
+  "9": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": "",
       "clip": [
-        "75:71",
+        "3",
         0
       ]
     }
   },
-  "75:74": {
+  "10": {
     "class_type": "CLIPTextEncode",
     "inputs": {
       "text": [
-        "76",
+        "6",
         0
       ],
       "clip": [
-        "75:71",
+        "3",
         0
       ]
     }
   },
-  "75:63": {
+  "11": {
     "class_type": "CFGGuider",
     "inputs": {
       "cfg": 5,
       "model": [
-        "75:70",
+        "2",
         0
       ],
       "positive": [
-        "75:74",
+        "10",
         0
       ],
       "negative": [
-        "75:67",
+        "9",
         0
       ]
     }
   },
-  "75:64": {
+  "12": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
       "noise": [
-        "75:73",
+        "5",
         0
       ],
       "guider": [
-        "75:63",
+        "11",
         0
       ],
       "sampler": [
-        "75:61",
+        "1",
         0
       ],
       "sigmas": [
-        "75:62",
+        "7",
         0
       ],
       "latent_image": [
-        "75:66",
+        "8",
         0
       ]
     }
   },
-  "75:65": {
+  "13": {
     "class_type": "VAEDecode",
     "inputs": {
       "samples": [
-        "75:64",
+        "12",
         0
       ],
       "vae": [
-        "75:72",
+        "4",
         0
       ]
     }
   },
-  "9": {
+  "14": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "Flux2-Klein",
       "images": [
-        "75:65",
+        "13",
         0
       ]
     }

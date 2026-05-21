@@ -4,11 +4,14 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 __all__ = []

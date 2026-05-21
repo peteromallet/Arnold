@@ -61,3 +61,16 @@ class RuntimeNodeError(VibeComfyError):
 
 class DriftError(VibeComfyError):
     """Custom-node or model pins have drifted from the lockfile."""
+
+
+__all__ = [
+    "ContextVarBindingError",
+    "ConversionParityError",
+    "DriftError",
+    "ModelAssetError",
+    "QueueError",
+    "RuntimeNodeError",
+    "SchemaValidationError",
+    "SubgraphFreshnessError",
+    "VibeComfyError",
+]

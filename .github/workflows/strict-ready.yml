@@ -44,7 +44,8 @@ jobs:
           tests/test_strict_ready_gate.py
           tests/test_porting_workbench.py
           tests/test_porting_inventory.py
-          tests/test_cli.py
+          tests/test_cli_misc.py
+          tests/test_cli_sources_workflows_nodes.py
           tests/test_porting_convert.py
           tests/test_plugin_discovery.py
           tests/test_agent_acceptance.py

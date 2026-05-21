@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from .call_validation import NodeCallValidationIssue, NodeCallValidationReport, validate_node_call
 from .provider import (
+    AuthoringSchemaProvider,
     InputSpec,
     CompositeSchemaProvider,
     ConversionSchemaProvider,
@@ -13,14 +15,19 @@ from .provider import (
     SchemaProvider,
     SchemaSourceInfo,
     SourceSchemaProvider,
+    get_authoring_schema_provider,
     get_schema_provider,
     schema_for,
     schema_registry_empty,
     schemas_for,
 )
+from .validate import socket_types_compatible
 
 __all__ = [
+    "AuthoringSchemaProvider",
     "InputSpec",
+    "NodeCallValidationIssue",
+    "NodeCallValidationReport",
     "CompositeSchemaProvider",
     "ConversionSchemaProvider",
     "LocalSchemaProvider",
@@ -32,8 +39,11 @@ __all__ = [
     "SchemaProvider",
     "SchemaSourceInfo",
     "SourceSchemaProvider",
+    "get_authoring_schema_provider",
     "get_schema_provider",
     "schema_for",
     "schema_registry_empty",
     "schemas_for",
+    "socket_types_compatible",
+    "validate_node_call",
 ]

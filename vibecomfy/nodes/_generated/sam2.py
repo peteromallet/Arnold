@@ -4,20 +4,23 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def DownloadAndLoadSAM2Model(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    segmentor: Any = _UNSET,
-    device: Any = _UNSET,
-    precision: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    segmentor: Any | _Omitted = _UNSET,
+    device: Any | _Omitted = _UNSET,
+    precision: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -47,9 +50,9 @@ def DownloadAndLoadSAM2Model(
 def Florence2toCoordinates(
     *args: VibeWorkflow,
     _id: str | None = None,
-    data: Any = _UNSET,
-    index: Any = _UNSET,
-    batch: Any = _UNSET,
+    data: Any | _Omitted = _UNSET,
+    index: Any | _Omitted = _UNSET,
+    batch: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -77,22 +80,22 @@ def Florence2toCoordinates(
 def Sam2AutoSegmentation(
     *args: VibeWorkflow,
     _id: str | None = None,
-    sam2_model: Any = _UNSET,
-    image: Any = _UNSET,
-    points_per_side: Any = _UNSET,
-    points_per_batch: Any = _UNSET,
-    pred_iou_thresh: Any = _UNSET,
-    stability_score_thresh: Any = _UNSET,
-    stability_score_offset: Any = _UNSET,
-    mask_threshold: Any = _UNSET,
-    crop_n_layers: Any = _UNSET,
-    box_nms_thresh: Any = _UNSET,
-    crop_nms_thresh: Any = _UNSET,
-    crop_overlap_ratio: Any = _UNSET,
-    crop_n_points_downscale_factor: Any = _UNSET,
-    min_mask_region_area: Any = _UNSET,
-    use_m2m: Any = _UNSET,
-    keep_model_loaded: Any = _UNSET,
+    sam2_model: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    points_per_side: Any | _Omitted = _UNSET,
+    points_per_batch: Any | _Omitted = _UNSET,
+    pred_iou_thresh: Any | _Omitted = _UNSET,
+    stability_score_thresh: Any | _Omitted = _UNSET,
+    stability_score_offset: Any | _Omitted = _UNSET,
+    mask_threshold: Any | _Omitted = _UNSET,
+    crop_n_layers: Any | _Omitted = _UNSET,
+    box_nms_thresh: Any | _Omitted = _UNSET,
+    crop_nms_thresh: Any | _Omitted = _UNSET,
+    crop_overlap_ratio: Any | _Omitted = _UNSET,
+    crop_n_points_downscale_factor: Any | _Omitted = _UNSET,
+    min_mask_region_area: Any | _Omitted = _UNSET,
+    use_m2m: Any | _Omitted = _UNSET,
+    keep_model_loaded: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -146,14 +149,14 @@ def Sam2AutoSegmentation(
 def Sam2Segmentation(
     *args: VibeWorkflow,
     _id: str | None = None,
-    sam2_model: Any = _UNSET,
-    image: Any = _UNSET,
-    keep_model_loaded: Any = _UNSET,
-    coordinates_positive: Any = _UNSET,
-    coordinates_negative: Any = _UNSET,
-    bboxes: Any = _UNSET,
-    individual_objects: Any = _UNSET,
-    mask: Any = _UNSET,
+    sam2_model: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    keep_model_loaded: Any | _Omitted = _UNSET,
+    coordinates_positive: Any | _Omitted = _UNSET,
+    coordinates_negative: Any | _Omitted = _UNSET,
+    bboxes: Any | _Omitted = _UNSET,
+    individual_objects: Any | _Omitted = _UNSET,
+    mask: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -191,9 +194,9 @@ def Sam2Segmentation(
 def Sam2VideoSegmentation(
     *args: VibeWorkflow,
     _id: str | None = None,
-    sam2_model: Any = _UNSET,
-    inference_state: Any = _UNSET,
-    keep_model_loaded: Any = _UNSET,
+    sam2_model: Any | _Omitted = _UNSET,
+    inference_state: Any | _Omitted = _UNSET,
+    keep_model_loaded: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -221,13 +224,13 @@ def Sam2VideoSegmentation(
 def Sam2VideoSegmentationAddPoints(
     *args: VibeWorkflow,
     _id: str | None = None,
-    sam2_model: Any = _UNSET,
-    coordinates_positive: Any = _UNSET,
-    frame_index: Any = _UNSET,
-    object_index: Any = _UNSET,
-    image: Any = _UNSET,
-    coordinates_negative: Any = _UNSET,
-    prev_inference_state: Any = _UNSET,
+    sam2_model: Any | _Omitted = _UNSET,
+    coordinates_positive: Any | _Omitted = _UNSET,
+    frame_index: Any | _Omitted = _UNSET,
+    object_index: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    coordinates_negative: Any | _Omitted = _UNSET,
+    prev_inference_state: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):

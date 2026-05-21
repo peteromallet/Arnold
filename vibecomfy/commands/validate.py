@@ -16,29 +16,49 @@ from vibecomfy.schema.format import format_issue
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    schema_provider = None if args.no_schema else get_schema_provider("auto")
     try:
-        workflow = load_workflow_any(args.path)
-        report = workflow.validate(schema_provider=schema_provider)
+        payload = build_validate_payload(
+            args.path,
+            no_schema=args.no_schema,
+            check_freshness=getattr(args, "check_freshness", False),
+        )
+    except SubgraphFreshnessError:
+        raise
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         print(f"python_build_error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    if not report.ok:
-        for issue in report.issues:
-            print(f"{issue.severity}: {format_issue(issue)}", file=sys.stderr)
+    if payload["status"] != "ok":
+        for issue in payload["issues"]:
+            print(f"{issue['severity']}: {issue['message']}", file=sys.stderr)
         return 1
-    if getattr(args, "check_freshness", False):
-        drift = _subgraph_freshness_diagnostics(Path(args.path))
-        if drift:
-            for item in drift:
-                print(f"error: {item}", file=sys.stderr)
-            raise SubgraphFreshnessError(
-                f"Subgraph freshness check failed for {args.path}",
-                next_action="vibecomfy port --reconvert <template>",
-            )
     print("ok")
     return 0
+
+
+def build_validate_payload(path: str, *, no_schema: bool = False, check_freshness: bool = False) -> dict[str, object]:
+    schema_provider = None if no_schema else get_schema_provider("auto")
+    workflow = load_workflow_any(path)
+    report = workflow.validate(schema_provider=schema_provider)
+    issues = [
+        {
+            "code": issue.code,
+            "severity": issue.severity,
+            "message": format_issue(issue),
+            "detail": issue.detail,
+        }
+        for issue in report.issues
+    ]
+    if not report.ok:
+        return {"status": "error", "path": path, "issues": issues}
+    if check_freshness:
+        drift = _subgraph_freshness_diagnostics(Path(path))
+        if drift:
+            raise SubgraphFreshnessError(
+                f"Subgraph freshness check failed for {path}",
+                next_action="vibecomfy port --reconvert <template>",
+            )
+    return {"status": "ok", "path": path, "issues": issues}
 
 
 def register(subparsers) -> None:

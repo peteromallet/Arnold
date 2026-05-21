@@ -4,20 +4,23 @@ Regenerate via: python -m tools.generate_node_shims
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vibecomfy.templates import _current_workflow_or_raise, node
 from vibecomfy.workflow import VibeWorkflow
 
-_UNSET = object()
+class _Omitted:
+    pass
+
+_UNSET = _Omitted()
 
 def GemmaAPITextEncode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    api_key: Any = _UNSET,
-    prompt: Any = _UNSET,
-    enhance_prompt: Any = _UNSET,
-    ckpt_name: Any = _UNSET,
+    api_key: str | _Omitted = _UNSET,
+    prompt: str | _Omitted = _UNSET,
+    enhance_prompt: bool | _Omitted = _UNSET,
+    ckpt_name: Literal['ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors', 'LTX23_audio_vae_bf16.safetensors'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -47,15 +50,15 @@ def GemmaAPITextEncode(
 def GuiderParameters(
     *args: VibeWorkflow,
     _id: str | None = None,
-    modality: Any = _UNSET,
-    cfg: Any = _UNSET,
-    stg: Any = _UNSET,
-    perturb_attn: Any = _UNSET,
-    rescale: Any = _UNSET,
-    modality_scale: Any = _UNSET,
-    skip_step: Any = _UNSET,
-    cross_attn: Any = _UNSET,
-    parameters: Any = _UNSET,
+    modality: Literal['VIDEO', 'AUDIO'] | _Omitted = _UNSET,
+    cfg: float | _Omitted = _UNSET,
+    stg: float | _Omitted = _UNSET,
+    perturb_attn: bool | _Omitted = _UNSET,
+    rescale: float | _Omitted = _UNSET,
+    modality_scale: float | _Omitted = _UNSET,
+    skip_step: int | _Omitted = _UNSET,
+    cross_attn: bool | _Omitted = _UNSET,
+    parameters: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -95,18 +98,18 @@ def GuiderParameters(
 def LTXAddVideoICLoRAGuide(
     *args: VibeWorkflow,
     _id: str | None = None,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    vae: Any = _UNSET,
-    latent: Any = _UNSET,
-    image: Any = _UNSET,
-    frame_idx: Any = _UNSET,
-    strength: Any = _UNSET,
-    latent_downscale_factor: Any = _UNSET,
-    crop: Any = _UNSET,
-    use_tiled_encode: Any = _UNSET,
-    tile_size: Any = _UNSET,
-    tile_overlap: Any = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    frame_idx: int | _Omitted = _UNSET,
+    strength: float | _Omitted = _UNSET,
+    latent_downscale_factor: float | _Omitted = _UNSET,
+    crop: Any | _Omitted = _UNSET,
+    use_tiled_encode: bool | _Omitted = _UNSET,
+    tile_size: int | _Omitted = _UNSET,
+    tile_overlap: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -152,7 +155,7 @@ def LTXAddVideoICLoRAGuide(
 def LTXFloatToInt(
     *args: VibeWorkflow,
     _id: str | None = None,
-    a: Any = _UNSET,
+    a: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -176,9 +179,9 @@ def LTXFloatToInt(
 def LTXICLoRALoaderModelOnly(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    lora_name: Any = _UNSET,
-    strength_model: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    lora_name: Any | _Omitted = _UNSET,
+    strength_model: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -206,13 +209,13 @@ def LTXICLoRALoaderModelOnly(
 def LTXVAddLatentGuide(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vae: Any = _UNSET,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    latent: Any = _UNSET,
-    guiding_latent: Any = _UNSET,
-    latent_idx: Any = _UNSET,
-    strength: Any = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    guiding_latent: Any | _Omitted = _UNSET,
+    latent_idx: int | _Omitted = _UNSET,
+    strength: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -248,9 +251,9 @@ def LTXVAddLatentGuide(
 def LTXVGemmaCLIPModelLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    gemma_path: Any = _UNSET,
-    ltxv_path: Any = _UNSET,
-    max_length: Any = _UNSET,
+    gemma_path: Literal['gemma_3_12B_it_fp4_mixed.safetensors', 'ltx-2.3_text_projection_bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'umt5-xxl-enc-bf16.safetensors'] | _Omitted = _UNSET,
+    ltxv_path: Literal['ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors', 'LTX23_audio_vae_bf16.safetensors'] | _Omitted = _UNSET,
+    max_length: int | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -278,12 +281,12 @@ def LTXVGemmaCLIPModelLoader(
 def LTXVHDRDecodePostprocess(
     *args: VibeWorkflow,
     _id: str | None = None,
-    image: Any = _UNSET,
-    exposure: Any = _UNSET,
-    save_exr: Any = _UNSET,
-    output_dir: Any = _UNSET,
-    filename_prefix: Any = _UNSET,
-    half_precision: Any = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    exposure: float | _Omitted = _UNSET,
+    save_exr: bool | _Omitted = _UNSET,
+    output_dir: str | _Omitted = _UNSET,
+    filename_prefix: str | _Omitted = _UNSET,
+    half_precision: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -317,11 +320,11 @@ def LTXVHDRDecodePostprocess(
 def LTXVImgToVideoConditionOnly(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vae: Any = _UNSET,
-    image: Any = _UNSET,
-    latent: Any = _UNSET,
-    strength: Any = _UNSET,
-    bypass: Any = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    image: Any | _Omitted = _UNSET,
+    latent: Any | _Omitted = _UNSET,
+    strength: float | _Omitted = _UNSET,
+    bypass: bool | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -353,15 +356,15 @@ def LTXVImgToVideoConditionOnly(
 def LTXVPreprocessMasks(
     *args: VibeWorkflow,
     _id: str | None = None,
-    masks: Any = _UNSET,
-    vae: Any = _UNSET,
-    invert_input_masks: Any = _UNSET,
-    ignore_first_mask: Any = _UNSET,
-    pooling_method: Any = _UNSET,
-    grow_mask: Any = _UNSET,
-    tapered_corners: Any = _UNSET,
-    clamp_min: Any = _UNSET,
-    clamp_max: Any = _UNSET,
+    masks: Any | _Omitted = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    invert_input_masks: bool | _Omitted = _UNSET,
+    ignore_first_mask: bool | _Omitted = _UNSET,
+    pooling_method: Literal['max', 'mean', 'min'] | _Omitted = _UNSET,
+    grow_mask: int | _Omitted = _UNSET,
+    tapered_corners: bool | _Omitted = _UNSET,
+    clamp_min: float | _Omitted = _UNSET,
+    clamp_max: float | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -401,8 +404,8 @@ def LTXVPreprocessMasks(
 def LTXVSetVideoLatentNoiseMasks(
     *args: VibeWorkflow,
     _id: str | None = None,
-    samples: Any = _UNSET,
-    masks: Any = _UNSET,
+    samples: Any | _Omitted = _UNSET,
+    masks: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -428,14 +431,14 @@ def LTXVSetVideoLatentNoiseMasks(
 def LTXVTiledVAEDecode(
     *args: VibeWorkflow,
     _id: str | None = None,
-    vae: Any = _UNSET,
-    latents: Any = _UNSET,
-    horizontal_tiles: Any = _UNSET,
-    vertical_tiles: Any = _UNSET,
-    overlap: Any = _UNSET,
-    last_frame_fix: Any = _UNSET,
-    working_device: Any = _UNSET,
-    working_dtype: Any = _UNSET,
+    vae: Any | _Omitted = _UNSET,
+    latents: Any | _Omitted = _UNSET,
+    horizontal_tiles: int | _Omitted = _UNSET,
+    vertical_tiles: int | _Omitted = _UNSET,
+    overlap: int | _Omitted = _UNSET,
+    last_frame_fix: bool | _Omitted = _UNSET,
+    working_device: Literal['cpu', 'auto'] | _Omitted = _UNSET,
+    working_dtype: Literal['float16', 'float32', 'auto'] | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -473,8 +476,8 @@ def LTXVTiledVAEDecode(
 def LowVRAMAudioVAELoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    ckpt_name: Any = _UNSET,
-    dependencies: Any = _UNSET,
+    ckpt_name: Literal['ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors', 'LTX23_audio_vae_bf16.safetensors'] | _Omitted = _UNSET,
+    dependencies: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -500,8 +503,8 @@ def LowVRAMAudioVAELoader(
 def LowVRAMCheckpointLoader(
     *args: VibeWorkflow,
     _id: str | None = None,
-    ckpt_name: Any = _UNSET,
-    dependencies: Any = _UNSET,
+    ckpt_name: Literal['AOM2-Hard.safetensors', 'AOM3A3.safetensors', 'Chroma1-Base.safetensors', 'LTX23_audio_vae_bf16.safetensors', 'Realistic_Vision_V5.1_fp16-no-ema.safetensors', 'Realistic_Vision_V6.0_NV_B1_fp16.safetensors', 'ace_step_1.5_turbo_aio.safetensors', 'ace_step_v1_3.5b.safetensors', 'albedobaseXL_v21.safetensors', 'anyloraCheckpoint_bakedvaeBlessedFp16.safetensors', 'aura_flow_0.1.safetensors', 'aura_flow_0.2.safetensors', 'cosxl.safetensors', 'cosxl_edit.safetensors', 'counterfeitV30_v30.safetensors', 'dreamshaperXL_v21TurboDPMSDE.safetensors', 'dreamshaper_8.safetensors', 'fantexiRealistic_v10.safetensors', 'flux1-dev-bnb-nf4-v2.safetensors', 'flux1-dev-bnb-nf4.safetensors', 'flux1-dev-fp8.safetensors', 'flux1-schnell-bnb-nf4.safetensors', 'flux1-schnell-fp8.safetensors', 'hunyuan_dit_1.0.safetensors', 'hunyuan_dit_1.1.safetensors', 'hunyuan_dit_1.2.safetensors', 'juggernautXL_v9Rundiffusionphoto2.safetensors', 'ltx-2-19b-dev-fp8.safetensors', 'ltx-2-19b-dev.safetensors', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-dev.safetensors', 'ltx-2.3-22b-distilled-fp8.safetensors', 'ltx-2.3-22b-distilled.safetensors', 'ltx-video-2b-v0.9.1.safetensors', 'ltx-video-2b-v0.9.5.safetensors', 'ltx-video-2b-v0.9.safetensors', 'lumina_2.safetensors', 'mochi_preview_fp8_scaled.safetensors', 'noosphere_v42.safetensors', 'picxReal_10.safetensors', 'realvisxlV40_v40Bakedvae.safetensors', 'revAnimated_v2Rebirth.safetensors', 'sd3.5_large.safetensors', 'sd3.5_large_fp8_scaled.safetensors', 'sd3.5_large_turbo.safetensors', 'sd3.5_medium.safetensors', 'sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors', 'sd3_medium.safetensors', 'sd3_medium_incl_clips.safetensors', 'sd3_medium_incl_clips_t5xxlfp8.safetensors', 'sd_xl_base_1.0.safetensors', 'sd_xl_refiner_1.0.safetensors', 'sd_xl_turbo_1.0_fp16.safetensors', 'sdpose_wholebody_fp16.safetensors', 'stable-audio-open-1.0.safetensors', 'stable_cascade_stage_b.safetensors', 'stable_cascade_stage_c.safetensors', 'svd.safetensors', 'svd_xt.safetensors', 'v1-5-pruned-emaonly-fp16.safetensors', 'v1-5-pruned-emaonly.safetensors', 'v2-inpainting-pruned-ema.safetensors'] | _Omitted = _UNSET,
+    dependencies: Any | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
@@ -527,11 +530,11 @@ def LowVRAMCheckpointLoader(
 def MultimodalGuider(
     *args: VibeWorkflow,
     _id: str | None = None,
-    model: Any = _UNSET,
-    positive: Any = _UNSET,
-    negative: Any = _UNSET,
-    parameters: Any = _UNSET,
-    skip_blocks: Any = _UNSET,
+    model: Any | _Omitted = _UNSET,
+    positive: Any | _Omitted = _UNSET,
+    negative: Any | _Omitted = _UNSET,
+    parameters: Any | _Omitted = _UNSET,
+    skip_blocks: str | _Omitted = _UNSET,
     pass_raw: bool = False,
     **_extras: Any,
 ):
