@@ -44,7 +44,7 @@ from megaplan._core import (
 )
 
 from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
-from .shared import _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
+from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
 
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -64,7 +64,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
         expected_ids = [check["id"] for check in active_checks]
         resolved = _pkg.resolve_agent_mode("critique", args)
-        agent_type, mode, refreshed, model = resolved.agent, resolved.mode, resolved.refreshed, resolved.model
+        agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
         if len(active_checks) > 1 and agent_type == "hermes":
             run_id = set_active_step(state, step="critique", agent="hermes", mode="persistent", model=model)
             save_state_merge_meta(plan_dir, state)
