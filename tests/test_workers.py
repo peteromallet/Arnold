@@ -2128,6 +2128,56 @@ def test_diagnose_codex_failure_detects_real_http_429() -> None:
     assert "rate limit" in message.lower()
 
 
+def test_diagnose_codex_failure_detects_usage_limit() -> None:
+    from megaplan.workers import _diagnose_codex_failure
+
+    raw = (
+        "{\"type\":\"error\",\"message\":\"You've hit your usage limit. "
+        "Visit https://chatgpt.com/codex/settings/usage to purchase more credits "
+        "or try again at 12:37 AM.\"}"
+    )
+
+    code, message = _diagnose_codex_failure(raw, 1)
+
+    assert code == "quota_exceeded"
+    assert "usage limit" in message.lower()
+
+
+def test_run_codex_step_classifies_nonzero_json_trace_usage_limit(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        out_path = Path(command[command.index("-o") + 1])
+        raw = (
+            "{\"type\":\"error\",\"message\":\"You've hit your usage limit. "
+            "Visit https://chatgpt.com/codex/settings/usage to purchase more credits "
+            "or try again at 12:37 AM.\"}\n"
+            "{\"type\":\"turn.failed\",\"error\":{\"message\":\"You've hit your usage limit.\"}}\n"
+        )
+        out_path.write_text(raw, encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=1,
+            stdout=raw,
+            stderr="",
+            duration_ms=100,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        with pytest.raises(CliError) as exc_info:
+            run_codex_step(
+                "plan", state, plan_dir, root=tmp_path, persistent=False, fresh=True,
+            )
+
+    assert exc_info.value.code == "quota_exceeded"
+    assert "usage limit" in str(exc_info.value).lower()
+
+
 def test_phase_runtime_policy_covers_all_worker_steps() -> None:
     from megaplan.workers import STEP_SCHEMA_FILENAMES
 

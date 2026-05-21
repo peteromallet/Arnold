@@ -376,6 +376,8 @@ _CODEX_ERROR_PATTERNS: list[tuple[str, str, str]] = [
     ("nodename nor servname provided", "connection_error", "Codex could not resolve the backend host"),
     ("connection error", "connection_error", "Codex could not connect to the API"),
     ("connection refused", "connection_error", "Codex could not connect to the API"),
+    ("usage limit", "quota_exceeded", "Codex usage limit reached"),
+    ("try again at", "quota_exceeded", "Codex usage limit reached"),
     ("rate limit", "rate_limit", "Codex hit a rate limit"),
     ("rate_limit", "rate_limit", "Codex hit a rate limit"),
     ("quota", "quota_exceeded", "Codex quota exceeded"),
@@ -2220,6 +2222,10 @@ def run_codex_step(
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         raise CliError(error_code, error_message, extra={"raw_output": raw})
+    if result.returncode != 0:
+        error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
+        if error_code != "worker_error":
+            raise CliError(error_code, error_message, extra={"raw_output": raw})
     payload = _recover_codex_payload(
         step,
         plan_dir=plan_dir,
