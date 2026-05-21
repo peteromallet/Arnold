@@ -56,7 +56,5 @@ def build() -> VibeWorkflow:
             images=n_65c22b29_59aa_496b_89c6_55a603658670.out(0),
         )
 
-        wf._set_id_map({name: node.node.id for name, node in (('loadimage', loadimage), ('loadimage_2', loadimage_2), ('n_7b34ab90_36f9_45ba_a665_71d418f0df18', n_7b34ab90_36f9_45ba_a665_71d418f0df18), ('n_65c22b29_59aa_496b_89c6_55a603658670', n_65c22b29_59aa_496b_89c6_55a603658670), ('saveimage', saveimage), ('saveimage_2', saveimage_2))})
-
         return wf.finalize(PUBLIC_INPUTS, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein-4b-base')
 

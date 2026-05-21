@@ -51,7 +51,5 @@ def build() -> VibeWorkflow:
             audio=ailab_qwen3ttsvoiceclone,
         )
 
-        wf._set_id_map({name: node.node.id for name, node in (('loadaudio', loadaudio), ('ailab_qwen3ttsvoiceclone', ailab_qwen3ttsvoiceclone), ('saveaudiomp3', saveaudiomp3))})
-
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

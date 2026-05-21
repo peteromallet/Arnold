@@ -96,7 +96,5 @@ def build() -> VibeWorkflow:
         # Outputs
         saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
 
-        wf._set_id_map({name: node.node.id for name, node in (('ksamplerselect', ksamplerselect), ('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('randomnoise', randomnoise), ('primitivestringmultiline', primitivestringmultiline), ('flux2scheduler', flux2scheduler), ('emptyflux2latentimage', emptyflux2latentimage), ('negative', negative), ('positive', positive), ('cfgguider', cfgguider), ('samplercustomadvanced', samplercustomadvanced), ('vaedecode', vaedecode), ('saveimage', saveimage), ('primitiveint', primitiveint), ('primitiveint_2', primitiveint_2))})
-
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
 

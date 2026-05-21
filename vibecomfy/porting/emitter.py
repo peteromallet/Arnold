@@ -1388,18 +1388,12 @@ def _emit_build_function(
 
 
 def _with_id_map_tail_line(tail_lines: list[str], var_names: dict[str, str]) -> list[str]:
-    if not var_names:
-        return tail_lines
-    ordered_vars = [var_names[nid] for nid in sorted(var_names, key=_id_sort_key)]
-    items_expr = "(" + ", ".join(f"({var!r}, {var})" for var in ordered_vars)
-    if len(ordered_vars) == 1:
-        items_expr += ","
-    items_expr += ")"
-    line = f"    wf._set_id_map({{name: node.node.id for name, node in {items_expr}}})"
-    for index, tail_line in enumerate(tail_lines):
-        if "return wf.finalize(" in tail_line:
-            return [*tail_lines[:index], line, "", *tail_lines[index:]]
-    return [line, "", *tail_lines]
+    # v2.6.4 fix: id_map is derived at runtime via wf.id_map() (returns
+    # {ClassType#N: node_id}). The build() source is the authoritative
+    # variable-name binding; storing it again at runtime via _set_id_map
+    # was bloat that scaled linearly with node count (60+ entry one-line
+    # dicts on LTX templates). Drop the emission entirely.
+    return tail_lines
 
 
 _OUTPUT_CLASSES: dict[str, tuple[str, str]] = {

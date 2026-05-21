@@ -112,7 +112,5 @@ def build() -> VibeWorkflow:
         # Outputs
         savevideo = SaveVideo(video=createvideo)
 
-        wf._set_id_map({name: node.node.id for name, node in (('unetloader', unetloader), ('cliploader', cliploader), ('vaeloader', vaeloader), ('clipvisionloader', clipvisionloader), ('loadimage', loadimage), ('cliptextencode', cliptextencode), ('cliptextencode_2', cliptextencode_2), ('clipvisionencode', clipvisionencode), ('modelsamplingsd3', modelsamplingsd3), ('wanimagetovideo', wanimagetovideo), ('ksampler', ksampler), ('vaedecode', vaedecode), ('createvideo', createvideo), ('savevideo', savevideo))})
-
         return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 
