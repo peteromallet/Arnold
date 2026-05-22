@@ -383,6 +383,132 @@ from vibecomfy import router
 result = router.pick("video", "i2v", model="ltx")    # RouterResult(template_id, explicit_patches, applicable_patches)
 ```
 
+## v2.7 guidance
+
+### ContextVar template authoring
+
+Templates now use a **context-manager pattern** with `new_workflow()` instead of passing `wf` explicitly to every call. This aligns generated templates with the typed-wrapper convention:
+
+```python
+from vibecomfy.templates import new_workflow, node, InputSpec
+from vibecomfy.handles import Handle
+
+READY_METADATA = {
+    "ready_template": "image/my_template",
+    "task": "t2i",
+    "description": "...",
+}
+
+with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    # node() reads wf from ContextVar — no explicit wf arg needed
+    loader = node("CheckpointLoaderSimple", ckpt_name=InputSpec("ckpt_name", default="..."))
+    # ...
+
+wf.finalize_metadata()
+```
+
+The `node()` function reads the active workflow from a `ContextVar` set by `new_workflow().__enter__()`. Legacy explicit-`wf` calling conventions still work: `node(wf, class_type, ...)`. The `_current_workflow_or_raise()` helper raises `ContextVarBindingError` (with `next_action="vibecomfy doctor"`) if called outside a `with new_workflow(...)` block.
+
+### Tuple-unpacked multi-output wrappers
+
+Nodes with multiple outputs (e.g., `WanVideoWrapper` returning `(latent, mask)`) use **tuple-unpacked return patterns** in generated templates:
+
+```python
+latent, mask = node("WanVideoWrapper", ...)
+```
+
+The emitter tracks `return_refs` — a tuple of `(node_id, output_slot)` pairs — and emits assignment targets accordingly. When a node has exactly one output, the return is a single `Handle`. For `pass_raw=True` nodes with list outputs, callers must use `.out('NAME')` explicitly. Use `node("ClassType", ..., _outputs=("latent", "mask"))` to override auto-detected output names in hand-authored templates.
+
+### Materialized subgraphs as Python functions
+
+Subgraphs embedded in workflows are **materialized as inline Python functions** inside `build()`:
+
+```python
+def _subgraph_upscale(**kwargs):
+    upscale = raw_call("<uuid>", "UpscaleModelLoader", model_name=kwargs["model_name"])
+    # ... internal nodes and edges ...
+    return upscale
+
+result = _subgraph_upscale(model_name="4x-UltraSharp")
+```
+
+The emitter detects subgraph nodes (identified by a named `GroupNode` or UUID-prefixed internal topology), extracts their internal nodes/edges, and emits them as a local function with declared default arguments matching the subgraph's input ports. Subgraph freshness is tracked via `SubgraphFreshnessError` — regenerated templates compare `source_hash` and alert when the embedded subgraph syntax has changed.
+
+### Blank-line / label-preferred emission style
+
+v2.6.4 Fix 8 refines emission formatting: multi-line node calls are **surrounded by blank lines** (one before, one after) for consistent vertical rhythm. Single-line statements pack together. Section comments stay attached to the first multi-line that follows (no blank between section comment and its code). The emitter prefers **label-derived variable names** when available (e.g., `ks_advanced` from a KSampler node's `title` field) over generic `node_3` identifiers.
+
+### widget_N cleanup
+
+The emitter resolves positional `widget_N` keys to their named fields via `object_info` input aliases and the `widget_aliases` module. During `port convert`, unresolved `widget_N` keys trigger a warning (or hard error under `--strict-ready-template`). The `_translate_widget_for_key()` function maps `widget_0` → `seed`, `widget_1` → `steps`, etc. for known class types. The `port inventory` command reports remaining `widget_N` occurrences across all ready templates.
+
+### New CLI commands (v2.7)
+
+```bash
+# Runtime eval-node: compile a minimal subgraph to preview one node
+python -m vibecomfy.cli runtime eval-node <wf> --node <node_id> [--runtime embedded|server]
+
+# Port validate-call: validate one node call against authoring schema
+python -m vibecomfy.cli port validate-call <ClassType> --kwargs '{"seed": 42, ...}' --json
+
+# Nodes compatible-with: find or check socket type compatibility
+python -m vibecomfy.cli nodes compatible-with <FromClass> [<ToClass> <ToInput>] --as output --json
+
+# Port doctor-all: run port check + install-plan + validate + doctor + runtime doctor
+python -m vibecomfy.cli port doctor-all <wf> --json
+
+# Port export: export a workflow as API JSON
+python -m vibecomfy.cli port export <wf> --to json [--json]
+```
+
+### wf.lookup_id() and wf.export_to_json()
+
+`wf.lookup_id(node_id)` returns a rich info dict for any node:
+```python
+info = wf.lookup_id("42")
+# {"node_id": "42", "class_type": "KSampler", "variable_name": "ks_advanced",
+#  "inputs": {...}, "outputs": [...], "edges_from": [...], "edges_to": [...]}
+```
+
+`wf.export_to_json(format="api")` compiles the workflow to API JSON (alias for `wf.compile("api")`). Use this when you need the raw ComfyUI-compatible dict without queuing.
+
+### wf.strict_types
+
+Set `strict_types=True` on a `VibeWorkflow` to enable socket-type compatibility warnings on `wf.connect()`. When enabled, connections between incompatible socket types (e.g., LATENT → IMAGE) log a warning. The `nodes compatible-with` CLI command performs the same check interactively.
+
+### attempt.json, drift, next_action
+
+Before every queue boundary, the session runner writes an **`attempt.json`** snapshot to `out/runs/<run_id>/` containing:
+- `compiled_prompt` — the full API dict sent to ComfyUI
+- `id_map` — variable-name → node-id mapping
+- `node_lookups` — rich info per node (via `wf.lookup_id()`)
+- `model_manifest` — expected and actual SHA-256 for every model asset
+- `lockfile_snapshot` — the full `custom_nodes.lock` at queue time
+- `drift` — pinned-vs-actual comparison for custom-node packs and ComfyUI commit
+
+**Drift detection** (`vibecomfy.runtime.drift`) compares pinned template requirements against the installed pack state (lockfile git HEAD, schema hashes, source file SHAs) and the ComfyUI git commit. Mismatches are logged as warnings; `SessionConfig.strict_drift=True` raises `DriftError` before queueing.
+
+**Structured errors** (`vibecomfy.errors`) all extend `VibeComfyError(RuntimeError)` with an optional `next_action` string suggesting remediation:
+- `ModelAssetError` — unresolved model file
+- `SchemaValidationError` — failed schema validation
+- `QueueError` — enqueue/wait/result failure
+- `ContextVarBindingError` — missing or nested workflow context
+- `ConversionParityError` — emitted code ≠ source workflow
+- `SubgraphFreshnessError` — embedded subgraph stale vs source
+- `RuntimeNodeError` — node failed during execution
+- `DriftError` — custom-node/model pins drifted from lockfile
+
+All VibeComfyError subclasses are caught by the CLI runner's `(OSError, RuntimeError, ValueError)` catch tuple. The `next_action` field appears in `str(exc)` and is accessible programmatically via `exc.next_action`.
+
+### Bidirectional roundtrip limitations
+
+JSON → Python → JSON roundtripping has known limitations:
+- **Helper/UI nodes** (`Note`, `MarkdownNote`, `SetNode`, `GetNode`, `Reroute`) are stripped during conversion and do not survive roundtrip.
+- **Unresolved widget_N keys** on community nodes without `object_info` produce positional output that may not roundtrip exactly.
+- **Subgraph UUIDs** are replaced by Python function names; re-importing the emitted Python may produce different UUIDs but structurally equivalent graphs.
+- **Broadcast edges** (one output → multiple inputs) are preserved but the ordering of parallel edges may differ from the source JSON.
+- **Comment nodes** and UI-only metadata are intentionally omitted from the Python representation.
+
 ## Known limitations (don't fight these)
 
 - Audio and image-edit verbs are not yet wired in the verb-native API. Use `load_workflow_any("audio/ace_step_1_5_t2a_song")` or `load_workflow_any("edit/qwen_image_edit")` and edit the `VibeWorkflow` directly.
