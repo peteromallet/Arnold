@@ -41,9 +41,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Top-of-file generator marker.
 GENERATED_HEADER = (
-    "# vibecomfy: generated — converted by tools/convert_ready_templates.py\n"
-    "# Edits will be overwritten on regeneration. Put the manual opt-out\n"
-    "# marker on the first line if hand-editing is required.\n"
+    "# vibecomfy: generated\n"
+    "# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>\n"
 )
 
 
@@ -446,7 +445,7 @@ def format_as_python(
     # ---- emit ---------------------------------------------------------------
     out_lines: list[str] = []
     out_lines.append(GENERATED_HEADER.rstrip("\n"))
-    out_lines.append('"""Auto-generated ready_template — see tools/convert_ready_templates.py."""')
+    out_lines.append('"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""')
     out_lines.append("from __future__ import annotations")
     out_lines.append("")
     out_lines.append("from vibecomfy.workflow import VibeWorkflow, WorkflowSource")

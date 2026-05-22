@@ -94,7 +94,7 @@ def test_classify_marker_detects_manual() -> None:
 
 
 def test_classify_marker_detects_generated() -> None:
-    source = "# vibecomfy: generated - converted by tools/convert_ready_templates.py\n"
+    source = "# vibecomfy: generated\n"
     assert _classify_marker(source) == "generated"
 
 
