@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-21T18:35:26+00:00",
+  "generated_at": "2026-05-22T00:17:59+00:00",
   "generated_from": "repo-only buildable non-manual ready_templates canonical compile output",
   "include_rule": "find ready_templates -type f -name '*.py' ! -name '_*' ! -name '__init__.py', exclude '# vibecomfy: manual', and include templates whose build() compiles to API",
   "template_count": 64,
@@ -24923,54 +24923,54 @@
     {
       "id": "video/wanvideo_wrapper_21_14b_wanmove_i2v",
       "path": "ready_templates/video/wanvideo_wrapper_21_14b_wanmove_i2v.py",
-      "sha256": "26e7347b2af0cb9b2dcc429fb3bc1a5812355ea02e68851bf27bd04ff59f0e97",
+      "sha256": "3926a835e03037502f0c0f585846583160428233bfc9c6eab6ae4a7fdb576a00",
       "canonical_form": {
         "nodes": [
           {
-            "label": "d07a49af1106",
+            "label": "ff1fa3aa46b4",
             "class_type": "CLIPVisionLoader",
             "inputs": {
               "clip_name": "clip_vision_h.safetensors"
             }
           },
           {
-            "label": "d75f8be5e71d",
+            "label": "4525f5dcd67e",
             "class_type": "ImageResizeKJv2",
             "inputs": {
               "device": "cpu",
               "divisible_by": 16,
               "height": [
-                "37898684dc47",
+                "23bc191a87c2",
                 0
               ],
               "image": [
-                "db5e297dc868",
+                "3cf5bce3efe5",
                 0
               ],
               "keep_proportion": "crop",
               "upscale_method": "lanczos",
               "width": [
-                "1bc2fa35ac31",
+                "e818855a5139",
                 0
               ]
             }
           },
           {
-            "label": "db5e297dc868",
+            "label": "3cf5bce3efe5",
             "class_type": "LoadImage",
             "inputs": {
               "image": "oldman_upscaled.png"
             }
           },
           {
-            "label": "63959e5d4956",
+            "label": "303a0d2fb206",
             "class_type": "LoadWanVideoT5TextEncoder",
             "inputs": {
               "model_name": "umt5-xxl-enc-bf16.safetensors"
             }
           },
           {
-            "label": "1bc2fa35ac31",
+            "label": "23bc191a87c2",
             "class_type": "PrimitiveNode",
             "inputs": {
               "widget_0": 640,
@@ -24978,7 +24978,7 @@
             }
           },
           {
-            "label": "37898684dc47",
+            "label": "e818855a5139",
             "class_type": "PrimitiveNode",
             "inputs": {
               "widget_0": 640,
@@ -24986,7 +24986,7 @@
             }
           },
           {
-            "label": "16ce91f92054",
+            "label": "8ab8707dd2ca",
             "class_type": "PrimitiveNode",
             "inputs": {
               "widget_0": 81,
@@ -24994,38 +24994,38 @@
             }
           },
           {
-            "label": "ffd95639a9b9",
+            "label": "ca3864d84a7c",
             "class_type": "RepeatImageBatch",
             "inputs": {
               "amount": [
-                "16ce91f92054",
+                "8ab8707dd2ca",
                 0
               ],
               "image": [
-                "d75f8be5e71d",
+                "4525f5dcd67e",
                 0
               ],
               "widget_0": 81
             }
           },
           {
-            "label": "5f6f1df85a77",
+            "label": "5f124a504f10",
             "class_type": "SplineEditor",
             "inputs": {
               "bg_image": [
-                "d75f8be5e71d",
+                "4525f5dcd67e",
                 0
               ],
               "mask_height": [
-                "37898684dc47",
+                "23bc191a87c2",
                 0
               ],
               "mask_width": [
-                "1bc2fa35ac31",
+                "e818855a5139",
                 0
               ],
               "points_to_sample": [
-                "16ce91f92054",
+                "8ab8707dd2ca",
                 0
               ],
               "widget_0": "[{\"points\":[{\"x\":309.03010266217507,\"y\":338.4615410109536},{\"x\":268.15310495553814,\"y\":268.15310495553814},{\"x\":367.8929793597322,\"y\":245.26198623982145},{\"x\":380.97361862585603,\"y\":327.0159816530953},{\"x\":312.300262478706,\"y\":385.8788583506524},{\"x\":238.72166660675956,\"y\":356.44742000187387},{\"x\":230.54626706543218,\"y\":312.300262478706}],\"color\":\"#1f77b4\",\"name\":\"Spline 1\"}]",
@@ -25044,42 +25044,42 @@
             }
           },
           {
-            "label": "92fe97882a5d",
+            "label": "7118abf5212d",
             "class_type": "VHS_VideoCombine",
             "inputs": {
               "images": [
-                "15ccc0b90141",
+                "abe4d38fe9af",
                 0
               ]
             }
           },
           {
-            "label": "d3c47258f867",
+            "label": "eefc28bbf354",
             "class_type": "VHS_VideoCombine",
             "inputs": {
               "images": [
-                "b074be77bd89",
+                "aedce4aa183e",
                 0
               ]
             }
           },
           {
-            "label": "e0e14d619316",
+            "label": "07303bf4cd94",
             "class_type": "WanVideoAddWanMoveTracks",
             "inputs": {
               "image_embeds": [
-                "53289e96de21",
+                "e2614daf9e42",
                 0
               ],
               "track_coords": [
-                "5f6f1df85a77",
+                "5f124a504f10",
                 1
               ],
               "widget_0": 1
             }
           },
           {
-            "label": "e4eb272759aa",
+            "label": "8c04e0583574",
             "class_type": "WanVideoBlockSwap",
             "inputs": {
               "blocks_to_swap": 25,
@@ -25088,69 +25088,69 @@
             }
           },
           {
-            "label": "80f8fa0894f4",
+            "label": "520b9cbd7fa1",
             "class_type": "WanVideoClipVisionEncode",
             "inputs": {
               "clip_vision": [
-                "d07a49af1106",
+                "ff1fa3aa46b4",
                 0
               ],
               "image_1": [
-                "d75f8be5e71d",
+                "4525f5dcd67e",
                 0
               ],
               "ratio": 0.2
             }
           },
           {
-            "label": "cb42d504f44e",
+            "label": "e2767a74cda4",
             "class_type": "WanVideoDecode",
             "inputs": {
               "normalization": "default",
               "samples": [
-                "2fb73fb09075",
+                "0208906569ab",
                 0
               ],
               "vae": [
-                "d7a3ca5a4f77",
+                "06a48efd37c7",
                 0
               ]
             }
           },
           {
-            "label": "53289e96de21",
+            "label": "e2614daf9e42",
             "class_type": "WanVideoImageToVideoEncode",
             "inputs": {
               "clip_embeds": [
-                "80f8fa0894f4",
+                "520b9cbd7fa1",
                 0
               ],
               "fun_or_fl2v_model": false,
               "height": [
-                "d75f8be5e71d",
+                "4525f5dcd67e",
                 2
               ],
               "num_frames": [
-                "5f6f1df85a77",
+                "5f124a504f10",
                 3
               ],
               "start_image": [
-                "d75f8be5e71d",
+                "4525f5dcd67e",
                 0
               ],
               "vae": [
-                "d7a3ca5a4f77",
+                "06a48efd37c7",
                 0
               ],
               "widget_9": 0,
               "width": [
-                "d75f8be5e71d",
+                "4525f5dcd67e",
                 1
               ]
             }
           },
           {
-            "label": "25ae18169d99",
+            "label": "57e0f340953b",
             "class_type": "WanVideoLoraSelect",
             "inputs": {
               "lora": "WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
@@ -25158,7 +25158,7 @@
             }
           },
           {
-            "label": "74aced84b6ec",
+            "label": "2d61dfb5eab3",
             "class_type": "WanVideoModelLoader",
             "inputs": {
               "base_precision": "fp16",
@@ -25166,68 +25166,68 @@
             }
           },
           {
-            "label": "2fb73fb09075",
+            "label": "0208906569ab",
             "class_type": "WanVideoSampler",
             "inputs": {
               "batched_cfg": "",
               "cfg": 1,
               "image_embeds": [
-                "e0e14d619316",
+                "07303bf4cd94",
                 0
               ],
               "model": [
-                "d10c7bf74df1",
+                "111af8ee172f",
                 0
               ],
               "scheduler": "dpm++_sde",
               "seed": 1057359483639287,
               "steps": 1,
               "text_embeds": [
-                "4e2e437ce5ac",
+                "ea9cc442b8b0",
                 0
               ]
             }
           },
           {
-            "label": "d10c7bf74df1",
+            "label": "111af8ee172f",
             "class_type": "WanVideoSetBlockSwap",
             "inputs": {
               "block_swap_args": [
-                "e4eb272759aa",
+                "8c04e0583574",
                 0
               ],
               "model": [
-                "da5724f4335f",
+                "bfe827ea8ba8",
                 0
               ]
             }
           },
           {
-            "label": "da5724f4335f",
+            "label": "bfe827ea8ba8",
             "class_type": "WanVideoSetLoRAs",
             "inputs": {
               "lora": [
-                "25ae18169d99",
+                "57e0f340953b",
                 0
               ],
               "model": [
-                "74aced84b6ec",
+                "2d61dfb5eab3",
                 0
               ]
             }
           },
           {
-            "label": "4e2e437ce5ac",
+            "label": "ea9cc442b8b0",
             "class_type": "WanVideoTextEncode",
             "inputs": {
               "model_to_offload": [
-                "74aced84b6ec",
+                "2d61dfb5eab3",
                 0
               ],
               "negative_prompt": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
               "positive_prompt": "video of an old man",
               "t5": [
-                "63959e5d4956",
+                "303a0d2fb206",
                 0
               ],
               "use_disk_cache": true
@@ -25239,37 +25239,37 @@
             "inputs": {}
           },
           {
-            "label": "d7a3ca5a4f77",
+            "label": "06a48efd37c7",
             "class_type": "WanVideoVAELoader",
             "inputs": {
-              "model_name": "wanvideo\\Wan2_1_VAE_bf16.safetensors",
-              "widget_2": false
+              "compile_args": false,
+              "model_name": "wanvideo\\Wan2_1_VAE_bf16.safetensors"
             }
           },
           {
-            "label": "b074be77bd89",
+            "label": "aedce4aa183e",
             "class_type": "WanVideoWanDrawWanMoveTracks",
             "inputs": {
               "images": [
-                "cb42d504f44e",
+                "ca3864d84a7c",
                 0
               ],
               "tracks": [
-                "e0e14d619316",
+                "07303bf4cd94",
                 1
               ]
             }
           },
           {
-            "label": "15ccc0b90141",
+            "label": "abe4d38fe9af",
             "class_type": "WanVideoWanDrawWanMoveTracks",
             "inputs": {
               "images": [
-                "ffd95639a9b9",
+                "e2767a74cda4",
                 0
               ],
               "tracks": [
-                "e0e14d619316",
+                "07303bf4cd94",
                 1
               ]
             }

@@ -349,7 +349,9 @@ def test_port_widgets_json_suggests_widget_only_schema_entries(
 
     payload = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert payload["unresolved_widget_aliases"] == [{"node_id": "1", "class_type": "PromptNode", "input": "widget_2"}]
+    assert payload["unresolved_widget_aliases"] == [
+        {"node_id": "1", "class_type": "PromptNode", "input": "widget_2", "source": "unresolved"}
+    ]
     assert payload["suggestions"] == [
         {
             "class_type": "PromptNode",
