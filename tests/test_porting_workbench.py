@@ -68,9 +68,7 @@ def test_analyze_source_reports_raw_json_provenance_assets_schema_and_widget_dat
     assert payload["workflow_shape"]["nodes"] == 4
     assert payload["node_counts"]["SaveImage"] == 1
     assert payload["metadata"]["schema_validation"]["schema_provider"] is True
-    assert payload["metadata"]["widget_analysis"]["unresolved_widget_aliases"] == [
-        {"node_id": "4", "class_type": "PromptNode", "input": "widget_0"}
-    ]
+    assert payload["metadata"]["widget_analysis"]["unresolved_widget_aliases"] == []
     assert payload["metadata"]["custom_node_analysis"]["runtime_class_types"] == [
         "CheckpointLoaderSimple",
         "LoadImage",
@@ -82,9 +80,9 @@ def test_analyze_source_reports_raw_json_provenance_assets_schema_and_widget_dat
     ]
     codes = [issue["code"] for issue in payload["diagnostics"]]
     assert "filename_only_asset_candidate" in codes
-    assert "widget_alias_unresolved" in codes
+    assert "widget_alias_unresolved" not in codes
     assert "missing_required_input" in codes
-    assert "unknown_input" in codes
+    assert "unknown_input" not in codes
     assert any("port convert" in item for item in payload["recommendations"])
 
 
@@ -101,17 +99,8 @@ def test_analyze_source_reports_widget_schema_that_compile_did_not_apply(
     report = analyze_source(str(path), schema_provider=_provider())
     payload = report.to_json()
 
-    assert payload["metadata"]["widget_analysis"]["missing_compiled_widget_inputs"] == [
-        {
-            "node_id": "4",
-            "class_type": "PromptNode",
-            "widget_key": "widget_0",
-            "expected_input": "text",
-            "widget_value": "hello",
-            "schema_required": True,
-        }
-    ]
-    assert "compiled_widget_input_missing" in [issue["code"] for issue in payload["diagnostics"]]
+    assert payload["metadata"]["widget_analysis"]["missing_compiled_widget_inputs"] == []
+    assert "compiled_widget_input_missing" not in [issue["code"] for issue in payload["diagnostics"]]
     assert payload["ok"] is False
 
 

@@ -306,6 +306,48 @@ def test_effective_widget_names_unknown_class(
     assert effective_widget_names_for_class("TotallyFakeClass", allow_object_info_fallback=True) == []
 
 
+def test_widget_resolver_does_not_auto_apply_shifted_object_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_root = _build_temp_cache(tmp_path)
+    _patch_consume_paths(monkeypatch, cache_root)
+
+    from vibecomfy.porting.widget_aliases import resolve_widget_name_with_provenance
+
+    result = resolve_widget_name_with_provenance("SomeUnknownClass", 1)
+
+    assert result.resolved is False
+    assert result.name == "widget_1"
+    assert result.source == "unresolved"
+
+
+def test_widget_resolver_uses_schema_provider_before_object_info() -> None:
+    from vibecomfy.schema import InputSpec, NodeSchema
+    from vibecomfy.porting.widget_aliases import resolve_widget_name_with_provenance
+
+    class Provider:
+        def get_schema(self, class_type: str) -> NodeSchema | None:
+            if class_type != "ProviderNode":
+                return None
+            return NodeSchema(
+                class_type="ProviderNode",
+                pack=None,
+                inputs={
+                    "image": InputSpec("IMAGE"),
+                    "prompt": InputSpec("STRING"),
+                    "strength": InputSpec("FLOAT"),
+                },
+                outputs=[],
+                source_provider="test_provider",
+            )
+
+    result = resolve_widget_name_with_provenance("ProviderNode", 1, schema_provider=Provider())
+
+    assert result.resolved is True
+    assert result.name == "strength"
+    assert result.source == "test_provider"
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

@@ -746,7 +746,7 @@ def _schema_for_node(node: VibeNode) -> object | None:
 def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
     inputs = dict(node.widgets)
     inputs.update(node.inputs)
-    _apply_positional_widget_aliases(inputs, node.class_type)
+    _apply_positional_widget_aliases(inputs, node)
     _drop_unused_positional_aliases(inputs)
     return {
         key: value
@@ -839,8 +839,12 @@ def _is_api_link(value: Any) -> bool:
     return porting_helpers.is_api_link(value)
 
 
-def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) -> None:
-    apply_positional_widget_aliases(inputs, class_type)
+def _apply_positional_widget_aliases(inputs: dict[str, Any], node: VibeNode) -> None:
+    apply_positional_widget_aliases(
+        inputs,
+        node.class_type,
+        input_aliases=node.metadata.get("input_aliases"),
+    )
 
 
 def _drop_unused_positional_aliases(inputs: dict[str, Any]) -> None:

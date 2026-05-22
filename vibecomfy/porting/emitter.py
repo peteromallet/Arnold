@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.porting.widget_aliases import resolve_widget_name
+from vibecomfy.porting.widget_aliases import resolve_widget_key_with_provenance
 from vibecomfy.porting.object_info import class_defaults, class_has_list_output, class_output_count
 from vibecomfy.porting.object_info import output_names as class_output_names
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
@@ -550,10 +550,11 @@ def _translate_widget_for_key(
         idx = int(key.split("_", 1)[1])
     except ValueError:
         return key
-    if isinstance(input_aliases, (list, tuple)) and 0 <= idx < len(input_aliases):
-        alias = input_aliases[idx]
-        return alias  # may be None (UI-only)
-    return resolve_widget_name(class_type, idx)
+    return resolve_widget_key_with_provenance(
+        class_type,
+        key,
+        input_aliases=input_aliases,
+    ).name
 
 
 def _drop_output_prefix_constants(
@@ -629,11 +630,11 @@ def _public_input_specs(
         resolved_field = field
         if field.startswith("widget_") and old_id in workflow_nodes:
             cls = workflow_nodes[old_id].class_type
-            try:
-                idx = int(field.split("_", 1)[1])
-                resolved_field = resolve_widget_name(cls, idx)
-            except (ValueError, IndexError):
-                pass
+            node = workflow_nodes[old_id]
+            aliases = getattr(node, "metadata", {}).get("input_aliases") or _ui_widget_aliases(node)
+            resolved = resolve_widget_key_with_provenance(cls, field, input_aliases=aliases)
+            if resolved.name is not None:
+                resolved_field = resolved.name
         add(_PublicInputBinding(name=input_name, node_id=str(old_id), field=resolved_field))
 
     inferred = _infer_public_input_bindings(workflow_nodes, edges_in, reserved_names=used_names)
@@ -1960,11 +1961,11 @@ def _emit_build_function(
             resolved_field = field
             if field.startswith("widget_") and old_id in workflow_nodes:
                 cls = workflow_nodes[old_id].class_type
-                try:
-                    idx = int(field.split("_", 1)[1])
-                    resolved_field = resolve_widget_name(cls, idx)
-                except (ValueError, IndexError):
-                    pass
+                node = workflow_nodes[old_id]
+                aliases = getattr(node, "metadata", {}).get("input_aliases") or _ui_widget_aliases(node)
+                resolved = resolve_widget_key_with_provenance(cls, field, input_aliases=aliases)
+                if resolved.name is not None:
+                    resolved_field = resolved.name
             descriptor_kwargs: list[str] = []
             if old_id in workflow_nodes:
                 node = workflow_nodes[old_id]
@@ -2767,19 +2768,7 @@ def _node_kwargs(
     def _translate_widget(key: str) -> str | None:
         if not key.startswith("widget_"):
             return key
-        try:
-            idx = int(key.split("_", 1)[1])
-        except ValueError:
-            return key
-        # 1. Per-node schema-source evidence (input_aliases from provider).
-        if isinstance(input_aliases, (list, tuple)) and 0 <= idx < len(input_aliases):
-            alias = input_aliases[idx]
-            if alias is not None:
-                return alias
-            # None -> UI-only widget, drop it.
-            return None
-        # 2. Static WIDGET_SCHEMA fallback (lowest priority).
-        return resolve_widget_name(cls, idx)
+        return resolve_widget_key_with_provenance(cls, key, input_aliases=input_aliases).name
 
     raw_inputs: dict[str, Any] = {}
     for key, value in node.inputs.items():

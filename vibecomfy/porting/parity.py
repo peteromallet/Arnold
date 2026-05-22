@@ -96,12 +96,13 @@ def _canonical_key(
             # None entry = UI-only widget, drop it.
             return None
 
-    # 2. Static WIDGET_SCHEMA fallback.
+    # 2. Shared resolver fallback. This uses the same provenance ladder as
+    # emission/compile so parity cannot drift from production behaviour.
     try:
-        from vibecomfy.porting.widget_aliases import resolve_widget_name
+        from vibecomfy.porting.widget_aliases import resolve_widget_name_with_provenance
     except Exception:
         return key
-    return resolve_widget_name(class_type, idx)
+    return resolve_widget_name_with_provenance(class_type, idx).name
 
 
 def class_type_counter(api: dict) -> Counter[str]:

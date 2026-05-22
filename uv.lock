@@ -2613,7 +2613,7 @@ wheels = [
 
 [[package]]
 name = "vibecomfy"
-version = "0.1.0"
+version = "2.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
