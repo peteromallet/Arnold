@@ -32,7 +32,6 @@ PROFILE_METADATA_KEYS = frozenset({
     "default",
     "extends",
     "tier_models",
-    "max_tasks_per_batch",
 })
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
@@ -158,15 +157,6 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
             validated_tiers = _validate_tier_models(path, profile_name, tier_data)
             if validated_tiers:
                 validated["tier_models"] = validated_tiers
-        elif key == "max_tasks_per_batch":
-            if not isinstance(value, int):
-                _raise_invalid_profile(
-                    path,
-                    profile_name,
-                    key,
-                    f"expected an integer for 'max_tasks_per_batch', got {type(value).__name__}",
-                )
-            validated["max_tasks_per_batch"] = value
         # Future metadata keys go here.
     return validated
 

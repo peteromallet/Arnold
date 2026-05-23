@@ -38,6 +38,7 @@ from megaplan.workers._impl import (
     session_key_for,
     validate_payload,
 )
+from megaplan.workers.context import WorkerExecutionContext
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +840,7 @@ def run_shannon_step(
     effort: str | None = None,
     session_agent: str = "shannon",
     model: str | None = None,
+    execution_context: WorkerExecutionContext | None = None,
 ) -> WorkerResult:
     """Run a megaplan phase via Shannon (Claude in an interactive tmux session).
 
@@ -852,13 +854,15 @@ def run_shannon_step(
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
         )
-    fresh = fresh or step != "execute"
+    fresh = fresh or execution_context is not None or step != "execute"
 
     # ── (b) resolve working directory and session ───────────────────────
     _ensure_shannon_parent_timeout_control()
-    work_dir = resolve_work_dir(state)
+    work_dir = execution_context.worktree_dir if execution_context is not None else resolve_work_dir(state)
+    prompt_plan_dir = execution_context.task_context_dir if execution_context is not None else plan_dir
+    worker_dir = execution_context.worker_dir if execution_context is not None else plan_dir
     session_key = session_key_for(step, session_agent, model=model)
-    session = state["sessions"].get(session_key, {})
+    session = {} if execution_context is not None else state["sessions"].get(session_key, {})
     session_id: str | None = session.get("id")
 
     # ── (c) build prompt ────────────────────────────────────────────────
@@ -866,7 +870,7 @@ def run_shannon_step(
         prompt_override
         if prompt_override is not None
         else create_claude_prompt(
-            step, state, plan_dir, root=root, **(prompt_kwargs or {})
+            step, state, prompt_plan_dir, root=root, **(prompt_kwargs or {})
         )
     )
 
@@ -885,7 +889,11 @@ def run_shannon_step(
     )
 
     prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
-    prompt_path = _write_prompt_file(plan_dir, step, prompt, iteration=prompt_iteration)
+    if execution_context is not None:
+        prompt_path = execution_context.prompt_path(step, session_agent)
+        prompt_path.write_text(prompt, encoding="utf-8")
+    else:
+        prompt_path = _write_prompt_file(worker_dir, step, prompt, iteration=prompt_iteration)
     launcher_prompt = (
         "Read the full megaplan phase prompt from this file and follow it exactly: "
         f"{prompt_path}. Your final response must satisfy the structured output "

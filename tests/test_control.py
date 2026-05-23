@@ -378,7 +378,7 @@ def test_resume_plan_uses_workflow_runner_with_progress_env_and_can_continue(
         {
             "current_state": "failed",
             "meta": {"epic_id": epic.id},
-            "resume_cursor": {"phase": "execute", "batch_index": 1},
+            "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
         },
     )
     runner_seen: dict[str, object] = {}

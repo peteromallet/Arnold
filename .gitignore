@@ -1,6 +1,7 @@
 __pycache__/
 .claude/
 .megaplan/
+.megaplan-worktrees/
 chain_state.json
 .desloppify/
 .desloppify.bak-*

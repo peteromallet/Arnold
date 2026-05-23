@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from megaplan.schemas import ProgressEvent
 from megaplan.store import DBStore, FileStore, MultiStore, ProgressEventInput, Store, deterministic_idempotency_key
+from megaplan.worktrees.identity import validate_task_key
 
 ENV_PREFIX = "MEGAPLAN_PROGRESS_"
 ENV_ENABLED = f"{ENV_PREFIX}ENABLED"
@@ -179,6 +180,15 @@ class ProgressEmitter:
 
     def batch_complete(self, batch_id: str, *, summary: str | None = None, **details: Any) -> ProgressEvent | None:
         return self.emit("batch_complete", summary or f"Batch {batch_id} complete", details={"batch_id": batch_id, **details}, key_parts=(batch_id,))
+
+    def task_complete(self, task_key: str, *, summary: str | None = None, **details: Any) -> ProgressEvent | None:
+        safe_task_key = validate_task_key(task_key)
+        return self.emit(
+            "task_complete",
+            summary or f"Task {safe_task_key} complete",
+            details={"task_key": safe_task_key, **details},
+            key_parts=(safe_task_key,),
+        )
 
     def gate_pending(self, gate_id: str, *, summary: str | None = None, **details: Any) -> ProgressEvent | None:
         return self.emit("gate_pending", summary or "Gate approval needed", details={"gate_id": gate_id, **details}, key_parts=(gate_id,))

@@ -21,6 +21,7 @@ from megaplan.workers._impl import (
     session_key_for,
     validate_payload,
 )
+from megaplan.workers.context import WorkerExecutionContext
 from megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
 from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_hermes_prompt
@@ -582,6 +583,7 @@ def run_hermes_step(
     fresh: bool,
     model: str | None = None,
     prompt_override: str | None = None,
+    execution_context: WorkerExecutionContext | None = None,
 ) -> WorkerResult:
     """Run a megaplan phase using Hermes Agent via OpenRouter.
 
@@ -590,7 +592,7 @@ def run_hermes_step(
     """
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
-    fresh = fresh or step != "execute"
+    fresh = fresh or execution_context is not None or step != "execute"
 
     AIAgent, SessionDB = _import_hermes_runtime()
     try:
@@ -600,7 +602,13 @@ def run_hermes_step(
     if configure_logging is not None:
         configure_logging(verbose_logging=False, quiet_mode=True)
 
-    project_dir = Path(state["config"]["project_dir"])
+    project_dir = (
+        execution_context.worktree_dir
+        if execution_context is not None
+        else Path(state["config"]["project_dir"])
+    )
+    prompt_plan_dir = execution_context.task_context_dir if execution_context is not None else plan_dir
+    worker_dir = execution_context.worker_dir if execution_context is not None else plan_dir
     plan_mode = state["config"].get("mode", "code")
     from megaplan.schemas import get_execution_schema_key
     schema_name = (
@@ -613,7 +621,7 @@ def run_hermes_step(
 
     # Session management
     session_key = session_key_for(step, "hermes", model=model)
-    session = state["sessions"].get(session_key, {})
+    session = {} if execution_context is not None else state["sessions"].get(session_key, {})
     session_id = session.get("id") if not fresh else None
 
     # Reload conversation history for session continuity
@@ -634,7 +642,7 @@ def run_hermes_step(
     # ignore formatting instructions buried in long prompts.  Append a clear
     # reminder so the final response is valid JSON, not markdown.
     prompt = prompt_override if prompt_override is not None else create_hermes_prompt(
-        step, state, plan_dir, root=root
+        step, state, prompt_plan_dir, root=root
     )
     # Add web search guidance for phases that have it
     if step in ("plan", "critique", "revise"):
@@ -660,10 +668,10 @@ def run_hermes_step(
     # Critique and review: use custom template writers that pre-populate IDs.
     # Other template-file phases: hermes_worker writes a generic template.
     if step == "critique":
-        output_path = plan_dir / "critique_output.json"
+        output_path = worker_dir / "critique_output.json"
     elif step == "review":
         from megaplan.prompts.review import _write_review_template
-        output_path = _write_review_template(plan_dir, state)
+        output_path = _write_review_template(worker_dir, state)
         prompt += (
             f"\n\nOUTPUT FILE: {output_path}\n"
             "This file is your ONLY output. It contains a JSON template PRE-POPULATED with "
@@ -678,7 +686,7 @@ def run_hermes_step(
             "Do NOT put your results in a text response. The file is the only output that matters."
         )
     elif step in _TEMPLATE_FILE_PHASES and toolsets:
-        output_path = plan_dir / f"{step}_output.json"
+        output_path = worker_dir / f"{step}_output.json"
         output_path.write_text(
             _build_output_template(step, schema),
             encoding="utf-8",
@@ -733,7 +741,7 @@ def run_hermes_step(
     # without `stream=true`.
     agent_max_tokens = 65536 if step == "execute" else 32768
 
-    _hermes_db_path = _worker_db_path(plan_dir, session_key)
+    _hermes_db_path = _worker_db_path(worker_dir, session_key)
 
     def _make_agent(agent_model: str, extra_kwargs: dict):
         current_agent = AIAgent(
@@ -763,13 +771,13 @@ def run_hermes_step(
 
             robustness = configured_robustness(state)
             return _write_critique_template(
-                plan_dir,
+                worker_dir,
                 state,
-                select_active_checks(state, robustness, plan_dir=plan_dir),
+                select_active_checks(state, robustness, plan_dir=prompt_plan_dir),
             )
         if step == "review":
             from megaplan.prompts.review import _write_review_template
-            return _write_review_template(plan_dir, state)
+            return _write_review_template(worker_dir, state)
         current_output_path.write_text(
             _build_output_template(step, schema),
             encoding="utf-8",
@@ -1088,15 +1096,26 @@ def _reconstruct_execute_payload(
     if not tool_calls and not files_changed:
         return None
 
-    # Try to read checkpoint file for task updates
+    # Try to read task-native execution artifacts for task updates.
     task_updates = []
-    checkpoint_files = sorted(plan_dir.glob("execution_batch_*.json"), reverse=True)
+    from megaplan.store import PlanRepository
+
+    try:
+        checkpoint_files = sorted(
+            PlanRepository.from_plan_dir(plan_dir).list_task_execution_artifacts(),
+            reverse=True,
+        )
+    except Exception:
+        checkpoint_files = []
     for cp_file in checkpoint_files:
         try:
             cp_data = json.loads(cp_file.read_text(encoding="utf-8"))
-            updates = cp_data.get("task_updates", [])
-            if isinstance(updates, list):
-                task_updates.extend(updates)
+            if isinstance(cp_data, dict):
+                updates = cp_data.get("task_updates", [])
+                if isinstance(updates, list):
+                    task_updates.extend(updates)
+                elif cp_data.get("status") is not None:
+                    task_updates.append(cp_data)
         except Exception:
             pass
 

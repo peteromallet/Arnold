@@ -8,8 +8,18 @@ from typing import Any
 
 from megaplan.runtime.doc_assembly import extract_settled_decisions
 from megaplan.forms import available_form_ids
-from megaplan.profiles import apply_profile_expansion, load_profile_metadata
-from megaplan.types import ROBUSTNESS_LEVELS, CliError, PlanState, STATE_INITIALIZED, StepResponse, normalize_robustness
+from megaplan.profiles import apply_profile_expansion
+from megaplan.types import (
+    EXECUTE_MODEL_WORKTREE_NATIVE,
+    EXECUTE_SCHEMA_VERSION,
+    CliError,
+    PlanState,
+    STATE_INITIALIZED,
+    StepResponse,
+    normalize_robustness,
+    validate_secret_scan_mode,
+)
+from megaplan.worktrees.paths import ensure_megaplan_worktrees_ignored
 from megaplan._core import (
     append_history,
     ensure_runtime_layout,
@@ -130,28 +140,24 @@ def _build_state_config(
         else:
             strict_notes_arg = get_effective("execution", "strict_notes")
     strict_notes = bool(strict_notes_arg)
-
-    max_tasks_per_batch_arg = getattr(args, "max_tasks_per_batch", None)
-    if max_tasks_per_batch_arg is not None:
-        max_tasks_per_batch = int(max_tasks_per_batch_arg)
+    secret_scan_mode_arg = getattr(args, "secret_scan_mode", None)
+    if secret_scan_mode_arg is None:
+        secret_scan_mode = validate_secret_scan_mode(get_effective("execution", "secret_scan_mode"))
     else:
-        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
-        profile_name = getattr(args, "profile", None)
-        if profile_name:
-            profile_meta = load_profile_metadata(project_dir=project_dir).get(profile_name, {})
-            profile_ceiling = profile_meta.get("max_tasks_per_batch")
-            if isinstance(profile_ceiling, int) and profile_ceiling > 0:
-                max_tasks_per_batch = profile_ceiling
-    if max_tasks_per_batch <= 0:
-        max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
+        secret_scan_mode = validate_secret_scan_mode(
+            secret_scan_mode_arg,
+            source="--secret-scan-mode",
+        )
 
     config: dict[str, Any] = {
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
         "robustness": robustness,
         "mode": mode,
+        "execute_model": EXECUTE_MODEL_WORKTREE_NATIVE,
+        "execute_schema_version": EXECUTE_SCHEMA_VERSION,
+        "secret_scan_mode": secret_scan_mode,
         "strict_notes": strict_notes,
-        "max_tasks_per_batch": max_tasks_per_batch,
         "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
     }
     if pipeline is not None:
@@ -196,6 +202,7 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     project_dir = Path(args.project_dir).expanduser().resolve()
     if not project_dir.exists() or not project_dir.is_dir():
         raise CliError("invalid_project_dir", f"Project directory does not exist: {project_dir}")
+    ensure_megaplan_worktrees_ignored(project_dir)
     apply_profile_expansion(args, project_dir)
     positional_idea = getattr(args, "idea", None)
     idea_file = getattr(args, "idea_file", None)

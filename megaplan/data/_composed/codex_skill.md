@@ -98,24 +98,18 @@ If you disagree with the guidance, explain why briefly and use an override. Do n
 megaplan execute --confirm-destructive --user-approved
 ```
 ## Long-Running Execution
-For plans with multiple batches, use per-batch mode to drive execution incrementally:
+For plans with multiple tasks, use worktree-native execute to drive task work incrementally:
 ```bash
-megaplan execute --plan <name> --confirm-destructive --user-approved --batch 1
-megaplan execute --plan <name> --confirm-destructive --user-approved --batch 2
-# ... continue until all batches complete
+megaplan execute --plan <name> --confirm-destructive --user-approved
 ```
-Between batches, poll progress:
+Between tasks, poll progress:
 ```bash
 megaplan progress --plan <name>
 ```
 Use `megaplan status --plan <name>` for the full plan state, including active-step timing and any `next_step_runtime` guidance from the latest response.
-Per-batch mode uses global batch numbering (1-indexed, computed from ALL tasks). Each `--batch N` call:
-- Validates that batches 1..N-1 are complete
-- Executes only batch N's tasks
-- Writes `execution_batch_N.json` as evidence
-- On the final batch, produces aggregate `execution.json` and transitions to `executed`
-Timeout recovery: re-run the same `--batch N`. The harness checks prerequisite completion and merges only untracked tasks.
-Note: `progress` shows completed state only (between-batch granularity). With per-batch mode, each batch is a separate CLI call, so the orchestrator has full visibility.
+Worktree-native execute records per-task evidence under `tasks/<task_key>/execution.json`, emits `task_complete` progress, and reconciles aggregate `execution.json`/`finalize.json` state. Legacy `execution_batch_*.json` artifacts are migration-only evidence for old plans.
+Timeout recovery: re-run execute. The harness checks task artifacts, aggregate state, and registry terminal entries before retrying unresolved work.
+Note: `progress` reports task-level completion for worktree-native plans.
 ## Overrides
 - `megaplan override add-note --plan <name> --note "..."`
 - `megaplan override force-proceed --plan <name> --reason "..."`

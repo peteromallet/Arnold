@@ -50,6 +50,7 @@ from megaplan.orchestration.evaluation import (
     run_gate_checks,
 )
 from megaplan.orchestration.phase_result import read_phase_result
+from megaplan.execute_resume_cursor import validate_state_resume_cursor
 
 from .shared import _append_to_meta, _attach_next_step_runtime
 
@@ -417,6 +418,7 @@ def _override_recover_blocked(
             f"recover-blocked does not know how to resume phase {phase!r}",
             extra={"resume_cursor": resume_cursor},
         )
+    validate_state_resume_cursor(plan_dir, state)
 
     finalize_path = plan_dir / "finalize.json"
     finalize_data = read_json(finalize_path) if finalize_path.exists() else {}

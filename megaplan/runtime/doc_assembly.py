@@ -1,4 +1,4 @@
-"""Doc-mode section assembly — collects per-batch executor outputs into a single document."""
+"""Doc-mode section assembly — collects task executor outputs into a single document."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import read_json
+from megaplan.store import PlanRepository
+from megaplan.worktrees.identity import build_task_identity_map
 
 
 def extract_sections(batch_payloads: list[dict[str, Any]]) -> dict[str, str]:
@@ -196,12 +198,68 @@ def _section_plan_order(
     return ordered
 
 
+def _task_execution_payloads(
+    plan_dir: Path,
+    finalize_data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    if finalize_data is not None:
+        try:
+            identity_map = build_task_identity_map(
+                [
+                    task
+                    for task in finalize_data.get("tasks", [])
+                    if isinstance(task, dict)
+                ]
+            )
+        except Exception:
+            identity_map = {}
+        if identity_map:
+            repository = PlanRepository.from_plan_dir(plan_dir)
+            ordered_payloads: list[dict[str, Any]] = []
+            for task in finalize_data.get("tasks", []):
+                if not isinstance(task, dict):
+                    continue
+                task_id = task.get("id")
+                if not isinstance(task_id, str):
+                    continue
+                identity = identity_map.get(task_id)
+                if identity is None:
+                    continue
+                try:
+                    payload = repository.read_task_execution_artifact(identity)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                if isinstance(payload, dict):
+                    if "task_updates" in payload:
+                        ordered_payloads.append(payload)
+                    else:
+                        ordered_payloads.append({"task_updates": [payload]})
+            if ordered_payloads:
+                return ordered_payloads
+    try:
+        artifact_paths = PlanRepository.from_plan_dir(plan_dir).list_task_execution_artifacts()
+    except (OSError, RuntimeError, ValueError):
+        artifact_paths = sorted(plan_dir.glob("tasks/*/execution.json"))
+    payloads: list[dict[str, Any]] = []
+    for task_path in artifact_paths:
+        try:
+            payload = read_json(task_path)
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            if "task_updates" in payload:
+                payloads.append(payload)
+            else:
+                payloads.append({"task_updates": [payload]})
+    return payloads
+
+
 def assemble_doc(
     plan_dir: Path,
     output_path: Path,
     finalize_data: dict[str, Any],
 ) -> Path:
-    """Fallback document assembly from per-batch executor notes.
+    """Fallback document assembly from task executor notes.
 
     The executor is the primary author: per `prompts/execute_doc.py`, it writes
     the document directly to `output_path` during each task, and keeps
@@ -210,27 +268,17 @@ def assemble_doc(
     and does nothing else.
 
     Fallback path — only if the output file is missing or empty — assembles
-    text from `executor_notes` in `execution_batch_*.json`, ordered by the
-    owning task's position in `finalize_data`. This is a degraded best-effort
-    output for the sandbox-blocked case; callers should treat its content as
-    verification prose rather than authored sections.
+    text from `executor_notes` in `tasks/<task_key>/execution.json`, ordered
+    by the owning task's position in `finalize_data`. This is a degraded
+    best-effort output for the sandbox-blocked case; callers should treat its
+    content as verification prose rather than authored sections.
 
     The file is written atomically (temp file + rename).
     """
     if output_path.exists() and output_path.stat().st_size > 0:
         return output_path
 
-    batch_payloads: list[dict[str, Any]] = []
-    batch_index = 1
-    while True:
-        batch_path = plan_dir / f"execution_batch_{batch_index}.json"
-        if not batch_path.exists():
-            break
-        try:
-            batch_payloads.append(read_json(batch_path))
-        except (OSError, ValueError):
-            pass
-        batch_index += 1
+    batch_payloads = _task_execution_payloads(plan_dir, finalize_data)
 
     sections = extract_sections(batch_payloads)
     ordered_ids = _section_plan_order(finalize_data, batch_payloads)

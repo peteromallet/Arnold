@@ -165,6 +165,14 @@ def compute_batch_complexity(
     return max_complexity if max_complexity > 0 else 5
 
 
+def compute_task_complexity(
+    finalize_data: dict[str, Any],
+    task_id: str,
+) -> int:
+    """Return a single task's valid complexity, defaulting fail-safe to 5."""
+    return compute_batch_complexity(finalize_data, [task_id])
+
+
 # ---------------------------------------------------------------------------
 # Atomic I/O
 # ---------------------------------------------------------------------------
@@ -751,7 +759,7 @@ def save_config(config: dict[str, Any], home: Path | None = None) -> Path:
 
 
 def get_effective(section: str, key: str) -> Any:
-    from megaplan.types import DEFAULTS
+    from megaplan.types import DEFAULTS, validate_secret_scan_mode
 
     default_key = f"{section}.{key}"
     if default_key not in DEFAULTS:
@@ -759,8 +767,12 @@ def get_effective(section: str, key: str) -> Any:
     config = load_config()
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
-        return section_config[key]
-    return DEFAULTS[default_key]
+        value = section_config[key]
+    else:
+        value = DEFAULTS[default_key]
+    if default_key == "execution.secret_scan_mode":
+        return validate_secret_scan_mode(value)
+    return value
 
 
 def is_shannon_available(*, shutil_ref: Any = None) -> bool:

@@ -26,7 +26,12 @@ import megaplan
 import megaplan.profiles as profiles_module
 from megaplan._core.workflow import _workflow_for_robustness
 from megaplan.profiles import apply_profile_expansion
-from megaplan.types import STATE_INITIALIZED
+from megaplan.types import (
+    EXECUTE_MODEL_WORKTREE_NATIVE,
+    EXECUTE_SCHEMA_VERSION,
+    SECRET_SCAN_MODE_PR_PUSHED,
+    STATE_INITIALIZED,
+)
 
 
 DEEPSEEK = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
@@ -371,6 +376,10 @@ def test_handle_init_persists_full_dial_set_into_state(
     assert config["critic"] == "kimi"
     assert config["depth"] == "medium"
     assert config["with_prep"] is True
+    assert config["execute_model"] == EXECUTE_MODEL_WORKTREE_NATIVE
+    assert config["execute_schema_version"] == EXECUTE_SCHEMA_VERSION
+    assert config["secret_scan_mode"] == SECRET_SCAN_MODE_PR_PUSHED
+    assert "max_tasks_per_batch" not in config
 
     # phase_model is persisted as a list of "phase=spec" strings; spot-check
     # that the rewrite chain landed (vendor -> depth -> critic).

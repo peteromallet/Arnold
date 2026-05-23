@@ -289,12 +289,12 @@ def test_db_store_plan_lifecycle_fields_round_trip(db_store_factory) -> None:
             name="db-plan-lifecycle",
             idea="idea",
             latest_failure={"kind": "blocked", "message": "needs input"},
-            resume_cursor={"phase": "execute", "batch_index": 2},
+            resume_cursor={"phase": "review", "retry_strategy": "rerun_phase"},
             idempotency_key="db-plan-life-create",
         )
         loaded = store.load_plan(plan.id)
         assert loaded.latest_failure == {"kind": "blocked", "message": "needs input"}
-        assert loaded.resume_cursor == {"phase": "execute", "batch_index": 2}
+        assert loaded.resume_cursor == {"phase": "review", "retry_strategy": "rerun_phase"}
 
         updated = store.update_plan(
             plan.id,

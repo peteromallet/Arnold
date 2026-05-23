@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,21 @@ AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
 
 
 # ---------------------------------------------------------------------------
+# Execute compatibility markers
+# ---------------------------------------------------------------------------
+
+EXECUTE_MODEL_LEGACY_BATCH = "legacy_batch"
+EXECUTE_MODEL_WORKTREE_NATIVE = "worktree_native"
+EXECUTE_SCHEMA_VERSION = 1
+SECRET_SCAN_MODE_PR_PUSHED = "pr_pushed"
+SECRET_SCAN_MODE_LOCAL_ONLY = "local_only"
+SECRET_SCAN_MODES = frozenset({SECRET_SCAN_MODE_PR_PUSHED, SECRET_SCAN_MODE_LOCAL_ONLY})
+
+ExecuteModel = Literal["legacy_batch", "worktree_native"]
+SecretScanMode = Literal["pr_pushed", "local_only"]
+
+
+# ---------------------------------------------------------------------------
 # TypedDicts
 # ---------------------------------------------------------------------------
 
@@ -46,6 +61,9 @@ class PlanConfig(TypedDict, total=False):
     auto_approve: bool
     robustness: str
     mode: str
+    execute_model: NotRequired[ExecuteModel]
+    execute_schema_version: NotRequired[int]
+    secret_scan_mode: NotRequired[SecretScanMode]
     output_path: str
     from_doc: str
     agents: dict[str, str]
@@ -617,7 +635,7 @@ DEFAULTS = {
     "execution.max_review_rework_cycles": 3,
     "execution.max_robust_review_rework_cycles": 2,
     "execution.max_execute_no_progress": 3,
-    "execution.max_tasks_per_batch": 5,
+    "execution.secret_scan_mode": SECRET_SCAN_MODE_PR_PUSHED,
     "orchestration.max_critique_concurrency": 5,
     "orchestration.mode": "subagent",
 }
@@ -629,6 +647,7 @@ _SETTABLE_BOOL = {
 
 _SETTABLE_ENUM = {
     "execution.robustness": ROBUSTNESS_ACCEPTED,
+    "execution.secret_scan_mode": SECRET_SCAN_MODES,
 }
 
 _SETTABLE_NUMERIC = {
@@ -636,7 +655,6 @@ _SETTABLE_NUMERIC = {
     "execution.max_review_rework_cycles",
     "execution.max_robust_review_rework_cycles",
     "execution.max_execute_no_progress",
-    "execution.max_tasks_per_batch",
     "orchestration.max_critique_concurrency",
 }
 
@@ -661,3 +679,16 @@ class CliError(Exception):
         self.valid_next = valid_next or []
         self.extra = extra or {}
         self.exit_code = exit_code
+
+
+def validate_secret_scan_mode(
+    value: Any,
+    *,
+    source: str = "execution.secret_scan_mode",
+) -> SecretScanMode:
+    if value in SECRET_SCAN_MODES:
+        return cast(SecretScanMode, value)
+    raise CliError(
+        "invalid_secret_scan_mode",
+        f"{source} must be one of: local_only, pr_pushed",
+    )

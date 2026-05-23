@@ -18,7 +18,7 @@ from megaplan.types import (
     DEFAULTS,
     KNOWN_AGENTS,
     ROBUSTNESS_ACCEPTED,
-    ROBUSTNESS_LEVELS,
+    SECRET_SCAN_MODES,
     STATE_BLOCKED,
     STATE_DONE,
     STATE_REVIEWED,
@@ -44,7 +44,6 @@ from megaplan._core import (
     infer_next_steps,
     is_prose_mode,
     json_dump,
-    list_batch_artifacts,
     load_config,
     load_debt_registry,
     load_plan,
@@ -59,6 +58,7 @@ from megaplan._core import (
     subsystem_occurrence_total,
     humanize_seconds,
 )
+from megaplan.store import PlanRepository
 from megaplan.execute.core import build_monitor_hint
 from megaplan.forms import available_form_ids
 from megaplan.handlers import (
@@ -387,21 +387,33 @@ def _compute_user_action_blockers(
     }
 
 
-def _batch_status_overlay(plan_dir: Path) -> dict[str, str]:
-    batch_status_overlay: dict[str, str] = {}
-    for batch_path in list_batch_artifacts(plan_dir):
-        try:
-            batch_data = read_json(batch_path)
-        except Exception:
-            continue
-        for update in batch_data.get("task_updates", []) or []:
-            if not isinstance(update, dict):
-                continue
-            task_id = update.get("task_id")
-            status = update.get("status")
-            if isinstance(task_id, str) and isinstance(status, str) and status:
-                batch_status_overlay[task_id] = status
-    return batch_status_overlay
+def _task_artifact_status_overlay(plan_dir: Path) -> dict[str, str]:
+    task_status_overlay: dict[str, str] = {}
+    try:
+        summaries = PlanRepository.from_plan_dir(plan_dir).list_task_execution_summaries()
+    except (OSError, RuntimeError, ValueError):
+        summaries = []
+    for summary in summaries:
+        task_id = summary.get("task_id")
+        status = summary.get("status")
+        if isinstance(task_id, str) and isinstance(status, str) and status:
+            task_status_overlay[task_id] = status
+    return task_status_overlay
+
+
+def _task_artifact_summaries(plan_dir: Path) -> list[dict[str, Any]]:
+    try:
+        return PlanRepository.from_plan_dir(plan_dir).list_task_execution_summaries()
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+
+def _task_artifact_summary_map(plan_dir: Path) -> dict[str, dict[str, Any]]:
+    return {
+        summary["task_id"]: summary
+        for summary in _task_artifact_summaries(plan_dir)
+        if isinstance(summary.get("task_id"), str)
+    }
 
 
 def _tasks_by_id(finalize_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -515,7 +527,7 @@ def _build_blocked_tasks_context(
         return []
 
     tasks_by_id = _tasks_by_id(finalize_data)
-    batch_status_overlay = _batch_status_overlay(plan_dir)
+    task_status_overlay = _task_artifact_status_overlay(plan_dir)
     blockers_by_task: dict[str, list[dict[str, Any]]] = {}
     for blocker in prereq_blockers:
         task_id = blocker.get("task_id")
@@ -527,7 +539,7 @@ def _build_blocked_tasks_context(
         task = tasks_by_id.get(task_id)
         if not task:
             continue
-        task_status = batch_status_overlay.get(task_id, task.get("status", "pending"))
+        task_status = task_status_overlay.get(task_id, task.get("status", "pending"))
         blockers = sorted(
             blockers_by_task[task_id],
             key=lambda item: str(item.get("blocker_id", "")),
@@ -661,38 +673,21 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
     for batch_idx, batch_ids in enumerate(global_batches, start=1):
         for task_id in batch_ids:
             task_id_to_batch[task_id] = batch_idx
-    # In per-batch execute mode, finalize.json is only rewritten after the
-    # final batch — between batches the per-task status overlay lives in
-    # execution_batch_<n>.json. Apply that overlay so progress reflects the
-    # most recent on-disk truth. Single-execute mode produces no batch
-    # artifacts, so this is a no-op there.
-    batch_status_overlay: dict[str, str] = {}
-    batch_artifacts = list_batch_artifacts(plan_dir)
-    for batch_path in batch_artifacts:
-        try:
-            batch_data = read_json(batch_path)
-        except Exception:
-            continue
-        for update in batch_data.get("task_updates", []) or []:
-            if not isinstance(update, dict):
-                continue
-            task_id = update.get("task_id")
-            status = update.get("status")
-            if isinstance(task_id, str) and isinstance(status, str) and status:
-                batch_status_overlay[task_id] = status
     progress_source = "finalize.json"
-    if batch_status_overlay:
+    artifact_summary_by_task = _task_artifact_summary_map(plan_dir)
+    task_status_overlay = _task_artifact_status_overlay(plan_dir)
+    if task_status_overlay:
         merged_tasks: list[dict[str, Any]] = []
         for task in tasks:
             tid = task.get("id")
-            if isinstance(tid, str) and tid in batch_status_overlay:
+            if isinstance(tid, str) and tid in task_status_overlay:
                 merged = dict(task)
-                merged["status"] = batch_status_overlay[tid]
+                merged["status"] = task_status_overlay[tid]
                 merged_tasks.append(merged)
             else:
                 merged_tasks.append(task)
         tasks = merged_tasks
-        progress_source = "execution_batch_*.json"
+        progress_source = "task execution artifacts"
     tasks_done = sum(1 for t in tasks if t.get("status") == "done")
     tasks_skipped = sum(1 for t in tasks if t.get("status") == "skipped")
     tasks_pending = sum(1 for t in tasks if t.get("status") == "pending")
@@ -716,10 +711,30 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         }
         for t in tasks
     ]
-    if progress_source == "execution_batch_*.json":
-        granularity_note = "Progress reflects per-batch artifacts (latest execution_batch_*.json overlay)."
+    if progress_source == "task execution artifacts":
+        granularity_note = "Progress reflects per-task execution artifacts plus finalize.json."
     else:
-        granularity_note = "Progress reflects the last finalize.json write (between-batch granularity)."
+        granularity_note = "Progress reflects the last finalize.json write."
+    current_task = None
+    for task in tasks:
+        if task.get("status") in {"done", "skipped"}:
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str):
+            continue
+        artifact_summary = artifact_summary_by_task.get(task_id, {})
+        current_task = {
+            "id": task_id,
+            "task_key": artifact_summary.get("task_key"),
+            "status": task.get("status", "pending"),
+            "artifact": artifact_summary.get("artifact"),
+            "integration_state": (
+                artifact_summary.get("integration", {}).get("state")
+                if isinstance(artifact_summary.get("integration"), dict)
+                else None
+            ),
+        }
+        break
     # Build compact resolution context for the progress payload
     blocked_tasks = _build_blocked_tasks_context(plan_dir, finalize_data, state)
     blocker_recovery = _build_blocker_recovery_context(plan_dir, finalize_data, state)
@@ -753,6 +768,11 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
             **ts,
             "blocking_action_ids": blocking_action_ids_map.get(ts["id"], []),
             "blocker_ids": blocker_ids_map.get(ts["id"], []),
+            **(
+                {"task_execution": artifact_summary_by_task[ts["id"]]}
+                if ts["id"] in artifact_summary_by_task
+                else {}
+            ),
         }
         for ts in task_status_list
     ]
@@ -767,9 +787,11 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
         "tasks_skipped": tasks_skipped,
         "tasks_pending": tasks_pending,
         "tasks_blocked": tasks_blocked,
+        "current_task": current_task,
         "batches_total": len(global_batches),
         "batches_completed": batches_completed,
         "tasks": task_status_with_resolution,
+        "task_artifacts": list(artifact_summary_by_task.values()),
         "blocked_tasks_detail": ua_blockers["blocked_tasks_detail"],
         "user_action_resolution_summary": ua_blockers["user_action_resolution_summary"],
         "recommended_action": ua_blockers["recommended_action"],
@@ -881,7 +903,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
             )
         elif step in {"execute", "loop_execute"}:
             details["phase_progress_summary"] = (
-                f"{step} running ({elapsed_label} elapsed, use progress for batch-level detail)."
+                f"{step} running ({elapsed_label} elapsed, use progress for task-level detail)."
             )
         else:
             details["phase_progress_summary"] = (
@@ -903,7 +925,7 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
         )
         if step in {"execute", "loop_execute"}:
             details["phase_progress_summary"] = (
-                f"{step} active (start time unknown, use progress for batch-level detail)."
+                f"{step} active (start time unknown, use progress for task-level detail)."
             )
         else:
             details["phase_progress_summary"] = f"{step} active (start time unknown)."
@@ -984,6 +1006,10 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     finalize_path = plan_dir / "finalize.json"
     if finalize_path.exists():
         finalize_data = read_json(finalize_path)
+        task_artifacts = _task_artifact_summaries(plan_dir)
+        if task_artifacts:
+            response["task_artifacts"] = task_artifacts
+            response["task_artifact_count"] = len(task_artifacts)
         blocked_tasks = _build_blocked_tasks_context(plan_dir, finalize_data, state)
         blocker_recovery = _build_blocker_recovery_context(
             plan_dir,
@@ -2353,6 +2379,67 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
         raise CliError("invalid_args", str(exc)) from exc
 
 
+def handle_migrate_plan(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Run explicit legacy execute migration operations for one plan."""
+    from megaplan.execute.migration import (
+        close_legacy_execute,
+        diagnose_legacy_execute,
+        restart_legacy_execute,
+    )
+
+    plan_dir = _resolve_migrate_plan_dir(root, args.plan)
+    if args.diagnose:
+        diagnostic = diagnose_legacy_execute(plan_dir)
+        return {
+            "success": True,
+            "action": "diagnose",
+            "plan": diagnostic.get("plan"),
+            "plan_dir": str(plan_dir),
+            "diagnostic": diagnostic,
+        }
+    if args.restart:
+        result = restart_legacy_execute(plan_dir)
+        return _migration_result_with_decision_path(plan_dir, result)
+    if args.close:
+        result = close_legacy_execute(plan_dir)
+        return _migration_result_with_decision_path(plan_dir, result)
+    raise CliError("invalid_args", "migrate-plan requires --diagnose, --restart, or --close")
+
+
+def _resolve_migrate_plan_dir(root: Path, plan: str) -> Path:
+    explicit_path = Path(plan).expanduser()
+    if (explicit_path / "state.json").exists():
+        return explicit_path.resolve()
+    if explicit_path.is_absolute() or any(part in {".", ".."} for part in explicit_path.parts):
+        raise CliError("missing_plan", f"Plan path '{plan}' does not contain state.json")
+    return resolve_plan_dir(root, plan)
+
+
+def _migration_result_with_decision_path(plan_dir: Path, result: dict[str, Any]) -> dict[str, Any]:
+    response = dict(result)
+    decision_record = response.get("decision_record")
+    if isinstance(decision_record, str):
+        response["decision_path"] = str((plan_dir / decision_record).resolve())
+    return response
+
+
+def handle_custody_report(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Render read-only worktree custody diagnostics for one run."""
+    from megaplan.worktrees.report import build_custody_report
+
+    if not args.json:
+        raise CliError("invalid_args", "custody-report requires --json")
+    return {
+        "success": True,
+        "action": "custody-report",
+        "report": build_custody_report(
+            root,
+            args.run_id,
+            write=bool(args.write),
+        ),
+    }
+
+
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
     # Check for awaiting_user.json first (pipeline human_gate pause).
     # When present, enter the human-gate resume flow consuming --choice.
@@ -3181,6 +3268,12 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument(
+        "--secret-scan-mode",
+        choices=sorted(SECRET_SCAN_MODES),
+        default=None,
+        help="Secret-scan policy for worktree patch capture: pr_pushed fails closed; local_only is an explicit local-only opt-in.",
+    )
+    init_parser.add_argument(
         "--strict-notes",
         action="store_true",
         default=None,
@@ -3494,6 +3587,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Hide snippet column in human output",
     )
 
+    migrate_plan_parser = subparsers.add_parser(
+        "migrate-plan",
+        help="Explicitly diagnose or migrate one legacy execute plan",
+    )
+    migrate_plan_parser.add_argument("--project-dir", default=None)
+    migrate_plan_action = migrate_plan_parser.add_mutually_exclusive_group(required=True)
+    migrate_plan_action.add_argument("--diagnose", action="store_true")
+    migrate_plan_action.add_argument("--restart", action="store_true")
+    migrate_plan_action.add_argument("--close", action="store_true")
+    migrate_plan_parser.add_argument("plan")
+
+    custody_report_parser = subparsers.add_parser(
+        "custody-report",
+        help="Report worktree custody drift for one run",
+    )
+    custody_report_parser.add_argument("--project-dir", default=None)
+    custody_report_parser.add_argument("--run-id", required=True)
+    custody_report_parser.add_argument("--json", action="store_true")
+    custody_report_parser.add_argument(
+        "--write",
+        action="store_true",
+        help="Persist the report under .megaplan/worktrees/custody-reports/<run-id>/",
+    )
+
     migrate_local_parser = subparsers.add_parser(
         "migrate-local-plans", help="Import legacy ~/.megaplan/<project>/plans trees"
     )
@@ -3675,6 +3792,12 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "execute":
             step_parser.add_argument("--confirm-destructive", action="store_true")
             step_parser.add_argument("--user-approved", action="store_true")
+            step_parser.add_argument(
+                "--secret-scan-mode",
+                choices=sorted(SECRET_SCAN_MODES),
+                default=None,
+                help="Override the stored secret-scan policy for this execute run.",
+            )
             step_parser.add_argument(
                 "--batch",
                 type=int,
@@ -4476,6 +4599,8 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "user-action": handle_user_action,
     "ticket": handle_ticket,
     "epic": handle_epic,
+    "custody-report": handle_custody_report,
+    "migrate-plan": handle_migrate_plan,
     "migrate-local-plans": handle_migrate_local_plans,
     "step": handle_step,
     "override": handle_override,
@@ -4558,7 +4683,9 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
     Safety contract: this function MUST be strictly additive. It may only
     create one new branch + one new worktree directory. It never modifies the
     invoking repo, its branches (other than the one it creates), its remotes,
-    its stash, or any other worktree. If anything looks ambiguous, it raises.
+    its stash, or any other worktree. Project-owned ignore setup is applied
+    later by ``handle_init`` to the newly active target root only. If anything
+    looks ambiguous, it raises.
     """
     name = getattr(args, "in_worktree", None)
     clean_worktree = bool(getattr(args, "clean_worktree", False))
@@ -4682,6 +4809,122 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
             f"  * Files were carried as unstaged in the new worktree (staging "
             f"information is not preserved). Run `git diff` or `git status` "
             f"inside the worktree to inspect.",
+            file=sys.stderr,
+        )
+
+
+def _setup_chain_worktree(args: argparse.Namespace) -> None:
+    """Create a shared worktree for ``megaplan chain`` and reroot the command.
+
+    Unlike ``megaplan init --in-worktree``, this creates one worktree for the
+    entire chain. Every milestone plan initialized by the chain then receives
+    ``--project-dir <that-worktree>`` from the chain driver.
+    The invoking checkout remains read-only; any .gitignore ownership update
+    is applied only inside the generated chain worktree.
+    """
+    name = getattr(args, "in_worktree", None)
+    clean_worktree = bool(getattr(args, "clean_worktree", False))
+    carry_dirty_flag = bool(getattr(args, "carry_dirty", False))
+    action = getattr(args, "chain_action", None)
+    if clean_worktree and carry_dirty_flag:
+        raise CliError(
+            "invalid_args",
+            "--clean-worktree and --carry-dirty are mutually exclusive",
+        )
+    if name is None:
+        if getattr(args, "worktree_from", None):
+            raise CliError(
+                "invalid_args",
+                "--worktree-from is only valid alongside --in-worktree",
+            )
+        if clean_worktree or carry_dirty_flag:
+            raise CliError(
+                "invalid_args",
+                "--clean-worktree / --carry-dirty are only valid with --in-worktree",
+            )
+        return
+
+    if action not in (None, "start"):
+        raise CliError(
+            "invalid_args",
+            "--in-worktree is only valid for `megaplan chain start`",
+        )
+    if getattr(args, "project_dir", None):
+        raise CliError(
+            "invalid_args",
+            "pass either --project-dir or --in-worktree, not both",
+        )
+
+    from megaplan.bakeoff.worktree import (
+        branch_exists,
+        carry_dirty_state_atomic,
+        create_named_worktree,
+        ensure_no_inprogress_op,
+        has_dirty_state,
+        resolve_ref,
+        validate_worktree_name,
+        worktree_registered,
+    )
+    from megaplan.worktrees.paths import ensure_megaplan_worktrees_ignored
+
+    validate_worktree_name(name)
+
+    invoking_repo = _find_git_root(Path.cwd().resolve())
+    if invoking_repo is None:
+        raise CliError(
+            "not_a_git_repo",
+            "--in-worktree requires running from inside a git repository",
+        )
+    ensure_no_inprogress_op(invoking_repo)
+
+    target = (Path.home() / "Documents" / ".megaplan-worktrees" / name).resolve()
+    if target.exists():
+        raise CliError(
+            "worktree_target_exists",
+            f"refusing to create worktree: target path already exists: {target}",
+        )
+    if worktree_registered(invoking_repo, target):
+        raise CliError(
+            "worktree_already_registered",
+            f"git already has a worktree registered at {target} "
+            "(run `git worktree prune` manually if it's stale)",
+        )
+    if branch_exists(invoking_repo, name):
+        raise CliError(
+            "worktree_branch_exists",
+            f"branch {name!r} already exists locally or on a remote; "
+            "pick a different --in-worktree name",
+        )
+
+    base_ref = getattr(args, "worktree_from", None) or "HEAD"
+    base_sha = resolve_ref(invoking_repo, base_ref)
+    create_named_worktree(invoking_repo, target, base_sha, name)
+    ensure_megaplan_worktrees_ignored(target)
+
+    tracked_carried = 0
+    untracked_carried = 0
+    if not clean_worktree:
+        should_carry = carry_dirty_flag or has_dirty_state(invoking_repo)
+        if should_carry:
+            tracked_carried, untracked_carried = carry_dirty_state_atomic(
+                invoking_repo, target
+            )
+
+    args.project_dir = str(target)
+    from megaplan.workers import set_work_dir_override
+
+    set_work_dir_override(target)
+
+    print(
+        f"Created chain worktree at {target} on branch {name} "
+        f"(base {base_sha[:12]}); running chain inside it...",
+        file=sys.stderr,
+    )
+    if tracked_carried or untracked_carried:
+        print(
+            f"warning: carried {tracked_carried} uncommitted file change(s) "
+            f"and {untracked_carried} untracked file(s) from {invoking_repo} "
+            f"into {target}. Source worktree is unchanged.",
             file=sys.stderr,
         )
 
@@ -4900,6 +5143,11 @@ def main(argv: list[str] | None = None) -> int:
                     "megaplan init requires --project-dir or --in-worktree",
                 )
             )
+    elif args.command == "chain":
+        try:
+            _setup_chain_worktree(args)
+        except CliError as error:
+            return error_response(error)
 
     try:
         root = _resolve_project_root(args)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import get_args
 
 import pytest
 
+from megaplan.schemas.sprint1 import PlanArtifactRole
 from megaplan.schemas import (
     AutomationActor,
     BotTurn,
@@ -372,13 +374,13 @@ def test_plan_round_trips_current_plan_state_shape(plan_fixture) -> None:
 def test_plan_round_trips_lifecycle_failure_and_resume_cursor(plan_fixture) -> None:
     state = load_state(plan_fixture.plan_dir)
     state["current_state"] = "failed"
-    state["latest_failure"] = {"kind": "phase_failed", "phase": "execute"}
-    state["resume_cursor"] = {"phase": "execute", "batch_index": 1}
+    state["latest_failure"] = {"kind": "phase_failed", "phase": "review"}
+    state["resume_cursor"] = {"phase": "review", "retry_strategy": "rerun_phase"}
 
     plan = Plan.from_plan_state(state, plan_id="plan_1", revision=3)
 
-    assert plan.latest_failure == {"kind": "phase_failed", "phase": "execute"}
-    assert plan.resume_cursor == {"phase": "execute", "batch_index": 1}
+    assert plan.latest_failure == {"kind": "phase_failed", "phase": "review"}
+    assert plan.resume_cursor == {"phase": "review", "retry_strategy": "rerun_phase"}
     assert plan.to_plan_state()["latest_failure"] == state["latest_failure"]
     assert plan.to_plan_state()["resume_cursor"] == state["resume_cursor"]
 
@@ -393,6 +395,26 @@ def test_plan_legacy_state_without_resume_cursor_defaults_to_none(plan_fixture) 
     assert plan.resume_cursor is None
     assert plan.latest_failure is None
     assert "resume_cursor" not in plan.to_plan_state()
+
+
+def test_plan_legacy_state_without_execute_markers_round_trips(plan_fixture) -> None:
+    state = load_state(plan_fixture.plan_dir)
+    state["config"].pop("execute_model", None)
+    state["config"].pop("execute_schema_version", None)
+
+    plan = Plan.from_plan_state(state, plan_id="plan_1", revision=3)
+
+    assert "execute_model" not in plan.config
+    assert "execute_schema_version" not in plan.config
+    assert plan.to_plan_state()["config"] == state["config"]
+
+
+def test_plan_artifact_roles_do_not_include_project_custody_storage() -> None:
+    roles = set(get_args(PlanArtifactRole))
+
+    assert "worktree_registry" not in roles
+    assert "patch_bundle" not in roles
+    assert "custody_report" not in roles
 
 
 def test_feedback_and_sprint_constraints_match_design_extensions() -> None:

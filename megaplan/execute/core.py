@@ -16,6 +16,7 @@ from megaplan._core import (
     build_next_step_runtime,
     compute_batch_complexity,
     compute_global_batches,
+    compute_task_complexity,
     compute_task_batches,
     configured_robustness,
     get_effective,
@@ -61,14 +62,105 @@ from megaplan.receipts.extractors import execute_metrics
 from megaplan.receipts.writer import write_receipt
 from megaplan.types import (
     CliError,
+    EXECUTE_MODEL_LEGACY_BATCH,
+    EXECUTE_MODEL_WORKTREE_NATIVE,
     PlanState,
+    SECRET_SCAN_MODE_PR_PUSHED,
     STATE_EXECUTED,
     STATE_FINALIZED,
     StepResponse,
+    validate_secret_scan_mode,
+)
+from megaplan.store.plan_repository import PlanRepository
+from megaplan.worktrees.patches import PatchCaptureError, load_patch_bundle
+from megaplan.worktrees.registry import (
+    MISSING_ANCHOR,
+    MISSING_REGISTRY,
+    RegistryError,
+    read_registry_entries,
+)
+from megaplan.worktrees.identity import (
+    TaskIdentity,
+    TaskIdentityError,
+    build_task_identity_map,
+    make_task_identity,
 )
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
+
+
+def _emit_execute_progress(
+    emitter: Any,
+    *,
+    state: PlanState,
+    finalize_data: dict[str, Any],
+    batch_number: int,
+    batches_total: int,
+    batch_task_ids: list[str],
+    batch_sense_check_ids: list[str],
+    result: BatchResult,
+    blocked: bool,
+    batch_blocked_ids: list[str],
+    response_state: str,
+    tier_routing_active: bool,
+    tier_complexity: int | None,
+    tier_spec_raw: str | None,
+    tier_resolved_model: str | None,
+) -> None:
+    execute_model = (state.get("config") or {}).get("execute_model")
+    if execute_model == EXECUTE_MODEL_WORKTREE_NATIVE:
+        updates_by_task = {
+            update.get("task_id"): update
+            for update in result.payload.get("task_updates", []) or []
+            if isinstance(update, dict) and isinstance(update.get("task_id"), str)
+        }
+        sense_checks_by_task: dict[str, list[str]] = {}
+        for sense_check in finalize_data.get("sense_checks", []) or []:
+            if not isinstance(sense_check, dict):
+                continue
+            task_id = sense_check.get("task_id")
+            sense_check_id = sense_check.get("id")
+            if (
+                isinstance(task_id, str)
+                and task_id in batch_task_ids
+                and isinstance(sense_check_id, str)
+            ):
+                sense_checks_by_task.setdefault(task_id, []).append(sense_check_id)
+        blocked_task_ids = set(batch_blocked_ids)
+        for task_id in batch_task_ids:
+            identity = make_task_identity(task_id)
+            update = updates_by_task.get(task_id, {})
+            status = update.get("status") if isinstance(update.get("status"), str) else None
+            emitter.task_complete(
+                identity.task_key,
+                summary=f"Task {task_id} complete",
+                task_id=task_id,
+                task_id_encoded=identity.original_task_id_encoded,
+                task_id_encoding=identity.trailer_encoding,
+                status=status,
+                sense_check_ids=sense_checks_by_task.get(task_id, []),
+                blocked=task_id in blocked_task_ids,
+                state=response_state,
+            )
+        return
+
+    if execute_model in {EXECUTE_MODEL_LEGACY_BATCH, None}:
+        emitter.batch_complete(
+            str(batch_number),
+            summary=f"Batch {batch_number}/{batches_total} complete",
+            batch_number=batch_number,
+            batches_total=batches_total,
+            task_ids=batch_task_ids,
+            sense_check_ids=batch_sense_check_ids,
+            merged_task_count=result.merged_task_count,
+            total_task_count=result.total_task_count,
+            blocked=blocked,
+            state=response_state,
+            batch_complexity=tier_complexity if tier_routing_active else None,
+            tier_model_spec=tier_spec_raw if tier_routing_active else None,
+            tier_model=tier_resolved_model if tier_routing_active else None,
+        )
 
 
 def _resolve_tier_spec(
@@ -185,6 +277,318 @@ def _stable_unique_strings(values: list[str]) -> list[str]:
     return ordered
 
 
+def _receipt_task_records(batch_payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for payload in batch_payloads:
+        for update in payload.get("task_updates", []) or []:
+            if not isinstance(update, dict):
+                continue
+            task_id = update.get("task_id")
+            if not isinstance(task_id, str):
+                continue
+            identity = make_task_identity(task_id)
+            records.append(
+                {
+                    "task_id": task_id,
+                    "task_key": identity.task_key,
+                    "status": update.get("status"),
+                    "files_changed": update.get("files_changed", []),
+                    "commands_run": update.get("commands_run", []),
+                }
+            )
+    return records
+
+
+def _task_tier_record(
+    finalize_data: dict[str, Any],
+    task_id: str,
+    *,
+    tier_map: dict[int, str] | None,
+    resolved_agent: str,
+    resolved_mode: str,
+    resolved_model: str | None,
+) -> dict[str, Any]:
+    identity = make_task_identity(task_id)
+    task_complexity = compute_task_complexity(finalize_data, task_id)
+    tier_model_spec = tier_map.get(task_complexity) if tier_map else None
+    return {
+        "task_id": task_id,
+        "task_key": identity.task_key,
+        "task_complexity": task_complexity,
+        "tier_model_spec": tier_model_spec,
+        "resolved_agent": resolved_agent,
+        "resolved_mode": resolved_mode,
+        "resolved_model": resolved_model,
+    }
+
+
+def _task_dependencies(task: dict[str, Any]) -> list[str]:
+    deps = task.get("depends_on") or []
+    if not isinstance(deps, list):
+        return []
+    return [dep for dep in deps if isinstance(dep, str)]
+
+
+def _compute_serial_task_groups(
+    pending_tasks: list[dict[str, Any]],
+    *,
+    completed_ids: set[str],
+) -> list[list[str]]:
+    pending_by_id = {
+        task["id"]: task
+        for task in pending_tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
+    ordered_ids = [
+        task["id"]
+        for task in pending_tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    ]
+    satisfied = set(completed_ids)
+    groups: list[list[str]] = []
+    while pending_by_id:
+        ready_id: str | None = None
+        for task_id in ordered_ids:
+            task = pending_by_id.get(task_id)
+            if task is None:
+                continue
+            if all(dep in satisfied for dep in _task_dependencies(task)):
+                ready_id = task_id
+                break
+        if ready_id is None:
+            blocked = ", ".join(sorted(pending_by_id))
+            raise CliError(
+                "task_prerequisites",
+                "No dependency-ready pending task could be selected for worktree-native execute. "
+                f"Blocked pending tasks: {blocked}",
+            )
+        groups.append([ready_id])
+        satisfied.add(ready_id)
+        pending_by_id.pop(ready_id, None)
+    return groups
+
+
+def _validate_task_identity_map(
+    tasks: list[dict[str, Any]],
+) -> dict[str, TaskIdentity]:
+    try:
+        return build_task_identity_map(tasks)
+    except TaskIdentityError as exc:
+        raise CliError(exc.code, str(exc)) from exc
+
+
+def _task_native_run_id(state: PlanState) -> str:
+    invocation_id = (state.get("meta") or {}).get("current_invocation_id")
+    if isinstance(invocation_id, str) and invocation_id:
+        return invocation_id
+    return "execute"
+
+
+def _task_payloads_in_finalize_order(
+    plan_dir: Path,
+    finalize_data: dict[str, Any],
+    identity_map: dict[str, TaskIdentity],
+) -> list[dict[str, Any]]:
+    repository = PlanRepository.from_plan_dir(plan_dir)
+    payloads: list[dict[str, Any]] = []
+    for task in finalize_data.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str):
+            continue
+        identity = identity_map.get(task_id)
+        if identity is None:
+            continue
+        try:
+            payload = repository.read_task_execution_artifact(identity)
+        except (OSError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
+def _registry_metadata(
+    project_dir: Path,
+    run_id: str,
+    identity: TaskIdentity,
+) -> dict[str, Any]:
+    try:
+        entries = read_registry_entries(project_dir, run_id)
+    except RegistryError as exc:
+        if exc.code in {MISSING_ANCHOR, MISSING_REGISTRY}:
+            return {"run_id": run_id, "available": False, "reason": exc.code, "entries": []}
+        return {"run_id": run_id, "available": False, "reason": exc.code, "entries": []}
+    task_entries = [
+        entry
+        for entry in entries
+        if entry.get("task_key") == identity.task_key
+    ]
+    return {
+        "run_id": run_id,
+        "available": bool(task_entries),
+        "entry_count": len(task_entries),
+        "entries": task_entries,
+    }
+
+
+def _patch_metadata(project_dir: Path, run_id: str, task_id: str) -> dict[str, Any]:
+    try:
+        bundle = load_patch_bundle(project_dir, run_id, task_id)
+    except (PatchCaptureError, ValueError, TypeError) as exc:
+        code = getattr(exc, "code", type(exc).__name__)
+        return {"run_id": run_id, "available": False, "reason": str(code)}
+    return {
+        "run_id": run_id,
+        "available": True,
+        "manifest_path": str(bundle.manifest_path),
+        "patch_path": str(bundle.patch_path),
+        "sha256": bundle.patch_sha256,
+        "size_bytes": bundle.patch_size_bytes,
+        "base_head": bundle.base_head,
+        "changed_paths": (
+            bundle.manifest.get("patch", {}).get("changed_paths", [])
+            if isinstance(bundle.manifest.get("patch"), dict)
+            else []
+        ),
+        "secret_scan": bundle.secret_scan,
+        "trailers": bundle.trailers,
+        "identity": bundle.identity,
+    }
+
+
+def _task_update_for(payload: dict[str, Any], task_id: str) -> dict[str, Any]:
+    for update in payload.get("task_updates", []) or []:
+        if isinstance(update, dict) and update.get("task_id") == task_id:
+            return update
+    return {}
+
+
+def _sense_check_ids_for_task(finalize_data: dict[str, Any], task_id: str) -> list[str]:
+    return [
+        sense_check["id"]
+        for sense_check in finalize_data.get("sense_checks", []) or []
+        if isinstance(sense_check, dict)
+        and sense_check.get("task_id") == task_id
+        and isinstance(sense_check.get("id"), str)
+    ]
+
+
+def _task_execution_metadata(
+    *,
+    project_dir: Path,
+    run_id: str,
+    finalize_data: dict[str, Any],
+    identity: TaskIdentity,
+    payload: dict[str, Any],
+    worker: WorkerResult | None,
+    agent: str,
+    mode: str,
+    model: str | None,
+    tier_record: dict[str, Any] | None,
+    secret_scan_mode: str,
+) -> dict[str, Any]:
+    task_id = identity.original_task_id
+    update = _task_update_for(payload, task_id)
+    registry = _registry_metadata(project_dir, run_id, identity)
+    registry_entries = registry.get("entries", [])
+    integration_entries = [
+        entry
+        for entry in registry_entries
+        if isinstance(entry, dict)
+        and str(entry.get("entry_type", "")).startswith(("integration_", "patch_", "task_", "push_", "pr_", "prune_"))
+    ]
+    status = update.get("status") if isinstance(update.get("status"), str) else None
+    return {
+        "schema_version": 1,
+        "task_id": task_id,
+        "task_key": identity.task_key,
+        "identity": identity.registry_identity(),
+        "trailers": identity.trailer_fields(),
+        "tier": tier_record,
+        "patch": _patch_metadata(project_dir, run_id, task_id),
+        "progress": {
+            "event": "task_complete",
+            "task_id": task_id,
+            "task_key": identity.task_key,
+            "task_id_encoded": identity.original_task_id_encoded,
+            "task_id_encoding": identity.trailer_encoding,
+            "status": status,
+            "sense_check_ids": _sense_check_ids_for_task(finalize_data, task_id),
+        },
+        "registry": registry,
+        "integration": {
+            "available": bool(integration_entries),
+            "entries": integration_entries,
+        },
+        "secret_scan": {
+            "mode": secret_scan_mode,
+            "source": "execution.secret_scan_mode",
+        },
+        "receipt": {
+            "agent": agent,
+            "mode": mode,
+            "model": model,
+            "duration_ms": worker.duration_ms if worker is not None else 0,
+            "cost_usd": worker.cost_usd if worker is not None else 0.0,
+            "session_id": worker.session_id if worker is not None else None,
+            "prompt_tokens": worker.prompt_tokens if worker is not None else None,
+            "completion_tokens": worker.completion_tokens if worker is not None else None,
+            "total_tokens": worker.total_tokens if worker is not None else None,
+        },
+    }
+
+
+def _write_task_execution_artifact(
+    *,
+    plan_dir: Path,
+    identity: TaskIdentity,
+    payload: dict[str, Any],
+    secret_scan_mode: str,
+    blocked_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    task_payload = dict(payload)
+    task_payload["task_id"] = identity.original_task_id
+    task_payload["task_key"] = identity.task_key
+    task_payload["task_id_encoded"] = identity.original_task_id_encoded
+    task_payload["task_id_encoding"] = identity.trailer_encoding
+    task_payload["secret_scan"] = {
+        "mode": secret_scan_mode,
+        "source": "execution.secret_scan_mode",
+    }
+    task_payload["worktree_preserved"] = bool(blocked_reason)
+    if blocked_reason:
+        task_payload["status"] = "blocked"
+        task_payload["blocked_reason"] = blocked_reason
+    if metadata is not None:
+        task_payload["metadata"] = metadata
+    PlanRepository.from_plan_dir(plan_dir).write_task_execution_artifact(
+        identity, task_payload
+    )
+
+
+def _mark_task_blocked(
+    finalize_data: dict[str, Any],
+    *,
+    task_id: str,
+    reason: str,
+    invocation_id: str = "",
+) -> None:
+    for task in finalize_data.get("tasks", []) or []:
+        if not isinstance(task, dict) or task.get("id") != task_id:
+            continue
+        task["status"] = "blocked"
+        task["executor_notes"] = reason
+        task.setdefault("files_changed", [])
+        task.setdefault("commands_run", [])
+        task.setdefault("evidence_files", [])
+        if invocation_id:
+            task["recorded_invocation_id"] = invocation_id
+        break
+
+
 def _build_aggregate_execution_payload(
     batch_payloads: list[dict[str, Any]],
     *,
@@ -195,7 +599,7 @@ def _build_aggregate_execution_payload(
     state: PlanState | None = None,
 ) -> dict[str, Any]:
     outputs = [
-        f"Batch {index + 1}: {payload.get('output', '')}".strip()
+        f"Task {index + 1}: {payload.get('output', '')}".strip()
         for index, payload in enumerate(batch_payloads)
     ]
     deviations: list[str] = []
@@ -235,9 +639,7 @@ def _build_aggregate_execution_payload(
                 if isinstance(item, dict)
             ]
         )
-    output = (
-        f"Aggregated execute batches: completed {completed_batches}/{total_batches}."
-    )
+    output = f"Aggregated execute tasks: completed {completed_batches}/{total_batches}."
     if outputs:
         output = output + "\n" + "\n".join(outputs)
     result: dict[str, Any] = {
@@ -276,6 +678,59 @@ def _build_aggregate_execution_payload(
             preserve_existing_provocations=True,
         )
     return result
+
+
+def _persist_task_native_aggregate_artifacts(
+    *,
+    plan_dir: Path,
+    project_dir: Path,
+    state: PlanState,
+    finalize_data: dict[str, Any],
+    identity_map: dict[str, TaskIdentity],
+    total_tasks: int,
+) -> dict[str, Any]:
+    task_payloads = _task_payloads_in_finalize_order(plan_dir, finalize_data, identity_map)
+    aggregate_payload = _build_aggregate_execution_payload(
+        task_payloads,
+        completed_batches=len(task_payloads),
+        total_batches=total_tasks,
+        mode=state["config"].get("mode", "code"),
+        plan_dir=plan_dir,
+        state=state,
+    )
+    execution_audit = validate_execution_evidence(
+        finalize_data,
+        project_dir,
+        mode=state["config"].get("mode", "code"),
+        state=state,
+    )
+    aggregate_payload["deviations"] = list(aggregate_payload.get("deviations", []))
+    if execution_audit["skipped"]:
+        aggregate_payload["deviations"].append(
+            f"Advisory audit skip: {execution_audit['reason']}"
+        )
+    for finding in execution_audit["findings"]:
+        aggregate_payload["deviations"].append(f"Advisory audit finding: {finding}")
+    repository = PlanRepository.from_plan_dir(plan_dir)
+    aggregate_payload["task_artifacts"] = [
+        {
+            "task_id": payload.get("task_id"),
+            "task_key": payload.get("task_key"),
+            "artifact": repository.task_execution_artifact_name(payload["task_key"])
+            if isinstance(payload.get("task_key"), str)
+            else None,
+            "metadata": payload.get("metadata", {}),
+        }
+        for payload in task_payloads
+        if isinstance(payload, dict)
+    ]
+    atomic_write_json(plan_dir / "execution.json", aggregate_payload)
+    atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
+    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    atomic_write_text(
+        plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
+    )
+    return aggregate_payload
 
 
 def _active_sense_check_ids(
@@ -569,6 +1024,7 @@ def _run_and_merge_batch(
     capture_git_status_snapshot_fn: Callable[
         [Path], tuple[dict[str, str], str | None]
     ] = _capture_git_status_snapshot,
+    enable_auto_attribution: bool = True,
 ) -> BatchResult:
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
@@ -613,7 +1069,7 @@ def _run_and_merge_batch(
         )
     )
     attribution_result = AttributionResult(records=[], recursive_snapshot=None)
-    if not is_prose_mode(state):
+    if not is_prose_mode(state) and enable_auto_attribution:
         attribution_result = _auto_attribute_unclaimed_paths(
             project_dir=project_dir,
             finalize_data=finalize_data,
@@ -638,6 +1094,18 @@ def _run_and_merge_batch(
                 batch_number=batch_number,
                 batches_total=batches_total,
                 capture_git_status_snapshot_fn=observation_snapshot_fn,
+            )
+        )
+    elif not is_prose_mode(state):
+        deviations.extend(
+            _observe_git_changes(
+                project_dir=project_dir,
+                payload=payload,
+                before_snapshot=before_snapshot,
+                before_error=before_error,
+                batch_number=batch_number,
+                batches_total=batches_total,
+                capture_git_status_snapshot_fn=capture_git_status_snapshot_fn,
             )
         )
     if is_prose_mode(state):
@@ -811,8 +1279,8 @@ def handle_execute_one_batch(
         state, plan_dir, batch_task_ids, completed_ids, root=root
     )
 
-    # Per-batch tier resolution: when tier_map is provided, select the model
-    # for the maximum task complexity in this batch.
+    # Legacy explicit-batch tier resolution: when tier_map is provided,
+    # select the model for the maximum task complexity in this batch.
     fallback_agent, fallback_mode, fallback_refreshed, fallback_model = (
         agent, mode, refreshed, model
     )
@@ -989,7 +1457,7 @@ def handle_execute_one_batch(
             total_tokens=result.worker.total_tokens,
         )
         receipt_metrics = execute_metrics(aggregate_payload, drift)
-        receipt_metrics["batches"] = batch_payloads
+        receipt_metrics["tasks"] = _receipt_task_records(batch_payloads)
         receipt_worker.receipt_metrics = receipt_metrics
         try:
             artifact_hash = sha256_file(plan_dir / "execution.json")
@@ -1091,20 +1559,22 @@ def handle_execute_one_batch(
         response["guidance"] = f"Run --batch {batch_number + 1}"
     emitter = getattr(args, "progress_emitter", None)
     if emitter is not None:
-        emitter.batch_complete(
-            str(batch_number),
-            summary=f"Batch {batch_number}/{batches_total} complete",
+        _emit_execute_progress(
+            emitter,
+            state=state,
+            finalize_data=finalize_data,
             batch_number=batch_number,
             batches_total=batches_total,
-            task_ids=batch_task_ids,
-            sense_check_ids=batch_sense_check_ids,
-            merged_task_count=result.merged_task_count,
-            total_task_count=result.total_task_count,
+            batch_task_ids=batch_task_ids,
+            batch_sense_check_ids=batch_sense_check_ids,
+            result=result,
             blocked=blocked,
-            state=response_state,
-            batch_complexity=tier_complexity if tier_routing_active else None,
-            tier_model_spec=tier_spec_raw if tier_routing_active else None,
-            tier_model=tier_resolved_model if tier_routing_active else None,
+            batch_blocked_ids=batch_blocked_ids,
+            response_state=response_state,
+            tier_routing_active=tier_routing_active,
+            tier_complexity=tier_complexity,
+            tier_spec_raw=tier_spec_raw,
+            tier_resolved_model=tier_resolved_model,
         )
     _attach_next_step_runtime(response)
     return response
@@ -1285,24 +1755,61 @@ def handle_execute_auto_loop(
             _attach_next_step_runtime(response)
             return response
 
-    pending_batches = compute_task_batches(
-        pending_tasks, completed_ids=completed_task_ids
+    worktree_native = (
+        (state.get("config") or {}).get("execute_model")
+        == EXECUTE_MODEL_WORKTREE_NATIVE
     )
-    single_batch_mode = len(pending_batches) <= 1
-    global_batches = compute_global_batches(finalize_data)
-    global_batch_lookup = {
-        tuple(batch): index + 1 for index, batch in enumerate(global_batches)
-    }
-    batches_to_run = [all_task_ids] if single_batch_mode else pending_batches
+    task_identity_map: dict[str, TaskIdentity] = {}
+    secret_scan_mode = SECRET_SCAN_MODE_PR_PUSHED
+    task_native_run_id = _task_native_run_id(state)
+    if worktree_native:
+        task_identity_map = _validate_task_identity_map(
+            [task for task in tasks if isinstance(task, dict)]
+        )
+        secret_scan_mode = validate_secret_scan_mode(
+            (state.get("config") or {}).get(
+                "secret_scan_mode", SECRET_SCAN_MODE_PR_PUSHED
+            )
+        )
+        state["config"]["secret_scan_mode"] = secret_scan_mode
+        pending_batches = _compute_serial_task_groups(
+            pending_tasks, completed_ids=completed_task_ids
+        )
+        single_batch_mode = False
+        global_batches = pending_batches
+        global_batch_lookup = {
+            tuple(batch): index + 1 for index, batch in enumerate(global_batches)
+        }
+        batches_to_run = pending_batches
+        active_task_ids = set(
+            [task["id"] for task in pending_tasks]
+            if pending_tasks
+            else all_task_ids
+        )
+        active_sense_check_ids = set(
+            _active_sense_check_ids(finalize_data, active_task_ids)
+            if pending_tasks
+            else all_sense_check_ids
+        )
+    else:
+        pending_batches = compute_task_batches(
+            pending_tasks, completed_ids=completed_task_ids
+        )
+        single_batch_mode = len(pending_batches) <= 1
+        global_batches = compute_global_batches(finalize_data)
+        global_batch_lookup = {
+            tuple(batch): index + 1 for index, batch in enumerate(global_batches)
+        }
+        batches_to_run = [all_task_ids] if single_batch_mode else pending_batches
+        active_task_ids = set(
+            all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks]
+        )
+        active_sense_check_ids = set(
+            all_sense_check_ids
+            if single_batch_mode
+            else _active_sense_check_ids(finalize_data, active_task_ids)
+        )
     total_batches = len(batches_to_run) or 1
-    active_task_ids = set(
-        all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks]
-    )
-    active_sense_check_ids = set(
-        all_sense_check_ids
-        if single_batch_mode
-        else _active_sense_check_ids(finalize_data, active_task_ids)
-    )
 
     batch_payloads: list[dict[str, Any]] = []
     all_attribution_records: list[dict[str, Any]] = []
@@ -1316,7 +1823,7 @@ def handle_execute_auto_loop(
     latest_session_id: str | None = None
     blocking_reasons: list[str] = []
     timeout_recovery: StepResponse | None = None
-    # Per-batch tier routing: track the previous batch's resolved (agent, model)
+    # Tier routing tracks the previous task group's resolved (agent, model)
     # identity so we can force a fresh session when the model changes.
     prev_batch_identity: tuple[str, str | None] | None = None
     # Save the fallback identity for tier-change freshness detection.
@@ -1325,8 +1832,8 @@ def handle_execute_auto_loop(
     )
     # Tier routing observability — only populated when tier_map is active.
     tier_routing_active = bool(tier_map)
-    # Batch-to-tier mapping for the aggregate history entry summary.
-    batch_to_tier: list[dict[str, Any]] = []
+    # Task-to-tier mapping for the aggregate history entry summary.
+    task_to_tier: list[dict[str, Any]] = []
 
     for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
         batch_prompt = (
@@ -1352,23 +1859,26 @@ def handle_execute_auto_loop(
         )
         batches_total_for_observation = 1 if single_batch_mode else len(global_batches)
 
-        # Per-batch tier resolution: select the model for the max task
-        # complexity in this batch.  Falls back to the caller-provided
+        # Tier resolution currently selects the dispatch model for this ready
+        # task group using its highest task complexity.  The persisted
+        # provenance below remains task-shaped so later serial dispatch can
+        # consume the same history contract.
+        # Falls back to the caller-provided
         # agent/mode/model when tier_map is None or the complexity has no entry.
         batch_agent, batch_mode, batch_refreshed, batch_model = (
             agent, mode, refreshed, model
         )
-        # Tier routing per-batch observability (only populated when active).
-        batch_tier_complexity: int | None = None
-        batch_tier_spec: str | None = None
         if tier_map:
-            batch_complexity = compute_batch_complexity(
-                finalize_data, batch_task_ids
-            )
-            batch_tier_complexity = batch_complexity
+            if worktree_native and len(batch_task_ids) == 1:
+                batch_complexity = compute_task_complexity(
+                    finalize_data, batch_task_ids[0]
+                )
+            else:
+                batch_complexity = compute_batch_complexity(
+                    finalize_data, batch_task_ids
+                )
             tier_spec = tier_map.get(batch_complexity)
             if tier_spec:
-                batch_tier_spec = tier_spec
                 tier_agent, tier_mode, tier_model = _resolve_tier_spec(
                     args, tier_spec
                 )
@@ -1413,8 +1923,86 @@ def handle_execute_auto_loop(
                 batches_total=batches_total_for_observation,
                 quality_config=quality_config,
                 capture_git_status_snapshot_fn=_capture_git_status_snapshot,
+                enable_auto_attribution=not worktree_native,
             )
         except CliError as error:
+            if error.code == "worker_timeout" and worktree_native:
+                timeout_error = error
+                latest_session_id = (
+                    error.extra.get("session_id")
+                    if isinstance(error.extra.get("session_id"), str)
+                    else latest_session_id
+                )
+                task_id = batch_task_ids[0] if batch_task_ids else ""
+                identity = task_identity_map.get(task_id)
+                reason = f"Worker timed out before task completion: {error.message}"
+                if identity is not None:
+                    _write_task_execution_artifact(
+                        plan_dir=plan_dir,
+                        identity=identity,
+                        payload={
+                            "output": "",
+                            "files_changed": [],
+                            "commands_run": [],
+                            "deviations": [reason],
+                            "task_updates": [
+                                {
+                                    "task_id": task_id,
+                                    "status": "blocked",
+                                    "executor_notes": reason,
+                                    "files_changed": [],
+                                    "commands_run": [],
+                                }
+                            ],
+                            "sense_check_acknowledgments": [],
+                        },
+                        secret_scan_mode=secret_scan_mode,
+                        blocked_reason="worker_timeout",
+                        metadata=_task_execution_metadata(
+                            project_dir=project_dir,
+                            run_id=task_native_run_id,
+                            finalize_data=finalize_data,
+                            identity=identity,
+                            payload={
+                                "task_updates": [
+                                    {"task_id": task_id, "status": "blocked"}
+                                ],
+                                "sense_check_acknowledgments": [],
+                            },
+                            worker=None,
+                            agent=batch_agent,
+                            mode=batch_mode,
+                            model=batch_model,
+                            tier_record=(
+                                _task_tier_record(
+                                    finalize_data,
+                                    task_id,
+                                    tier_map=tier_map,
+                                    resolved_agent=batch_agent,
+                                    resolved_mode=batch_mode,
+                                    resolved_model=batch_model,
+                                )
+                                if tier_routing_active and task_id
+                                else None
+                            ),
+                            secret_scan_mode=secret_scan_mode,
+                        ),
+                    )
+                current_inv_id = (state.get("meta") or {}).get(
+                    "current_invocation_id", ""
+                )
+                _mark_task_blocked(
+                    finalize_data,
+                    task_id=task_id,
+                    reason=reason,
+                    invocation_id=current_inv_id if isinstance(current_inv_id, str) else "",
+                )
+                atomic_write_json(plan_dir / "finalize.json", finalize_data)
+                atomic_write_text(
+                    plan_dir / "final.md",
+                    render_final_md(finalize_data, phase="execute"),
+                )
+                break
             if error.code == "worker_timeout":
                 timeout_error = error
                 latest_session_id = (
@@ -1461,20 +2049,65 @@ def handle_execute_auto_loop(
             mode=result.mode,
             refreshed=result.refreshed,
         )
-        # Track the actual tier-selected model identity for the next batch's
+        # Track the actual tier-selected model identity for the next task group's
         # freshness comparison (timeout recovery paths read this same tracking).
         prev_batch_identity = (batch_agent, batch_model)
-        # Record batch-to-tier mapping for the aggregate history entry.
+        # Record task-to-tier mapping for the aggregate history entry.
         if tier_routing_active:
-            batch_to_tier.append({
-                "batch_number": batch_number_for_artifact,
-                "batch_index": batch_index,
-                "batch_complexity": batch_tier_complexity,
-                "tier_model_spec": batch_tier_spec,
-                "resolved_agent": batch_agent,
-                "resolved_mode": batch_mode,
-                "resolved_model": batch_model,
-            })
+            for task_id in batch_task_ids:
+                task_to_tier.append(
+                    _task_tier_record(
+                        finalize_data,
+                        task_id,
+                        tier_map=tier_map,
+                        resolved_agent=batch_agent,
+                        resolved_mode=batch_mode,
+                        resolved_model=batch_model,
+                    )
+                )
+        if worktree_native:
+            for task_id in batch_task_ids:
+                identity = task_identity_map.get(task_id)
+                if identity is not None:
+                    tier_record = (
+                        _task_tier_record(
+                            finalize_data,
+                            task_id,
+                            tier_map=tier_map,
+                            resolved_agent=batch_agent,
+                            resolved_mode=batch_mode,
+                            resolved_model=batch_model,
+                        )
+                        if tier_routing_active
+                        else None
+                    )
+                    _write_task_execution_artifact(
+                        plan_dir=plan_dir,
+                        identity=identity,
+                        payload=result.payload,
+                        secret_scan_mode=secret_scan_mode,
+                        metadata=_task_execution_metadata(
+                            project_dir=project_dir,
+                            run_id=task_native_run_id,
+                            finalize_data=finalize_data,
+                            identity=identity,
+                            payload=result.payload,
+                            worker=result.worker,
+                            agent=batch_agent,
+                            mode=batch_mode,
+                            model=batch_model,
+                            tier_record=tier_record,
+                            secret_scan_mode=secret_scan_mode,
+                        ),
+                    )
+            _persist_task_native_aggregate_artifacts(
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state,
+                finalize_data=finalize_data,
+                identity_map=task_identity_map,
+                total_tasks=len(active_task_ids) or total_batches,
+            )
         batch_payloads.append(result.payload)
         all_attribution_records.extend(result.attribution_records)
         if result.worker.trace_output is not None:
@@ -1527,6 +2160,10 @@ def handle_execute_auto_loop(
         refreshed = result.refreshed
 
     plan_mode = state["config"].get("mode", "code")
+    if worktree_native:
+        batch_payloads = _task_payloads_in_finalize_order(
+            plan_dir, finalize_data, task_identity_map
+        )
     aggregate_payload = _build_aggregate_execution_payload(
         batch_payloads,
         completed_batches=len(batch_payloads),
@@ -1538,7 +2175,7 @@ def handle_execute_auto_loop(
     if timeout_error is not None:
         aggregate_payload["deviations"] = list(aggregate_payload.get("deviations", []))
         aggregate_payload["deviations"].append(
-            f"Execute timed out after {len(batch_payloads)}/{total_batches} completed batches: {timeout_error.message}"
+            f"Execute timed out after {len(batch_payloads)}/{total_batches} completed task groups: {timeout_error.message}"
         )
     if trace_chunks:
         atomic_write_text(plan_dir / "execution_trace.jsonl", "".join(trace_chunks))
@@ -1570,6 +2207,20 @@ def handle_execute_auto_loop(
             f"work is handled out-of-band; re-run those tasks once the blockage is resolved."
         )
     aggregate_payload["deviations"] = deviations
+    if worktree_native:
+        repository = PlanRepository.from_plan_dir(plan_dir)
+        aggregate_payload["task_artifacts"] = [
+            {
+                "task_id": payload.get("task_id"),
+                "task_key": payload.get("task_key"),
+                "artifact": repository.task_execution_artifact_name(payload["task_key"])
+                if isinstance(payload.get("task_key"), str)
+                else None,
+                "metadata": payload.get("metadata", {}),
+            }
+            for payload in batch_payloads
+            if isinstance(payload, dict)
+        ]
     atomic_write_json(plan_dir / "execution.json", aggregate_payload)
     drift = _compute_execute_scope_drift(project_dir, aggregate_payload, state)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
@@ -1609,7 +2260,7 @@ def handle_execute_auto_loop(
         total_checks=total_checks,
         missing_task_evidence=missing_task_evidence,
         timeout_reason=(
-            f"execution timed out after {len(batch_payloads)}/{total_batches} completed batches"
+            f"execution timed out after {len(batch_payloads)}/{total_batches} completed task groups"
             if timeout_error is not None
             else None
         ),
@@ -1660,7 +2311,7 @@ def handle_execute_auto_loop(
         total_tokens=total_total_tokens,
     )
     receipt_metrics = execute_metrics(aggregate_payload, drift)
-    receipt_metrics["batches"] = batch_payloads
+    receipt_metrics["tasks"] = _receipt_task_records(batch_payloads)
     receipt_worker.receipt_metrics = receipt_metrics
     aggregate_history_entry = make_history_entry(
         "execute",
@@ -1677,9 +2328,9 @@ def handle_execute_auto_loop(
         message=message,
         approval_mode=approval_mode,
     )
-    # Include batch-to-tier mapping summary when tier routing was active.
-    if tier_routing_active and batch_to_tier:
-        aggregate_history_entry["batch_to_tier"] = batch_to_tier
+    # Include task-to-tier mapping summary when tier routing was active.
+    if tier_routing_active and task_to_tier:
+        aggregate_history_entry["task_to_tier"] = task_to_tier
     append_history(state, aggregate_history_entry)
     try:
         artifact_hash = sha256_file(plan_dir / "execution.json")
@@ -1712,8 +2363,8 @@ def handle_execute_auto_loop(
     )
     if timeout_error is not None:
         summary = (
-            f"Execute timed out after {len(batch_payloads)}/{total_batches} completed batches. "
-            "Prior batches were persisted; re-run execute to continue."
+            f"Execute timed out after {len(batch_payloads)}/{total_batches} completed task groups. "
+            "Prior task artifacts were persisted; re-run execute to continue."
         )
     elif blocked:
         summary = (

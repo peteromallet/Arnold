@@ -293,11 +293,11 @@ def test_file_store_plan_lifecycle_fields_round_trip(tmp_path: Path) -> None:
         name="plan",
         idea="idea",
         latest_failure={"kind": "blocked", "message": "needs input"},
-        resume_cursor={"phase": "execute", "batch_index": 2},
+        resume_cursor={"phase": "review", "retry_strategy": "rerun_phase"},
     )
     loaded = store.load_plan(plan.id)
     assert loaded.latest_failure == {"kind": "blocked", "message": "needs input"}
-    assert loaded.resume_cursor == {"phase": "execute", "batch_index": 2}
+    assert loaded.resume_cursor == {"phase": "review", "retry_strategy": "rerun_phase"}
 
     updated = store.update_plan(
         plan.id,

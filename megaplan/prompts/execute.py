@@ -92,10 +92,12 @@ _EXECUTE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - Before declaring the work complete, write a short script (not a full test) that reproduces the exact bug or incorrect behavior described in the task. Run it to confirm the fix resolves the issue. Then delete the script so it does not appear in the final diff. If the task description is too vague to write a concrete reproduction, note this explicitly in executor_notes.
     - Output concrete files changed and commands run. `files_changed` means files you WROTE or MODIFIED — not files you read or verified. Only list files where you made actual edits.
     - Use the tasks in `finalize.json` as the execution boundary.
-    - Best-effort progress checkpointing: if `{checkpoint_path}` is writable, then after each completed task read the full file, update that task's `status`, `executor_notes`, `files_changed`, and `commands_run`, and write the full file back. Do NOT write to `finalize.json` directly — the harness owns that file.
-    - Best-effort sense-check checkpointing: if `{checkpoint_path}` is writable, then after each sense check acknowledgment read the full file again, update that sense check's `executor_note`, and write the full file back.
+    - Worker/coordinator boundary: report task outcomes and evidence only. Do not commit, push, merge, open PRs, capture integration patches, apply patches back to the milestone worktree, clean up task worktrees, emit progress-completion events, or update coordinator-owned registry/progress state.
+    - The coordinator owns patch capture, commits, pushes, cleanup, progress completion, and integration into the milestone worktree after your task evidence is returned.
+    - Best-effort timeout-recovery evidence artifact: if `{checkpoint_path}` is writable, then after each completed task read the full file, update that task's `status`, `executor_notes`, `files_changed`, and `commands_run`, and write the full file back. Do NOT write to `finalize.json` directly — the harness owns that file.
+    - Best-effort sense-check evidence artifact: if `{checkpoint_path}` is writable, then after each sense check acknowledgment read the full file again, update that sense check's `executor_note`, and write the full file back.
     - Always use full read-modify-write updates for `{checkpoint_path}` instead of partial edits. If the sandbox blocks writes, continue execution and rely on the structured output below.
-    - Structured output remains the authoritative final summary for this step. Disk writes are progress checkpoints for timeout recovery only.
+    - Structured output remains the authoritative final evidence summary for this step. Disk writes are timeout-recovery evidence snapshots only; they do not mark coordinator progress complete.
     - Return `task_updates` with one object per completed or skipped task.
     - `task_updates[].status` must be either `done` or `skipped`. Never return `pending` in execute output.
     - If a task is blocked by environment limits, missing devices, or manual-only validation that cannot happen in this session, return `status: "skipped"` and explain the remaining manual follow-up in `executor_notes` and `deviations`.
@@ -417,7 +419,7 @@ def _execute_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) 
         Execution tracking source of truth (`finalize.json`):
         {json_dump(finalize_data).strip()}
 
-        Absolute checkpoint path for best-effort progress checkpoints (NOT `finalize.json`):
+        Absolute checkpoint path for best-effort timeout-recovery evidence snapshots (NOT `finalize.json`):
         {checkpoint_path}
 
         Plan metadata:
@@ -594,7 +596,9 @@ def _execute_batch_prompt(
         - Only produce `sense_check_acknowledgments` for these sense checks: [{", ".join(batch_sense_check_ids)}]
         - Do not include updates for tasks or sense checks outside this batch.
         - Keep `executor_notes` verification-focused.
-        - Best-effort progress checkpointing: if `{checkpoint_path}` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - Worker/coordinator boundary: report task outcomes and evidence only. Do not commit, push, merge, open PRs, capture integration patches, apply patches back to the milestone worktree, clean up task worktrees, emit progress-completion events, or update coordinator-owned registry/progress state.
+        - The coordinator owns patch capture, commits, pushes, cleanup, progress completion, and integration into the milestone worktree after your task evidence is returned.
+        - Best-effort timeout-recovery evidence artifact: if `{checkpoint_path}` is writable, checkpoint task and sense-check evidence there (not `finalize.json`). The harness owns `finalize.json`; this artifact does not mark coordinator progress complete.
         - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
         - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. You MUST still re-run the FULL test suite with your changes applied — pre-existing failures do not excuse skipping verification. Never narrow to individual test functions and stop.
         - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.

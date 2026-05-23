@@ -11,6 +11,10 @@ from pydantic import Field
 from megaplan.types import (
     ActiveStep,
     ClarificationRecord,
+    EXECUTE_MODEL_LEGACY_BATCH,
+    EXECUTE_MODEL_WORKTREE_NATIVE,
+    EXECUTE_SCHEMA_VERSION,
+    ExecuteModel,
     HistoryEntry,
     LastGateRecord,
     PlanConfig,
@@ -43,6 +47,7 @@ PlanArtifactRole = Literal[
     "finalize_snapshot",
     "execution_batch",
     "execution",
+    "execution_task",
     "execution_audit",
     "execution_checkpoint",
     "execution_trace",
@@ -78,6 +83,7 @@ ControlIntent = Literal[
 ProgressEventKind = Literal[
     "phase_start",
     "phase_end",
+    "task_complete",
     "batch_complete",
     "gate_pending",
     "gate_resolved",
@@ -87,6 +93,12 @@ ProgressEventKind = Literal[
     "manual_fix_attached",
 ]
 AutomationActorKind = Literal["cli", "cloud_worker", "ci", "admin"]
+
+EXECUTE_MODEL_VALUES: tuple[ExecuteModel, ...] = (
+    EXECUTE_MODEL_LEGACY_BATCH,
+    EXECUTE_MODEL_WORKTREE_NATIVE,
+)
+CURRENT_EXECUTE_SCHEMA_VERSION = EXECUTE_SCHEMA_VERSION
 
 
 class MigrationRun(StorageModel):

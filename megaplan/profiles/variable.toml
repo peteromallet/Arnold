@@ -5,7 +5,7 @@
 # (plan, critique, revise, review, loop_plan, tiebreakers, feedback),
 # DeepSeek V4 Pro for mechanical phases (prep, gate, finalize, loop_execute).
 #
-# Execute dispatch picks the cheapest safe model per batch using the
+# Execute dispatch records the cheapest safe model per task using the
 # [tier_models.execute] table below.  The flat ``execute`` entry is the
 # fallback when tier routing is disabled (e.g. --phase-model execute=...).
 #
@@ -22,7 +22,7 @@
 #   * `--critic cross` — overrides critique+review to the *other* premium
 #     relative to the resolved vendor.
 #   * `--phase-model execute=...` — disables tier routing entirely; the
-#     explicit spec wins for every batch.
+#     explicit spec wins for every task.
 #   * `--deepseek-provider direct` — flips hermes:fireworks:… DeepSeek specs
 #     to hermes:deepseek:… (tiers 1-3).
 [profiles.variable]

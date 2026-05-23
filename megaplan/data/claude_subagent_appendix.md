@@ -222,11 +222,10 @@ Finalize and execute:
 - In auto-approve mode, run `megaplan execute --plan <name> --confirm-destructive`.
 - In review mode, stop with `BREAKPOINT: EXECUTE_APPROVAL`, then after approval run `megaplan execute --plan <name> --confirm-destructive --user-approved`.
 
-Per-batch execution:
-- If the execution briefing or CLI response indicates per-batch execution, continue batch by batch.
-- Batch numbering is global and 1-indexed.
-- Use `megaplan progress --plan <name>` between batch executions.
-- Re-run the same batch number after a timeout if needed; the harness will reconcile previously completed work.
+Task-native execution:
+- If the execution briefing or CLI response identifies one current task, continue task by task.
+- Use `megaplan progress --plan <name>` between task executions to inspect task keys, task artifacts, and preserved worktrees.
+- Re-run execute after a timeout if needed; the harness will reconcile task artifacts and registry state.
 
 Execution loop end conditions:
 - Continue until all actionable tasks are complete and the workflow reaches `done`.

@@ -77,5 +77,25 @@ def test_finalize_instruction_forbids_self_validation(tmp_path: Path) -> None:
     assert "self-checks plan coverage" not in prompt
 
 
+def test_finalize_prompt_uses_task_native_dependency_guidance(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+
+    prompt = create_claude_prompt("finalize", state, plan_dir)
+
+    assert "task-native serial execution" in prompt
+    assert "real prerequisites only" in prompt
+    assert "one dependency-ready task at a time" in prompt
+    assert "stable user-facing task ID" in prompt
+    assert "deterministic safe filesystem/task keys" in prompt
+    legacy_first_group = "batch" + "_1"
+    retired_capacity_key = "max_tasks" + "_per_batch"
+    legacy_dependency_verb = "spr" + "ead"
+    assert legacy_first_group not in prompt
+    assert retired_capacity_key not in prompt
+    assert "batch" + "-size" not in prompt
+    assert "batch" + " size" not in prompt
+    assert legacy_dependency_verb not in prompt.lower()
+
+
 def test_finalize_has_no_hermes_file_toolset() -> None:
     assert _toolsets_for_phase("finalize") is None

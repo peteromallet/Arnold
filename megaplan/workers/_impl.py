@@ -50,11 +50,11 @@ from megaplan._core import (
     touch_active_step,
 )
 from megaplan.prompts import (
-    create_claude_prompt,
     create_codex_prompt,
     create_hermes_prompt,
     _resolve_prompt_root,
 )
+from megaplan.workers.context import WorkerExecutionContext
 
 
 _EXECUTE_STEPS = {"execute", "loop_execute"}
@@ -1526,7 +1526,7 @@ def _default_mock_finalize_payload(state: PlanState, plan_dir: Path) -> dict[str
             {
                 "id": "T2",
                 "description": "Verify success criteria",
-                "depends_on": [],
+                "depends_on": ["T1"],
                 "status": "pending",
                 "executor_notes": "",
                 "files_changed": [],
@@ -1826,6 +1826,7 @@ def run_claude_step(
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
     model: str | None = None,
+    execution_context: WorkerExecutionContext | None = None,
 ) -> WorkerResult:
     """Compatibility wrapper: the public ``claude`` route runs via Shannon."""
     if effort is not None and effort not in _VALID_CLAUDE_EFFORTS:
@@ -1843,6 +1844,7 @@ def run_claude_step(
         effort=effort,
         session_agent="claude",
         model=model,
+        execution_context=execution_context,
     )
 
 
@@ -1859,14 +1861,16 @@ def run_codex_step(
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
     model: str | None = None,
+    execution_context: WorkerExecutionContext | None = None,
 ) -> WorkerResult:
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
-    fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
+    fresh = fresh or execution_context is not None or step not in _CROSS_CALL_PERSISTENT_STEPS
     if os.getenv(MOCK_ENV_VAR) == "1":
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
-    work_dir = resolve_work_dir(state)
+    work_dir = execution_context.worktree_dir if execution_context is not None else resolve_work_dir(state)
+    prompt_plan_dir = execution_context.task_context_dir if execution_context is not None else plan_dir
     plan_mode = state["config"].get("mode", "code")
     codex_schema_name = (
         get_execution_schema_key(plan_mode, form=creative_form_id(state))
@@ -1875,14 +1879,17 @@ def run_codex_step(
     )
     schema_file = schemas_root(root) / codex_schema_name
     session_key = session_key_for(step, "codex", model=model)
-    session = state["sessions"].get(session_key, {})
-    out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
-    out_handle.close()
-    output_path = Path(out_handle.name)
+    session = {} if execution_context is not None else state["sessions"].get(session_key, {})
+    if execution_context is not None:
+        output_path = execution_context.output_path("codex", step)
+    else:
+        out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+        out_handle.close()
+        output_path = Path(out_handle.name)
     prompt = prompt_override if prompt_override is not None else create_codex_prompt(
         step,
         state,
-        plan_dir,
+        prompt_plan_dir,
         root=root,
         **(prompt_kwargs or {}),
     )
@@ -1915,9 +1922,9 @@ def run_codex_step(
             "--skip-git-repo-check",
             "-C",
             str(work_dir),
-            "--add-dir",
-            str(plan_dir),
         ]
+        if execution_context is None:
+            command.extend(["--add-dir", str(plan_dir)])
         if _trusted_container():
             # In a trusted container the surrounding runtime is the sandbox.
             # Skip the workspace-write sandbox (which requires user namespaces
@@ -1937,10 +1944,11 @@ def run_codex_step(
             # plans whose project_dir is e.g. ``tools/`` get blocked from
             # writing siblings like ``effects/`` even though they're part of
             # the same repo. Set MEGAPLAN_NARROW_SANDBOX=1 to opt out.
-            extra_roots.extend(_auto_writable_roots(Path(work_dir)))
+            if execution_context is None:
+                extra_roots.extend(_auto_writable_roots(Path(work_dir)))
             try:
                 state_path = plan_dir / "state.json"
-                if state_path.is_file():
+                if execution_context is None and state_path.is_file():
                     state_data = json.loads(state_path.read_text(encoding="utf-8"))
                     raw_extra = state_data.get("config", {}).get("extra_writable_roots", []) or []
                     if isinstance(raw_extra, list):
@@ -2018,6 +2026,7 @@ def run_codex_step(
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
                 model=model,
+                execution_context=execution_context,
             )
         # Recover from a poisoned session: the history carries an obsolete
         # "sandbox is broken" belief from a pre-trusted-container run. Only
@@ -2051,6 +2060,7 @@ def run_codex_step(
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
                 model=model,
+                execution_context=execution_context,
             )
         # Recover from a session that grew too large to remote-compact:
         # OpenAI 429s the compaction call, codex gives up and exits. Same
@@ -2081,6 +2091,7 @@ def run_codex_step(
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
                 model=model,
+                execution_context=execution_context,
             )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
@@ -2159,6 +2170,7 @@ def run_codex_step(
             prompt_kwargs=prompt_kwargs,
             effort=effort,
             model=model,
+            execution_context=execution_context,
         )
     # Poisoned-session recovery on non-exception path: the worker exited 0 or
     # non-zero but produced output that still echoes an obsolete sandbox
@@ -2188,6 +2200,7 @@ def run_codex_step(
             prompt_kwargs=prompt_kwargs,
             effort=effort,
             model=model,
+            execution_context=execution_context,
         )
     # Oversized-session recovery on non-exception path. See the matching
     # branch in the CliError handler above for context.
@@ -2216,6 +2229,7 @@ def run_codex_step(
             prompt_kwargs=prompt_kwargs,
             effort=effort,
             model=model,
+            execution_context=execution_context,
         )
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
@@ -2289,7 +2303,10 @@ def _is_agent_available(agent: str) -> bool:
         # megaplan/agent/__init__.py that makes run_agent / hermes_state
         # resolvable; we probe both so a partial install also fails closed.
         try:
-            import megaplan.agent  # noqa: F401
+            import megaplan.agent as agent_pkg  # noqa: F401
+            agent_dir = Path(agent_pkg.__file__).resolve().parent
+            if str(agent_dir) not in sys.path:
+                sys.path.insert(0, str(agent_dir))
             from run_agent import AIAgent  # noqa: F401
             from hermes_state import SessionDB  # noqa: F401
         except ImportError:
@@ -2469,6 +2486,7 @@ def run_step_with_worker(
     resolved: tuple[str, str, bool, str | None] | AgentMode | None = None,
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
+    execution_context: WorkerExecutionContext | None = None,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -2480,7 +2498,9 @@ def run_step_with_worker(
     # Cross-call persistence is only valid for execute-shaped phases. Every
     # other phase receives all needed context in its prompt, so resuming prior
     # planner/critic/reviewer sessions risks cache-replay no-ops.
-    effective_refreshed = refreshed or step not in _CROSS_CALL_PERSISTENT_STEPS
+    effective_refreshed = (
+        refreshed or execution_context is not None or step not in _CROSS_CALL_PERSISTENT_STEPS
+    )
     explicit_agent = _agent_requested_explicitly(step, args)
     attempted_agents: set[str] = set()
     while True:
@@ -2497,6 +2517,7 @@ def run_step_with_worker(
                     fresh=effective_refreshed,
                     model=model,
                     prompt_override=prompt_override,
+                    execution_context=execution_context,
                 )
             elif agent == "claude":
                 from megaplan.workers.shannon import run_shannon_step
@@ -2511,6 +2532,7 @@ def run_step_with_worker(
                     effort=effort,
                     session_agent="claude",
                     model=resolved_model,
+                    execution_context=execution_context,
                 )
             elif agent == "shannon":
                 # Deferred import to avoid circular import
@@ -2525,6 +2547,7 @@ def run_step_with_worker(
                     prompt_kwargs=prompt_kwargs,
                     effort=effort,
                     model=resolved_model,
+                    execution_context=execution_context,
                 )
             else:
                 attempted_retry = False
@@ -2542,6 +2565,7 @@ def run_step_with_worker(
                             prompt_kwargs=prompt_kwargs,
                             effort=effort,
                             model=resolved_model,
+                            execution_context=execution_context,
                         )
                         break
                     except CliError as error:
@@ -2563,7 +2587,10 @@ def run_step_with_worker(
                                 refreshed=effective_refreshed,
                                 model=resolved_model,
                             )
-                            effective_refreshed = step not in _CROSS_CALL_PERSISTENT_STEPS
+                            effective_refreshed = (
+                                execution_context is not None
+                                or step not in _CROSS_CALL_PERSISTENT_STEPS
+                            )
                         continue
             return worker, agent, mode, effective_refreshed
         except CliError as error:

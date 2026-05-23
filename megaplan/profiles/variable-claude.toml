@@ -1,8 +1,8 @@
 # `variable-claude` — tier-route execute by task complexity. Vendor-locked
 # to Claude; ignores --vendor / --critic flags.
 #
-# Non-execute phases are all-Claude. Execute dispatch picks the cheapest
-# safe model per batch using the [tier_models.execute] table, with
+# Non-execute phases are all-Claude. Execute dispatch records the cheapest
+# safe model per task using the [tier_models.execute] table, with
 # DeepSeek for low-complexity work and Claude for high-complexity work.
 #
 # The flat ``execute`` entry is the fallback when tier routing is disabled

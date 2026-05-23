@@ -35,6 +35,7 @@ from megaplan.orchestration.phase_result import (
     PhaseResult,
     read_phase_result,
 )
+from megaplan.execute_resume_cursor import build_best_effort_task_resume_cursor
 from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
@@ -274,10 +275,10 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
 
     if plan_dir is None:
         return None
-    candidates = [plan_dir / "state.json"]
+    candidates = [plan_dir / "state.json", plan_dir / "execution.json", plan_dir / "finalize.json"]
     try:
-        candidates.extend(plan_dir.glob("execution_batch_*.json"))
-    except OSError:
+        candidates.extend(PlanRepository.from_plan_dir(plan_dir).list_task_execution_artifacts())
+    except (OSError, RuntimeError, ValueError):
         pass
     newest: float | None = None
     for path in candidates:
@@ -510,15 +511,36 @@ def _latest_artifact_name(plan_dir: Path | None) -> str | None:
     if plan_dir is None:
         return None
     try:
-        artifact = PlanRepository.from_plan_dir(plan_dir).latest_execution_batch_artifact()
+        repo = PlanRepository.from_plan_dir(plan_dir)
+        candidates = repo.list_task_execution_artifacts()
+        candidates.extend(
+            path
+            for path in [
+                plan_dir / "execution.json",
+                plan_dir / "finalize.json",
+                plan_dir / "phase_result.json",
+            ]
+            if path.exists()
+        )
     except (OSError, RuntimeError, ValueError):
         return None
-    if artifact is None:
+    if not candidates:
         return None
+    artifact = max(candidates, key=lambda path: path.stat().st_mtime_ns)
     try:
         return artifact.relative_to(plan_dir).as_posix()
     except ValueError:
         return artifact.name
+
+
+def _phase_result_signature(plan_dir: Path | None) -> tuple[int, int] | None:
+    if plan_dir is None:
+        return None
+    try:
+        stat = (plan_dir / "phase_result.json").stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
 
 
 def _record_lifecycle_failure(
@@ -557,19 +579,71 @@ def _record_lifecycle_failure(
             progress_emitter.plan_failed(summary=message, **failure_details)
 
 
-def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] | None:
+def _summarize_execute_checkpoint_state(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
+        repo = PlanRepository.from_plan_dir(plan_dir)
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             state_data = json.load(handle)
         if not isinstance(state_data, dict):
-            return {"reconciled": False, "reason": "state payload was not an object"}
-        from megaplan.execute.core import reconcile_latest_execution_batch
-
-        return reconcile_latest_execution_batch(plan_dir, state_data)
+            return {"summarized": False, "reason": "state payload was not an object"}
+        finalize_data = {}
+        try:
+            with (plan_dir / "finalize.json").open(encoding="utf-8") as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                finalize_data = loaded
+        except (OSError, json.JSONDecodeError):
+            finalize_data = {}
+        task_artifacts = [
+            path.relative_to(plan_dir).as_posix()
+            for path in repo.list_task_execution_artifacts()
+        ]
+        tasks = finalize_data.get("tasks") if isinstance(finalize_data, dict) else None
+        terminal = 0
+        total = 0
+        if isinstance(tasks, list):
+            total = len([task for task in tasks if isinstance(task, dict)])
+            terminal = len(
+                [
+                    task
+                    for task in tasks
+                    if isinstance(task, dict)
+                    and task.get("status") in {"done", "skipped", "blocked"}
+                ]
+            )
+        return {
+            "summarized": True,
+            "state": state_data.get("current_state"),
+            "task_artifacts": task_artifacts,
+            "finalize_terminal_tasks": terminal,
+            "finalize_total_tasks": total,
+        }
     except Exception as error:
-        return {"reconciled": False, "reason": str(error)}
+        return {"summarized": False, "reason": str(error)}
+
+
+def _execute_resume_cursor(
+    plan_dir: Path | None,
+    *,
+    phase_result: Any | None = None,
+) -> dict[str, Any]:
+    if plan_dir is None:
+        return {"phase": "execute", "retry_strategy": "task_worktree"}
+    task_id: str | None = None
+    for blocked_task in getattr(phase_result, "blocked_tasks", ()) or ():
+        candidate = getattr(blocked_task, "task_id", None)
+        if isinstance(candidate, str) and candidate:
+            task_id = candidate
+            break
+    if task_id is None:
+        for deviation in getattr(phase_result, "deviations", ()) or ():
+            candidate = getattr(deviation, "task_id", None)
+            if isinstance(candidate, str) and candidate:
+                task_id = candidate
+                break
+    return build_best_effort_task_resume_cursor(plan_dir, task_id=task_id)
 
 
 def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
@@ -591,8 +665,8 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
             return False
         if latest_failure.get("phase") != "execute":
             return False
-        reconciliation = latest_failure.get("metadata", {}).get("checkpoint_reconciliation")
-        if not isinstance(reconciliation, dict) or reconciliation.get("reconciled") is not True:
+        checkpoint_summary = latest_failure.get("metadata", {}).get("checkpoint_summary")
+        if not isinstance(checkpoint_summary, dict) or checkpoint_summary.get("summarized") is not True:
             return False
         history = state_data.get("history")
         if not isinstance(history, list):
@@ -683,6 +757,7 @@ def drive(
         writer(f"[auto {plan}] {msg}\n")
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
+        before_phase_result = _phase_result_signature(plan_dir)
         run_kwargs: dict[str, Any] = {
             "cwd": cwd,
             "timeout": phase_timeout,
@@ -702,8 +777,15 @@ def drive(
             run_kwargs.pop("liveness_plan_dir", None)
             code, out, err = _run_megaplan(cmd, **run_kwargs)
 
-        # Read structured phase_result.json if it exists
-        result: object | None = read_phase_result(plan_dir)
+        # Read the structured phase_result.json only when this command actually
+        # produced it. A stale result from the previous phase must not mask a
+        # current phase failure or the driver can loop on the same state forever.
+        result: object | None = None
+        after_phase_result = _phase_result_signature(plan_dir)
+        if after_phase_result is not None and after_phase_result != before_phase_result:
+            candidate = read_phase_result(plan_dir)
+            if candidate is not None and getattr(candidate, "phase", None) == next_step:
+                result = candidate
 
         if result is not None:
             return code, out, err, result
@@ -992,9 +1074,13 @@ def drive(
                         message="all pending tasks reported blocked",
                         current_state=STATE_BLOCKED,
                         phase=last_phase,
-                        resume_cursor={"phase": last_phase or "execute", "retry_strategy": "fresh_session"},
+                        resume_cursor=(
+                            _execute_resume_cursor(plan_dir)
+                            if (last_phase or "execute") == "execute"
+                            else {"phase": last_phase or "execute", "retry_strategy": "fresh_session"}
+                        ),
                         last_artifact=_latest_artifact_name(plan_dir),
-                        suggested_action="Resume with a fresh worker session after reviewing blocked task reasons.",
+                        suggested_action="Resume the blocked task after reviewing blocked task reasons.",
                         metadata={"tasks_blocked": tasks_blocked, "iteration": iteration},
                     )
                     return _outcome(
@@ -1250,9 +1336,13 @@ def drive(
                         message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
-                        resume_cursor={"phase": next_step, "retry_strategy": "fresh_session"},
+                        resume_cursor=(
+                            _execute_resume_cursor(plan_dir)
+                            if next_step == "execute"
+                            else {"phase": next_step, "retry_strategy": "fresh_session"}
+                        ),
                         last_artifact=_latest_artifact_name(plan_dir),
-                        suggested_action="Resume execute with a fresh worker context.",
+                        suggested_action="Resume execute in the task worktree.",
                         metadata={"context_retries_used": context_retry_count, "max_context_retries": max_context_retries},
                     )
                     return _outcome(
@@ -1332,8 +1422,8 @@ def drive(
                 on_phase_complete(next_step, int(code or 0), out, err)
             except Exception as error:  # pragma: no cover - defensive callback boundary
                 log(f"phase-complete callback failed after '{next_step}': {error}")
-                reconciliation = (
-                    _reconcile_latest_execution_batch(plan_dir)
+                checkpoint_summary = (
+                    _summarize_execute_checkpoint_state(plan_dir)
                     if next_step == "execute"
                     else None
                 )
@@ -1346,7 +1436,7 @@ def drive(
                     resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                     last_artifact=_latest_artifact_name(plan_dir),
                     suggested_action="Fix the phase-complete callback and resume this phase.",
-                    metadata={"iteration": iteration, "checkpoint_reconciliation": reconciliation},
+                    metadata={"iteration": iteration, "checkpoint_summary": checkpoint_summary},
                 )
                 return _outcome(
                     "failed",
@@ -1357,10 +1447,9 @@ def drive(
                 )
 
         # Post-execute routing: consume PhaseResult.exit_kind exclusively.
-        # Delete the old pathways that read state["history"], globbed
-        # execution_batch_*.json, captured stdout tails, and deviation
-        # prefix-matching tables. Those surfaces still exist for user-visible
-        # logging, but the driver no longer consults them for decisions.
+        # Task artifacts, aggregate execution/finalize state, and progress
+        # events are informational; the auto driver no longer makes routing
+        # decisions from stdout tails or worker deviation string matching.
         if next_step == "execute" and result is not None and max_blocked_retries >= 0:
             ek = getattr(result, "exit_kind", None)
             if ek == ExitKind.success.value:
@@ -1428,13 +1517,9 @@ def drive(
                         message="execute blocked_by_prereq with no blocked tasks — treating as quality block",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
-                        resume_cursor={
-                            "phase": next_step,
-                            "batch_index": None,
-                            "retry_strategy": "fresh_session",
-                        },
+                        resume_cursor=_execute_resume_cursor(plan_dir, phase_result=result),
                         last_artifact=_latest_artifact_name(plan_dir),
-                        suggested_action="Review blocking deviations and resume execute with a fresh session.",
+                        suggested_action="Review blocking deviations and resume execute in the task worktree.",
                         metadata={
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,
@@ -1482,13 +1567,9 @@ def drive(
                         message="execute blocked by quality gates",
                         current_state=STATE_BLOCKED,
                         phase=next_step,
-                        resume_cursor={
-                            "phase": next_step,
-                            "batch_index": None,
-                            "retry_strategy": "fresh_session",
-                        },
+                        resume_cursor=_execute_resume_cursor(plan_dir, phase_result=result),
                         last_artifact=_latest_artifact_name(plan_dir),
-                        suggested_action="Review blocking deviations and resume execute with a fresh session.",
+                        suggested_action="Review blocking deviations and resume execute in the task worktree.",
                         metadata={
                             "blocked_retries_used": blocked_retry_count,
                             "max_blocked_retries": max_blocked_retries,

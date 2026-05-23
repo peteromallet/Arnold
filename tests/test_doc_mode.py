@@ -16,7 +16,9 @@ from megaplan.runtime.doc_assembly import assemble_doc, extract_sections
 from megaplan.orchestration.evaluation import validate_execution_evidence
 from megaplan.execute.timeout import _merge_timeout_checkpoint, _reset_timeout_invalid_tasks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key, strict_schema
+from megaplan.store import PlanRepository
 from megaplan.types import CliError
+from megaplan.worktrees.identity import make_task_identity
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -221,9 +223,10 @@ def test_validate_evidence_doc_passes_all_sections_present(tmp_path: Path) -> No
 def test_assemble_doc_orders_by_plan_and_is_idempotent(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
+    _write_json(plan_dir / "state.json", {})
     output_path = tmp_path / "output" / "doc.md"
 
-    batch_1 = {
+    task_2_payload = {
         "task_updates": [
             {
                 "task_id": "T2",
@@ -233,7 +236,7 @@ def test_assemble_doc_orders_by_plan_and_is_idempotent(tmp_path: Path) -> None:
             },
         ]
     }
-    batch_2 = {
+    task_1_payload = {
         "task_updates": [
             {
                 "task_id": "T1",
@@ -243,8 +246,9 @@ def test_assemble_doc_orders_by_plan_and_is_idempotent(tmp_path: Path) -> None:
             },
         ]
     }
-    _write_json(plan_dir / "execution_batch_1.json", batch_1)
-    _write_json(plan_dir / "execution_batch_2.json", batch_2)
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    repo.write_task_execution_artifact(make_task_identity("T2"), task_2_payload)
+    repo.write_task_execution_artifact(make_task_identity("T1"), task_1_payload)
 
     finalize_data = {
         "tasks": [

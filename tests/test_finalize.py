@@ -194,6 +194,22 @@ def test_finalize_snapshot_remains_pending_after_execute(plan_fixture: PlanFixtu
     assert all(task["status"] == "pending" for task in snapshot_after_execute["tasks"])
 
 
+def test_mock_finalize_verification_depends_on_implementation(plan_fixture: PlanFixture) -> None:
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    tasks_by_id = {task["id"]: task for task in finalize_data["tasks"]}
+    assert tasks_by_id["T2"]["depends_on"] == ["T1"]
+
+
 def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
     from megaplan._core import render_final_md
 

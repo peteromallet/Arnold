@@ -151,6 +151,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
 ) -> None:
     project = _project(tmp_path)
     home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(tmp_path / "runtime-home"))
     source_plan = home / ".megaplan" / "old-project" / "plans" / "plan-a"
     (source_plan / "nested").mkdir(parents=True)
     (source_plan / "state.json").write_text("{\"legacy\": true}\n", encoding="utf-8")
@@ -230,6 +231,7 @@ def test_migrate_local_plans_all_projects_legacy_epic_and_db_promotion_preserve_
 ) -> None:
     project = _project(tmp_path)
     home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(tmp_path / "runtime-home"))
     first_plan = home / ".megaplan" / "project-one" / "plans" / "plan-a"
     second_plan = home / ".megaplan" / "project-two" / "plans" / "plan-b"
     (first_plan / "nested").mkdir(parents=True)
@@ -473,7 +475,7 @@ def test_resume_command_uses_actor_store_for_epic_backed_plan(
                 "meta": {},
                 "last_gate": {},
                 "latest_failure": {"kind": "execution_blocked"},
-                "resume_cursor": {"phase": "execute", "batch_index": 1},
+                "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
             }
         ),
         encoding="utf-8",

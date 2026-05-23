@@ -18,12 +18,10 @@ def _project(tmp_path: Path) -> Path:
     return project
 
 
-def _plan_dir(project: Path, name: str, *, phase: str = "execute", batch_index: int | None = 2, epic_id: str | None = None) -> Path:
+def _plan_dir(project: Path, name: str, *, phase: str = "review", epic_id: str | None = None) -> Path:
     plan_dir = project / ".megaplan" / "plans" / name
     plan_dir.mkdir(parents=True)
     cursor = {"phase": phase, "retry_strategy": "rerun_phase"}
-    if batch_index is not None:
-        cursor["batch_index"] = batch_index
     state = {
         "name": name,
         "idea": "idea",
@@ -53,25 +51,25 @@ def test_resume_plan_reenters_cursor_and_clears_failure_after_success(tmp_path: 
     def runner(args: list[str], cwd: Path | None = None):
         calls.append(args)
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-        assert state["current_state"] == "finalized"
+        assert state["current_state"] == "executed"
         assert state["latest_failure"] == {"kind": "execution_blocked"}
-        state["current_state"] = "executed"
+        state["current_state"] = "done"
         (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
         return 0, "ok", ""
 
     result = resume_plan(project, "blocked-plan", runner=runner)
 
     assert result["success"] is True
-    assert calls == [["execute", "--plan", "blocked-plan", "--confirm-destructive", "--user-approved", "--batch", "2"]]
+    assert calls == [["review", "--plan", "blocked-plan"]]
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["current_state"] == "executed"
+    assert state["current_state"] == "done"
     assert "latest_failure" not in state
     assert "resume_cursor" not in state
 
 
 def test_resume_plan_preserves_failure_after_failed_resume(tmp_path: Path) -> None:
     project = _project(tmp_path)
-    plan_dir = _plan_dir(project, "failed-resume", phase="review", batch_index=None)
+    plan_dir = _plan_dir(project, "failed-resume", phase="review")
 
     def runner(args: list[str], cwd: Path | None = None):
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
@@ -119,7 +117,7 @@ def test_resume_revision_conflict_records_epic_progress_event(tmp_path: Path) ->
 
 def test_resume_cli_dispatches_minimal_entry_point(tmp_path: Path, monkeypatch, capsys) -> None:
     project = _project(tmp_path)
-    _plan_dir(project, "cli-resume", phase="review", batch_index=None)
+    _plan_dir(project, "cli-resume", phase="review")
     monkeypatch.chdir(project)
 
     def fake_resume(root: Path, plan: str, *, store=None):

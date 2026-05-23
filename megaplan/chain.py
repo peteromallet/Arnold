@@ -79,6 +79,7 @@ from megaplan.profiles import (
     VALID_DEPTH_CHOICES,
 )
 from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED
+from megaplan.store import PlanRepository
 
 
 VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
@@ -1436,13 +1437,6 @@ def _drive_plan(
     )
 
 
-def _execution_batch_sort_key(path: Path) -> tuple[int, str]:
-    match = re.fullmatch(r"execution_batch_(\d+)\.json", path.name)
-    if match:
-        return (int(match.group(1)), path.name)
-    return (-1, path.name)
-
-
 def _latest_execute_result(plan_dir: Path) -> str | None:
     try:
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
@@ -1458,55 +1452,56 @@ def _latest_execute_result(plan_dir: Path) -> str | None:
     return None
 
 
-def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
-    batches = sorted(
-        plan_dir.glob("execution_batch_*.json"),
-        key=_execution_batch_sort_key,
-    )
-    if not batches:
-        return False, "no execution_batch_*.json artifact found"
-    latest = batches[-1]
+def _task_artifact_status_overlay(plan_dir: Path) -> dict[str, str]:
     try:
-        payload = json.loads(latest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return False, f"{latest.name} could not be read: {error}"
-    if not isinstance(payload, dict):
-        return False, f"{latest.name} payload is not an object"
-
-    task_records: list[dict[str, Any]] = []
-    for key in ("task_updates", "tasks"):
-        raw_records = payload.get(key)
-        if isinstance(raw_records, list):
-            task_records.extend(item for item in raw_records if isinstance(item, dict))
-    if not task_records:
-        return False, f"{latest.name} has no task records"
-
-    incomplete: list[str] = []
-    for task in task_records:
-        if task.get("status") == "done":
-            continue
-        task_id = task.get("task_id") or task.get("id") or "?"
-        incomplete.append(f"{task_id}={task.get('status')!r}")
-    if incomplete:
-        return False, f"{latest.name} has non-done tasks: {', '.join(incomplete)}"
-    finalize_path = plan_dir / "finalize.json"
-    if finalize_path.exists():
+        artifact_paths = PlanRepository.from_plan_dir(plan_dir).list_task_execution_artifacts()
+    except (OSError, RuntimeError, ValueError):
+        artifact_paths = []
+    overlay: dict[str, str] = {}
+    for path in artifact_paths:
         try:
-            finalize_payload = json.loads(finalize_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            return False, f"finalize.json could not be read: {error}"
-        finalize_tasks = (
-            finalize_payload.get("tasks") if isinstance(finalize_payload, dict) else None
-        )
-        if isinstance(finalize_tasks, list) and finalize_tasks:
-            pending = [
-                f"{(task.get('id') or '?')}={task.get('status')!r}"
-                for task in finalize_tasks
-                if isinstance(task, dict) and task.get("status") not in {"done", "skipped"}
-            ]
-            if pending:
-                return False, f"finalize.json has incomplete tasks: {', '.join(pending)}"
-    return True, latest.name
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidates: list[dict[str, Any]] = []
+        if isinstance(payload, dict):
+            candidates.append(payload)
+            updates = payload.get("task_updates")
+            if isinstance(updates, list):
+                candidates.extend(item for item in updates if isinstance(item, dict))
+        for task in candidates:
+            task_id = task.get("task_id") or task.get("id")
+            status = task.get("status")
+            if isinstance(task_id, str) and isinstance(status, str):
+                overlay[task_id] = status
+    return overlay
+
+
+def _latest_execute_tasks_terminal(plan_dir: Path) -> tuple[bool, str]:
+    finalize_path = plan_dir / "finalize.json"
+    if not finalize_path.exists():
+        return False, "finalize.json is missing"
+    try:
+        finalize_payload = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return False, f"finalize.json could not be read: {error}"
+    finalize_tasks = finalize_payload.get("tasks") if isinstance(finalize_payload, dict) else None
+    if not isinstance(finalize_tasks, list) or not finalize_tasks:
+        return False, "finalize.json has no task records"
+    overlay = _task_artifact_status_overlay(plan_dir)
+    pending = []
+    for task in finalize_tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        status = overlay.get(task_id, task.get("status")) if isinstance(task_id, str) else task.get("status")
+        if status not in {"done", "skipped"}:
+            pending.append(f"{(task_id or '?')}={status!r}")
+    if pending:
+        source = "task artifacts/finalize.json" if overlay else "finalize.json"
+        return False, f"{source} has incomplete tasks: {', '.join(pending)}"
+    source = "task artifacts and finalize.json" if overlay else "finalize.json"
+    return True, f"{source} show all tasks terminal"
 
 
 def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
@@ -1536,7 +1531,7 @@ def _recover_blocked_execute_if_tasks_done(
     if _latest_execute_result(plan_dir) != "blocked":
         return False
 
-    all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    all_done, reason = _latest_execute_tasks_terminal(plan_dir)
     if not all_done:
         writer(
             f"[chain] execute result=blocked for {outcome.plan}; treating as real block: {reason}\n"
@@ -2059,6 +2054,12 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Path to the chain spec YAML (required at top-level or on subcommands)",
     )
     chain_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Run the chain against this project directory instead of discovering from CWD.",
+    )
+    _add_chain_worktree_args(chain_parser)
+    chain_parser.add_argument(
         "--no-git-refresh",
         action="store_true",
         help=(
@@ -2086,6 +2087,12 @@ def build_chain_parser(subparsers: Any) -> None:
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
     start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
     start_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Run the chain against this project directory instead of discovering from CWD.",
+    )
+    _add_chain_worktree_args(start_parser)
+    start_parser.add_argument(
         "--no-git-refresh",
         action="store_true",
         help=(
@@ -2108,11 +2115,21 @@ def build_chain_parser(subparsers: Any) -> None:
         "status", help="Show persisted chain progress without driving"
     )
     status_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    status_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Read chain state from this project directory instead of discovering from CWD.",
+    )
 
     override_parser = chain_sub.add_parser(
         "override", help="Set runtime policy overrides without editing chain.yaml"
     )
     override_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    override_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Apply chain overrides against this project directory instead of discovering from CWD.",
+    )
     override_parser.add_argument(
         "--set-prerequisite-policy",
         choices=VALID_PREREQUISITE_POLICIES,
@@ -2130,6 +2147,47 @@ def build_chain_parser(subparsers: Any) -> None:
         choices=VALID_CLEAN_MILESTONE_PR_POLICIES,
         default=None,
         help="Set review clean_milestone_pr policy at runtime (e.g. auto, manual)",
+    )
+
+
+def _add_chain_worktree_args(parser: Any) -> None:
+    parser.add_argument(
+        "--in-worktree",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Create a new git worktree at ~/Documents/.megaplan-worktrees/<name>/ "
+            "on a new branch and run the whole chain inside it. Name must match "
+            "^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir."
+        ),
+    )
+    parser.add_argument(
+        "--worktree-from",
+        default=None,
+        metavar="GITREF",
+        help=(
+            "Base ref for the new worktree (default: current HEAD of the repo "
+            "where `megaplan chain` was invoked). Only valid with --in-worktree."
+        ),
+    )
+    parser.add_argument(
+        "--clean-worktree",
+        action="store_true",
+        default=False,
+        help=(
+            "With --in-worktree: fork from a clean base ref and leave any "
+            "uncommitted state behind in the source repo (no carry)."
+        ),
+    )
+    parser.add_argument(
+        "--carry-dirty",
+        action="store_true",
+        default=False,
+        help=(
+            "With --in-worktree: explicitly opt into carrying uncommitted state "
+            "from the source repo into the new worktree. Mutually exclusive "
+            "with --clean-worktree."
+        ),
     )
 
 

@@ -20,11 +20,18 @@ from megaplan._core.io import (
 from megaplan.orchestration.feedback import load_feedback
 from megaplan.schemas import Plan, PlanArtifact
 from megaplan.store.base import ProgressEventInput
+from megaplan.execute_resume_cursor import validate_state_resume_cursor
+from megaplan.worktrees.identity import (
+    TaskIdentity,
+    decode_original_task_id,
+    validate_task_key,
+)
 
 from .base import Store
 
 _EXECUTION_BATCH_RE = re.compile(r"execution_batch_(\d+)\.json$")
 _VERSION_RE = re.compile(r"_v(\d+)(?:\.|_|$)")
+_TASK_EXECUTION_PARTS = ("tasks", "execution.json")
 
 
 class PlanRepository:
@@ -77,6 +84,20 @@ class PlanRepository:
         if relative.is_absolute() or any(part == ".." for part in relative.parts):
             raise ValueError(f"Artifact path must stay inside the plan tree: {name!r}")
         return self.plan_dir / relative
+
+    def _coerce_task_key(self, task: TaskIdentity | str) -> str:
+        if isinstance(task, TaskIdentity):
+            return task.task_key
+        if isinstance(task, str):
+            return validate_task_key(task)
+        raise TypeError("task must be a TaskIdentity or validated task key string")
+
+    def task_execution_artifact_name(self, task: TaskIdentity | str) -> str:
+        task_key = self._coerce_task_key(task)
+        return f"tasks/{task_key}/execution.json"
+
+    def task_execution_artifact_path(self, task: TaskIdentity | str) -> Path:
+        return self.artifact_path(self.task_execution_artifact_name(task))
 
     @property
     def is_bound(self) -> bool:
@@ -165,6 +186,15 @@ class PlanRepository:
         atomic_write_json(path, data)
         return path
 
+    def read_task_execution_artifact(
+        self,
+        task: TaskIdentity | str,
+    ) -> dict[str, Any] | list[Any] | None:
+        return self.read_artifact_json(self.task_execution_artifact_name(task))
+
+    def write_task_execution_artifact(self, task: TaskIdentity | str, data: Any) -> Path:
+        return self.write_artifact_json(self.task_execution_artifact_name(task), data)
+
     def delete_artifact(self, name: str | Path) -> None:
         path = self._resolve_artifact_path(name)
         if path.exists():
@@ -185,6 +215,187 @@ class PlanRepository:
             ),
             key=lambda path: path.name,
         )
+
+    def list_top_level_execution_batch_artifacts(self) -> list[Path]:
+        plan_dir = self._require_plan_dir()
+        return sorted(
+            (
+                path
+                for path in plan_dir.glob("execution_batch_*.json")
+                if path.is_file() and _EXECUTION_BATCH_RE.fullmatch(path.name)
+            ),
+            key=lambda path: path.name,
+        )
+
+    def list_task_execution_artifacts(self) -> list[Path]:
+        plan_dir = self._require_plan_dir()
+        tasks_dir = plan_dir / _TASK_EXECUTION_PARTS[0]
+        if not tasks_dir.exists():
+            return []
+        artifacts: list[Path] = []
+        for path in tasks_dir.glob(f"*/{_TASK_EXECUTION_PARTS[1]}"):
+            if not path.is_file():
+                continue
+            try:
+                validate_task_key(path.parent.name)
+            except (TypeError, ValueError):
+                continue
+            artifacts.append(path)
+        return sorted(artifacts, key=lambda path: path.relative_to(plan_dir).as_posix())
+
+    def list_task_execution_summaries(self) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for path in self.list_task_execution_artifacts():
+            try:
+                payload = read_json(path)
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            summaries.append(self._task_execution_summary(path, payload))
+        return summaries
+
+    def _task_execution_summary(
+        self,
+        path: Path,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        metadata = payload.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        identity = metadata.get("identity")
+        identity = identity if isinstance(identity, dict) else {}
+        trailers = metadata.get("trailers")
+        trailers = trailers if isinstance(trailers, dict) else {}
+        progress = metadata.get("progress")
+        progress = progress if isinstance(progress, dict) else {}
+        patch = metadata.get("patch")
+        patch = patch if isinstance(patch, dict) else {}
+        secret_scan = metadata.get("secret_scan")
+        secret_scan = secret_scan if isinstance(secret_scan, dict) else {}
+        payload_secret_scan = payload.get("secret_scan")
+        payload_secret_scan = payload_secret_scan if isinstance(payload_secret_scan, dict) else {}
+        patch_secret_scan = patch.get("secret_scan")
+        patch_secret_scan = patch_secret_scan if isinstance(patch_secret_scan, dict) else {}
+        registry = metadata.get("registry")
+        registry = registry if isinstance(registry, dict) else {}
+        integration = metadata.get("integration")
+        integration = integration if isinstance(integration, dict) else {}
+        integration_entries = [
+            entry
+            for entry in integration.get("entries", [])
+            if isinstance(entry, dict)
+        ]
+        registry_entries = [
+            entry
+            for entry in registry.get("entries", [])
+            if isinstance(entry, dict)
+        ]
+        latest_integration = integration_entries[-1] if integration_entries else None
+        latest_registry = registry_entries[-1] if registry_entries else None
+        latest_entry = latest_integration or latest_registry
+        latest_payload = latest_entry.get("payload") if isinstance(latest_entry, dict) else None
+        latest_payload = latest_payload if isinstance(latest_payload, dict) else {}
+        tier = metadata.get("tier")
+        tier = tier if isinstance(tier, dict) else {}
+        receipt = metadata.get("receipt")
+        receipt = receipt if isinstance(receipt, dict) else {}
+        task_key = (
+            payload.get("task_key")
+            or metadata.get("task_key")
+            or identity.get("task_key")
+            or path.parent.name
+        )
+        encoded_task_id = (
+            payload.get("task_id_encoded")
+            or identity.get("original_task_id_encoded")
+            or progress.get("task_id_encoded")
+            or trailers.get("Task-Id-B64")
+        )
+        task_id = payload.get("task_id") or metadata.get("task_id") or progress.get("task_id")
+        if not isinstance(task_id, str) and isinstance(encoded_task_id, str):
+            try:
+                task_id = decode_original_task_id(encoded_task_id)
+            except ValueError:
+                task_id = None
+        status = payload.get("status") or progress.get("status")
+        if not isinstance(status, str):
+            for update in payload.get("task_updates", []) or []:
+                if isinstance(update, dict) and isinstance(update.get("status"), str):
+                    status = update["status"]
+                    break
+        return {
+            "task_id": task_id,
+            "task_key": task_key,
+            "status": status,
+            "artifact": path.relative_to(self.plan_dir).as_posix(),
+            "artifact_path": str(path),
+            "worktree_preserved": bool(payload.get("worktree_preserved")),
+            "blocked_reason": payload.get("blocked_reason"),
+            "patch": {
+                "available": bool(patch.get("available")),
+                "manifest_path": patch.get("manifest_path"),
+                "patch_path": patch.get("patch_path"),
+                "base_head": patch.get("base_head"),
+                "sha256": patch.get("sha256"),
+                "size_bytes": patch.get("size_bytes"),
+                "changed_paths": patch.get("changed_paths", []),
+            },
+            "secret_scan": {
+                "mode": secret_scan.get("mode") or payload_secret_scan.get("mode"),
+                "source": secret_scan.get("source") or payload_secret_scan.get("source"),
+                "status": patch_secret_scan.get("status") or secret_scan.get("status"),
+                "policy": patch_secret_scan.get("policy"),
+                "opt_in": patch_secret_scan.get("opt_in"),
+            },
+            "tier": {
+                "task_complexity": tier.get("task_complexity"),
+                "tier_model_spec": tier.get("tier_model_spec"),
+                "selected_agent": tier.get("resolved_agent") or receipt.get("agent"),
+                "selected_mode": tier.get("resolved_mode") or receipt.get("mode"),
+                "selected_model": tier.get("resolved_model") or receipt.get("model"),
+            },
+            "progress": {
+                "event": progress.get("event"),
+                "status": progress.get("status") or status,
+                "sense_check_ids": progress.get("sense_check_ids", []),
+                "task_id_encoded": encoded_task_id,
+                "task_id_encoding": (
+                    payload.get("task_id_encoding")
+                    or progress.get("task_id_encoding")
+                    or identity.get("original_task_id_encoding")
+                ),
+            },
+            "registry": {
+                "available": bool(registry.get("available")),
+                "run_id": registry.get("run_id"),
+                "entry_count": registry.get("entry_count", len(registry_entries)),
+                "latest_entry_type": (
+                    latest_registry.get("entry_type")
+                    if isinstance(latest_registry, dict)
+                    else None
+                ),
+            },
+            "integration": {
+                "available": bool(integration.get("available")),
+                "state": (
+                    latest_integration.get("entry_type")
+                    if isinstance(latest_integration, dict)
+                    else None
+                ),
+                "entry_count": len(integration_entries),
+                "commit_sha": latest_payload.get("commit_sha"),
+                "terminal": latest_payload.get("terminal"),
+            },
+            "commit_identity": {
+                "task_key": task_key,
+                "trailers": trailers,
+                "trailers_present": bool(trailers),
+                "commit_sha": latest_payload.get("commit_sha"),
+                "registry_entry_type": (
+                    latest_entry.get("entry_type") if isinstance(latest_entry, dict) else None
+                ),
+            },
+        }
 
     def latest_execution_batch_artifact(self) -> Path | None:
         batches = self.list_execution_batch_artifacts()
@@ -219,6 +430,8 @@ class PlanRepository:
 
     def _artifact_role(self, path: Path) -> str | None:
         name = path.name
+        if self._is_task_execution_artifact(path):
+            return "execution_task"
         if name == "state.json" or (name.startswith("plan_v") and name.endswith(".meta.json")):
             return "plan_meta"
         if name.startswith("plan_v") and name.endswith(".md"):
@@ -279,8 +492,27 @@ class PlanRepository:
         match = _EXECUTION_BATCH_RE.fullmatch(path.name)
         return int(match.group(1)) if match is not None else None
 
+    def _is_task_execution_artifact(self, path: Path) -> bool:
+        try:
+            parts = path.relative_to(self.plan_dir).parts
+        except ValueError:
+            return False
+        if (
+            len(parts) != 3
+            or parts[0] != _TASK_EXECUTION_PARTS[0]
+            or parts[2] != _TASK_EXECUTION_PARTS[1]
+        ):
+            return False
+        try:
+            validate_task_key(parts[1])
+        except (TypeError, ValueError):
+            return False
+        return True
+
     def _artifact_phase(self, path: Path) -> str | None:
         name = path.name
+        if self._is_task_execution_artifact(path):
+            return "execute"
         if name == "state.json":
             return "state"
         if name == "final.md":
@@ -396,6 +628,7 @@ class PlanRepository:
             state.pop("resume_cursor", None)
         else:
             state["resume_cursor"] = dict(resume_cursor)
+        validate_state_resume_cursor(self.plan_dir, state)
         self.save_state(state)
 
         epic_id = state.get("epic_id") or (state.get("meta") or {}).get("epic_id")

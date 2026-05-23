@@ -68,6 +68,7 @@ def make_args_factory(project_dir: Path) -> Callable[..., Namespace]:
             "persist": False,
             "confirm_destructive": True,
             "user_approved": False,
+            "secret_scan_mode": None,
             "confirm_self_review": False,
             "batch": None,
             "override_action": None,

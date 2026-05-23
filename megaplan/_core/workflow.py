@@ -291,6 +291,8 @@ def _resume_phase_args(phase: str, cursor: dict[str, Any], plan: str) -> list[st
     args = [phase, "--plan", plan]
     if phase == "execute":
         args.extend(["--confirm-destructive", "--user-approved"])
+        # Legacy explicit-batch cursors are rejected for worktree-native plans
+        # before this helper runs; this fallback remains for old migrated plans.
         batch_index = cursor.get("batch_index")
         if isinstance(batch_index, int) and batch_index > 0:
             args.extend(["--batch", str(batch_index)])
@@ -343,9 +345,11 @@ def resume_plan(
     phase = cursor.get("phase")
     if not isinstance(phase, str) or not phase:
         raise CliError("invalid_resume_cursor", f"Plan '{plan}' has an invalid resume cursor", extra={"resume_cursor": cursor})
+    previous_state = repo.load_state()
+    from megaplan.execute_resume_cursor import validate_state_resume_cursor
+    validate_state_resume_cursor(plan_dir, previous_state)
     args = _resume_phase_args(phase, cursor, plan)
     runner_fn = runner or _default_resume_runner
-    previous_state = repo.load_state()
     active_state = _RESUME_ACTIVE_STATES.get(phase)
     if active_state and previous_state.get("current_state") in {"failed", "blocked"}:
         state = dict(previous_state)

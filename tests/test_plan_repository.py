@@ -9,6 +9,7 @@ import pytest
 from megaplan.schemas import Plan
 from megaplan.store import FileStore, PlanRepository
 from megaplan._core.io import orphan_plans_root
+from megaplan.worktrees.identity import make_task_identity
 
 
 FIXTURE_ROOT = Path("arnold-source/.megaplan/plans")
@@ -112,6 +113,150 @@ def test_plan_repository_load_plan_exposes_hot_state_and_artifact_manifest(tmp_p
     assert any(artifact.name == "execution_batch_10.json" and artifact.batch == 10 for artifact in plan.artifacts)
 
 
+def test_plan_repository_task_execution_artifact_helpers_use_task_identity(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "plan",
+                "idea": "idea",
+                "current_state": "finalized",
+                "iteration": 1,
+                "created_at": "2026-05-03T00:00:00Z",
+                "config": {},
+                "sessions": {},
+                "plan_versions": [],
+                "history": [],
+                "meta": {},
+                "last_gate": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    identity = make_task_identity("src/../Task: 1\nTask-Key: injected")
+
+    payload = {
+        "task_key": identity.task_key,
+        "status": "done",
+        "task_id_encoded": identity.original_task_id_encoded,
+    }
+    path = repo.write_task_execution_artifact(identity, payload)
+
+    assert path == plan_dir / "tasks" / identity.task_key / "execution.json"
+    expected_name = f"tasks/{identity.task_key}/execution.json"
+    assert repo.task_execution_artifact_name(identity) == expected_name
+    assert repo.task_execution_artifact_name(identity.task_key) == expected_name
+    assert repo.read_task_execution_artifact(identity) == payload
+    assert repo.list_task_execution_artifacts() == [path]
+
+    artifact = repo.describe_artifact(repo.task_execution_artifact_name(identity))
+    assert artifact.name == f"tasks/{identity.task_key}/execution.json"
+    assert artifact.role == "execution_task"
+    assert artifact.kind == "json"
+    assert artifact.phase == "execute"
+    assert artifact.batch is None
+
+    plan = repo.load_plan()
+    assert any(
+        item.name == artifact.name and item.role == "execution_task"
+        for item in plan.artifacts
+    )
+
+
+def test_plan_repository_summarizes_task_execution_artifacts(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text("{}", encoding="utf-8")
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    identity = make_task_identity("T1")
+    payload = {
+        "task_id": "T1",
+        "task_key": identity.task_key,
+        "status": "done",
+        "secret_scan": {"mode": "local_only", "source": "execution.secret_scan_mode"},
+        "metadata": {
+            "identity": identity.registry_identity(),
+            "trailers": identity.trailer_fields(),
+            "tier": {
+                "task_complexity": 3,
+                "tier_model_spec": "gpt-5.4",
+                "resolved_agent": "codex",
+                "resolved_mode": "persistent",
+                "resolved_model": "gpt-5.4",
+            },
+            "patch": {
+                "run_id": "run-1",
+                "available": True,
+                "manifest_path": "/tmp/manifest.json",
+                "patch_path": "/tmp/task.patch",
+                "secret_scan": {"status": "passed", "mode": "local_only"},
+            },
+            "progress": {"event": "task_complete", "status": "done"},
+            "registry": {
+                "run_id": "run-1",
+                "available": True,
+                "entry_count": 1,
+                "entries": [{"entry_type": "task_committed", "payload": {"commit_sha": "abc123"}}],
+            },
+            "integration": {
+                "available": True,
+                "entries": [{"entry_type": "integration_complete", "payload": {"commit_sha": "abc123", "terminal": True}}],
+            },
+            "receipt": {"agent": "codex", "mode": "persistent", "model": "gpt-5.4"},
+        },
+    }
+    repo.write_task_execution_artifact(identity, payload)
+
+    summaries = repo.list_task_execution_summaries()
+
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary["task_id"] == "T1"
+    assert summary["task_key"] == identity.task_key
+    assert summary["artifact"] == f"tasks/{identity.task_key}/execution.json"
+    assert summary["patch"]["patch_path"] == "/tmp/task.patch"
+    assert summary["secret_scan"]["status"] == "passed"
+    assert summary["tier"]["selected_model"] == "gpt-5.4"
+    assert summary["integration"]["state"] == "integration_complete"
+    assert summary["commit_identity"]["trailers"] == identity.trailer_fields()
+
+
+def test_plan_repository_rejects_raw_task_ids_for_task_execution_helpers(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text("{}", encoding="utf-8")
+    repo = PlanRepository.from_plan_dir(plan_dir)
+
+    raw_task_ids = [
+        "T1",
+        "task/../escape",
+        "needs space",
+        "Task-Key: injected\nOther: trailer",
+    ]
+    for raw_task_id in raw_task_ids:
+        with pytest.raises(ValueError):
+            repo.task_execution_artifact_name(raw_task_id)
+
+
+def test_plan_repository_keeps_batch_artifact_discovery_legacy_scoped(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text("{}", encoding="utf-8")
+    repo = PlanRepository.from_plan_dir(plan_dir)
+    identity = make_task_identity("T1")
+
+    (plan_dir / "execution_batch_1.json").write_text("{}", encoding="utf-8")
+    repo.write_task_execution_artifact(identity, {"task_key": identity.task_key})
+
+    assert repo.list_execution_batch_artifacts() == [plan_dir / "execution_batch_1.json"]
+    assert repo.latest_execution_batch_artifact() == plan_dir / "execution_batch_1.json"
+    assert repo.list_task_execution_artifacts() == [
+        plan_dir / "tasks" / identity.task_key / "execution.json"
+    ]
+
+
 def test_plan_repository_round_trips_latest_failure_and_resume_cursor(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
@@ -128,7 +273,7 @@ def test_plan_repository_round_trips_latest_failure_and_resume_cursor(tmp_path: 
         "meta": {},
         "last_gate": {},
         "latest_failure": {"kind": "worker_blocked", "message": "quality gates"},
-        "resume_cursor": {"phase": "execute", "batch_index": 3},
+        "resume_cursor": {"phase": "review", "retry_strategy": "rerun_phase"},
     }
     (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
     repo = PlanRepository.from_plan_dir(plan_dir)
@@ -136,11 +281,11 @@ def test_plan_repository_round_trips_latest_failure_and_resume_cursor(tmp_path: 
     plan = repo.load_plan()
 
     assert plan.latest_failure == {"kind": "worker_blocked", "message": "quality gates"}
-    assert plan.resume_cursor == {"phase": "execute", "batch_index": 3}
+    assert plan.resume_cursor == {"phase": "review", "retry_strategy": "rerun_phase"}
     repo.save_plan(plan)
     saved = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert saved["latest_failure"] == {"kind": "worker_blocked", "message": "quality gates"}
-    assert saved["resume_cursor"] == {"phase": "execute", "batch_index": 3}
+    assert saved["resume_cursor"] == {"phase": "review", "retry_strategy": "rerun_phase"}
 
 
 def test_plan_repository_legacy_state_without_resume_cursor_stays_compatible(tmp_path: Path) -> None:

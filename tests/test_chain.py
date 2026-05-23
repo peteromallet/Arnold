@@ -28,6 +28,7 @@ from megaplan.chain import (
     save_chain_state,
 )
 from megaplan.types import CliError
+from megaplan.worktrees.identity import make_task_identity
 
 
 def _write_spec(tmp_path: Path, spec_dict: dict, *, name: str = "chain.yaml") -> Path:
@@ -76,10 +77,20 @@ def _write_blocked_execute_batch(
     task_updates: list[dict[str, object]],
 ) -> Path:
     plan_dir = _write_execute_plan_state(root, plan, "blocked")
-    (plan_dir / "execution_batch_1.json").write_text(
-        json.dumps({"task_updates": task_updates}, indent=2) + "\n",
+    tasks = [
+        {"id": update.get("task_id", f"T{index}"), "status": update.get("status", "pending")}
+        for index, update in enumerate(task_updates, start=1)
+    ]
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": tasks}, indent=2) + "\n",
         encoding="utf-8",
     )
+    for update in task_updates:
+        task_id = str(update.get("task_id") or update.get("id") or "T1")
+        identity = make_task_identity(task_id)
+        artifact = plan_dir / "tasks" / identity.task_key / "execution.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(json.dumps(update, indent=2) + "\n", encoding="utf-8")
     return plan_dir
 
 

@@ -70,18 +70,18 @@ Key fields:
 cat .megaplan/plans/<plan-name>/execution.json | python -m json.tool
 ```
 
-Look for `result: "blocked"` in the latest history entry or the
-`execution_batch_*.json` files:
+Look for `result: "blocked"` in the latest history entry, aggregate
+`execution.json`, or task-native execution artifacts:
 
 ```bash
-cat .megaplan/plans/<plan-name>/execution_batch_*.json | python -c "
-import json, sys
-for line in sys.stdin:
-    data = json.loads(line)
-    tasks = data.get('tasks', data.get('output', {}).get('tasks', []))
-    for t in tasks:
-        if t.get('status') == 'blocked':
-            print(f\"Blocked: {t.get('id')} — {t.get('reason', 'no reason')}\")
+python -c "
+import glob, json
+for path in glob.glob('.megaplan/plans/<plan-name>/tasks/*/execution.json'):
+    data = json.load(open(path))
+    records = data.get('task_updates') if isinstance(data.get('task_updates'), list) else [data]
+    for t in records:
+        if isinstance(t, dict) and t.get('status') == 'blocked':
+            print(f\"Blocked: {t.get('task_id') or t.get('id') or path} - {t.get('reason', 'no reason')}\")
 "
 ```
 
@@ -190,7 +190,7 @@ If `--retry-blocked-tasks` is needed:
 megaplan execute --plan <plan-name> --confirm-destructive --user-approved --retry-blocked-tasks
 ```
 
-### 4.3 Resume with a fresh session
+### 4.3 Resume in the task worktree
 
 When the worker environment is suspected to be poisoned (stale context, wrong
 beliefs about filesystem state), resume from the stored cursor:
@@ -204,18 +204,28 @@ The resume mechanism (`workflow.py` `resume_plan()`):
    `record_lifecycle_failure`).
 2. Overrides `current_state` to the active pre-phase state (e.g. `finalized`
    for execute resume).
-3. Re-runs the phase with a fresh worker session (no prior-context bias).
+3. Re-runs the task through the task worktree retry path.
 4. Clears `latest_failure` and `resume_cursor` on success.
 
-The resume cursor structure:
+The worktree-native execute resume cursor structure:
 
 ```json
 {
   "phase": "execute",
-  "batch_index": null,
-  "retry_strategy": "fresh_session"
+  "task_id": "T7",
+  "task_key": "t7-0123456789abcdef",
+  "task_id_encoded": "VDc",
+  "task_id_encoding": "base64url-v1",
+  "trailer_encoding_version": "base64url-v1",
+  "cursor_schema_version": 1,
+  "retry_strategy": "task_worktree"
 }
 ```
+
+Legacy `batch_index` cursors are migration diagnostics only. A
+worktree-native plan that still has one must be diagnosed with
+`megaplan migrate-plan --diagnose <plan-name>` and closed or restarted before
+resuming execute.
 
 ### 4.4 Driver-level retry with increased cap
 
@@ -307,7 +317,7 @@ megaplan override set-profile --plan <plan-name> --profile sonnet --reason "Swit
 Placed in `STATE_BLOCKED` with kind `tasks_blocked`.
 
 **Fix:**
-1. Check `execution_batch_*.json` for individual task statuses.
+1. Check `tasks/<task_key>/execution.json`, `execution.json`, and `finalize.json` for individual task statuses.
 2. If tasks are genuinely unsatisfiable (prerequisite never met), revise plan.
 3. If tasks were blocked due to transient errors, resume with fresh session.
 

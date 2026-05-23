@@ -4,14 +4,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from megaplan.runtime.doc_assembly import assemble_doc, extract_sections, extract_settled_decisions
+from megaplan.worktrees.identity import make_task_identity
 
 
-def _write_batch(plan_dir: Path, index: int, payload: dict) -> None:
+def _write_task_artifact(plan_dir: Path, task_id: str, payload: dict) -> None:
     plan_dir.mkdir(parents=True, exist_ok=True)
-    (plan_dir / f"execution_batch_{index}.json").write_text(
+    identity = make_task_identity(task_id)
+    artifact_path = plan_dir / "tasks" / identity.task_key / "execution.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
         json.dumps(payload), encoding="utf-8"
     )
 
@@ -47,14 +49,14 @@ def test_assemble_doc_orders_sections_by_task_index(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     output_path = tmp_path / "out.md"
 
-    # Batch 1 has T2's section, batch 2 has T1's section — written out of plan order.
-    _write_batch(plan_dir, 1, {
+    # Task artifacts are written out of plan order but assembled in plan order.
+    _write_task_artifact(plan_dir, "T2", {
         "task_updates": [
             {"task_id": "T2", "status": "done",
              "executor_notes": "Body content", "sections_written": ["body"]},
         ]
     })
-    _write_batch(plan_dir, 2, {
+    _write_task_artifact(plan_dir, "T1", {
         "task_updates": [
             {"task_id": "T1", "status": "done",
              "executor_notes": "Intro content", "sections_written": ["intro"]},
@@ -70,7 +72,7 @@ def test_assemble_doc_orders_sections_by_task_index(tmp_path: Path) -> None:
 def test_assemble_doc_is_idempotent(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     output_path = tmp_path / "out.md"
-    _write_batch(plan_dir, 1, {
+    _write_task_artifact(plan_dir, "T1", {
         "task_updates": [
             {"task_id": "T1", "status": "done",
              "executor_notes": "Hello", "sections_written": ["s1"]},
@@ -84,7 +86,7 @@ def test_assemble_doc_is_idempotent(tmp_path: Path) -> None:
     assert first == second == "Hello"
 
 
-def test_assemble_doc_handles_no_batches(tmp_path: Path) -> None:
+def test_assemble_doc_handles_no_task_artifacts(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     output_path = tmp_path / "out.md"
@@ -93,10 +95,10 @@ def test_assemble_doc_handles_no_batches(tmp_path: Path) -> None:
     assert output_path.read_text(encoding="utf-8") == ""
 
 
-def test_assemble_doc_handles_empty_batch(tmp_path: Path) -> None:
+def test_assemble_doc_handles_empty_task_artifact(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     output_path = tmp_path / "out.md"
-    _write_batch(plan_dir, 1, {"task_updates": []})
+    _write_task_artifact(plan_dir, "T1", {"task_updates": []})
     assemble_doc(plan_dir, output_path, _finalize_with_tasks("T1"))
     assert output_path.read_text(encoding="utf-8") == ""
 
@@ -104,7 +106,7 @@ def test_assemble_doc_handles_empty_batch(tmp_path: Path) -> None:
 def test_assemble_doc_creates_parent_directory(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     output_path = tmp_path / "nested" / "deep" / "out.md"
-    _write_batch(plan_dir, 1, {
+    _write_task_artifact(plan_dir, "T1", {
         "task_updates": [
             {"task_id": "T1", "status": "done",
              "executor_notes": "X", "sections_written": ["s1"]},
@@ -119,7 +121,7 @@ def test_assemble_doc_preserves_executor_written_file(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     output_path = tmp_path / "out.md"
     output_path.write_text("# Real document\n\nAuthored content here.", encoding="utf-8")
-    _write_batch(plan_dir, 1, {
+    _write_task_artifact(plan_dir, "T1", {
         "task_updates": [
             {"task_id": "T1", "status": "done",
              "executor_notes": "Verification prose, not content", "sections_written": ["s1"]},
@@ -133,7 +135,7 @@ def test_assemble_doc_falls_back_when_file_empty(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     output_path = tmp_path / "out.md"
     output_path.write_text("", encoding="utf-8")
-    _write_batch(plan_dir, 1, {
+    _write_task_artifact(plan_dir, "T1", {
         "task_updates": [
             {"task_id": "T1", "status": "done",
              "executor_notes": "Fallback body", "sections_written": ["s1"]},
@@ -145,7 +147,7 @@ def test_assemble_doc_falls_back_when_file_empty(tmp_path: Path) -> None:
 
 def test_extract_sections_duplicate_section_id_last_wins(tmp_path: Path) -> None:
     """Document current behavior: when two tasks claim the same section_id,
-    the later batch wins. This locks the contract so any future change is
+    the later payload wins. This locks the contract so any future change is
     deliberate."""
     payloads = [
         {"task_updates": [

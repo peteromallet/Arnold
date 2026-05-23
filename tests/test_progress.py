@@ -19,6 +19,7 @@ from megaplan.orchestration.progress import (
     strip_progress_env,
 )
 from megaplan.store import FileStore
+from megaplan.worktrees.identity import make_task_identity
 
 
 def test_progress_emitter_noops_without_store_or_context() -> None:
@@ -39,17 +40,46 @@ def test_progress_emitter_appends_idempotent_structured_events(tmp_path) -> None
 
     first = emitter.phase_start("execute", worker="codex")
     duplicate = emitter.phase_start("execute", worker="codex")
-    done = emitter.batch_complete("batch-1", task_ids=["T2"])
+    identity = make_task_identity("T2")
+    done = emitter.task_complete(
+        identity.task_key,
+        task_id="T2",
+        task_id_encoded=identity.original_task_id_encoded,
+        status="done",
+    )
 
     events = store.list_progress_events(epic_id=epic.id, plan_id="plan-1")
     assert first is not None
     assert duplicate is not None
     assert done is not None
     assert duplicate.id == first.id
-    assert [event.kind for event in events] == ["phase_start", "batch_complete"]
+    assert [event.kind for event in events] == ["phase_start", "task_complete"]
     assert events[0].details == {"phase": "execute", "worker": "codex", "run_id": "run-1"}
-    assert events[1].details == {"batch_id": "batch-1", "task_ids": ["T2"], "run_id": "run-1"}
+    assert events[1].details == {
+        "task_key": identity.task_key,
+        "task_id": "T2",
+        "task_id_encoded": identity.original_task_id_encoded,
+        "status": "done",
+        "run_id": "run-1",
+    }
     assert all(event.idempotency_key for event in events)
+
+
+def test_progress_emitter_retains_legacy_batch_complete_event(tmp_path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Body")
+    emitter = ProgressEmitter(store, epic_id=epic.id, plan_id="plan-1", run_id="run-1")
+
+    event = emitter.batch_complete("batch-1", task_ids=["T2"])
+
+    assert event is not None
+    events = store.list_progress_events(epic_id=epic.id, plan_id="plan-1")
+    assert [row.kind for row in events] == ["batch_complete"]
+    assert events[0].details == {
+        "batch_id": "batch-1",
+        "task_ids": ["T2"],
+        "run_id": "run-1",
+    }
 
 
 def test_progress_context_serializes_only_non_secret_env_values(tmp_path, monkeypatch) -> None:

@@ -48,7 +48,7 @@ Each digest is 2-5 sentences summarizing what the phase produced:
 - **revise** (plan diffs across versions): what changed v1→vN
 - **gate** (`gate.json`): recommendation + passed
 - **finalize** (`final.md`): task count, batches
-- **execute** (`execution.json`, `execution_audit.json`, `execution_batch_*.json`): tasks done/skipped/blocked, batch count, files changed
+- **execute** (`execution.json`, `execution_audit.json`, `tasks/<task_key>/execution.json`): tasks done/skipped/blocked, task progress, files changed
 - **review** (`review.json`): verdict, summary
 - **Run meta** (always): robustness, profile, iteration count, total cost from `state["meta"]["total_cost_usd"]`, history durations per phase
 

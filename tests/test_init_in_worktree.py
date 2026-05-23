@@ -84,12 +84,15 @@ def test_in_worktree_happy_path(
     assert wt["branch"] == "feature-x"
     assert wt["base_sha"] == head
     assert wt["path"] == str(expected_wt)
+    target_gitignore = expected_wt / ".gitignore"
+    assert target_gitignore.read_text(encoding="utf-8").splitlines().count(".megaplan-worktrees/") == 1
     # New branch exists in the original repo.
     branches = _git(repo, "branch", "--list").stdout
     assert "feature-x" in branches
     # Main worktree untouched (still on main, clean).
     assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "main"
     assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+    assert not (repo / ".gitignore").exists()
 
 
 @pytest.mark.parametrize(

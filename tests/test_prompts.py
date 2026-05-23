@@ -819,15 +819,18 @@ def test_resolved_debt_no_longer_appears_in_subsequent_prompts(tmp_path: Path) -
     assert "retry backoff remains brittle" not in after_prompt
 
 
-def test_execute_prompt_includes_finalize_path_and_checkpoint_instructions(tmp_path: Path) -> None:
+def test_execute_prompt_includes_finalize_path_and_evidence_checkpoint_instructions(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     prompt = create_claude_prompt("execute", state, plan_dir)
     # Single-batch checkpoint should go to execution_checkpoint.json, NOT finalize.json
     assert str(plan_dir / "execution_checkpoint.json") in prompt
-    assert "Best-effort progress checkpointing" in prompt
+    assert "Best-effort timeout-recovery evidence artifact" in prompt
     assert "full read-modify-write" in prompt
-    assert "Structured output remains the authoritative final summary" in prompt
+    assert "Structured output remains the authoritative final evidence summary" in prompt
     assert "Do not create or rewrite tracking artifacts directly." not in prompt
+    assert "Worker/coordinator boundary: report task outcomes and evidence only" in prompt
+    assert "The coordinator owns patch capture, commits, pushes, cleanup, progress completion" in prompt
+    assert "emit progress-completion events" in prompt
     # finalize.json should still appear as the source of truth, but NOT as the checkpoint target
     assert "source of truth" in prompt
     assert "harness owns" in prompt.lower() or "not `finalize.json`" in prompt.lower()
@@ -1066,6 +1069,8 @@ def test_execute_batch_prompt_scopes_tasks_and_sense_checks(tmp_path: Path) -> N
     assert "Advisory quality: megaplan/prompts.py grew by 220 lines (threshold 200)." in prompt
     # Batch prompt checkpoint should reference execution_batch_2.json, not finalize.json
     assert "execution_batch_2.json" in prompt
+    assert "Best-effort timeout-recovery evidence artifact" in prompt
+    assert "Worker/coordinator boundary: report task outcomes and evidence only" in prompt
     assert "not `finalize.json`" in prompt.lower() or "harness owns" in prompt.lower()
 
 

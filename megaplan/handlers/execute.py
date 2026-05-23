@@ -9,10 +9,15 @@ from megaplan.execute.core import (
     handle_execute_auto_loop as dispatch_execute_auto_loop,
     handle_execute_one_batch as dispatch_execute_one_batch,
 )
+from megaplan.execute_resume_cursor import build_best_effort_task_resume_cursor
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     CliError,
+    EXECUTE_MODEL_LEGACY_BATCH,
+    EXECUTE_MODEL_WORKTREE_NATIVE,
+    EXECUTE_SCHEMA_VERSION,
     PlanState,
+    SECRET_SCAN_MODE_PR_PUSHED,
     STATE_AWAITING_HUMAN,
     STATE_BLOCKED,
     STATE_DONE,
@@ -20,7 +25,9 @@ from megaplan.types import (
     STATE_FAILED,
     STATE_FINALIZED,
     StepResponse,
+    validate_secret_scan_mode,
 )
+from megaplan.execute.migration import diagnose_legacy_execute
 from megaplan.store import PlanRepository
 from megaplan._core import (
     atomic_write_json,
@@ -87,15 +94,65 @@ def _record_execute_blocked(plan_dir: Path, response: StepResponse) -> None:
         message="execute returned result=blocked from quality gates",
         current_state=STATE_BLOCKED,
         phase="execute",
-        resume_cursor={"phase": "execute", "batch_index": None, "retry_strategy": "fresh_session"},
+        resume_cursor=build_best_effort_task_resume_cursor(plan_dir),
         last_artifact=artifact.name if artifact is not None else None,
-        suggested_action="Review blocking deviations and resume execute with a fresh worker session.",
+        suggested_action="Review blocking deviations and resume execute in the task worktree.",
         metadata={"response": dict(response)},
     )
+
+
+def _prepare_execute_model_or_refuse(plan_dir: Path, state: PlanState) -> None:
+    diagnostic = diagnose_legacy_execute(plan_dir)
+    classification = diagnostic.get("classification")
+    warnings = diagnostic.get("warnings") or []
+    config = state.setdefault("config", {})
+    execute_model = config.get("execute_model")
+
+    if execute_model == EXECUTE_MODEL_LEGACY_BATCH or classification in {
+        "legacy_batch_marked",
+        "legacy_batch_inferred",
+        "unmarked_execute_evidence",
+    }:
+        raise CliError(
+            "legacy_execute_migration_required",
+            "This plan contains legacy batch execute evidence. Run "
+            "`megaplan migrate-plan --diagnose <plan>` and then choose "
+            "`--restart` or `--close` before executing.",
+            extra={"diagnostic": diagnostic},
+        )
+    if execute_model == EXECUTE_MODEL_WORKTREE_NATIVE and warnings:
+        raise CliError(
+            "legacy_execute_migration_required",
+            "This worktree-native plan still has legacy execute evidence. Run "
+            "`megaplan migrate-plan --diagnose <plan>` and clear the stale artifacts before executing.",
+            extra={"diagnostic": diagnostic},
+        )
+    if execute_model not in {EXECUTE_MODEL_WORKTREE_NATIVE, None}:
+        raise CliError(
+            "invalid_execute_model",
+            f"Unsupported execute_model {execute_model!r}; expected {EXECUTE_MODEL_WORKTREE_NATIVE!r}.",
+            extra={"diagnostic": diagnostic},
+        )
+    if execute_model is None:
+        config["execute_model"] = EXECUTE_MODEL_WORKTREE_NATIVE
+        config["execute_schema_version"] = EXECUTE_SCHEMA_VERSION
+    config.setdefault("execute_schema_version", EXECUTE_SCHEMA_VERSION)
+    config["secret_scan_mode"] = validate_secret_scan_mode(
+        config.get("secret_scan_mode", SECRET_SCAN_MODE_PR_PUSHED)
+    )
+
 
 def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="execute") as (plan_dir, state):
         require_state(state, "execute", {STATE_FINALIZED, STATE_BLOCKED, STATE_FAILED})
+        _prepare_execute_model_or_refuse(plan_dir, state)
+        secret_scan_mode_arg = getattr(args, "secret_scan_mode", None)
+        if secret_scan_mode_arg is not None:
+            state["config"]["secret_scan_mode"] = validate_secret_scan_mode(
+                secret_scan_mode_arg,
+                source="--secret-scan-mode",
+            )
+        save_state_merge_meta(plan_dir, state)
         apply_profile_expansion(args, Path(state["config"]["project_dir"]), state=state)
         # Loud operator warning if the resolved sandbox root is narrower than
         # the plan's stored project_dir. Silent divergence here cost entire

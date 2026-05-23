@@ -158,6 +158,26 @@ def test_load_profiles_rejects_invalid_phase_key_with_path_and_key(tmp_path: Pat
     assert "not_a_phase" in exc_info.value.message
 
 
+def test_load_profiles_rejects_secret_scan_mode_profile_key(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    bad_path = home / ".config" / "megaplan" / "profiles.toml"
+    _write_profiles(
+        bad_path,
+        """
+        [profiles.bad]
+        secret_scan_mode = "local_only"
+        execute = "claude"
+        """,
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        load_profiles(home=home, project_dir=tmp_path / "project")
+
+    assert exc_info.value.code == "invalid_profile"
+    assert str(bad_path) in exc_info.value.message
+    assert "secret_scan_mode" in exc_info.value.message
+
+
 def test_load_profiles_rejects_invalid_agent_spec(tmp_path: Path) -> None:
     home = tmp_path / "home"
     bad_path = home / ".config" / "megaplan" / "profiles.toml"

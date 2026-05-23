@@ -20,12 +20,10 @@ import pytest
 import megaplan
 import megaplan.cli
 import megaplan.workers
-from megaplan._core import read_json
 from megaplan.handlers.finalize import _ensure_user_actions_pre_gate_task
 from megaplan.prompts.execute import _execute_batch_prompt, _execute_prompt
 from megaplan.resolutions import (
     FALLBACK_STATES,
-    HARD_BLOCK_STATES,
     USER_ACTION_RESOLUTIONS_FILE,
     load_user_action_resolutions,
     resolution_applies_to_task,
@@ -910,7 +908,7 @@ class TestProgressStatusResolution:
         upsert_user_action_resolution(tmp_path, "U1", "accepted_blocked", reason="ok", fallback_mode="mock")
 
         monkeypatch.setattr(cli_mod, "compute_global_batches", lambda fd: [["T1"], ["T2"]])
-        monkeypatch.setattr(cli_mod, "list_batch_artifacts", lambda pd: [])
+        monkeypatch.setattr(cli_mod, "_task_artifact_status_overlay", lambda pd: {})
 
         state = {
             "name": "test", "current_state": "finalized", "iteration": 1,

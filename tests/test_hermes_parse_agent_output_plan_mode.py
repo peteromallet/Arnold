@@ -30,7 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._core import atomic_write_json, atomic_write_text, read_json, schemas_root
+from megaplan._core import read_json, schemas_root
+from megaplan.store import PlanRepository
 from megaplan.workers.hermes import parse_agent_output
 from megaplan.workers import STEP_SCHEMA_FILENAMES
 
@@ -50,6 +51,7 @@ def _scaffold(tmp_path: Path) -> tuple[Path, Path]:
     project_dir = tmp_path / "project"
     plan_dir.mkdir()
     project_dir.mkdir()
+    (plan_dir / "state.json").write_text("{}\n", encoding="utf-8")
     # Make the project look like a git repo so the fallback's `git diff`
     # call doesn't blow up — it's wrapped in try/except, but keeping the
     # fixture realistic avoids spurious stderr noise.
@@ -138,13 +140,14 @@ def test_parse_agent_output_execute_fallback_honors_doc_plan_mode(
     """
     plan_dir, project_dir = _scaffold(tmp_path)
     schema = _execute_schema()
-    # Doc mode reconstruction reads task_updates from checkpoint files.
-    atomic_write_json(
-        plan_dir / "execution_batch_001.json",
+    # Doc mode reconstruction reads task_updates from task-native execution artifacts.
+    PlanRepository.from_plan_dir(plan_dir).write_task_execution_artifact(
+        "task-1",
         {
             "task_updates": [
                 {
                     "task_id": "T1",
+                    "task_key": "task-1",
                     "status": "done",
                     "executor_notes": "wrote section",
                     "sections_written": ["intro", "background"],

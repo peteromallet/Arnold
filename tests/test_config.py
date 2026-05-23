@@ -161,6 +161,174 @@ def test_config_set_execution_robustness_invalid_value(isolated_config_dir: Path
         )
 
 
+@pytest.mark.parametrize("value", ["pr_pushed", "local_only"])
+def test_config_set_secret_scan_mode_enum(isolated_config_dir: Path, value: str) -> None:
+    response = megaplan.handle_config(
+        Namespace(
+            config_action="set",
+            key="execution.secret_scan_mode",
+            value=value,
+        )
+    )
+
+    assert response["success"] is True
+    assert response["value"] == value
+    saved = json.loads((isolated_config_dir / "config.json").read_text(encoding="utf-8"))
+    assert saved["execution"]["secret_scan_mode"] == value
+
+
+@pytest.mark.parametrize("value", ["", "LOCAL_ONLY", "implicit"])
+def test_config_set_secret_scan_mode_rejects_invalid_values(
+    isolated_config_dir: Path,
+    value: str,
+) -> None:
+    with pytest.raises(megaplan.CliError, match=r"execution\.secret_scan_mode must be one of:"):
+        megaplan.handle_config(
+            Namespace(
+                config_action="set",
+                key="execution.secret_scan_mode",
+                value=value,
+            )
+        )
+
+
+@pytest.mark.parametrize("value", ["", None, "implicit"])
+def test_get_effective_secret_scan_mode_rejects_invalid_config_file_values(
+    isolated_config_dir: Path,
+    value: object,
+) -> None:
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    (isolated_config_dir / "config.json").write_text(
+        json.dumps({"execution": {"secret_scan_mode": value}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(megaplan.CliError) as excinfo:
+        get_effective("execution", "secret_scan_mode")
+
+    assert excinfo.value.code == "invalid_secret_scan_mode"
+
+
+def test_get_effective_secret_scan_mode_missing_defaults_pr_pushed(
+    isolated_config_dir: Path,
+) -> None:
+    assert get_effective("execution", "secret_scan_mode") == "pr_pushed"
+
+
+def test_config_set_max_tasks_per_batch_is_retired(isolated_config_dir: Path) -> None:
+    with pytest.raises(megaplan.CliError, match=r"Unknown config key 'execution\.max_tasks_per_batch'"):
+        megaplan.handle_config(
+            Namespace(
+                config_action="set",
+                key="execution.max_tasks_per_batch",
+                value="2",
+            )
+        )
+
+
+def test_init_honors_secret_scan_mode_config_opt_in(
+    isolated_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    (isolated_config_dir / "config.json").write_text(
+        json.dumps({"execution": {"secret_scan_mode": "local_only"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+
+    response = megaplan.handle_init(
+        root,
+        Namespace(
+            project_dir=str(project_dir),
+            name="secret-mode",
+            idea="test idea",
+            idea_file=None,
+            mode="code",
+            output=None,
+            primary_criterion=None,
+            from_doc=None,
+            form=None,
+            auto_approve=None,
+            robustness=None,
+            strict_notes=None,
+            hermes=None,
+            phase_model=[],
+            profile=None,
+            vendor=None,
+            critic=None,
+            depth=None,
+            deepseek_provider=None,
+            with_prep=False,
+            with_feedback=False,
+            prep_direction=None,
+            auto_start=False,
+        ),
+    )
+
+    state = json.loads((megaplan.plans_root(root) / response["plan"] / "state.json").read_text(encoding="utf-8"))
+    assert state["config"]["secret_scan_mode"] == "local_only"
+    assert "max_tasks_per_batch" not in state["config"]
+
+
+def test_init_secret_scan_mode_cli_override_is_explicit_opt_in(
+    isolated_config_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+
+    response = megaplan.handle_init(
+        root,
+        Namespace(
+            project_dir=str(project_dir),
+            name="secret-mode-cli",
+            idea="test idea",
+            idea_file=None,
+            mode="code",
+            output=None,
+            primary_criterion=None,
+            from_doc=None,
+            form=None,
+            auto_approve=None,
+            robustness=None,
+            strict_notes=None,
+            secret_scan_mode="local_only",
+            hermes=None,
+            phase_model=[],
+            profile=None,
+            vendor=None,
+            critic=None,
+            depth=None,
+            deepseek_provider=None,
+            with_prep=False,
+            with_feedback=False,
+            prep_direction=None,
+            auto_start=False,
+        ),
+    )
+
+    state = json.loads((megaplan.plans_root(root) / response["plan"] / "state.json").read_text(encoding="utf-8"))
+    assert state["config"]["secret_scan_mode"] == "local_only"
+
+
 def test_config_set_invalid_key(isolated_config_dir: Path) -> None:
     with pytest.raises(megaplan.CliError, match=r"Unknown config key 'foo\.bar'"):
         megaplan.handle_config(

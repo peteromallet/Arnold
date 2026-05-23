@@ -21,6 +21,7 @@ from megaplan.execute.quality import (
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,
 )
+from megaplan.store import PlanRepository
 from megaplan.workers import WorkerResult
 from tests.conftest import (
     PlanFixture,
@@ -721,7 +722,7 @@ def _execute_auto_loop_direct(plan_fixture: PlanFixture) -> dict:
     )
 
 
-def test_auto_attribute_auto_loop_hermes_style_reaches_executed(
+def test_worktree_native_auto_loop_does_not_auto_attribute_hermes_style_output(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -735,31 +736,19 @@ def test_auto_attribute_auto_loop_hermes_style_reaches_executed(
 
     response = _execute_auto_loop_direct(plan_fixture)
     finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
-    batch = read_json(plan_fixture.plan_dir / "execution_batch_1.json")
     execution = read_json(plan_fixture.plan_dir / "execution.json")
     audit = read_json(plan_fixture.plan_dir / "execution_audit.json")
     deviations = execution["deviations"]
 
-    assert response["success"] is True
-    assert response["state"] == megaplan.STATE_EXECUTED
+    assert response["success"] is False
+    assert response["state"] == megaplan.STATE_FINALIZED
     task = finalize_data["tasks"][0]
-    assert task["auto_attributed_files"] is True
-    assert task["files_changed"] == ["newpkg/file.py"]
-    update = batch["task_updates"][0]
-    assert update["auto_attributed_files"] is True
-    assert update["files_changed"] == ["newpkg/file.py"]
-    assert "newpkg/file.py" in execution["files_changed"]
-    assert audit["auto_attribution"] == [
-        {"task_id": "T1", "files": ["newpkg/file.py"], "ambiguous": False}
-    ]
-    assert any(
-        "Auto-attributed 1 unclaimed file(s) to task T1" in deviation
-        for deviation in deviations
-    )
-    assert not any(
-        "Advisory observation mismatch:" in deviation and "newpkg/" in deviation
-        for deviation in deviations
-    )
+    assert "auto_attributed_files" not in task
+    assert task["files_changed"] == []
+    summaries = PlanRepository.from_plan_dir(plan_fixture.plan_dir).list_task_execution_summaries()
+    assert [summary["task_id"] for summary in summaries] == ["T1"]
+    assert summaries[0]["artifact"].startswith("tasks/")
+    assert audit.get("auto_attribution", []) == []
     assert not any(
         "executor claimed files not observed in git status" in deviation
         and "newpkg/file.py" in deviation
@@ -771,7 +760,7 @@ def test_auto_loop_aggregates_worker_tokens_into_receipt(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: dispatch_execute_auto_loop must sum per-batch worker tokens
+    """Regression: dispatch_execute_auto_loop must sum task-group worker tokens
     into the aggregate step_receipt_execute_v*.json. Previously the auto-loop
     dropped prompt_tokens / completion_tokens on the floor (always recorded 0)
     even when the underlying hermes worker reported real usage."""
@@ -785,6 +774,10 @@ def test_auto_loop_aggregates_worker_tokens_into_receipt(
             step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
         )
         # Simulate a real hermes/deepseek invocation reporting token usage.
+        worker_result.payload["files_changed"] = ["newpkg/file.py"]
+        worker_result.payload["commands_run"] = ["pytest -k token"]
+        worker_result.payload["task_updates"][0]["files_changed"] = ["newpkg/file.py"]
+        worker_result.payload["task_updates"][0]["commands_run"] = ["pytest -k token"]
         worker_result.prompt_tokens = 12_345
         worker_result.completion_tokens = 678
         worker_result.total_tokens = 13_023
@@ -818,11 +811,19 @@ def test_auto_attribute_robust_auto_loop_avoids_scope_drift_blocker(
         monkeypatch,
         scope_snapshot={"newpkg/file.py": "<hash>"},
     )
-    monkeypatch.setattr(
-        megaplan.workers,
-        "run_step_with_worker",
-        _hermes_style_worker(plan_fixture.project_dir),
-    )
+    base_worker = _hermes_style_worker(plan_fixture.project_dir)
+
+    def scoped_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_override=None):
+        worker_result, agent, mode, refreshed = base_worker(
+            step, state, plan_dir, args, root=root, resolved=resolved, prompt_override=prompt_override
+        )
+        worker_result.payload["files_changed"] = ["newpkg/file.py"]
+        worker_result.payload["commands_run"] = ["pytest -k scope"]
+        worker_result.payload["task_updates"][0]["files_changed"] = ["newpkg/file.py"]
+        worker_result.payload["task_updates"][0]["commands_run"] = ["pytest -k scope"]
+        return worker_result, agent, mode, refreshed
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", scoped_worker)
 
     response = _execute_auto_loop_direct(plan_fixture)
     execution = read_json(plan_fixture.plan_dir / "execution.json")
@@ -954,6 +955,61 @@ def test_execute_requires_user_approval_in_review_mode(plan_fixture: PlanFixture
             plan_fixture.root,
             plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=False),
         )
+
+
+def test_execute_rejects_invalid_stored_secret_scan_mode_before_worker(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["config"]["secret_scan_mode"] = ""
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    def worker_should_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid secret_scan_mode must fail before worker dispatch")
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
+
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+        )
+
+    assert excinfo.value.code == "invalid_secret_scan_mode"
+
+
+def test_execute_secret_scan_mode_cli_override_updates_state(
+    plan_fixture: PlanFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+    megaplan.handle_finalize(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    response = megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+            secret_scan_mode="local_only",
+        ),
+    )
+
+    state = load_state(plan_fixture.plan_dir)
+    assert response["success"] is True
+    assert state["config"]["secret_scan_mode"] == "local_only"
 
 
 def test_execute_succeeds_with_user_approval(plan_fixture: PlanFixture) -> None:
@@ -1124,19 +1180,15 @@ def test_execute_timeout_recovers_partial_progress_from_finalize_json(
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", timing_out_worker)
 
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
-    )
-    state = load_state(plan_fixture.plan_dir)
-    recovered = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+        )
 
-    assert response["success"] is False
-    assert response["next_step"] == "execute"
-    assert response["state"] == megaplan.STATE_FINALIZED
-    assert recovered["tasks"][0]["status"] == "done"
-    assert state["history"][-1]["result"] == "timeout"
-    assert state["sessions"][megaplan.workers.session_key_for("execute", "codex")]["id"] == "test-session"
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    diagnostic = excinfo.value.extra["diagnostic"]
+    assert diagnostic["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
 
 
 def test_execute_timeout_reads_execution_checkpoint_json(
@@ -1184,13 +1236,13 @@ def test_execute_timeout_reads_execution_checkpoint_json(
 
     assert response["success"] is False
     assert response["state"] == megaplan.STATE_FINALIZED
-    assert recovered["tasks"][0]["status"] == "done"
-    assert recovered["tasks"][0]["files_changed"] == ["IMPLEMENTED_BY_MEGAPLAN.txt"]
-    assert recovered["sense_checks"][0]["executor_note"] == "Recovered checkpoint sense check."
-    assert any(
-        "Recovered timeout checkpoint from execution_checkpoint.json" in deviation
-        for deviation in response["deviations"]
-    )
+    assert recovered["tasks"][0]["status"] == "blocked"
+    assert recovered["tasks"][0]["files_changed"] == []
+    assert recovered["sense_checks"][0]["executor_note"] == ""
+    summaries = PlanRepository.from_plan_dir(plan_fixture.plan_dir).list_task_execution_summaries()
+    assert summaries[0]["task_id"] == "T1"
+    assert summaries[0]["worktree_preserved"] is True
+    assert summaries[0]["blocked_reason"] == "worker_timeout"
 
 
 def test_execute_timeout_resets_done_tasks_without_any_evidence(
@@ -1216,16 +1268,14 @@ def test_execute_timeout_resets_done_tasks_without_any_evidence(
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", timing_out_worker)
 
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
-    )
-    recovered = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+        )
 
-    assert response["success"] is False
-    assert recovered["tasks"][0]["status"] == "pending"
-    assert "Timeout recovery reset this task to pending" in recovered["tasks"][0]["executor_notes"]
-    assert any("Reset timed-out done tasks to pending" in deviation for deviation in response["deviations"])
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
 
 
 def test_execute_reports_advisory_when_structured_output_disagrees_with_disk_checkpoint(
@@ -1286,18 +1336,14 @@ def test_execute_reports_advisory_when_structured_output_disagrees_with_disk_che
         lambda *args, **kwargs: (worker, "codex", "persistent", False),
     )
 
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
-    )
-    merged_finalize = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+        )
 
-    assert response["success"] is True
-    assert merged_finalize["tasks"][0]["status"] == "skipped"
-    assert any(
-        "task T1 was 'done' on disk before merge but structured output set it to 'skipped'" in deviation
-        for deviation in response["deviations"]
-    )
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
 
 
 def test_execute_deduplicates_task_updates_and_blocks_incomplete_coverage(
@@ -1420,11 +1466,11 @@ def test_handle_execute_persists_blocked_lifecycle_after_direct_blocked_response
     assert "active_step" not in state
     assert state["latest_failure"]["kind"] == "execution_blocked"
     assert state["latest_failure"]["last_artifact"] == "execution_batch_1.json"
-    assert state["resume_cursor"] == {
-        "phase": "execute",
-        "batch_index": None,
-        "retry_strategy": "fresh_session",
-    }
+    assert state["resume_cursor"]["phase"] == "execute"
+    assert state["resume_cursor"]["retry_strategy"] == "task_worktree"
+    assert "task_id" in state["resume_cursor"]
+    assert "task_key" in state["resume_cursor"]
+    assert "batch_index" not in state["resume_cursor"]
 
 
 def test_handle_execute_allows_resume_from_blocked_state(
@@ -1753,7 +1799,7 @@ def test_execute_multi_batch_happy_path_aggregates_results(
         "Confirmed batch one output.",
         "Confirmed batch two output.",
     ]
-    assert execution["output"].startswith("Aggregated execute batches: completed 2/2.")
+    assert execution["output"].startswith("Aggregated execute tasks: completed 2/2.")
     assert [item["task_id"] for item in execution["task_updates"]] == ["T1", "T2"]
     assert [item["sense_check_id"] for item in execution["sense_check_acknowledgments"]] == ["SC1", "SC2"]
     assert execution["files_changed"] == ["batch1.py", "batch2.py"]
@@ -1822,16 +1868,20 @@ def test_execute_multi_batch_timeout_preserves_prior_batches(
     )
     final_data = read_json(plan_fixture.plan_dir / "finalize.json")
     execution = read_json(plan_fixture.plan_dir / "execution.json")
+    summaries = PlanRepository.from_plan_dir(plan_fixture.plan_dir).list_task_execution_summaries()
     state = load_state(plan_fixture.plan_dir)
 
     assert response["success"] is False
     assert response["state"] == megaplan.STATE_FINALIZED
     assert response["next_step"] == "execute"
     assert final_data["tasks"][0]["status"] == "done"
-    assert final_data["tasks"][1]["status"] == "pending"
+    assert final_data["tasks"][1]["status"] == "blocked"
     assert final_data["sense_checks"][0]["executor_note"] == "Confirmed batch one output."
     assert final_data["sense_checks"][1]["executor_note"] == ""
-    assert [item["task_id"] for item in execution["task_updates"]] == ["T1"]
+    assert [item["task_id"] for item in execution["task_updates"]] == ["T1", "T2"]
+    assert summaries[-1]["task_id"] == "T2"
+    assert summaries[-1]["worktree_preserved"] is True
+    assert summaries[-1]["blocked_reason"] == "worker_timeout"
     assert state["history"][-1]["result"] == "timeout"
 
 
@@ -1891,13 +1941,15 @@ def test_execute_rerun_with_completed_dependency_uses_single_batch_fast_path(
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", rerun_worker)
 
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
-    )
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+        )
 
-    assert response["success"] is True
-    assert prompt_overrides == [None]
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
+    assert prompt_overrides == []
 
 
 def test_execute_multi_batch_observation_allows_cross_batch_reedit_and_flags_phantoms(
@@ -2128,23 +2180,14 @@ def test_batch_timeout_reads_execution_batch_n_json(
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", timing_out_batch_worker)
 
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=1),
-    )
-    recovered = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=1),
+        )
 
-    assert response["success"] is False
-    assert response["state"] == megaplan.STATE_FINALIZED
-    assert response["next_step"] == "execute"
-    assert recovered["tasks"][0]["status"] == "done"
-    assert recovered["tasks"][0]["files_changed"] == ["batch1.py"]
-    assert recovered["tasks"][1]["status"] == "pending"
-    assert recovered["sense_checks"][0]["executor_note"] == "Recovered batch checkpoint sense check."
-    assert any(
-        "Recovered timeout checkpoint from execution_batch_1.json" in deviation
-        for deviation in response["deviations"]
-    )
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_top_level_execution_batch_artifacts"
 
 def test_batch_2_after_batch_1_transitions_to_executed(
     plan_fixture: PlanFixture,
@@ -2159,21 +2202,14 @@ def test_batch_2_after_batch_1_transitions_to_executed(
         plan_fixture.root,
         make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=1),
     )
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=2),
-    )
-    state = read_json(plan_fixture.plan_dir / "state.json")
-    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=2),
+        )
 
-    assert response["state"] == megaplan.STATE_EXECUTED
-    assert response["next_step"] == "review"
-    assert response["batch"] == 2
-    assert response["batches_remaining"] == 0
-    assert (plan_fixture.plan_dir / "execution.json").exists()
-    execution = read_json(plan_fixture.plan_dir / "execution.json")
-    assert [item["task_id"] for item in execution["task_updates"]] == ["T1", "T2"]
-    assert all(t["status"] == "done" for t in finalize_data["tasks"])
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_top_level_execution_batch_artifacts"
 
 def test_execute_quality_advisories_flow_into_batch_artifacts_aggregate_and_next_prompt(
     plan_fixture: PlanFixture,
@@ -2501,23 +2537,14 @@ def test_execute_auto_loop_stops_when_existing_task_is_blocked(
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", worker_should_not_run)
 
-    response = megaplan.handle_execute(
-        plan_fixture.root,
-        plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
-    )
-    state = load_state(plan_fixture.plan_dir)
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True),
+        )
 
-    assert response["success"] is False
-    assert response["state"] == megaplan.STATE_FINALIZED
-    assert response["next_step"] == "execute"
-    assert response["blocked_task_ids"] == ["T1"]
-    assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
-    assert state["history"][-1]["result"] == "blocked"
-    # Verify phase_result.json is written with correct exit_kind
-    from megaplan.orchestration.phase_result import read_phase_result
-    pr = read_phase_result(plan_fixture.plan_dir)
-    assert pr is not None, "phase_result.json must be written for every execute exit"
-    assert pr.exit_kind == "blocked_by_prereq"
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
 
 
 def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
@@ -2552,27 +2579,11 @@ def test_execute_auto_loop_resets_blocked_tasks_when_flag_set(
         user_approved=True,
         retry_blocked_tasks=True,
     )
-    response = megaplan.handle_execute(plan_fixture.root, args)
-    state = load_state(plan_fixture.plan_dir)
-    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(plan_fixture.root, args)
 
-    # Short-circuit did NOT fire: blocked task got retried and reported done.
-    t1 = finalize_after["tasks"][0]
-    assert t1["status"] == "done"
-    # The blocked task's per-attempt stale fields were replaced by the new
-    # worker's output (mocked _batch_worker returns done with batch1.py).
-    assert "stale.py" not in t1.get("files_changed", [])
-    assert "Stale notes" not in t1.get("executor_notes", "")
-    # The execute history entry is no longer the short-circuit "blocked" exit.
-    last_execute = next(
-        entry for entry in reversed(state.get("history", [])) if entry.get("step") == "execute"
-    )
-    assert last_execute["result"] != "blocked"
-    # Verify phase_result.json is written with success exit_kind
-    from megaplan.orchestration.phase_result import read_phase_result
-    pr = read_phase_result(plan_fixture.plan_dir)
-    assert pr is not None, "phase_result.json must be written for every execute exit"
-    assert pr.exit_kind == "success"
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
 
 
 def test_execute_auto_loop_short_circuits_when_flag_unset(
@@ -2603,21 +2614,11 @@ def test_execute_auto_loop_short_circuits_when_flag_unset(
         user_approved=True,
         retry_blocked_tasks=False,
     )
-    response = megaplan.handle_execute(plan_fixture.root, args)
-    finalize_after = read_json(plan_fixture.plan_dir / "finalize.json")
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_execute(plan_fixture.root, args)
 
-    # Short-circuit fired: blocked status (and stale fields) preserved.
-    t1 = finalize_after["tasks"][0]
-    assert t1["status"] == "blocked"
-    assert t1["executor_notes"] == "Stale notes from prior session."
-    assert t1["files_changed"] == ["stale.py"]
-    assert response["blocked_task_ids"] == ["T1"]
-    assert "existing blocked task(s) prevent dependent execution: T1" in response["summary"]
-    # Verify phase_result.json is written with blocked_by_prereq exit_kind
-    from megaplan.orchestration.phase_result import read_phase_result
-    pr = read_phase_result(plan_fixture.plan_dir)
-    assert pr is not None, "phase_result.json must be written for every execute exit"
-    assert pr.exit_kind == "blocked_by_prereq"
+    assert excinfo.value.code == "legacy_execute_migration_required"
+    assert excinfo.value.extra["diagnostic"]["warnings"][0]["code"] == "stale_finalize_task_status_evidence"
 
 
 def test_execute_auto_loop_stops_when_batch_creates_blocked_task(
@@ -3440,7 +3441,7 @@ def test_handle_execute_variable_profile_passes_tier_map_without_cli_override(
 
 
 # ---------------------------------------------------------------------------
-# Freshness tests — auto_loop per-batch tier change
+# Freshness tests — auto_loop task-group tier change
 # ---------------------------------------------------------------------------
 
 
@@ -3448,8 +3449,8 @@ def test_auto_loop_freshness_forced_on_model_change(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the tier-selected model differs from the previous batch's model,
-    refreshed=True is forced for the later batch."""
+    """When the tier-selected model differs from the previous task group's
+    model, refreshed=True is forced for the later group."""
     _setup_three_batch_tier_plan(plan_fixture)
     monkeypatch.setattr(
         megaplan.execute.core,
@@ -3463,7 +3464,7 @@ def test_auto_loop_freshness_forced_on_model_change(
     )
 
     tier_spec_resolutions: list[tuple[str, str, str | None]] = []
-    # Batch 1: model-A, Batch 2: model-B (different), Batch 3: model-C (different)
+    # Group 1: model-A, Group 2: model-B (different), Group 3: model-C (different)
     model_sequence = iter(["model-A", "model-B", "model-C"])
 
     def _tracking_resolve_tier_spec(args, tier_spec):
@@ -3539,23 +3540,23 @@ def test_auto_loop_freshness_forced_on_model_change(
         tier_map=tier_map,
     )
 
-    assert len(run_params) == 3, f"Expected 3 batches, got {len(run_params)}"
+    assert len(run_params) == 3, f"Expected 3 task groups, got {len(run_params)}"
 
-    # Batch 1: first batch keeps caller's refreshed value (False).
+    # Group 1 keeps caller's refreshed value (False).
     assert run_params[0]["refreshed"] is False, (
-        "Batch 1 should preserve caller refreshed=False"
+        "First task group should preserve caller refreshed=False"
     )
     assert run_params[0]["model"] == "model-A"
 
-    # Batch 2: model changed (model-A → model-B) → refreshed=True.
+    # Group 2: model changed (model-A → model-B) → refreshed=True.
     assert run_params[1]["refreshed"] is True, (
-        "Batch 2 must force refreshed=True when model differs from batch 1"
+        "Second task group must force refreshed=True when model differs from group 1"
     )
     assert run_params[1]["model"] == "model-B"
 
-    # Batch 3: model changed again (model-B → model-C) → refreshed=True.
+    # Group 3: model changed again (model-B → model-C) → refreshed=True.
     assert run_params[2]["refreshed"] is True, (
-        "Batch 3 must force refreshed=True when model differs from batch 2"
+        "Third task group must force refreshed=True when model differs from group 2"
     )
     assert run_params[2]["model"] == "model-C"
 
@@ -3564,7 +3565,7 @@ def test_auto_loop_same_model_no_extra_refresh(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When consecutive batches use the same tier-selected model, refreshed
+    """When consecutive task groups use the same tier-selected model, refreshed
     is NOT forced to True."""
     _setup_three_batch_tier_plan(plan_fixture)
     monkeypatch.setattr(
@@ -3578,7 +3579,7 @@ def test_auto_loop_same_model_no_extra_refresh(
         lambda *_: ({}, None),
     )
 
-    # All batches resolve to the same model.
+    # All task groups resolve to the same model.
     def _tracking_resolve_tier_spec(args, tier_spec):
         return ("codex", "persistent", "same-model")
 
@@ -3661,16 +3662,16 @@ def test_auto_loop_same_model_no_extra_refresh(
 
 
 # ---------------------------------------------------------------------------
-# Auto_loop observability — batch_to_tier mapping and history entries
+# Auto_loop observability — task_to_tier mapping and history entries
 # ---------------------------------------------------------------------------
 
 
-def test_auto_loop_batch_to_tier_observability(
+def test_auto_loop_task_to_tier_observability(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When tier routing is active, the aggregate history entry includes a
-    batch_to_tier mapping with complexities, specs, and resolved models."""
+    task_to_tier mapping with complexities, specs, and resolved models."""
     _setup_three_batch_tier_plan(plan_fixture)
     monkeypatch.setattr(
         megaplan.execute.core,
@@ -3755,31 +3756,34 @@ def test_auto_loop_batch_to_tier_observability(
     # Find the aggregate execute history entry (the last one for the auto loop).
     agg_entry = None
     for entry in reversed(history):
-        if entry.get("step") == "execute" and "batch_to_tier" in entry:
+        if entry.get("step") == "execute" and "task_to_tier" in entry:
             agg_entry = entry
             break
 
     assert agg_entry is not None, (
-        "Aggregate history entry must include batch_to_tier when tier routing active"
+        "Aggregate history entry must include task_to_tier when tier routing active"
     )
 
-    batch_to_tier = agg_entry["batch_to_tier"]
-    assert len(batch_to_tier) == 3, (
-        f"Expected 3 batch→tier mappings, got {len(batch_to_tier)}"
+    task_to_tier = agg_entry["task_to_tier"]
+    assert len(task_to_tier) == 3, (
+        f"Expected 3 task→tier mappings, got {len(task_to_tier)}"
     )
 
     # Verify ordered mapping: complexity 1→hermes:flash, 3→codex:medium, 5→codex:high.
-    assert batch_to_tier[0]["batch_complexity"] == 1
-    assert batch_to_tier[0]["tier_model_spec"] == "hermes:flash"
-    assert batch_to_tier[0]["resolved_model"] == "deepseek-flash-v1"
+    assert task_to_tier[0]["task_id"] == "T1"
+    assert task_to_tier[0]["task_complexity"] == 1
+    assert task_to_tier[0]["tier_model_spec"] == "hermes:flash"
+    assert task_to_tier[0]["resolved_model"] == "deepseek-flash-v1"
 
-    assert batch_to_tier[1]["batch_complexity"] == 3
-    assert batch_to_tier[1]["tier_model_spec"] == "codex:medium"
-    assert batch_to_tier[1]["resolved_model"] == "codex-medium-v2"
+    assert task_to_tier[1]["task_id"] == "T2"
+    assert task_to_tier[1]["task_complexity"] == 3
+    assert task_to_tier[1]["tier_model_spec"] == "codex:medium"
+    assert task_to_tier[1]["resolved_model"] == "codex-medium-v2"
 
-    assert batch_to_tier[2]["batch_complexity"] == 5
-    assert batch_to_tier[2]["tier_model_spec"] == "codex:high"
-    assert batch_to_tier[2]["resolved_model"] == "codex-high-v1"
+    assert task_to_tier[2]["task_id"] == "T3"
+    assert task_to_tier[2]["task_complexity"] == 5
+    assert task_to_tier[2]["tier_model_spec"] == "codex:high"
+    assert task_to_tier[2]["resolved_model"] == "codex-high-v1"
 
 
 # ---------------------------------------------------------------------------
@@ -3857,7 +3861,7 @@ def test_one_batch_active_step_reflects_tier_selected_model(
     )
 
     # The handler's set_active_step (at line ~140 of handlers/execute.py)
-    # sets the fallback model. Then the per-batch tier resolution sets the
+    # sets the fallback model. Then the legacy batch tier resolution sets the
     # tier-selected model. We should see at least one call with the tier model.
     tier_calls = [
         c for c in active_step_calls

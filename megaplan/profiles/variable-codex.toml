@@ -2,8 +2,8 @@
 # to Codex; ignores --vendor / --critic flags.
 #
 # Non-execute phases are all-Codex (except feedback which stays claude:low
-# per the all-codex convention). Execute dispatch picks the cheapest safe
-# model per batch using the [tier_models.execute] table, with DeepSeek for
+# per the all-codex convention). Execute dispatch records the cheapest safe
+# model per task using the [tier_models.execute] table, with DeepSeek for
 # low-complexity work, codex:medium for complexity-4, and codex:high for
 # complexity-5.
 #

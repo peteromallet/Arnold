@@ -178,14 +178,14 @@ def test_multi_store_plan_lifecycle_fields_round_trip_on_routed_backend(tmp_path
         name="db-plan",
         idea="idea",
         latest_failure={"kind": "blocked"},
-        resume_cursor={"phase": "execute", "batch_index": 4},
+        resume_cursor={"phase": "review", "retry_strategy": "rerun_phase"},
         idempotency_key=deterministic_idempotency_key("multi", epic.id, "plan-lifecycle"),
     )
 
     loaded = store.load_plan(plan.id)
     assert loaded.latest_failure == {"kind": "blocked"}
-    assert loaded.resume_cursor == {"phase": "execute", "batch_index": 4}
-    assert db_store.load_plan(plan.id).resume_cursor == {"phase": "execute", "batch_index": 4}
+    assert loaded.resume_cursor == {"phase": "review", "retry_strategy": "rerun_phase"}
+    assert db_store.load_plan(plan.id).resume_cursor == {"phase": "review", "retry_strategy": "rerun_phase"}
 
     updated = store.update_plan(
         plan.id,

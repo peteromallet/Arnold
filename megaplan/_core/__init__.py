@@ -23,6 +23,7 @@ from .io import (
     collect_git_diff_summary,
     compute_batch_complexity,
     compute_global_batches,
+    compute_task_complexity,
     compute_task_batches,
     config_dir,
     current_iteration_artifact,

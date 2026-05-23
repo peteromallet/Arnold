@@ -13,11 +13,10 @@ import json
 from pathlib import Path
 
 from megaplan._core import (
-    latest_plan_path,
-    latest_plan_meta_path,
     read_json,
 )
 from megaplan.orchestration.feedback import STAGES
+from megaplan.store import PlanRepository
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +194,6 @@ def _digest_gate(plan_dir: Path) -> str:
 
 def _digest_tiebreaker(plan_dir: Path) -> str:
     # Check for tiebreaker artifacts
-    import glob
     tb_files = sorted(plan_dir.glob("tiebreaker*.json"))
     if not tb_files:
         return "Tiebreaker did not run; do not rate."
@@ -243,12 +241,16 @@ def _digest_execute(plan_dir: Path, state: dict) -> str:
     if audit:
         files_changed = len(audit.get("changed_files", audit.get("files", [])))
 
-    # Count batch files
-    batch_count = len(list(plan_dir.glob("execution_batch_*.json")))
+    try:
+        task_artifact_count = len(
+            PlanRepository.from_plan_dir(plan_dir).list_task_execution_artifacts()
+        )
+    except (OSError, RuntimeError, ValueError):
+        task_artifact_count = 0
 
     parts = [
         f"{done} done, {skipped} skipped, {blocked} blocked",
-        f"{batch_count} batch(es)",
+        f"{task_artifact_count} task execution artifact(s)",
     ]
     if files_changed:
         parts.append(f"{files_changed} file(s) changed")

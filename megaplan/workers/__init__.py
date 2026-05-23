@@ -2,6 +2,7 @@ from megaplan.workers._impl import *  # noqa: F401,F403
 from megaplan.workers._impl import (
     AgentMode,
     CommandResult,
+    WorkerExecutionContext,
     WorkerResult,
     STEP_SCHEMA_FILENAMES,
     _build_mock_payload,
@@ -27,6 +28,7 @@ from megaplan.workers._impl import (
 __all__ = [
     "AgentMode",
     "CommandResult",
+    "WorkerExecutionContext",
     "WorkerResult",
     "STEP_SCHEMA_FILENAMES",
     "_build_mock_payload",

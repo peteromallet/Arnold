@@ -21,6 +21,7 @@ from megaplan.workers import (
     _extract_claude_usage,
     _merge_partial_output,
     WorkerResult,
+    WorkerExecutionContext,
     extract_session_id,
     parse_claude_envelope,
     parse_json_file,
@@ -819,6 +820,21 @@ def _mock_state(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, dict]:
     return plan_dir, state
 
 
+def _worker_execution_context(tmp_path: Path) -> WorkerExecutionContext:
+    worktree_dir = tmp_path / "task-worktree"
+    task_context_dir = worktree_dir / ".megaplan" / "task-context"
+    worker_dir = worktree_dir / ".megaplan" / "worker"
+    task_context_dir.mkdir(parents=True)
+    worker_dir.mkdir(parents=True)
+    return WorkerExecutionContext(
+        task_id="Task/Unsafe\nID",
+        task_key="task-unsafe-id-1234",
+        worktree_dir=worktree_dir,
+        task_context_dir=task_context_dir,
+        worker_dir=worker_dir,
+    )
+
+
 def test_mock_plan_returns_valid_payload(tmp_path: Path) -> None:
     from megaplan.workers import mock_worker_output
     plan_dir, state = _mock_state(tmp_path)
@@ -1451,6 +1467,216 @@ def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
             prompt_override="custom execute prompt",
         )
     assert run_codex.call_args.kwargs["prompt_override"] == "custom execute prompt"
+
+
+def test_run_step_with_worker_passes_task_execution_context(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    context = _worker_execution_context(tmp_path)
+    payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+    with patch(
+        "megaplan.workers._impl.run_codex_step",
+        return_value=type("Result", (), {"payload": payload, "raw_output": "", "duration_ms": 1, "cost_usd": 0.0, "session_id": "sess", "trace_output": None})(),
+    ) as run_codex:
+        _worker, _agent, _mode, refreshed = run_step_with_worker(
+            "execute",
+            state,
+            plan_dir,
+            _make_args(agent="codex"),
+            root=tmp_path,
+            resolved=("codex", "persistent", False, None),
+            prompt_override="custom execute prompt",
+            execution_context=context,
+        )
+    assert refreshed is True
+    assert run_codex.call_args.kwargs["execution_context"] == context
+
+
+def test_run_codex_step_task_context_uses_task_worktree_and_worker_output(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step, session_key_for
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    context = _worker_execution_context(tmp_path)
+    state["sessions"][session_key_for("execute", "codex")] = {"id": "old-session"}
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        assert "resume" not in command
+        assert "--add-dir" not in command
+        assert Path(command[command.index("-C") + 1]) == context.worktree_dir
+        roots_arg = command[command.index("sandbox_workspace_write.writable_roots=[\"" + str(context.worktree_dir) + "\"]")]
+        assert str(plan_dir) not in roots_arg
+        output_path = Path(command[command.index("-o") + 1])
+        assert output_path.parent == context.worker_dir
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=context.worktree_dir,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"task-session"}\n',
+            stderr="",
+            duration_ms=1,
+        )
+
+    with patch("megaplan.workers._impl._trusted_container", return_value=False), \
+         patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=False,
+            prompt_override="task prompt",
+            execution_context=context,
+        )
+
+    assert result.payload["task_updates"] == []
+    assert result.payload["sense_check_acknowledgments"] == []
+    assert result.session_id == "task-session"
+    assert captured["kwargs"]["stdin_text"] == "task prompt"  # type: ignore[index]
+
+
+def test_run_shannon_step_task_context_uses_task_worktree_prompt_and_fresh_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers import CommandResult, session_key_for
+    from megaplan.workers.shannon import run_shannon_step
+
+    from megaplan._core import ensure_runtime_layout
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    context = _worker_execution_context(tmp_path)
+    state["sessions"][session_key_for("execute", "shannon")] = {"id": "old-session"}
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    payload = {"task_updates": [], "sense_check_acknowledgments": []}
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        assert "--resume" not in command
+        assert "--session-id" in command
+        assert kwargs["cwd"] == context.worktree_dir
+        prompt_arg = command[command.index("-p") + 1]
+        assert str(context.worker_dir) in prompt_arg
+        assert str(plan_dir) not in prompt_arg
+        return CommandResult(
+            command=command,
+            cwd=context.worktree_dir,
+            returncode=0,
+            stdout=json.dumps({"result": payload, "session_id": "task-shannon"}),
+            stderr="",
+            duration_ms=1,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=False,
+            prompt_override="task prompt",
+            execution_context=context,
+        )
+
+    assert result.payload["task_updates"] == payload["task_updates"]
+    assert result.payload["sense_check_acknowledgments"] == payload["sense_check_acknowledgments"]
+    assert result.session_id == "task-shannon"
+    prompt_files = list(context.worker_dir.glob("*_shannon_prompt.txt"))
+    assert len(prompt_files) == 1
+    assert "task prompt" in prompt_files[0].read_text(encoding="utf-8")
+    assert not list(plan_dir.glob("*_shannon_prompt.txt"))
+
+
+def test_run_hermes_step_task_context_uses_task_worktree_sandbox_and_worker_db(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import contextlib
+
+    from megaplan.workers import session_key_for
+    from megaplan.workers.hermes import run_hermes_step
+
+    from megaplan._core import ensure_runtime_layout
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    context = _worker_execution_context(tmp_path)
+    state["sessions"][session_key_for("execute", "hermes")] = {"id": "old-session"}
+    payload = {"task_updates": [], "sense_check_acknowledgments": []}
+    captured: dict[str, object] = {"sandbox_roots": [], "db_paths": []}
+
+    class FakeSessionDB:
+        def __init__(self, db_path: Path | None = None) -> None:
+            captured["db_paths"].append(db_path)
+
+        def get_messages_as_conversation(self, session_id: str) -> list[dict[str, object]]:
+            raise AssertionError(f"task context should not resume {session_id}")
+
+    class FakeAIAgent:
+        instances: list["FakeAIAgent"] = []
+
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+            self.calls: list[dict[str, object]] = []
+            FakeAIAgent.instances.append(self)
+
+        def set_response_format(self, *args: object, **kwargs: object) -> None:
+            self.response_format = (args, kwargs)
+
+        def run_conversation(self, **kwargs: object) -> dict[str, object]:
+            self.calls.append(kwargs)
+            return {
+                "final_response": json.dumps(payload),
+                "messages": [],
+                "model": "fake-model",
+                "prompt_tokens": 1,
+                "completion_tokens": 2,
+            }
+
+    def fake_install_sandbox(root: Path):
+        captured["sandbox_roots"].append(root)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr("megaplan.workers.hermes._import_hermes_runtime", lambda: (FakeAIAgent, FakeSessionDB))
+    monkeypatch.setattr("megaplan.runtime.key_pool.resolve_model", lambda model: ("fake-model", {}))
+    monkeypatch.setattr("megaplan.runtime.sandbox.install_sandbox", fake_install_sandbox)
+
+    result = run_hermes_step(
+        "execute",
+        state,
+        plan_dir,
+        root=tmp_path,
+        fresh=False,
+        prompt_override="task prompt",
+        execution_context=context,
+    )
+
+    assert result.payload["task_updates"] == payload["task_updates"]
+    assert result.payload["sense_check_acknowledgments"] == payload["sense_check_acknowledgments"]
+    assert result.session_id != "old-session"
+    assert captured["sandbox_roots"] == [context.worktree_dir]
+    assert any(path is not None and context.worker_dir in path.parents for path in captured["db_paths"])
+    agent = FakeAIAgent.instances[0]
+    assert agent.kwargs["session_id"] == result.session_id
+    assert str(agent.calls[0]["user_message"]).startswith("task prompt")
 
 
 def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:

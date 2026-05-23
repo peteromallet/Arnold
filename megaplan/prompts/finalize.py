@@ -84,11 +84,12 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
         - For each task, emit one sense_check.
         - Identify user_actions ONLY for human-only setup: env vars, manual UI tests, deploys, out-of-band approvals, or other work the executor cannot perform in the repo.
         - Do not invent tasks that don't trace to a plan step.
-        - batch_1 (dependency-independent tasks executed together) MUST have at most 5 tasks. If you have more than 5 independent tasks, linearize some via depends_on to spread them across batches.
+        - Shape tasks for task-native serial execution. `depends_on` must reflect real prerequisites only: a task depends on another task when it needs that task's code, artifact, decision, or verification result. Do NOT add scheduler-only dependencies or force unrelated work into a legacy grouped-execute shape.
+        - Avoid legacy grouped-execute fields, capacity limits, and scheduler workarounds. The executor runs one dependency-ready task at a time.
         - Do not include `validation` or `coverage_complete` fields - the harness computes those.
         - The FINAL task MUST run tests; harness validation will reject finalize output without it.
         - `tasks` must be an ordered array of task objects. Every task object must include:
-          - `id`: short stable task ID like `T1`
+          - `id`: short stable user-facing task ID like `T1`. Preserve this ID for human-readable task identity only; execute derives separate deterministic safe filesystem/task keys for paths, registry custody, patch bundles, worktrees, and commit subjects.
           - `description`: concrete work item
           - `depends_on`: array of earlier task IDs or `[]`
           - `status`: always `"pending"` at finalize time

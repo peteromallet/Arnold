@@ -17,6 +17,15 @@ from unittest.mock import patch
 
 from megaplan import auto
 from megaplan.auto import DriverOutcome, drive
+from megaplan.worktrees.identity import make_task_identity
+
+
+def _write_task_execution_artifact(plan_dir: Path, task_id: str, payload: dict) -> Path:
+    identity = make_task_identity(task_id)
+    path = plan_dir / "tasks" / identity.task_key / "execution.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
@@ -28,6 +37,11 @@ def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
         encoding="utf-8",
     )
     return plan_dir
+
+
+def _write_finalize_tasks(plan_dir: Path, *task_ids: str) -> None:
+    tasks = [{"id": task_id, "status": "pending"} for task_id in task_ids]
+    (plan_dir / "finalize.json").write_text(json.dumps({"tasks": tasks}), encoding="utf-8")
 
 
 def _finalized_status(plan: str) -> dict:
@@ -1022,46 +1036,36 @@ def _write_blocked_execute_history(plan_dir: Path, deviations: list[str] | None 
     state_data.setdefault("history", []).append({"step": "execute", "result": "blocked", "cost_usd": 0.16})
     state_path.write_text(json.dumps(state_data), encoding="utf-8")
     if deviations is not None:
-        (plan_dir / "execution_batch_1.json").write_text(
-            json.dumps({"deviations": deviations}),
-            encoding="utf-8",
-        )
+        _write_task_execution_artifact(plan_dir, "T1", {"task_id": "T1", "deviations": deviations})
 
 
 def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) -> None:
     plan = "worker-blocked-cap"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json with blocked_by_quality so the auto driver
-    # sees the structured outcome directly — replaces the old state.json
-    # history + execution_batch_*.json globbing path.
     from megaplan.orchestration.phase_result import Deviation
-    from tests.conftest import make_fake_phase_result
+    from tests.conftest import fake_run_with_phase_result
 
-    make_fake_phase_result(
-        plan_dir,
-        exit_kind="blocked_by_quality",
-        deviations=(
-            Deviation(
-                kind="quality_gate",
-                message="done tasks missing both files_changed and commands_run: T1, T2",
-            ),
-        ),
-    )
-    # Also write execution_batch for last_artifact assertion
-    (plan_dir / "execution_batch_1.json").write_text(
-        json.dumps({"deviations": ["done tasks missing both files_changed and commands_run: T1, T2"]}),
-        encoding="utf-8",
-    )
+    _write_finalize_tasks(plan_dir, "T1", "T2")
+    _write_task_execution_artifact(plan_dir, "T1", {"task_id": "T1", "status": "blocked"})
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
-    def fake_run(args, cwd=None, timeout=None):
-        # Worker exits 0; PhaseResult on disk carries the exit_kind.
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(
+                 plan_dir,
+                 exit_kind="blocked_by_quality",
+                 deviations=(
+                     Deviation(
+                         kind="quality_gate",
+                         message="done tasks missing both files_changed and commands_run: T1, T2",
+                     ),
+                 ),
+             ),
+         ):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1077,39 +1081,31 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state_data["current_state"] == "blocked"
     assert state_data["latest_failure"]["kind"] == "execution_blocked"
-    assert state_data["latest_failure"]["last_artifact"] == "execution_batch_1.json"
+    assert state_data["latest_failure"]["last_artifact"] == "phase_result.json"
     assert state_data["resume_cursor"]["phase"] == "execute"
+    assert state_data["resume_cursor"]["task_id"] == "T1"
+    assert state_data["resume_cursor"]["task_key"] == make_task_identity("T1").task_key
+    assert state_data["resume_cursor"]["retry_strategy"] == "task_worktree"
+    assert "batch_index" not in state_data["resume_cursor"]
 
 
-def _write_blocked_task_update_batch(
+def _write_blocked_task_update_artifact(
     plan_dir: Path,
     *,
     task_id: str = "T10",
     notes: str = "DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
 ) -> None:
-    """Persist an execution_batch_1.json whose task_updates reports the named
-    task as ``status: "blocked"`` with executor notes. Mirrors what the real
-    execute handler writes when a task hits an unmet user prerequisite.
-    """
-    (plan_dir / "execution_batch_1.json").write_text(
-        json.dumps(
-            {
-                "task_updates": [
-                    {
-                        "task_id": task_id,
-                        "status": "blocked",
-                        "executor_notes": notes,
-                        "files_changed": [],
-                        "commands_run": ["env_check"],
-                    }
-                ],
-                "deviations": [
-                    f"task(s) reported status=blocked by the worker: {task_id}. "
-                    "Resolve or replan the blocked task(s) before continuing.",
-                ],
-            }
-        ),
-        encoding="utf-8",
+    """Persist task-native execution evidence for a blocked task."""
+    _write_task_execution_artifact(
+        plan_dir,
+        task_id,
+        {
+            "task_id": task_id,
+            "status": "blocked",
+            "executor_notes": notes,
+            "files_changed": [],
+            "commands_run": ["env_check"],
+        },
     )
 
 
@@ -1124,32 +1120,30 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     """
     plan = "execute-blocked-awaiting-human"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json with blocked_by_prereq + BlockedTask entries
-    # so the auto driver reads the structured outcome directly.
     from megaplan.orchestration.phase_result import BlockedTask
-    from tests.conftest import make_fake_phase_result
+    from tests.conftest import fake_run_with_phase_result
 
-    make_fake_phase_result(
-        plan_dir,
-        exit_kind="blocked_by_prereq",
-        blocked_tasks=(
-            BlockedTask(
-                task_id="T10",
-                reason="blocked",
-                notes="DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
-            ),
-        ),
-    )
-    _write_blocked_task_update_batch(plan_dir)
+    _write_blocked_task_update_artifact(plan_dir)
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(
+                 plan_dir,
+                 exit_kind="blocked_by_prereq",
+                 blocked_tasks=(
+                     BlockedTask(
+                         task_id="T10",
+                         reason="blocked",
+                         notes="DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
+                     ),
+                 ),
+             ),
+         ):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1186,20 +1180,17 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
 def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
     plan = "worker-blocked-zero"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json directly — auto driver reads it instead of
-    # state.json history / execution_batch globbing.
-    from tests.conftest import make_fake_phase_result
-
-    make_fake_phase_result(plan_dir, exit_kind="blocked_by_quality")
+    from tests.conftest import fake_run_with_phase_result
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(plan_dir, exit_kind="blocked_by_quality"),
+         ):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1216,27 +1207,66 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     """A clean execute (result=success) must NOT trigger the worker_blocked path."""
     plan = "execute-success-no-blocked"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json with success exit_kind — auto driver reads it.
-    from tests.conftest import make_fake_phase_result
-
-    make_fake_phase_result(plan_dir, exit_kind="success")
+    from tests.conftest import fake_run_with_phase_result
     statuses = [_execute_status(plan), _done_status(plan)]
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return statuses.pop(0)
 
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(plan_dir, exit_kind="success"),
+         ):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
     assert outcome.blocked_retries_used == 0
 
 
-def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step(tmp_path: Path) -> None:
+def test_stale_phase_result_from_previous_phase_does_not_mask_failure(tmp_path: Path) -> None:
+    plan = "stale-phase-result"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(plan_dir, phase="critique", exit_kind="success")
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return {
+            "success": True,
+            "step": "status",
+            "plan": plan,
+            "state": "critiqued",
+            "iteration": 1,
+            "summary": "Plan is in state 'critiqued'.",
+            "next_step": "gate",
+            "valid_next": ["gate", "step"],
+        }
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 1, "", "gate crashed before phase_result emission"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=1,
+            max_iterations=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert any(
+        event["msg"].startswith("phase 'gate' exited with internal_error")
+        and "gate crashed" in event["msg"]
+        for event in outcome.events
+    )
+    assert outcome.status in {"stalled", "cap"}
+
+
+def test_execute_callback_failure_summarizes_task_state_and_records_failure(tmp_path: Path) -> None:
     plan = "callback-reconcile"
     plan_dir = _make_plan_dir(tmp_path, plan)
     (plan_dir / "state.json").write_text(
@@ -1263,24 +1293,16 @@ def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step
         ),
         encoding="utf-8",
     )
-    (plan_dir / "execution_batch_1.json").write_text(
-        json.dumps(
-            {
-                "task_updates": [
-                    {
-                        "id": "T1",
-                        "status": "completed",
-                        "executor_notes": "Completed before callback failure.",
-                        "files_changed": ["app.py"],
-                        "commands_run": ["pytest"],
-                    }
-                ],
-                "sense_check_acknowledgments": [
-                    {"id": "SC1", "executor_note": "Confirmed before callback failure."}
-                ],
-            }
-        ),
-        encoding="utf-8",
+    _write_task_execution_artifact(
+        plan_dir,
+        "T1",
+        {
+            "task_id": "T1",
+            "status": "done",
+            "executor_notes": "Completed before callback failure.",
+            "files_changed": ["app.py"],
+            "commands_run": ["pytest"],
+        },
     )
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
@@ -1304,12 +1326,12 @@ def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step
 
     assert outcome.status == "failed"
     finalize_data = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
-    assert finalize_data["tasks"][0]["status"] == "done"
-    assert finalize_data["tasks"][0]["files_changed"] == ["app.py"]
-    assert finalize_data["sense_checks"][0]["executor_note"] == "Confirmed before callback failure."
+    assert finalize_data["tasks"][0]["status"] == "pending"
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert "active_step" not in state_data
-    assert state_data["latest_failure"]["metadata"]["checkpoint_reconciliation"]["reconciled"] is True
+    assert state_data["latest_failure"]["metadata"]["checkpoint_summary"]["summarized"] is True
+    assert state_data["latest_failure"]["metadata"]["checkpoint_summary"]["task_artifacts"] == [
+        f"tasks/{make_task_identity('T1').task_key}/execution.json"
+    ]
 
 
 def test_failed_execute_callback_resume_restores_executed_state(tmp_path: Path) -> None:
@@ -1326,7 +1348,7 @@ def test_failed_execute_callback_resume_restores_executed_state(tmp_path: Path) 
                     "phase": "execute",
                     "state": "failed",
                     "metadata": {
-                        "checkpoint_reconciliation": {"reconciled": True},
+                        "checkpoint_summary": {"summarized": True},
                     },
                 },
             }
@@ -1373,7 +1395,7 @@ def test_failed_execute_callback_resume_restores_blocked_execute_to_finalized(tm
                     "phase": "execute",
                     "state": "failed",
                     "metadata": {
-                        "checkpoint_reconciliation": {"reconciled": True},
+                        "checkpoint_summary": {"summarized": True},
                     },
                 },
             }
@@ -1435,7 +1457,7 @@ def test_phase_complete_callback_skipped_after_nonzero_phase(tmp_path: Path) -> 
     assert any("phase 'critique'" in event.get("msg", "") for event in outcome.events)
 
 
-def test_plan_liveness_mtime_uses_state_and_execution_batches(tmp_path: Path) -> None:
+def test_plan_liveness_mtime_uses_state_and_task_artifacts(tmp_path: Path) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
 
@@ -1445,11 +1467,10 @@ def test_plan_liveness_mtime_uses_state_and_execution_batches(tmp_path: Path) ->
     first = auto._plan_liveness_mtime(plan_dir)
     assert first is not None
 
-    batch_path = plan_dir / "execution_batch_1.json"
-    batch_path.write_text("{}", encoding="utf-8")
-    os.utime(batch_path, (state_path.stat().st_mtime + 10, state_path.stat().st_mtime + 10))
-    batch_mtime = batch_path.stat().st_mtime
-    assert auto._plan_liveness_mtime(plan_dir) == batch_mtime
+    task_artifact = _write_task_execution_artifact(plan_dir, "T1", {"task_id": "T1", "status": "done"})
+    os.utime(task_artifact, (state_path.stat().st_mtime + 10, state_path.stat().st_mtime + 10))
+    task_mtime = task_artifact.stat().st_mtime
+    assert auto._plan_liveness_mtime(plan_dir) == task_mtime
 
 
 def test_auto_strict_notes_blocks_force_proceed_after_escalate(tmp_path: Path) -> None:

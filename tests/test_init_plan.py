@@ -48,6 +48,33 @@ def test_init_includes_next_step_runtime(plan_fixture: PlanFixture) -> None:
     assert "Expected duration:" in response["next_step_runtime"]["duration_hint"]
 
 
+def test_init_adds_megaplan_worktrees_ignore_to_target_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    original_checkout = tmp_path / "original"
+    root.mkdir()
+    project_dir.mkdir()
+    original_checkout.mkdir()
+    (project_dir / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+
+    make_args = make_args_factory(project_dir)
+    response = megaplan.handle_init(root, make_args(name="ignore-target"))
+    response_again = megaplan.handle_init(root, make_args(name="ignore-target-2"))
+
+    assert response["success"] is True
+    assert response_again["success"] is True
+    lines = (project_dir / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert lines.count(".megaplan-worktrees/") == 1
+    assert not (original_checkout / ".gitignore").exists()
+
+
 def test_init_prep_direction_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """--prep-direction lands in state['config']['prep_direction']."""
     root = tmp_path / "root"
@@ -771,6 +798,7 @@ def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         "gate",
         "finalize",
         "execute",
+        "execute",
         "review",
     ]
     assert (plan_fixture.project_dir / "IMPLEMENTED_BY_MEGAPLAN.txt").exists()
@@ -814,7 +842,14 @@ def test_workflow_light_robustness_single_pass(
     assert execute["next_step"] is None
     assert "review.json" in execute["artifacts"]
     assert stored_review["review_verdict"] == "approved"
-    assert recorded_steps == ["plan", "critique", "revise", "finalize", "execute"]
+    assert recorded_steps == [
+        "plan",
+        "critique",
+        "revise",
+        "finalize",
+        "execute",
+        "execute",
+    ]
     assert [entry["step"] for entry in state["history"]] == [
         "init",
         "plan",
