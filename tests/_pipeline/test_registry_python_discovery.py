@@ -34,11 +34,11 @@ from megaplan._pipeline.registry import (
 # ── (a) Built-ins + writing-panel-strict are all visible ────────────────
 
 
-def test_registered_pipelines_lists_builtins_plus_writing_panel_strict() -> None:
+def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_blitz() -> None:
     from megaplan._pipeline.registry import registered_pipelines
 
     names = registered_pipelines()
-    for required in ("planning", "doc-critique", "judges", "writing-panel-strict"):
+    for required in ("planning", "doc-critique", "judges", "writing-panel-strict", "epic-blitz"):
         assert required in names, (
             f"missing {required!r} in registry; got {names!r}"
         )
@@ -58,8 +58,38 @@ def test_writing_panel_strict_metadata_exposes_module_constants() -> None:
     assert meta.get("supported_modes") == ("polish", "restructure", "provoke")
 
 
-# ── (d) read_skill_md returns the on-disk SKILL.md text ─────────────────
+# ── (b) epic-blitz metadata exposes module constants ────────────────────
 
+def test_epic_blitz_metadata_exposes_module_constants() -> None:
+    from megaplan._pipeline.registry import pipeline_metadata
+
+    meta = pipeline_metadata("epic-blitz")
+    assert meta.get("description"), (
+        f"epic-blitz description missing; meta={meta!r}"
+    )
+    assert meta.get("default_profile") == "@epic-blitz:standard"
+    assert meta.get("supported_modes") == ()
+
+
+# ── (c) read_skill_md returns epic-blitz SKILL.md contents ───────────────
+
+def test_read_skill_md_returns_epic_blitz_contents() -> None:
+    from megaplan._pipeline.registry import read_pipeline_skill_md
+
+    contents = read_pipeline_skill_md("epic-blitz")
+    on_disk = (
+        Path(__file__).resolve().parents[2]
+        / "megaplan"
+        / "pipelines"
+        / "epic-blitz"
+        / "SKILL.md"
+    )
+    assert on_disk.exists(), "epic-blitz/SKILL.md vanished from disk"
+    expected = on_disk.read_text(encoding="utf-8")
+    assert contents == expected
+
+
+# ── (d) read_skill_md returns the on-disk SKILL.md text ─────────────────
 
 def test_read_skill_md_returns_writing_panel_strict_contents() -> None:
     from megaplan._pipeline.registry import read_pipeline_skill_md
@@ -242,3 +272,101 @@ def test_discover_python_pipelines_skips_built_in_collision(
     assert builtin_meta.get("description") != (
         "BOGUS override of the built-in planning pipeline."
     )
+
+
+# ── (d/e) Epic Blitz topology assertions ──────────────────────────────
+
+
+class TestEpicBlitzTopology:
+    """Assert the exact 6-stage order, reviewer composition, and artifact chaining."""
+
+    def test_stage_graph_has_exact_6_stage_insertion_order(self) -> None:
+        from megaplan.pipelines.epic_blitz import build_pipeline
+
+        pipeline = build_pipeline()
+
+        assert pipeline.entry == "high_panel"
+        assert list(pipeline.stages) == [
+            "high_panel",
+            "high_revise",
+            "mid_panel",
+            "mid_revise",
+            "low_panel",
+            "readiness",
+        ]
+
+        # readiness stage must have Edge('done','halt')
+        readiness = pipeline.stages["readiness"]
+        edge_map = {e.label: e.target for e in readiness.edges}
+        assert edge_map == {"done": "halt"}, (
+            f"readiness edges={edge_map!r}; expected {{'done':'halt'}}"
+        )
+
+    def test_high_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
+        from megaplan.pipelines.epic_blitz import build_pipeline
+        from megaplan._pipeline.types import ParallelStage
+        from megaplan._pipeline.steps.panel import PanelReviewerStep
+
+        pipeline = build_pipeline()
+        high_panel = pipeline.stages["high_panel"]
+        assert isinstance(high_panel, ParallelStage)
+        reviewer_ids = [s._reviewer_id for s in high_panel.steps if isinstance(s, PanelReviewerStep)]
+        assert reviewer_ids == [
+            "existing_system_reuse",
+            "conceptual_fit",
+            "missing_abstraction",
+            "epic_decomposition",
+            "strategic_risk",
+        ]
+
+    def test_mid_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
+        from megaplan.pipelines.epic_blitz import build_pipeline
+        from megaplan._pipeline.types import ParallelStage
+        from megaplan._pipeline.steps.panel import PanelReviewerStep
+
+        pipeline = build_pipeline()
+        mid_panel = pipeline.stages["mid_panel"]
+        assert isinstance(mid_panel, ParallelStage)
+        reviewer_ids = [s._reviewer_id for s in mid_panel.steps if isinstance(s, PanelReviewerStep)]
+        assert reviewer_ids == [
+            "codebase_convention_fit",
+            "data_artifact_model",
+            "orchestration_semantics",
+            "agent_model_assignment",
+            "blast_radius",
+        ]
+
+    def test_low_panel_is_parallel_with_5_exact_reviewer_ids(self) -> None:
+        from megaplan.pipelines.epic_blitz import build_pipeline
+        from megaplan._pipeline.types import ParallelStage
+        from megaplan._pipeline.steps.panel import PanelReviewerStep
+
+        pipeline = build_pipeline()
+        low_panel = pipeline.stages["low_panel"]
+        assert isinstance(low_panel, ParallelStage)
+        reviewer_ids = [s._reviewer_id for s in low_panel.steps if isinstance(s, PanelReviewerStep)]
+        assert reviewer_ids == [
+            "implementation_feasibility",
+            "testability",
+            "edge_cases",
+            "cli_ux_details",
+            "migration_backcompat",
+        ]
+
+    def test_agent_step_input_refs_prove_artifact_chaining(self) -> None:
+        from megaplan.pipelines.epic_blitz import build_pipeline
+        from megaplan._pipeline.steps.agent import AgentStep
+
+        pipeline = build_pipeline()
+
+        high_revise = pipeline.stages["high_revise"]
+        assert isinstance(high_revise.step, AgentStep)
+        assert high_revise.step._input_refs == ["draft", "high_panel.*"]
+
+        mid_revise = pipeline.stages["mid_revise"]
+        assert isinstance(mid_revise.step, AgentStep)
+        assert mid_revise.step._input_refs == ["high_revise", "mid_panel.*"]
+
+        readiness = pipeline.stages["readiness"]
+        assert isinstance(readiness.step, AgentStep)
+        assert readiness.step._input_refs == ["mid_revise", "low_panel.*"]

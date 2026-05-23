@@ -37,11 +37,12 @@ from megaplan._pipeline.registry import (
 
 
 def test_builtin_pipelines_are_registered() -> None:
-    """Three pipelines ship as built-ins."""
+    """Built-in and in-tree pipelines are registered."""
     names = registered_pipelines()
     assert "planning" in names
     assert "doc-critique" in names
     assert "judges" in names
+    assert "epic-blitz" in names
 
 
 def test_each_builtin_has_a_description() -> None:
