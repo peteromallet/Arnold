@@ -1,8 +1,8 @@
 # Pipeline architecture — the elegance writeup
 
-Post-Sprint-4. The `megaplan/_pipeline/` package is the new orchestration
-layer. This document maps the surface, the extension axes, the
-runtime, and how a new workflow type fits in.
+Post-Sprint-4. The `megaplan/_pipeline/` package is the orchestration
+layer. This document maps the surface, the extension axes, the runtime,
+and how the first-class built-in pipelines fit in.
 
 ## Primitive surface
 
@@ -46,20 +46,22 @@ is also present.
 The primitive surface stays tiny because three axes carry the
 variability:
 
-1. **Mode** (`ctx.mode`) → resolves a prompt via
+1. **Prompt variant** (`ctx.mode`) → resolves a prompt via
    `megaplan/_pipeline/prompts.py::PromptRegistry`. Keys are
-   `"<step_name>"` or `"<step_name>:<mode>"`. A new mode registers
-   `"critique:scientific-paper"` and the existing `CritiqueStep`
+   `"<step_name>"` or `"<step_name>:<variant>"`. A custom pipeline can
+   register `"critique:scientific-paper"` and the existing `CritiqueStep`
    picks it up — no subclass.
 2. **Slot** (`step.slot`) → resolves a model spec via
    `megaplan/_pipeline/profile.py::Profile.model_for(slot)`. Each
    profile TOML's slot keys (`plan`, `critique`, …) are unchanged.
    Profile.with_slot/with_overrides returns an immutable copy for
    on-the-fly swaps.
-3. **Overlay** (`Pipeline.overlays`) → transforms the Pipeline graph.
-   Robustness, `--with-prep`, `--with-feedback`, mode dispatch are
-   all Overlay instances composed in
-   `compile_pipeline_for(robustness, state_payload, mode)`.
+3. **Pipeline identity** → selects a registered graph. The built-ins are
+   first-class pipelines: `planning` is compiled by
+   `compile_planning_pipeline()`, while `doc` and `creative` live under
+   `megaplan/pipelines/`. `Pipeline.overlays` remains an optional
+   low-level primitive for local graph transforms, but the in-tree
+   built-ins are not assembled through compatibility graph rewrites.
 
 These axes don't tangle. A new workflow type changes one — say
 prompt resolution — without touching the others.
@@ -79,11 +81,9 @@ prompt resolution — without touching the others.
   `EscalatePolicy`, `ContextRetry`, `BlockedRetry`.
 
 The `MEGAPLAN_PIPELINE_AUTO=1` env var (see
-`runtime.py::pipeline_runtime_enabled()`) flips a future `auto.py`
-between the legacy phase loop and the new
-`run_pipeline_with_policy`-based runtime. As of Sprint 4 it defaults
-to `0`; a follow-up flips the default once the parity has been live
-for two chunks.
+`runtime.py::pipeline_runtime_enabled()`) gates experiments that route
+through `run_pipeline_with_policy`. The built-in pipeline definitions
+are always importable as Python values, regardless of that runtime flag.
 
 ## Subloop + Override edges
 
@@ -100,12 +100,12 @@ escape hatches (`override force-proceed` / `abort` / `replan` /
 Verdict with `override="force_proceed"` causes the executor to find
 and follow the matching `kind="override"` edge.
 
-## How a new mode is added (in <20 lines)
+## How a prompt variant is added (in <20 lines)
 
 ```python
 from megaplan._pipeline.prompts import register_prompt
 
-# 1. Register the mode-specific prompt(s).
+# 1. Register the variant-specific prompt(s).
 register_prompt(
     "critique:scientific-paper",
     lambda ctx, params: "You are a peer reviewer. Be technical.",
@@ -115,30 +115,29 @@ register_prompt(
     lambda ctx, params: "Apply the reviewer's flags.",
 )
 
-# 2. (Optional) Override one slot for this mode.
+# 2. (Optional) Override one slot for this variant.
 from megaplan._pipeline.profile import Profile, load_profile
 profile = load_profile("all-claude").with_slot("critique", "hermes:openai/gpt-5")
 
-# 3. Run any existing pipeline with mode="scientific-paper".
+# 3. Run a pipeline with mode="scientific-paper" in its StepContext.
 from megaplan._pipeline.demos.doc_critique import run_demo
 run_demo(fixture_path, artifact_root, mode="scientific-paper")
 ```
 
 That's it. No Step subclass, no Edge surgery, no Pipeline rewrite.
 
-## How WORKFLOW is derived from the Pipeline
+## Built-in pipelines
 
-`megaplan/_pipeline/planning.py::workflow_dict_from_pipeline(pipeline)`
-reverse-derives the legacy `dict[str, list[Transition]]` table from
-a Pipeline value. `tests/test_pipeline_workflow_inversion.py` proves
-the derivation reproduces the WORKFLOW dict byte-for-byte. The
-Pipeline is the source of truth; WORKFLOW is the view.
+`megaplan/_pipeline/planning.py::compile_planning_pipeline()` is the
+canonical compiler for the core planning graph. It returns the phase
+graph directly: prep, plan, critique, gate, revise, finalize, execute,
+review, and tiebreaker. The pipeline registry exposes that graph under
+the `planning` name.
 
-The literal `WORKFLOW = {...}` dict in
-`megaplan/_core/workflow_data.py` stays as the bootstrap source
-until every consumer migrates to read from the Pipeline. A follow-up
-sprint replaces the literal with `WORKFLOW =
-workflow_dict_from_pipeline(compile_planning_pipeline())`.
+`doc` and `creative` are separate first-class pipelines under
+`megaplan/pipelines/`. They have their own topologies, prompt
+registrations, and CLI entry points; they are not derived by rewriting
+the planning graph.
 
 ## Worked example — a 3× critique → revise loop from scratch
 
@@ -196,8 +195,7 @@ megaplan/_pipeline/
 ├── runtime.py                 # RuntimePolicy + 5 policy classes
 ├── profile.py                 # Profile + load_profile + slot binding
 ├── prompts.py                 # PromptRegistry + per-mode lookup
-├── planning.py                # WORKFLOW → Pipeline compilation +
-│                              #   workflow_dict_from_pipeline inversion
+├── planning.py                # compile_planning_pipeline()
 ├── subloop.py                 # SubloopStep + child Pipeline dispatch
 ├── override.py                # override_edge helper + lookup
 ├── demo_judges.py             # fan-out judges demo
