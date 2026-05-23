@@ -189,6 +189,188 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
     )
 
 
+def _orphaned_critique_status(plan: str) -> dict:
+    """Status with an orphaned (dead-worker) active_step on critique.
+
+    Mirrors what _build_active_step returns when the recorded worker PID
+    is no longer alive — phase_runtime.build_phase_observability sets
+    health=dead + recommended_action=resume_or_recover.
+    """
+    response = _phase_status(plan, state="planned", next_step="critique")
+    response["active_step"] = {
+        "step": "critique",
+        "agent": "claude",
+        "mode": "persistent",
+        "worker_pid": 999999,
+        "started_at": "2026-05-23T14:31:00Z",
+        "age_seconds": 420,
+        "stale": True,
+        "health": "dead",
+        "worker_pid_alive": False,
+        "recommended_action": "resume_or_recover",
+        "recommended_action_reason": (
+            "The active step's recorded worker process (pid=999999) is no "
+            "longer alive; the phase is not actually running. Re-run the "
+            "step or recover via override."
+        ),
+    }
+    return response
+
+
+def test_auto_recovers_orphaned_active_step_after_silent_phase_death(
+    tmp_path: Path,
+) -> None:
+    """Bug C regression: critique handler dies silently after writing an
+    empty ``critique_output.json``. State.json keeps ``active_step`` set
+    pointing at a now-dead worker PID. The next driver tick must clear
+    the orphan, quarantine the half-written output, and dispatch the
+    phase fresh — without spin-looping until the iteration cap.
+    """
+    plan = "wedged-critique-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    # The dead worker left an empty output file behind, exactly the
+    # symptom reported on brief-scratchpad-emitter-20260523-1431.
+    critique_output = plan_dir / "critique_output.json"
+    critique_output.write_text("", encoding="utf-8")
+
+    # State.json carries an orphaned active_step record. Persist it so
+    # _clear_orphaned_active_step can read+rewrite the same file.
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "planned"
+    state_data["active_step"] = {
+        "step": "critique",
+        "agent": "claude",
+        "mode": "persistent",
+        "worker_pid": 999999,
+        "started_at": "2026-05-23T14:31:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        # First tick: orphaned active_step on critique. After the driver
+        # dispatches critique once, simulate the phase completing and the
+        # plan reaching done — proving the wedge unwound after a single
+        # cleanup + dispatch rather than spinning to the iteration cap.
+        if poll_count["n"] == 1:
+            return _orphaned_critique_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Plan eventually reached `done` — the wedge unwound.
+    assert outcome.status == "done", (
+        f"expected done after orphan cleanup, got {outcome.status}: "
+        f"{outcome.reason}"
+    )
+    # Exactly one critique dispatch happened — not 200 spin-loops.
+    assert run_calls, "driver should have dispatched the orphaned phase"
+    assert outcome.iterations <= 3, (
+        f"orphan recovery should not consume the full iteration budget; "
+        f"used {outcome.iterations}"
+    )
+    # The driver logged the orphan-clear path.
+    assert any(
+        "orphaned" in event.get("msg", "") for event in outcome.events
+    ), (
+        "driver should have logged the orphan cleanup; events: "
+        f"{[e.get('msg') for e in outcome.events]}"
+    )
+    # state.json no longer carries the dead active_step.
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") is None, (
+        "orphaned active_step should have been cleared from state.json"
+    )
+    # The empty output file was quarantined (renamed) so the next dispatch
+    # cannot be tricked into "recovering" malformed worker output.
+    assert not critique_output.exists(), (
+        "empty critique_output.json should have been moved out of the way"
+    )
+    assert (plan_dir / "critique_output.json.orphaned").exists(), (
+        "quarantined output should land at .orphaned for forensics"
+    )
+
+
+def test_auto_orphan_recovery_leaves_non_empty_output_alone(
+    tmp_path: Path,
+) -> None:
+    """A successfully-completed phase output that nonetheless coincides
+    with an orphaned active_step (e.g. the parent died between worker
+    success and ``clear_active_step``) must not be quarantined — the
+    handler's own recover path can use it.
+    """
+    plan = "orphan-with-good-output"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    critique_output = plan_dir / "critique_output.json"
+    good_payload = {"checks": [{"id": "c1", "status": "pass"}]}
+    critique_output.write_text(json.dumps(good_payload), encoding="utf-8")
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "planned"
+    state_data["active_step"] = {
+        "step": "critique",
+        "agent": "claude",
+        "worker_pid": 999999,
+        "started_at": "2026-05-23T14:31:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] == 1:
+            return _orphaned_critique_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # active_step cleared.
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") is None
+    # But the non-empty output file is preserved — handler recovery
+    # paths depend on it.
+    assert critique_output.exists(), (
+        "non-empty critique output must not be quarantined"
+    )
+    assert json.loads(critique_output.read_text(encoding="utf-8")) == good_payload
+    assert not (plan_dir / "critique_output.json.orphaned").exists()
+
+
 def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> None:
     """Stall detection must be rework-aware.
 

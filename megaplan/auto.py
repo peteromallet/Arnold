@@ -643,6 +643,106 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
         return False
 
 
+# Output artifacts written incrementally by long-running phase workers. When
+# the worker dies mid-write these files survive on disk but lack the terminal
+# fields the recovery paths look for. The next dispatch must start clean —
+# otherwise critique's `_recover_valid_critique_output` (and friends) can
+# treat the half-written file as authoritative and short-circuit the rerun.
+_PHASE_OUTPUT_QUARANTINE: dict[str, tuple[str, ...]] = {
+    "critique": ("critique_output.json",),
+    "plan": ("plan_output.json",),
+    "revise": ("revise_output.json",),
+    "gate": ("gate_output.json",),
+    "finalize": ("finalize_output.json",),
+    "review": ("review_output.json",),
+    "execute": ("execute_output.json",),
+}
+
+
+def _quarantine_phase_outputs(plan_dir: Path, step: str) -> list[str]:
+    """Rename half-written `<step>_output.json` files so a re-dispatched
+    phase can't be fooled into "recovering" malformed worker output.
+
+    Returns the list of artifact names quarantined (for logging).
+    """
+    quarantined: list[str] = []
+    artifacts = _PHASE_OUTPUT_QUARANTINE.get(step)
+    if not artifacts:
+        return quarantined
+    for name in artifacts:
+        source = plan_dir / name
+        if not source.exists():
+            continue
+        # Treat zero-byte AND structurally-empty payloads as corpses worth
+        # quarantining. An output file that holds a complete payload is
+        # rare in this orphan path, but we leave it alone — the handler's
+        # own recover logic will accept or reject it normally.
+        try:
+            text = source.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        stripped = text.strip()
+        if stripped not in ("", "{}", "[]"):
+            try:
+                payload = json.loads(stripped)
+            except (json.JSONDecodeError, ValueError):
+                payload = None
+            # Non-empty parseable dicts/lists are left in place — only the
+            # genuinely-empty corpses are quarantined.
+            if isinstance(payload, dict) and payload:
+                continue
+            if isinstance(payload, list) and payload:
+                continue
+        target = plan_dir / f"{name}.orphaned"
+        try:
+            source.replace(target)
+        except OSError:
+            continue
+        quarantined.append(name)
+    return quarantined
+
+
+def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bool:
+    """Strip an orphaned ``active_step`` from ``state.json`` in place.
+
+    Returns True iff the cleanup actually wrote a change. The expected step
+    name is used purely as a safety check — if state.json's ``active_step``
+    no longer matches (because some other actor cleared it), we leave it
+    alone rather than racing with a healthy phase.
+    """
+    if plan_dir is None:
+        return False
+    state_path = plan_dir / "state.json"
+    try:
+        with state_path.open(encoding="utf-8") as handle:
+            state_data = json.load(handle)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if not isinstance(state_data, dict):
+        return False
+    current_active = state_data.get("active_step")
+    if not isinstance(current_active, dict):
+        return False
+    recorded_step = current_active.get("step")
+    if recorded_step != expected_step:
+        return False
+    state_data.pop("active_step", None)
+    quarantined = _quarantine_phase_outputs(plan_dir, expected_step)
+    if quarantined:
+        meta = state_data.setdefault("meta", {})
+        history = meta.setdefault("orphan_recoveries", [])
+        if isinstance(history, list):
+            history.append({
+                "step": expected_step,
+                "quarantined": list(quarantined),
+            })
+    try:
+        state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def drive(
     plan: str,
     *,
@@ -954,6 +1054,35 @@ def drive(
                 time.sleep(poll_sleep)
             iteration -= 1  # healthy wait — don't consume iteration budget
             continue
+
+        # Orphaned active_step: the recorded worker is dead (or stale and
+        # unlocked) but state.json still claims a phase is running. Without
+        # this guard the driver would either spin-poll a dead phase or
+        # treat the corpse as authoritative on status / health. Clear it
+        # before dispatching anything, and quarantine the half-written
+        # output file from that phase so a fresh dispatch can't be fooled
+        # into "recovering" malformed output.
+        if (
+            isinstance(active_step, dict)
+            and active_step.get("recommended_action") in {
+                "resume_or_recover",
+                "rerun_same_step",
+                "rerun_execute",
+                "terminate_idle_step",
+            }
+        ):
+            orphan_step = active_step.get("step") or next_step or "unknown"
+            reason = (
+                active_step.get("recommended_action_reason")
+                or "active step is orphaned (worker dead or stale and unlocked)"
+            )
+            log(
+                f"active step '{orphan_step}' is orphaned — clearing before dispatch: {reason}",
+                orphan_step=orphan_step,
+                recommended_action=active_step.get("recommended_action"),
+                health=active_step.get("health"),
+            )
+            _clear_orphaned_active_step(plan_dir, orphan_step)
 
         # Review-cycle progress: a fresh review.json means a real review
         # pass completed since the last iteration. This counts as forward
