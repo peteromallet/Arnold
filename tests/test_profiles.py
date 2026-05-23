@@ -2272,6 +2272,44 @@ feedback = "claude:low"
     assert args.tier_models is None or "execute" not in (args.tier_models or {})
 
 
+def test_explicit_agent_overrides_persisted_phase_model_recovery_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    state = {
+        "config": {
+            "phase_model": ["execute=hermes:deepseek:deepseek-v4-pro"],
+        }
+    }
+    args = _worker_args(agent="codex", phase_model=[])
+
+    apply_profile_expansion(args, None, state=state)
+
+    with patch("megaplan.workers._impl.shutil.which", return_value="/usr/bin/codex"):
+        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
+    assert agent == "codex"
+    assert model is None
+
+
+def test_live_phase_model_still_beats_explicit_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    args = _worker_args(
+        agent="codex",
+        phase_model=["execute=hermes:deepseek:deepseek-v4-pro"],
+    )
+
+    apply_profile_expansion(args, None)
+
+    with patch("megaplan.workers._impl._is_agent_available", return_value=True):
+        agent, _mode, _refreshed, model = resolve_agent_mode("execute", args)
+    assert agent == "hermes"
+    assert model == "deepseek:deepseek-v4-pro"
+
+
 def test_apply_profile_expansion_flat_profile_no_tier_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -5,7 +5,11 @@ from argparse import Namespace
 from pathlib import Path
 
 from megaplan._core import atomic_write_json, read_json, save_state
-from megaplan.handlers.review import _finalize_review_outcome, _synthesize_review_rework_items
+from megaplan.handlers.review import (
+    _finalize_review_outcome,
+    _format_review_success_summary,
+    _synthesize_review_rework_items,
+)
 from megaplan.types import STATE_EXECUTED
 from megaplan.workers import WorkerResult
 
@@ -53,6 +57,48 @@ def test_rework_falls_back_when_missing_concerned_ids(caplog) -> None:
 
     assert rework_items[0]["task_id"] == "REVIEW-coverage"
     assert "omitted concerned_task_ids" in caplog.text
+
+
+def test_review_success_summary_explains_non_passing_non_blocking_criteria() -> None:
+    summary = _format_review_success_summary(
+        [
+            {"name": "A", "pass": "pass"},
+            {"name": "B", "pass": True},
+            {"name": "C", "pass": "waived"},
+            {"name": "D", "pass": "deferred_human"},
+        ]
+    )
+
+    assert summary == (
+        "Review complete: 2/4 success criteria passed "
+        "(1 waived, 1 deferred to human)."
+    )
+
+
+def test_review_success_summary_all_passed_has_no_breakdown() -> None:
+    summary = _format_review_success_summary(
+        [
+            {"name": "A", "pass": "pass"},
+            {"name": "B", "pass": True},
+        ]
+    )
+
+    assert summary == "Review complete: 2/2 success criteria passed."
+
+
+def test_review_success_summary_explains_non_blocking_failed_criteria() -> None:
+    summary = _format_review_success_summary(
+        [
+            {"name": "A", "pass": "pass"},
+            {"name": "B", "pass": "fail"},
+            {"name": "C", "pass": False},
+        ]
+    )
+
+    assert summary == (
+        "Review complete: 1/3 success criteria passed "
+        "(2 failed but non-blocking)."
+    )
 
 
 def test_review_does_not_mutate_finalize_json(tmp_path: Path) -> None:

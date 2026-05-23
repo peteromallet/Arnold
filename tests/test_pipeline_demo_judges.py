@@ -24,29 +24,37 @@ def test_demo_judges_artifact_set(tmp_path: Path) -> None:
         "shape of the artifacts written under the supplied plan directory."
     )
 
-    result = run_demo(fixture, tmp_path)
+    artifact_root = tmp_path / "artifacts"
+    result = run_demo(fixture, artifact_root)
 
-    expected = [
-        tmp_path / "judges" / "judge_clarity" / "verdict.json",
-        tmp_path / "judges" / "judge_concreteness" / "verdict.json",
-        tmp_path / "judges" / "judge_brevity" / "verdict.json",
-        tmp_path / "synthesis" / "synthesis.md",
-        tmp_path / "state.json",
-    ]
-    for path in expected:
-        assert path.exists(), f"missing artifact: {path}"
+    expected = {
+        "judges/judge_clarity/verdict.json",
+        "judges/judge_concreteness/verdict.json",
+        "judges/judge_brevity/verdict.json",
+        "synthesis/synthesis.md",
+        "state.json",
+    }
+    found = {
+        path.relative_to(artifact_root).as_posix()
+        for path in artifact_root.rglob("*")
+        if path.is_file()
+    }
+    assert found == expected
 
-    for verdict_path in expected[:3]:
+    for verdict_path in sorted((artifact_root / "judges").rglob("verdict.json")):
         data = json.loads(verdict_path.read_text())
         assert isinstance(data, dict)
         assert isinstance(data.get("score"), float)
 
-    state = json.loads((tmp_path / "state.json").read_text())
+    state = json.loads((artifact_root / "state.json").read_text())
     assert "judges" in state
-
-    verdicts_found = list(tmp_path.rglob("verdict.json"))
-    syntheses_found = list(tmp_path.rglob("synthesis.md"))
-    assert len(verdicts_found) == 3, f"expected 3 verdict.json, got {verdicts_found}"
-    assert len(syntheses_found) == 1, f"expected 1 synthesis.md, got {syntheses_found}"
+    assert {
+        Path(path).relative_to(artifact_root).as_posix()
+        for path in state["judge_verdict_paths"]
+    } == {
+        "judges/judge_clarity/verdict.json",
+        "judges/judge_concreteness/verdict.json",
+        "judges/judge_brevity/verdict.json",
+    }
 
     assert result.get("final_stage") == "synthesis"

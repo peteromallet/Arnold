@@ -1,11 +1,9 @@
-"""Sense-check fix: the runnable Pipeline drives a real plan to done.
+"""The canonical planning Pipeline drives a real plan to done.
 
-The legacy ``compile_planning_pipeline()`` produces a Pipeline whose
-gate-recommendation edges sit on the wrong stage (``critiqued``
-instead of ``gate``), preventing the runtime from following gate
-verdict dispatch. ``compile_planning_pipeline()`` is the
-structurally-correct alternative — this test proves it actually
-drives a real mock plan from prep all the way to ``done``.
+These tests pin the phase-keyed ``compile_planning_pipeline()`` shape:
+gate recommendation edges live on the ``gate`` stage, named handler
+steps are used for primary phases, and a real mock plan can run from
+prep to ``done``.
 """
 
 from __future__ import annotations
@@ -131,7 +129,7 @@ def test_runnable_pipeline_iterates_on_gate(
 
 def test_runnable_pipeline_uses_named_step_classes() -> None:
     """Every primary stage uses a named Step class, not a generic
-    HandlerStep or _RuntimeStep placeholder."""
+    handler placeholder."""
     from megaplan._pipeline.stages.prep import PrepStep
     from megaplan._pipeline.stages.plan import PlanStep
     from megaplan._pipeline.stages.critique import CritiqueStep

@@ -221,6 +221,190 @@ def test_cli_run_unknown_pipeline_returns_2() -> None:
     assert result == 2
 
 
+def _run_args(
+    *,
+    pipeline_name: str,
+    plan_dir: Path,
+    state: dict | None = None,
+    form: str | None = None,
+    primary_criterion: str | None = None,
+    inputs: str | None = None,
+    input_file: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        list_pipelines=False,
+        pipeline_name=pipeline_name,
+        input_file=input_file,
+        plan_dir=str(plan_dir),
+        inputs=inputs,
+        state=json.dumps(state) if state is not None else None,
+        mode=None,
+        profile=None,
+        describe=False,
+        resume_choice=None,
+        vendor=None,
+        form=form,
+        primary_criterion=primary_criterion,
+    )
+
+
+def test_creative_invalid_form_validates_before_profile_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from megaplan import profiles as profiles_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    def fail_profile_load(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("profile resolution should not run")
+
+    def fail_preflight(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("preflight should not run")
+
+    monkeypatch.setattr(profiles_module, "load_profiles", fail_profile_load)
+    monkeypatch.setattr(preflight_module, "preflight_or_raise", fail_preflight)
+
+    rc = cli_run(
+        _run_args(
+            pipeline_name="creative",
+            plan_dir=tmp_path / "creative-invalid",
+            form="not-a-real-form",
+        )
+    )
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["error"] == "invalid_args"
+    assert "not-a-real-form" in payload["message"]
+    assert "Available" in payload["message"]
+    assert captured.err == ""
+
+
+def test_creative_only_options_rejected_for_non_creative_before_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from megaplan import profiles as profiles_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    monkeypatch.setattr(
+        profiles_module,
+        "load_profiles",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("profile resolution should not run")
+        ),
+    )
+    monkeypatch.setattr(
+        preflight_module,
+        "preflight_or_raise",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("preflight should not run")
+        ),
+    )
+
+    rc = cli_run(
+        _run_args(
+            pipeline_name="planning",
+            plan_dir=tmp_path / "planning",
+            form="poem",
+            primary_criterion="most surprising exact image",
+        )
+    )
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["error"] == "invalid_args"
+    assert "--form" in payload["message"]
+    assert "--primary-criterion" in payload["message"]
+    assert "creative" in payload["message"]
+    assert captured.err == ""
+
+
+def test_run_pipeline_injects_pipeline_context_without_persisting_internal_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._pipeline import executor as executor_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    captured = {}
+
+    def fake_run_pipeline(pipeline, ctx, *, artifact_root):  # noqa: ANN001
+        captured["inputs"] = dict(ctx.inputs)
+        captured["state"] = dict(ctx.state)
+        return {"final_stage": pipeline.entry, "state": dict(ctx.state)}
+
+    monkeypatch.setattr(
+        preflight_module,
+        "preflight_or_raise",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(executor_module, "run_pipeline", fake_run_pipeline)
+
+    rc = cli_run(
+        _run_args(
+            pipeline_name="planning",
+            plan_dir=tmp_path / "planning-context",
+        )
+    )
+
+    assert rc == 0
+    assert captured["inputs"]["_pipeline"] == "planning"
+    assert "_pipeline" not in captured["state"].get("_inputs", {})
+
+
+def test_creative_run_seeds_runtime_state_before_step_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._pipeline import executor as executor_module
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    idea_file = tmp_path / "idea.md"
+    idea_file.write_text("write a poem about a blue door", encoding="utf-8")
+    captured = {}
+
+    def fake_run_pipeline(pipeline, ctx, *, artifact_root):  # noqa: ANN001
+        captured["inputs"] = dict(ctx.inputs)
+        captured["state"] = dict(ctx.state)
+        return {"final_stage": pipeline.entry, "state": dict(ctx.state)}
+
+    monkeypatch.setattr(
+        preflight_module,
+        "preflight_or_raise",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(executor_module, "run_pipeline", fake_run_pipeline)
+
+    rc = cli_run(
+        _run_args(
+            pipeline_name="creative",
+            plan_dir=tmp_path / "creative-state",
+            form="poem",
+            primary_criterion="most surprising exact image",
+            inputs=f"idea={idea_file}",
+        )
+    )
+
+    assert rc == 0
+    state = captured["state"]
+    assert state["_pipeline_name"] == "creative"
+    assert state["idea"] == "write a poem about a blue door"
+    assert state["config"]["mode"] == "creative"
+    assert state["config"]["form"] == "poem"
+    assert state["config"]["primary_criterion"] == "most surprising exact image"
+    assert state["config"]["project_dir"] == str(Path.cwd())
+    assert captured["inputs"]["_pipeline"] == "creative"
+
+
 # ── Credential preflight CLI path tests ────────────────────────────────
 
 

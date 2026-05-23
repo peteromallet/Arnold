@@ -157,6 +157,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
     binary = b"\x00\xfflegacy\x80\n"
     (source_plan / "nested" / "blob.bin").write_bytes(binary)
     monkeypatch.chdir(project)
+    monkeypatch.setenv("HOME", str(tmp_path / "target-home"))
 
     dry_exit = megaplan.cli.main([
         "migrate-local-plans",
@@ -238,6 +239,7 @@ def test_migrate_local_plans_all_projects_legacy_epic_and_db_promotion_preserve_
     (first_plan / "nested" / "blob.bin").write_bytes(binary)
     (second_plan / "state.json").write_text("{\"two\": true}\n", encoding="utf-8")
     monkeypatch.chdir(project)
+    monkeypatch.setenv("HOME", str(tmp_path / "target-home"))
 
     exit_code = megaplan.cli.main([
         "migrate-local-plans",

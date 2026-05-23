@@ -28,7 +28,7 @@ import megaplan._core.io as io_module
 import megaplan.cli
 
 from megaplan._pipeline.executor import run_pipeline_with_policy
-from megaplan._pipeline.planning import compile_pipeline_for
+from megaplan._pipeline.planning import compile_planning_pipeline
 from megaplan._pipeline.runtime import policy_from_cli_args
 from megaplan._pipeline.types import StepContext
 
@@ -72,7 +72,7 @@ def _mock_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def _build_pipeline_with_initial_entry():
     """Post-Sprint-5 the canonical pipeline already enters on the
     real-handler 'prep' phase; no rerouting needed."""
-    return compile_pipeline_for(robustness="robust")
+    return compile_planning_pipeline()
 
 
 def test_pipeline_runtime_drives_plan_through_prep_plan_critique(

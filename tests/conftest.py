@@ -17,6 +17,7 @@ import megaplan._core.io as io_module
 from megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
+    ExternalError,
     PhaseResult,
     atomic_write_phase_result,
 )
@@ -292,6 +293,7 @@ def make_fake_phase_result(
     deviations: tuple[Deviation, ...] = (),
     artifacts_written: tuple[str, ...] = (),
     cli_provenance: dict[str, object] | None = None,
+    external_error: ExternalError | None = None,
 ) -> PhaseResult:
     """Write a synthetic ``phase_result.json`` to *plan_dir*.
 
@@ -305,6 +307,7 @@ def make_fake_phase_result(
         deviations=deviations,
         artifacts_written=artifacts_written,
         cli_provenance=cli_provenance or {},
+        external_error=external_error,
     )
     atomic_write_phase_result(plan_dir, result)
     return result

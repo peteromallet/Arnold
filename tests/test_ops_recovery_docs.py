@@ -154,6 +154,8 @@ def test_ops_missing_blob_export_and_partial_legacy_conflict(tmp_path: Path, mon
     assert fail_response["error"] == "export_failed"
 
     home = tmp_path / "home"
+    target_home = tmp_path / "target-home"
+    monkeypatch.setenv("HOME", str(target_home))
     source_plan = home / ".megaplan" / "old" / "plans" / "plan-a"
     source_plan.mkdir(parents=True)
     (source_plan / "state.json").write_text("{\"ok\": true}\n", encoding="utf-8")
@@ -167,6 +169,7 @@ def test_ops_missing_blob_export_and_partial_legacy_conflict(tmp_path: Path, mon
         str(project),
     ]
     assert megaplan.cli.main(args) == 0
+    assert MultiStore.canonical_filestore_root(project).is_relative_to((target_home / ".megaplan").resolve())
     capsys.readouterr()
     (source_plan / "state.json").write_text("{\"ok\": false}\n", encoding="utf-8")
     assert megaplan.cli.main(args) == 0
