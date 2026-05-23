@@ -1,9 +1,9 @@
-"""Doc-pipeline prompt registry wiring (T5).
+"""Doc-pipeline prompt registry wiring.
 
 Registers the five canonical doc-pipeline stage prompts under the
 ``doc`` pipeline namespace via :func:`register_pipeline_prompt`. The
-stage Steps in ``megaplan.pipelines.doc`` carry these as their
-``prompt_key`` values:
+public Step shells in ``megaplan.pipelines.doc.steps`` carry these as
+their ``prompt_key`` values:
 
     outline       → outline_doc
     section_drafts → execute_doc
@@ -11,11 +11,9 @@ stage Steps in ``megaplan.pipelines.doc`` carry these as their
     revise        → revise_doc
     assembly      → assemble_doc
 
-``prep_doc`` and ``review_doc`` are NOT registered here — they remain
-at ``megaplan/prompts/`` and are consumed only by the legacy
-``--auto-start`` planning + mode-overlay path (retained for the 0.23
-release window per USER DECISION 2). The new ``doc`` pipeline reaches
-users only via ``megaplan run doc`` and uses the five keys above.
+``prep_doc`` and ``review_doc`` are not registered here because they are
+not stages in the first-class ``doc`` pipeline. The ``doc`` pipeline
+reaches users via ``megaplan run doc`` and uses the five keys above.
 """
 
 from __future__ import annotations

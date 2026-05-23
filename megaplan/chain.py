@@ -2059,6 +2059,12 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Path to the chain spec YAML (required at top-level or on subcommands)",
     )
     chain_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Run the chain against this project directory instead of discovering from CWD.",
+    )
+    _add_chain_worktree_args(chain_parser)
+    chain_parser.add_argument(
         "--no-git-refresh",
         action="store_true",
         help=(
@@ -2086,6 +2092,12 @@ def build_chain_parser(subparsers: Any) -> None:
     start_parser = chain_sub.add_parser("start", help="Drive a chain spec")
     start_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
     start_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Run the chain against this project directory instead of discovering from CWD.",
+    )
+    _add_chain_worktree_args(start_parser)
+    start_parser.add_argument(
         "--no-git-refresh",
         action="store_true",
         help=(
@@ -2108,11 +2120,21 @@ def build_chain_parser(subparsers: Any) -> None:
         "status", help="Show persisted chain progress without driving"
     )
     status_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    status_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Read chain state from this project directory instead of discovering from CWD.",
+    )
 
     override_parser = chain_sub.add_parser(
         "override", help="Set runtime policy overrides without editing chain.yaml"
     )
     override_parser.add_argument("--spec", required=True, help="Path to the chain spec YAML")
+    override_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Apply chain overrides against this project directory instead of discovering from CWD.",
+    )
     override_parser.add_argument(
         "--set-prerequisite-policy",
         choices=VALID_PREREQUISITE_POLICIES,
@@ -2130,6 +2152,47 @@ def build_chain_parser(subparsers: Any) -> None:
         choices=VALID_CLEAN_MILESTONE_PR_POLICIES,
         default=None,
         help="Set review clean_milestone_pr policy at runtime (e.g. auto, manual)",
+    )
+
+
+def _add_chain_worktree_args(parser: Any) -> None:
+    parser.add_argument(
+        "--in-worktree",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Create a new git worktree at ~/Documents/.megaplan-worktrees/<name>/ "
+            "on a new branch and run the whole chain inside it. Name must match "
+            "^[a-z0-9][a-z0-9._-]{0,63}$. Substitutes for --project-dir."
+        ),
+    )
+    parser.add_argument(
+        "--worktree-from",
+        default=None,
+        metavar="GITREF",
+        help=(
+            "Base ref for the new worktree (default: current HEAD of the repo "
+            "where `megaplan chain` was invoked). Only valid with --in-worktree."
+        ),
+    )
+    parser.add_argument(
+        "--clean-worktree",
+        action="store_true",
+        default=False,
+        help=(
+            "With --in-worktree: fork from a clean base ref and leave any "
+            "uncommitted state behind in the source repo (no carry)."
+        ),
+    )
+    parser.add_argument(
+        "--carry-dirty",
+        action="store_true",
+        default=False,
+        help=(
+            "With --in-worktree: explicitly opt into carrying uncommitted state "
+            "from the source repo into the new worktree. Mutually exclusive "
+            "with --clean-worktree."
+        ),
     )
 
 

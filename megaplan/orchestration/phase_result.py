@@ -7,6 +7,7 @@ the auto driver reads *only* that file to decide what to do next.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import uuid
 from contextlib import contextmanager
@@ -29,6 +30,7 @@ class ExitKind(str, Enum):
     timeout = "timeout"
     context_exhausted = "context_exhausted"
     internal_error = "internal_error"
+    external_error = "external_error"
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +118,166 @@ class Deviation:
         return cls(kind="quality_gate", message=raw, task_id=None)
 
 
+@dataclass(frozen=True)
+class ExternalError:
+    """Structured external dependency failure surfaced at the phase boundary."""
+
+    provider: str
+    error_kind: str
+    message: str = ""
+    status_code: int | None = None
+    retry_after_s: float | None = None
+    request_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "provider": self.provider,
+            "error_kind": self.error_kind,
+            "message": self.message,
+        }
+        if self.status_code is not None:
+            payload["status_code"] = self.status_code
+        if self.retry_after_s is not None:
+            payload["retry_after_s"] = self.retry_after_s
+        if self.request_id is not None:
+            payload["request_id"] = self.request_id
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ExternalError:
+        return cls(
+            provider=str(payload.get("provider") or "unknown"),
+            error_kind=str(payload["error_kind"]),
+            message=str(payload.get("message", "")),
+            status_code=(
+                int(payload["status_code"])
+                if payload.get("status_code") is not None
+                else None
+            ),
+            retry_after_s=(
+                float(payload["retry_after_s"])
+                if payload.get("retry_after_s") is not None
+                else None
+            ),
+            request_id=(
+                str(payload["request_id"])
+                if payload.get("request_id") is not None
+                else None
+            ),
+        )
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: Exception,
+        *,
+        provider: str = "unknown",
+    ) -> ExternalError | None:
+        """Classify known provider/API failures without masking internal bugs."""
+        extra = getattr(exc, "extra", None)
+        if isinstance(extra, dict):
+            raw = extra.get("_external_error") or extra.get("external_error")
+            if isinstance(raw, dict):
+                return cls.from_dict(raw)
+
+        exc_name = type(exc).__name__
+        message = str(exc)
+        combined = f"{exc_name} {message}".lower()
+
+        status_code = _extract_status_code(exc, message)
+        error_kind: str | None = None
+        if status_code == 429 or re.search(
+            r"\b(rate[-_\s]?limit(?:ed)?|too many requests)\b", combined
+        ):
+            error_kind = "rate_limit"
+        elif status_code == 402 or re.search(
+            r"\b(payment required|insufficient (?:balance|credits?)|"
+            r"balance|quota (?:exceeded|exhausted)|limit exhausted)\b",
+            combined,
+        ):
+            error_kind = "balance"
+        elif status_code in (401, 403) or re.search(
+            r"\b(unauthori[sz]ed|forbidden|invalid api key|bad api key|"
+            r"api key|authentication|permission denied)\b",
+            combined,
+        ):
+            error_kind = "auth"
+        elif status_code in (500, 502, 503, 504) or re.search(
+            r"\b(server error|internal server|bad gateway|service unavailable|"
+            r"gateway timeout)\b",
+            combined,
+        ):
+            error_kind = "provider_failure"
+        elif re.search(
+            r"\b(timeout|timed out|connection (?:refused|reset|aborted)|"
+            r"network|dns|resolve(?:d|r)?|unreachable)\b",
+            combined,
+        ):
+            error_kind = "network"
+
+        if error_kind is None:
+            return None
+
+        return cls(
+            provider=provider,
+            error_kind=error_kind,
+            message=message[:500],
+            status_code=status_code,
+            retry_after_s=_extract_retry_after(combined),
+            request_id=_extract_request_id(combined),
+        )
+
+
+def _extract_status_code(exc: Exception, message: str) -> int | None:
+    for attr in ("status_code", "status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int) and 100 <= value <= 599:
+            return value
+    for pattern in (
+        r"\bstatus code[:\s]+(\d{3})\b",
+        r"\bhttp[:\s]+(\d{3})\b",
+        r"\berror code[:\s]+(\d{3})\b",
+        r"\b(401|402|403|429|500|502|503|504)\b",
+    ):
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_retry_after(message: str) -> float | None:
+    match = re.search(r"\bretry[-_\s]?after[:=\s]+(\d+(?:\.\d+)?)\b", message)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_request_id(message: str) -> str | None:
+    for pattern in (
+        r"\brequest[-_ ]?id[:=\s]+([a-z0-9_-]+)\b",
+        r"\bx-request-id[:=\s]+([a-z0-9_-]+)\b",
+    ):
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _classify_external_error(exc: Exception) -> ExternalError | None:
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while isinstance(current, Exception) and id(current) not in seen:
+        seen.add(id(current))
+        external_error = ExternalError.from_exception(current)
+        if external_error is not None:
+            return external_error
+        current = current.__cause__ or current.__context__
+    return None
+
+
 # ---------------------------------------------------------------------------
 # PhaseResult — the canonical phase-boundary record
 # ---------------------------------------------------------------------------
@@ -152,6 +314,7 @@ class PhaseResult:
     deviations: tuple[Deviation, ...] = ()
     artifacts_written: tuple[str, ...] = ()
     cli_provenance: dict[str, Any] = field(default_factory=dict)
+    external_error: ExternalError | None = None
 
     # ── helpers ─────────────────────────────────────────────────────────
 
@@ -170,6 +333,11 @@ class PhaseResult:
             "deviations": [d.to_dict() for d in self.deviations],
             "artifacts_written": list(self.artifacts_written),
             "cli_provenance": dict(self.cli_provenance),
+            "external_error": (
+                self.external_error.to_dict()
+                if self.external_error is not None
+                else None
+            ),
         }
 
     @classmethod
@@ -186,6 +354,11 @@ class PhaseResult:
             ),
             artifacts_written=tuple(d.get("artifacts_written", [])),
             cli_provenance=dict(d.get("cli_provenance", {})),
+            external_error=(
+                ExternalError.from_dict(raw)
+                if isinstance((raw := d.get("external_error")), dict)
+                else None
+            ),
         )
 
 
@@ -242,7 +415,7 @@ def validate_phase_result(payload: dict[str, Any]) -> None:
     """Validate the **structure** of a ``PhaseResult`` dict.
 
     Checks:
-    - All 7 required fields are present.
+    - All required fields are present.
     - ``exit_kind`` is a recognised enum literal.
     - ``blocked_tasks`` and ``deviations`` have the correct nested shapes.
     - ``phase``, ``invocation_id`` are strings; ``artifacts_written`` is a
@@ -294,6 +467,20 @@ def validate_phase_result(payload: dict[str, Any]) -> None:
             "parse_error",
             "phase_result.cli_provenance must be a dict",
         )
+
+    external_error = payload.get("external_error")
+    if external_error is not None:
+        if not isinstance(external_error, dict):
+            raise CliError(
+                "parse_error",
+                "phase_result.external_error must be an object or null",
+            )
+        for field_name in ("provider", "error_kind", "message"):
+            if not isinstance(external_error.get(field_name), str):
+                raise CliError(
+                    "parse_error",
+                    f"phase_result.external_error.{field_name} must be a string",
+                )
 
     # --- blocked_tasks ----------------------------------------------------
     bts = payload.get("blocked_tasks")
@@ -350,6 +537,7 @@ def _emit_phase_result(
     deviations: tuple[Deviation, ...] = (),
     artifacts_written: tuple[str, ...] = (),
     cli_provenance: dict[str, Any] | None = None,
+    external_error: ExternalError | None = None,
 ) -> None:
     """Construct and write a ``PhaseResult`` from handler state.
 
@@ -384,6 +572,7 @@ def _emit_phase_result(
         deviations=deviations,
         artifacts_written=artifacts_written,
         cli_provenance=cli_provenance,
+        external_error=external_error,
     )
 
     # Validate against schema before writing
@@ -425,6 +614,11 @@ def phase_result_guard(plan_dir: Path):
             ek = ExitKind.timeout.value
         else:
             ek = ExitKind.internal_error.value
+        external_error = None
+        if ek == ExitKind.internal_error.value:
+            external_error = _classify_external_error(exc)
+            if external_error is not None:
+                ek = ExitKind.external_error.value
 
         # Try to emit only if we have an invocation id
         state_path = plan_dir / "state.json"
@@ -442,6 +636,7 @@ def phase_result_guard(plan_dir: Path):
                         phase=raw.get("active_step", {}).get("step", "unknown"),
                         invocation_id=invocation_id,
                         exit_kind=ek,
+                        external_error=external_error,
                     )
                     atomic_write_phase_result(plan_dir, result)
         except Exception:

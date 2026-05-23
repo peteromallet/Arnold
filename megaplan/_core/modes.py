@@ -1,12 +1,9 @@
 """Mode helpers shared across workflow, prompts, and handlers.
 
-TODO(0.24): These helpers (`is_creative_mode`, `creative_form_id`,
-`is_prose_mode`) encode the legacy mode-as-state.config-key shape. The
-0.23 doc/creative pipelines route via `state['config']['pipeline']`
-and `state['config']['form']` instead. These helpers are retained for
-the legacy `--auto-start` planning + mode-overlay path (USER DECISION 2)
-and for 0.22 plan-state compatibility; they are scheduled for removal
-in 0.24 alongside `compile_pipeline_for`'s creative/joke branch.
+These helpers read the persisted ``state['config']['mode']`` shape used
+by init-time mode selection and prompt rendering. First-class pipelines
+such as ``doc`` and ``creative`` carry their own pipeline/form metadata;
+planning graph compilation no longer has a mode-specific overlay layer.
 """
 
 from __future__ import annotations

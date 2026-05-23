@@ -1810,6 +1810,13 @@ def update_session_state(step: str, agent: str, session_id: str | None, *, mode:
         "last_used_at": now_utc(),
         "refreshed": refreshed,
     }
+    existing_entry = existing_sessions.get(key, {})
+    if (
+        isinstance(existing_entry, dict)
+        and existing_entry.get("id") == session_id
+        and isinstance(existing_entry.get("last_total_tokens"), dict)
+    ):
+        entry["last_total_tokens"] = dict(existing_entry["last_total_tokens"])
     return key, entry
 
 
@@ -2234,9 +2241,10 @@ def run_codex_step(
     )
     if payload is None:
         raise CliError("parse_error", f"Output file {output_path.name} was not valid JSON and no fallback found", extra={"raw_output": raw})
-    session_id = session.get("id") if persistent else None
+    raw_session_id = extract_session_id(raw)
+    session_id = session.get("id") if persistent and not fresh else None
     if persistent and not session_id:
-        session_id = extract_session_id(raw)
+        session_id = raw_session_id or session.get("id")
         if not session_id:
             raise CliError(
                 "worker_error",
@@ -2247,8 +2255,12 @@ def run_codex_step(
     # Capture real codex token usage / USD cost from the rollout JSONL.
     # session_id may be None for ephemeral runs; in that case try to recover
     # the auto-assigned id from the run output so we can still bill the step.
-    cost_session_id = session_id or extract_session_id(raw)
-    session_entry = state["sessions"].get(session_key, {}) if isinstance(state.get("sessions"), dict) else {}
+    cost_session_id = raw_session_id if fresh else (session_id or raw_session_id)
+    session_entry = {}
+    if isinstance(state.get("sessions"), dict):
+        candidate_entry = state["sessions"].get(session_key, {})
+        if isinstance(candidate_entry, dict) and candidate_entry.get("id") == cost_session_id:
+            session_entry = candidate_entry
     cost_usd, prompt_tokens, completion_tokens, model_actual, current_totals = _codex_step_cost(
         cost_session_id, session_entry
     )
@@ -2259,6 +2271,8 @@ def run_codex_step(
         if isinstance(state.get("sessions"), dict):
             entry = state["sessions"].setdefault(session_key, {})
             if isinstance(entry, dict):
+                if cost_session_id:
+                    entry["id"] = cost_session_id
                 entry["last_total_tokens"] = dict(current_totals)
     if cost_usd == 0.0 and cost_session_id and current_totals is None:
         # Don't crash; just leave a breadcrumb so operators can investigate
@@ -2295,7 +2309,27 @@ def _is_agent_available(agent: str) -> bool:
         # megaplan/agent/__init__.py that makes run_agent / hermes_state
         # resolvable; we probe both so a partial install also fails closed.
         try:
-            import megaplan.agent  # noqa: F401
+            import megaplan.agent
+            import importlib
+            import sys
+            from pathlib import Path
+
+            agent_dir = str(Path(megaplan.agent.__file__).resolve().parent)
+            if agent_dir not in sys.path:
+                sys.path.insert(0, agent_dir)
+
+            for module_name in ("run_agent", "hermes_state", "tools", "tools.registry"):
+                module = sys.modules.get(module_name)
+                module_file = getattr(module, "__file__", None)
+                if (
+                    module is not None
+                    and (
+                        not module_file
+                        or not str(Path(module_file).resolve()).startswith(agent_dir)
+                    )
+                ):
+                    sys.modules.pop(module_name, None)
+            importlib.invalidate_caches()
             from run_agent import AIAgent  # noqa: F401
             from hermes_state import SessionDB  # noqa: F401
         except ImportError:
@@ -2340,27 +2374,52 @@ def resolve_agent_mode(step: str, args: argparse.Namespace, *, home: Path | None
     model: str | None = None
     effort: str | None = None
 
-    # Check --phase-model overrides first (highest priority)
+    explicit_agent_spec = getattr(args, "agent", None)
+    explicit_hermes_flag = getattr(args, "hermes", None)
+    explicit_agent_override = bool(explicit_agent_spec) or explicit_hermes_flag is not None
+    live_phase_model_steps = getattr(args, "_live_phase_model_steps", None)
+    live_phase_model_steps_known = live_phase_model_steps is not None
+    if live_phase_model_steps is None:
+        live_phase_model_steps = {
+            pm.split("=", 1)[0]
+            for pm in (getattr(args, "phase_model", None) or [])
+            if "=" in pm
+        }
+
+    # Check --phase-model overrides first when they came from the current CLI.
+    # Persisted phase_model entries are merged into args by profile expansion,
+    # but an explicit recovery flag like `execute --agent codex` must be able
+    # to override those stale persisted routes. If callers have not supplied
+    # provenance, preserve the historical phase_model-first behavior.
     phase_models = getattr(args, "phase_model", None) or []
-    for pm in phase_models:
-        if "=" in pm:
-            pm_step, pm_spec = pm.split("=", 1)
-            if pm_step == step:
-                pm_parsed = parse_agent_spec(pm_spec)
-                agent = pm_parsed.agent
-                model = pm_parsed.model
-                effort = pm_parsed.effort
-                break
-    else:
+    phase_model_matches = (
+        not explicit_agent_override
+        or not live_phase_model_steps_known
+        or step in live_phase_model_steps
+    )
+    if phase_model_matches:
+        for pm in phase_models:
+            if "=" in pm:
+                pm_step, pm_spec = pm.split("=", 1)
+                if pm_step == step:
+                    pm_parsed = parse_agent_spec(pm_spec)
+                    agent = pm_parsed.agent
+                    model = pm_parsed.model
+                    effort = pm_parsed.effort
+                    break
+        else:
+            phase_model_matches = False
+
+    if not phase_model_matches:
         # Check --hermes flag
-        hermes_flag = getattr(args, "hermes", None)
+        hermes_flag = explicit_hermes_flag
         if hermes_flag is not None:
             agent = "hermes"
             if isinstance(hermes_flag, str) and hermes_flag:
                 model = hermes_flag
         else:
             # Check explicit --agent flag
-            explicit = args.agent
+            explicit = explicit_agent_spec
             if explicit:
                 explicit_parsed = parse_agent_spec(explicit)
                 agent = explicit_parsed.agent

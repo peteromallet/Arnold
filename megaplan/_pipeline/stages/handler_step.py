@@ -3,11 +3,9 @@
 Sprint 5 Chunk A (T3) retired the subprocess ``HandlerStep`` wrapper.
 The canonical planning Steps are the named in-process classes under
 ``megaplan/_pipeline/stages/`` (``PrepStep`` / ``PlanStep`` /
-``CritiqueStep`` / ``GateStep`` / ``FinalizeStep`` / ``ExecuteStep``)
-plus :class:`InProcessHandlerStep` wrappers for the tiebreaker pair.
-``build_planning_steps()`` returns the keyed registry consumed by
-``megaplan/_pipeline/planning._step_for`` for the tiebreaker lookup
-(and historically by overlays — now identity transforms post-Chunk-A).
+``CritiqueStep`` / ``GateStep`` / ``FinalizeStep`` / ``ExecuteStep``).
+``build_planning_steps()`` remains for tests and manual state-machine
+drivers that map persisted state names to in-process handler steps.
 """
 
 from __future__ import annotations
@@ -20,11 +18,9 @@ from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
 def build_planning_steps() -> dict[str, Any]:
     """Return the canonical handler-backed Step set for the planning Pipeline.
 
-    Keyed by legacy state name so ``planning._step_for`` (the only
-    remaining consumer in the canonical phase-name graph, for the
-    tiebreaker stage) can resolve ``"tiebreaker_pending"`` cleanly.
-    All entries are in-process Steps; subprocess dispatch was retired
-    in Sprint 5 Chunk A.
+    Keyed by legacy state name for manual state-machine drivers. All
+    entries are in-process Steps; subprocess dispatch was retired in
+    Sprint 5 Chunk A.
     """
 
     import megaplan

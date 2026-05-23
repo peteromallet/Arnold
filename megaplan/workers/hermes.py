@@ -593,12 +593,10 @@ def run_hermes_step(
     fresh = fresh or step != "execute"
 
     AIAgent, SessionDB = _import_hermes_runtime()
-    try:
-        from run_agent import configure_logging
-    except ImportError:
-        configure_logging = None
-    if configure_logging is not None:
-        configure_logging(verbose_logging=False, quiet_mode=True)
+    # Logging is configured once at process startup by entry points such as
+    # the CLI, gateway, and ACP adapter. Do not call configure_logging() from
+    # this per-worker path: it mutates process-global logger state and is not
+    # safe for in-process worker concurrency.
 
     project_dir = Path(state["config"]["project_dir"])
     plan_mode = state["config"].get("mode", "code")
@@ -878,6 +876,9 @@ def run_hermes_step(
         except Exception as exc:
             # Emit llm_call_error
             _emit_llm_error(plan_dir, step, str(exc))
+            provider = (model or "").split(":", 1)[0] if model else "unknown"
+            from megaplan.orchestration.phase_result import ExternalError
+            external_error = ExternalError.from_exception(exc, provider=provider)
             # Report 429 to key pool so it cools down this key
             exc_str = str(exc)
             if "429" in exc_str:
@@ -916,6 +917,10 @@ def run_hermes_step(
                         result, payload, raw_output = _run_attempt(agent, output_path)
                     except Exception as fallback_exc:
                         _emit_llm_error(plan_dir, step, str(fallback_exc))
+                        fallback_error = ExternalError.from_exception(
+                            fallback_exc,
+                            provider="openrouter",
+                        )
                         raise CliError(
                             "worker_error",
                             (
@@ -923,7 +928,19 @@ def run_hermes_step(
                                 f"(both MiniMax and OpenRouter): primary={_failure_reason(exc)}; "
                                 f"fallback={_failure_reason(fallback_exc)}"
                             ),
-                            extra={"session_id": session_id},
+                            extra={
+                                "session_id": session_id,
+                                "_external_error": (
+                                    external_error.to_dict()
+                                    if external_error is not None
+                                    else None
+                                ),
+                                "_fallback_external_error": (
+                                    fallback_error.to_dict()
+                                    if fallback_error is not None
+                                    else None
+                                ),
+                            },
                         ) from fallback_exc
                 elif isinstance(exc, CliError):
                     raise
@@ -931,7 +948,14 @@ def run_hermes_step(
                     raise CliError(
                         "worker_error",
                         f"Hermes worker failed for step '{step}': {exc}",
-                        extra={"session_id": session_id},
+                        extra={
+                            "session_id": session_id,
+                            "_external_error": (
+                                external_error.to_dict()
+                                if external_error is not None
+                                else None
+                            ),
+                        },
                     ) from exc
             elif isinstance(exc, CliError):
                 raise
@@ -939,7 +963,14 @@ def run_hermes_step(
                 raise CliError(
                     "worker_error",
                     f"Hermes worker failed for step '{step}': {exc}",
-                    extra={"session_id": session_id},
+                    extra={
+                        "session_id": session_id,
+                        "_external_error": (
+                            external_error.to_dict()
+                            if external_error is not None
+                            else None
+                        ),
+                    },
                 ) from exc
     finally:
         _sandbox_stack.close()

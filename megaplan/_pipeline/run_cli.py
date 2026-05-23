@@ -87,6 +87,16 @@ def build_run_parser(subparsers: Any) -> None:
         choices=["claude", "codex"],
         help="Vendor override for premium slots in profiles.",
     )
+    parser.add_argument(
+        "--form",
+        default=None,
+        help="Creative form for parameterized pipelines such as 'creative'.",
+    )
+    parser.add_argument(
+        "--primary-criterion",
+        default=None,
+        help="Primary creative criterion for the 'creative' pipeline.",
+    )
     parser.set_defaults(func=cli_run)
 
 
@@ -155,7 +165,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     from megaplan._pipeline.executor import run_pipeline
     from megaplan._pipeline.preflight import preflight_or_raise
     from megaplan._pipeline.registry import (
-        get_pipeline,
         pipeline_metadata,
     )
     from megaplan._pipeline.resume import with_entry
@@ -183,6 +192,17 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         return 2
     if not mode:
         mode = supported_modes[0] if supported_modes else "code"
+
+    from megaplan.types import CliError
+
+    pipeline = None
+    try:
+        _validate_run_parameters(args)
+        if pipeline_name == "creative":
+            pipeline = _build_pipeline_for_run(args)
+    except CliError as error:
+        _print_cli_error(error)
+        return error.exit_code
 
     # Profile resolution (4-layer order).
     cli_profile = getattr(args, "profile", None)
@@ -279,16 +299,23 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         if "_inputs_original" not in state:
             state["_inputs_original"] = dict(state["_inputs"])
 
-    pipeline = get_pipeline(pipeline_name)
+    if pipeline_name == "creative":
+        _seed_creative_runtime_state(args, state, inputs)
+
+    if pipeline is None:
+        pipeline = _build_pipeline_for_run(args)
     if paused_stage and paused_stage in pipeline.stages:
         pipeline = with_entry(pipeline, paused_stage)
+
+    ctx_inputs = dict(inputs)
+    ctx_inputs.setdefault("_pipeline", pipeline_name)
 
     ctx = StepContext(
         plan_dir=plan_dir,
         state=state,
         profile=resolved_profile,
         mode=mode,
-        inputs=inputs,
+        inputs=ctx_inputs,
     )
 
     # Persist state.json before running so the executor's state-merge
@@ -324,6 +351,97 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     }
     print(json.dumps(payload, indent=2, default=str))
     return 0
+
+
+def _build_pipeline_for_run(args: argparse.Namespace):
+    """Build a pipeline, applying CLI parameters for parameterized pipelines."""
+
+    from megaplan._pipeline.registry import get_pipeline
+
+    if args.pipeline_name == "creative":
+        from megaplan.pipelines.creative import build_pipeline
+
+        return build_pipeline(
+            form=getattr(args, "form", None) or "joke",
+            primary_criterion=getattr(args, "primary_criterion", None),
+        )
+    return get_pipeline(args.pipeline_name)
+
+
+def _validate_run_parameters(args: argparse.Namespace) -> None:
+    from megaplan.types import CliError
+
+    pipeline_name = getattr(args, "pipeline_name", None)
+    form = getattr(args, "form", None)
+    primary_criterion = getattr(args, "primary_criterion", None)
+
+    if pipeline_name != "creative":
+        creative_options = []
+        if form is not None:
+            creative_options.append("--form")
+        if primary_criterion is not None:
+            creative_options.append("--primary-criterion")
+        if creative_options:
+            raise CliError(
+                "invalid_args",
+                ", ".join(creative_options)
+                + " are only supported with the 'creative' pipeline.",
+                exit_code=2,
+            )
+
+
+def _print_cli_error(error: CliError) -> None:
+    payload: dict[str, Any] = {
+        "success": False,
+        "error": error.code,
+        "message": error.message,
+    }
+    if error.valid_next:
+        payload["valid_next"] = error.valid_next
+    if error.extra:
+        payload["details"] = dict(error.extra)
+    print(json.dumps(payload))
+
+
+def _seed_creative_runtime_state(
+    args: argparse.Namespace,
+    state: dict[str, Any],
+    inputs: dict[str, Path],
+) -> None:
+    raw_config = state.get("config", {})
+    config = dict(raw_config) if isinstance(raw_config, dict) else {}
+    config["mode"] = "creative"
+    config["form"] = getattr(args, "form", None) or config.get("form") or "joke"
+    primary_criterion = getattr(args, "primary_criterion", None)
+    if primary_criterion is not None:
+        config["primary_criterion"] = primary_criterion
+    else:
+        config.setdefault("primary_criterion", "")
+    config.setdefault("project_dir", str(Path.cwd()))
+    state["config"] = config
+    state.setdefault("idea", _creative_idea_seed(args, inputs))
+
+
+def _creative_idea_seed(args: argparse.Namespace, inputs: dict[str, Path]) -> str:
+    raw_state = getattr(args, "state", None)
+    if raw_state:
+        try:
+            parsed = json.loads(raw_state)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            idea = parsed.get("idea")
+            if isinstance(idea, str):
+                return idea
+
+    for key in ("idea", "draft"):
+        path = inputs.get(key)
+        if path is not None:
+            try:
+                return path.read_text(encoding="utf-8")
+            except OSError:
+                return str(path)
+    return ""
 
 
 def _describe_pipeline(name: str) -> int:

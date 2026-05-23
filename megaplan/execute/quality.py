@@ -220,16 +220,71 @@ def _auto_attribute_unclaimed_paths(
 ) -> AttributionResult:
     batch_id_set = set(batch_task_ids)
     tasks = finalize_data.get("tasks") or []
-    unattributed_done_tasks = [
+    done_batch_tasks = [
         task
         for task in tasks
         if task.get("id") in batch_id_set
         and task.get("status") == "done"
-        and not (task.get("files_changed") or [])
+    ]
+    unattributed_done_tasks = [
+        task
+        for task in done_batch_tasks
+        if not (task.get("files_changed") or [])
         and not (task.get("commands_run") or [])
     ]
     if not unattributed_done_tasks:
         return AttributionResult(records=[], recursive_snapshot=None)
+
+    task_updates_by_id = {
+        update.get("task_id"): update
+        for update in (payload.get("task_updates") or [])
+        if isinstance(update, dict)
+    }
+    batch_files = [
+        path for path in (payload.get("files_changed") or []) if isinstance(path, str)
+    ]
+    batch_commands = [
+        command
+        for command in (payload.get("commands_run") or [])
+        if isinstance(command, str)
+    ]
+    if (
+        len(done_batch_tasks) == 1
+        and len(unattributed_done_tasks) == 1
+        and (batch_files or batch_commands)
+    ):
+        task = unattributed_done_tasks[0]
+        task_id = task.get("id")
+        if batch_files:
+            task["files_changed"] = list(batch_files)
+        if batch_commands:
+            task["commands_run"] = list(batch_commands)
+        task["auto_attributed_files"] = True
+        task["auto_attributed_metadata_source"] = "batch_payload"
+        update = task_updates_by_id.get(task_id)
+        if update is not None:
+            if batch_files:
+                update["files_changed"] = list(batch_files)
+            if batch_commands:
+                update["commands_run"] = list(batch_commands)
+            update["auto_attributed_files"] = True
+            update["auto_attributed_metadata_source"] = "batch_payload"
+        issues.append(
+            f"Backfilled batch-level metadata to task {task_id}: "
+            f"{len(batch_files)} file(s), {len(batch_commands)} command(s)"
+        )
+        return AttributionResult(
+            records=[
+                {
+                    "task_id": task_id,
+                    "files": list(batch_files),
+                    "commands": list(batch_commands),
+                    "ambiguous": False,
+                    "source": "batch_payload",
+                }
+            ],
+            recursive_snapshot=None,
+        )
 
     snapshot, error = capture_recursive_snapshot_fn(project_dir)
     if error is not None:
@@ -246,11 +301,6 @@ def _auto_attribute_unclaimed_paths(
     if not unclaimed_paths:
         return AttributionResult(records=[], recursive_snapshot=snapshot)
 
-    task_updates_by_id = {
-        update.get("task_id"): update
-        for update in (payload.get("task_updates") or [])
-        if isinstance(update, dict)
-    }
     existing_payload_files = [
         path for path in (payload.get("files_changed") or []) if isinstance(path, str)
     ]

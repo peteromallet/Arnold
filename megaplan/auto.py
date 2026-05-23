@@ -521,12 +521,22 @@ def _latest_artifact_name(plan_dir: Path | None) -> str | None:
         return artifact.name
 
 
+def _phase_result_signature(plan_dir: Path | None) -> tuple[int, int] | None:
+    if plan_dir is None:
+        return None
+    try:
+        stat = (plan_dir / "phase_result.json").stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
 def _record_lifecycle_failure(
     *,
     plan_dir: Path | None,
     kind: str,
     message: str,
-    current_state: str,
+    current_state: str | None = None,
     phase: str | None,
     resume_cursor: dict[str, Any] | None,
     last_artifact: str | None = None,
@@ -536,6 +546,18 @@ def _record_lifecycle_failure(
 ) -> None:
     if plan_dir is None:
         return
+    if current_state is None:
+        # Driver-lifecycle exit (iteration cap, stall, cost cap, etc.): record
+        # the failure event for audit + resume_cursor, but preserve the plan's
+        # actual current_state — the driver giving up doesn't terminate the plan.
+        try:
+            state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            if isinstance(state_data, dict):
+                current_state = state_data.get("current_state") or STATE_BLOCKED
+            else:
+                current_state = STATE_BLOCKED
+        except (OSError, json.JSONDecodeError, ValueError):
+            current_state = STATE_BLOCKED
     failure_details: dict[str, Any] | None = None
     try:
         failure_details = PlanRepository.from_plan_dir(plan_dir).record_lifecycle_failure(
@@ -683,6 +705,7 @@ def drive(
         writer(f"[auto {plan}] {msg}\n")
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
+        before_phase_result = _phase_result_signature(plan_dir)
         run_kwargs: dict[str, Any] = {
             "cwd": cwd,
             "timeout": phase_timeout,
@@ -702,8 +725,15 @@ def drive(
             run_kwargs.pop("liveness_plan_dir", None)
             code, out, err = _run_megaplan(cmd, **run_kwargs)
 
-        # Read structured phase_result.json if it exists
-        result: object | None = read_phase_result(plan_dir)
+        # Read the structured phase_result.json only when this command actually
+        # produced it. A stale result from the previous phase must not mask a
+        # current phase failure or the driver can loop on the same state forever.
+        result: object | None = None
+        after_phase_result = _phase_result_signature(plan_dir)
+        if after_phase_result is not None and after_phase_result != before_phase_result:
+            candidate = read_phase_result(plan_dir)
+            if candidate is not None and getattr(candidate, "phase", None) == next_step:
+                result = candidate
 
         if result is not None:
             return code, out, err, result
@@ -774,7 +804,9 @@ def drive(
             blocking_reasons=list(blocking_reasons or []),
         )
 
-    for iteration in range(1, max_iterations + 1):
+    iteration = 0
+    while iteration < max_iterations:
+        iteration += 1
         try:
             status_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
             if progress_env:
@@ -786,7 +818,7 @@ def drive(
                 plan_dir=plan_dir,
                 kind="status_lookup_failed",
                 message=str(error),
-                current_state=STATE_FAILED,
+                current_state=None,
                 phase=last_phase,
                 resume_cursor={"phase": last_phase or "status", "retry_strategy": "rerun_status"},
                 suggested_action="Inspect state.json and rerun status before resuming automation.",
@@ -815,7 +847,7 @@ def drive(
                     plan_dir=plan_dir,
                     kind="cost_cap_exceeded",
                     message=f"Cost cap exceeded: {cumulative} > {max_cost_usd}",
-                    current_state=STATE_BLOCKED,
+                    current_state=None,
                     phase=last_phase,
                     resume_cursor={"phase": last_phase or "status", "retry_strategy": "increase_cap_or_resume"},
                     suggested_action="Increase the cost cap or resume the plan after reviewing spend.",
@@ -920,6 +952,7 @@ def drive(
             log(f"active step '{active_name}' still running — waiting: {reason}")
             if poll_sleep > 0:
                 time.sleep(poll_sleep)
+            iteration -= 1  # healthy wait — don't consume iteration budget
             continue
 
         # Review-cycle progress: a fresh review.json means a real review
@@ -1012,7 +1045,7 @@ def drive(
                     plan_dir=plan_dir,
                     kind="stalled",
                     message=f"stalled at '{state}' for {stall_count} iterations",
-                    current_state=STATE_BLOCKED,
+                    current_state=None,
                     phase=last_phase,
                     resume_cursor={"phase": last_phase or str(next_step or "status"), "retry_strategy": "manual_review"},
                     suggested_action="Review the plan state before resuming automation.",
@@ -1248,7 +1281,7 @@ def drive(
                         plan_dir=plan_dir,
                         kind="context_retry_exhausted",
                         message=f"context exhaustion retry cap reached ({context_retry_count}/{max_context_retries})",
-                        current_state=STATE_BLOCKED,
+                        current_state=None,
                         phase=next_step,
                         resume_cursor={"phase": next_step, "retry_strategy": "fresh_session"},
                         last_artifact=_latest_artifact_name(plan_dir),
@@ -1291,22 +1324,83 @@ def drive(
                 suggested_action="Investigate the timed-out phase and resume from the phase cursor.",
                 metadata={"timeout_seconds": phase_timeout, "idle_timeout_seconds": phase_idle_timeout, "iteration": iteration},
             )
+        elif result is not None and getattr(result, "exit_kind", None) == ExitKind.external_error.value:
+            external_error = getattr(result, "external_error", None)
+            provider = getattr(external_error, "provider", "unknown")
+            error_kind = getattr(external_error, "error_kind", "unknown")
+            message = getattr(external_error, "message", "")
+            status_code = getattr(external_error, "status_code", None)
+            retry_after_s = getattr(external_error, "retry_after_s", None)
+            code_hint = f" HTTP {status_code}" if status_code is not None else ""
+            retry_hint = (
+                f" retry_after={retry_after_s}s"
+                if retry_after_s is not None
+                else ""
+            )
+            log(
+                f"phase '{next_step}' external_error [{provider}] "
+                f"{error_kind}{code_hint}{retry_hint}: {message[:200]}"
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="external_error",
+                message=(
+                    f"phase '{next_step}' external dependency failure: "
+                    f"[{provider}] {error_kind}{code_hint}{retry_hint}"
+                ),
+                current_state=STATE_BLOCKED,
+                phase=next_step,
+                resume_cursor={
+                    "phase": next_step,
+                    "retry_strategy": (
+                        "wait_and_retry"
+                        if retry_after_s is not None and retry_after_s > 0
+                        else "check_provider_and_retry"
+                    ),
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    f"External provider '{provider}' returned {error_kind}. "
+                    "Verify API key/quota/balance and retry."
+                    + (
+                        f" Wait {retry_after_s}s before retrying."
+                        if retry_after_s is not None
+                        else ""
+                    )
+                ),
+                metadata={
+                    "provider": provider,
+                    "error_kind": error_kind,
+                    "status_code": status_code,
+                    "retry_after_s": retry_after_s,
+                    "exit_code": code,
+                    "iteration": iteration,
+                },
+            )
         elif result is not None and getattr(result, "exit_kind", None) == ExitKind.internal_error.value:
             # Don't bail immediately — megaplan often records a partial failure
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             log(f"phase '{next_step}' exited with internal_error: {err.strip() or out.strip()[-400:]}")
-            _record_failure(
-                plan_dir=plan_dir,
-                kind="phase_failed",
-                message=f"phase '{next_step}' internal_error",
-                current_state=STATE_FAILED,
-                phase=next_step,
-                resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
-                last_artifact=_latest_artifact_name(plan_dir),
-                suggested_action="Inspect phase output and resume from the failed phase.",
-                metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
-            )
+            # plan_locked is transient contention from a concurrent auto/phase,
+            # not a phase failure. Writing STATE_FAILED here turns a recoverable
+            # lock-wait into a terminal state — the bug that surfaced when two
+            # auto drivers raced into the same phase. Treat as a no-op; the next
+            # iteration's status() will see the lock released.
+            if "plan_locked" in ((err or "") + (out or "")):
+                log(f"phase '{next_step}' hit plan_locked — transient contention, retrying next iteration")
+            else:
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind="phase_failed",
+                    message=f"phase '{next_step}' internal_error",
+                    current_state=None,
+                    phase=next_step,
+                    resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
+                    last_artifact=_latest_artifact_name(plan_dir),
+                    suggested_action="Inspect phase output and resume from the failed phase.",
+                    metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
+                )
         elif result is None and code != 0:
             # Non-phase commands (e.g. 'override add-note') that failed —
             # preserve existing exit-code-based handling.
@@ -1315,7 +1409,7 @@ def drive(
                 plan_dir=plan_dir,
                 kind="phase_failed",
                 message=f"command '{next_step}' exited {code}",
-                current_state=STATE_FAILED,
+                current_state=None,
                 phase=next_step,
                 resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                 last_artifact=_latest_artifact_name(plan_dir),
@@ -1533,7 +1627,7 @@ def drive(
         plan_dir=plan_dir,
         kind="iteration_cap",
         message=f"exceeded max_iterations={max_iterations}",
-        current_state=STATE_BLOCKED,
+        current_state=None,
         phase=last_phase,
         resume_cursor={"phase": last_phase or "status", "retry_strategy": "manual_review"},
         suggested_action="Review automation progress before resuming.",
