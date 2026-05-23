@@ -42,6 +42,7 @@ from types import SimpleNamespace
 import uuid
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
+import httpx
 import fire
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,42 @@ from hermes_constants import OPENROUTER_BASE_URL
 
 DEFAULT_API_TIMEOUT_SECONDS = 300.0
 DEFAULT_DEEPSEEK_API_TIMEOUT_SECONDS = 1200.0
+# Per-read (inter-chunk) socket inactivity bound for streaming SSE responses.
+# A synchronous `for chunk in stream:` read with no httpx read-timeout blocks
+# inside the C-level socket recv() and CANNOT be interrupted by another thread
+# calling client.close() — so a provider that establishes the SSE connection
+# but never sends a token produces an unrecoverable "zero-token stall". A finite
+# httpx read timeout enforces the abort at the syscall level. httpx applies the
+# read timeout per-read and RESETS it on every received chunk, so a slow but
+# progressing (e.g. reasoning) generation is NOT falsely aborted — only true
+# inactivity (including zero-tokens-from-start) longer than the bound aborts.
+DEFAULT_STREAM_READ_TIMEOUT_SECONDS = 60.0
+
+
+def _stream_read_timeout_seconds() -> float:
+    """Inter-chunk inactivity bound (seconds) for streaming reads.
+
+    Configurable via HERMES_STREAM_READ_TIMEOUT. Falls back to a generous
+    default that tolerates legitimately slow first-token latency while still
+    catching true stalls.
+    """
+    try:
+        value = float(os.getenv("HERMES_STREAM_READ_TIMEOUT", DEFAULT_STREAM_READ_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
+        value = DEFAULT_STREAM_READ_TIMEOUT_SECONDS
+    return max(value, 1.0)
+
+
+def _build_httpx_timeout() -> "httpx.Timeout":
+    """httpx.Timeout for OpenAI clients.
+
+    The read timeout is the per-chunk inactivity bound that interrupts a
+    stalled SSE socket read; connect/write/pool are kept sane. Applied to every
+    OpenAI client we construct (initial + recreate-closed paths) so the stall
+    safeguard survives reconnects.
+    """
+    read = _stream_read_timeout_seconds()
+    return httpx.Timeout(connect=30.0, read=read, write=30.0, pool=30.0)
 
 # Agent internals extracted to agent/ package for modularity
 from agent.prompt_builder import (
@@ -3367,6 +3404,13 @@ class AIAgent:
                 self._client_log_context(),
             )
             return client
+        # Inject a finite httpx read timeout so a stalled streaming SSE socket
+        # read aborts at the syscall level (the watchdog's client.close() cannot
+        # interrupt a thread blocked in C-level recv()). Caller-supplied timeout
+        # is respected if already set. Applies to initial construction AND the
+        # recreate-closed-client path, since all clients route through here.
+        if "timeout" not in client_kwargs:
+            client_kwargs = {**client_kwargs, "timeout": _build_httpx_timeout()}
         client = OpenAI(**client_kwargs)
         logger.info(
             "OpenAI client created (%s, shared=%s) %s",
@@ -6699,9 +6743,21 @@ class AIAgent:
                     # context window below the prompt size makes the model
                     # return empty (observed regression). The counter resets
                     # after any successful streaming call.
+                    # A stalled SSE read now surfaces as the httpx/OpenAI
+                    # read-timeout (APITimeoutError wrapping httpx.ReadTimeout)
+                    # rather than only the thread-watchdog's TimeoutError. Both
+                    # mean the same thing here: the model produced no bytes for
+                    # too long. Treat them identically — retry on a fresh client
+                    # (the streaming path builds a new request client per call)
+                    # and scale the deadline for the next attempt.
+                    import openai as _openai_mod
+                    is_read_timeout = isinstance(
+                        api_error, (_openai_mod.APITimeoutError, httpx.ReadTimeout, httpx.ConnectTimeout)
+                    )
                     is_streaming_timeout = (
-                        isinstance(api_error, TimeoutError)
-                        and "streaming api call exceeded" in error_msg
+                        (isinstance(api_error, TimeoutError)
+                         and "streaming api call exceeded" in error_msg)
+                        or is_read_timeout
                     )
                     if is_streaming_timeout:
                         self._streaming_timeout_streak += 1
