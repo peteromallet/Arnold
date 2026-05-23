@@ -81,6 +81,29 @@ def test_run_unknown_pipeline_returns_error() -> None:
     assert "no pipeline named" in (proc.stdout + proc.stderr).lower()
 
 
+@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
+def test_run_list_includes_epic_blitz() -> None:
+    """``megaplan run --list`` includes epic-blitz."""
+    proc = subprocess.run(
+        [str(_MEGAPLAN), "run", "--list"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "epic-blitz" in proc.stdout
+
+
+@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
+def test_run_describe_epic_blitz_prints_metadata() -> None:
+    """``megaplan run epic-blitz --describe`` prints metadata + SKILL.md."""
+    proc = subprocess.run(
+        [str(_MEGAPLAN), "run", "epic-blitz", "--describe"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "Three-round" in proc.stdout
+    assert "epic-blitz" in proc.stdout
+
+
 # ── Registry-backed CLI tests (Python-level, no subprocess) ───────────
 
 
@@ -90,6 +113,13 @@ def test_registered_pipelines_includes_writing_panel_strict() -> None:
     names = registered_pipelines()
     assert "writing-panel-strict" in names
     assert "planning" in names
+
+
+def test_registered_pipelines_includes_epic_blitz() -> None:
+    """The registry surfaces epic-blitz alongside the built-ins."""
+    from megaplan._pipeline.registry import registered_pipelines
+    names = registered_pipelines()
+    assert "epic-blitz" in names
 
 
 def test_describe_pipeline_writing_panel_strict(capsys) -> None:
@@ -111,6 +141,16 @@ def test_describe_pipeline_unknown(capsys) -> None:
     assert "unknown" in captured.err.lower() or "Unknown" in captured.err
 
 
+def test_describe_pipeline_epic_blitz(capsys) -> None:
+    """_describe_pipeline for epic-blitz prints metadata + SKILL.md."""
+    from megaplan._pipeline.run_cli import _describe_pipeline
+    rc = _describe_pipeline("epic-blitz")
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "epic-blitz" in captured.out
+    assert "Three-round" in captured.out
+
+
 def test_handle_list_pipelines() -> None:
     """handle_list with list_target='pipelines' returns pipeline listing."""
     from megaplan.cli import handle_list
@@ -130,6 +170,7 @@ def test_handle_list_pipelines() -> None:
     names = [p["name"] for p in result["pipelines"]]
     assert "writing-panel-strict" in names
     assert "planning" in names
+    assert "epic-blitz" in names
 
 
 def test_handle_list_pipelines_verbose() -> None:
@@ -181,6 +222,19 @@ def test_handle_describe_unknown_pipeline() -> None:
     assert result["step"] == "describe"
 
 
+def test_handle_describe_epic_blitz(capsys) -> None:
+    """handle_describe for epic-blitz prints metadata + SKILL.md."""
+    from megaplan.cli import handle_describe
+    args = argparse.Namespace(pipeline_name="epic-blitz")
+    result = handle_describe(args)
+    captured = capsys.readouterr()
+    assert result["success"] is True
+    assert result["step"] == "describe"
+    assert result["pipeline"] == "epic-blitz"
+    assert "epic-blitz" in captured.out
+    assert "Three-round" in captured.out
+
+
 def test_cli_run_list_dispatches(monkeypatch) -> None:
     """cli_run with --list prints the registered pipeline names."""
     from megaplan._pipeline.run_cli import cli_run
@@ -219,6 +273,37 @@ def test_cli_run_unknown_pipeline_returns_2() -> None:
     )
     result = cli_run(args)
     assert result == 2
+
+
+def test_cli_run_list_includes_epic_blitz(capsys) -> None:
+    """cli_run --list output includes epic-blitz."""
+    from megaplan._pipeline.run_cli import cli_run
+
+    args = argparse.Namespace(
+        list_pipelines=True,
+        pipeline_name=None,
+        describe=False,
+    )
+    result = cli_run(args)
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "epic-blitz" in captured.out
+
+
+def test_cli_run_describe_epic_blitz(capsys) -> None:
+    """cli_run --describe for epic-blitz prints metadata + SKILL.md."""
+    from megaplan._pipeline.run_cli import cli_run
+
+    args = argparse.Namespace(
+        list_pipelines=False,
+        pipeline_name="epic-blitz",
+        describe=True,
+    )
+    result = cli_run(args)
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "epic-blitz" in captured.out
+    assert "Three-round" in captured.out
 
 
 # ── Credential preflight CLI path tests ────────────────────────────────
