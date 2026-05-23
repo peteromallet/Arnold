@@ -26,11 +26,13 @@ Two more concepts round the model out:
 * **Pattern** — a stateless function from `megaplan._pipeline.patterns`
   that returns the appropriate primitive (`Stage`, `ParallelStage`,
   `dict[str, Stage]`, or a `join` callable). Patterns encode the recurring
-  topologies — critique loops, panels, subpipeline calls, mode overlays —
+  topologies — critique loops, panels, subpipeline calls, prompt variants —
   so individual pipelines stay short.
 * **Overlay** — a `Pipeline → Pipeline` transform stashed on
-  `Pipeline.overlays`. Used for runtime variants (mode prompts,
-  robustness levels) that rewrite Steps without changing topology.
+  `Pipeline.overlays`. This remains an optional low-level primitive for
+  local graph transforms. The built-in `planning`, `doc`, and `creative`
+  pipelines are first-class registered graphs, not rewrites of one shared
+  planning topology.
 
 A pipeline runs from `Pipeline.entry`. Each Stage's Step emits a
 `StepResult`; the executor picks the outgoing edge whose typed
@@ -67,6 +69,22 @@ explicitly — they do not auto-link, so the caller wires every transition
 via the method's own `extra_edges` / `edges` argument.
 
 The first added stage becomes `Pipeline.entry`.
+
+## Built-in first-class pipelines
+
+The in-tree pipelines are selected by name from the registry:
+
+* `planning` is compiled by
+  `megaplan._pipeline.planning.compile_planning_pipeline()`.
+* `doc` lives under `megaplan/pipelines/doc/` and owns its document
+  topology and prompt registrations.
+* `creative` lives under `megaplan/pipelines/creative/` and owns its
+  form-aware topology and prompt registrations.
+
+Registry builders remain nullary. CLI-only inputs such as creative
+`--form` and `--primary-criterion` are handled at the command boundary
+and passed into the creative steps; they do not change the public
+registry builder contract.
 
 ## Pattern library
 
@@ -346,21 +364,13 @@ Prompts live alongside the pipeline under
 `megaplan/pipelines/doc/prompts/` and register with the pipeline-scoped
 `PromptRegistry` slot `doc/<key>` for each of the five stages
 (`outline_doc`, `execute_doc`, `critique_doc`, `revise_doc`,
-`assemble_doc`). The legacy `megaplan/prompts/{prep_doc,
-review_doc}.py` modules are **not** consumed by the new pipeline; they
-remain at `megaplan/prompts/` solely to keep the legacy `--auto-start`
-planning + mode-overlay path functional for 0.23.
+`assemble_doc`). The old `megaplan/prompts/{prep_doc, review_doc}.py`
+modules are **not** consumed by the first-class `doc` pipeline.
 
-**Iteration semantics drop in 0.23.** Legacy `--mode doc` (running
-under the planning topology with a doc mode-overlay) had a
-critique-revise gate loop that could iterate, proceed, escalate, or
-tiebreaker. The new `megaplan run doc` topology is a **single linear
-pass**: no gate, no loop, no tiebreaker. If you depend on the legacy
-multi-iteration behaviour you can still reach it for 0.23 via
-`megaplan init --mode doc --auto-start <brief>` (which routes through
-the legacy planning path), but that path is deprecated and will be
-removed in 0.24. The recommendation is to land your final doc through
-the new pipeline and re-run if you need a second pass.
+**Iteration semantics differ from planning.** The first-class
+`megaplan run doc` topology is a **single linear pass**: no gate, no
+loop, no tiebreaker. If you need another pass, re-run the doc pipeline
+with the previous output as input.
 
 ## The `creative` pipeline
 
@@ -382,11 +392,10 @@ registered so the `PromptRegistry` resolves the form-aware variant
 when one is registered and falls back to the generic creative renderer
 otherwise.
 
-The provocations registry, stance contract, and director's-notes
-sidecar are wired in exactly as on the legacy creative path —
-`megaplan/forms/` was **not** relocated (it's consumed by 25+ non-
-creative modules) and the creative pipeline imports from it like any
-other consumer.
+The provocations registry, stance contract, and director's-notes sidecar
+are shared with the rest of the application. `megaplan/forms/` was
+**not** relocated (it's consumed by 25+ non-creative modules) and the
+creative pipeline imports from it like any other consumer.
 
 `--primary-criterion <text>` is a first-class creative-pipeline input
 and threads through to every stage's Step via the `primary_criterion`
@@ -394,9 +403,8 @@ dataclass field on `_CreativeStep`.
 
 ## How modes work in the new system
 
-After 0.23 there is no longer a single `--mode` axis that overlays the
-planning pipeline with mode-specific prompts in-tree. The architecture
-splits the responsibility:
+There is no single `--mode` axis that rewrites the planning pipeline
+with in-tree prompt sets. The architecture splits the responsibility:
 
 - **`planning` has no modes.** The `code` mode is the only effective
   mode and it is the default; the pipeline is built from a single
@@ -409,24 +417,25 @@ splits the responsibility:
   `creative` pipeline, validated against the canonical
   `megaplan.forms.available_form_ids()` registry.
 - **The `Pipeline.builder(...).mode({...})` / `mode_prompts(...)`
-  pattern is retained** for any future pipeline where the topology is
-  shared across variants but the prompts swap (worked example 6 above).
+  pattern is retained** for future custom pipelines where the topology
+  is shared across variants but the prompts swap (worked example 6
+  above).
   Use it inline inside the pipeline module that owns those variants;
   there is no separate registry.
 
 ## `--mode` deprecation migration table (0.22 → 0.23)
 
-`megaplan init --mode <X>` continues to work in 0.23 with a one-release
-deprecation warning printed to stderr. **There is no `--mode` flag on
+`megaplan init --mode <X>` is a deprecated state-initialization path.
+**There is no `--mode` flag on
 `megaplan plan|execute|review`** — those subparsers never accepted it,
 so any documentation referring to `megaplan plan --mode <X>` is wrong.
-`--mode` will be removed entirely in 0.24.
+Use `megaplan run <pipeline>` for first-class pipeline execution.
 
 | Old (0.22)                                                  | New (0.23+)                                                  | 0.23 limitation                                                                                                                                                                          |
 | ----------------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `megaplan init --mode doc <brief>`                          | `megaplan run doc <brief>`                                   | `init --mode doc` still works in 0.23 with a deprecation warning. `--auto-start` after `init --mode doc` runs the **legacy** planning + mode-overlay path, not the new `doc` pipeline.    |
-| `megaplan init --mode creative --form <id> <brief>`         | `megaplan run creative <brief> --form <id>`                  | `init --mode creative` still works in 0.23 with a deprecation warning. `--auto-start` after `init --mode creative` runs the **legacy** planning + mode-overlay path.                       |
-| `megaplan init --mode metaplan <brief>`                     | `megaplan run doc <brief>`                                   | `metaplan` was always an alias for `doc`. `init --mode metaplan` still coerces to `mode='doc'` in state config and prints a deprecation warning. `--auto-start` still routes through legacy. |
+| `megaplan init --mode doc <brief>`                          | `megaplan run doc <brief>`                                   | `init --mode doc` is deprecated; use the first-class `doc` pipeline for document generation.                                                                                             |
+| `megaplan init --mode creative --form <id> <brief>`         | `megaplan run creative <brief> --form <id>`                  | `init --mode creative` is deprecated; use the first-class `creative` pipeline for creative generation.                                                                                    |
+| `megaplan init --mode metaplan <brief>`                     | `megaplan run doc <brief>`                                   | `metaplan` was always an alias for `doc`; use the first-class `doc` pipeline.                                                                                                             |
 | `megaplan init --mode joke <brief>`                         | `megaplan run creative <brief> --form joke`                  | `init --mode joke` still works in 0.23 with a deprecation warning; state config keeps `mode='joke'` (not rewritten) to preserve legacy `is_prose_mode`/`creative_form_id` semantics for `--auto-start`. |
 | `megaplan bakeoff run --mode metaplan …`                    | `megaplan bakeoff run --mode doc …`                          | The bake-off `metaplan` alias is **removed** in 0.23. `--mode metaplan` and `--mode joke` are rejected at the bake-off argparse layer.                                                    |
 
@@ -436,10 +445,7 @@ The deprecation warning printed to stderr on each deprecated
 ```
 [deprecation] megaplan init --mode <X> is deprecated; use
 "megaplan run <pipeline> [--form …]" instead. NOTE: in 0.23,
---auto-start after init --mode still runs the LEGACY planning +
-mode-overlay path; the new <pipeline> pipeline is only reached via
-"megaplan run". Full integration ships in 0.24. --mode will be removed
-in 0.24.
+first-class pipeline execution is reached via "megaplan run <pipeline>".
 ```
 
 `--mode code` is unchanged: no warning, `state.config.mode='code'`,
@@ -696,8 +702,7 @@ pipeline = (
         })
         .build()
 )
-# At dispatch time the executor applies
-# `mode_prompts(builder._modes_dict)(active_mode)` as an overlay.
+# The builder records the prompt-variant map on the pipeline that owns it.
 ```
 
 ## Where to look next

@@ -1,8 +1,8 @@
 # YAML pipelines + per-pipeline skills — migration design
 
-> **Experiment outcome — Python composition replaced YAML. See [docs/pipelines.md](pipelines.md).**
+> **Archived historical record — Python composition replaced YAML. See [docs/pipelines.md](pipelines.md).**
 >
-> This document is retained as the historical record of the YAML-pipelines experiment (Sprints A/B). The YAML runtime was removed in megaplan 0.22.0; pipelines are now defined as Python modules using `Pipeline.builder(...)` and the pattern library at `megaplan/_pipeline/patterns.py`. Read `docs/pipelines.md` for the current framework.
+> This document is retained as the archived historical record of the YAML-pipelines experiment (Sprints A/B). The YAML runtime was removed in megaplan 0.22.0; pipelines are now defined as Python modules using `Pipeline.builder(...)` and the pattern library at `megaplan/_pipeline/patterns.py`. Do not treat the design notes below as current API guidance; read `docs/pipelines.md` for the current framework.
 
 Companion to ticket `01KRVVDSGPFJQEJ2JBB81CYPTQ` (generic YAML pipelines framework). That ticket establishes **what** the runtime becomes; this doc extends it with **per-pipeline skill docs** and **pipeline-local profiles**, and lays out the work to migrate today's `planning` + mode variants + parallel critique onto the new shape.
 
@@ -140,7 +140,7 @@ The ticket already covers schema/loader/executor/steps/resume. This doc adds:
 - **Skill auto-registration** (Sprint 4) — install-time hook that symlinks `pipelines/*/SKILL.md` into `~/.claude/skills/megaplan-pipeline-<name>/` so they show up as first-class Claude Code skills. Optional; pipelines work fine without it.
 
 ### Mode handling on YAML path
-- **`_pipeline/executor.py`** — mode_overlay logic moves out of `planning.py` (which is being deleted) into the executor itself. Reads `supported_modes:` from pipeline.yaml; passes mode through to PromptRegistry resolution unchanged.
+- **`_pipeline/executor.py`** — historical mode-dispatch handling moves out of `planning.py` (which this abandoned migration expected to delete) into the executor itself. Reads `supported_modes:` from pipeline.yaml; passes mode through to PromptRegistry resolution unchanged.
 
 ### Sprint placement
 
@@ -223,7 +223,7 @@ This audit covers all `handle_*` functions in `megaplan/handlers/` that particip
 planning.py (compile) → stages/<phase>.py (Step.run) → InProcessHandlerStep → handlers/<phase>.py (handle_*)
 ```
 
-The `_RuntimeStep` placeholder (line 43–62) raises `NotImplementedError` and is only used for `tiebreaker_pending`/`tiebreaker_ready` lookups for the YAML gate tiebreaker subloop — it is never invoked by the executor path.
+The historical placeholder Step (line 43–62 in the old audit) raises `NotImplementedError` and is only used for `tiebreaker_pending`/`tiebreaker_ready` lookups for the YAML gate tiebreaker subloop — it is never invoked by the executor path.
 
 ### Per-handler audit
 
