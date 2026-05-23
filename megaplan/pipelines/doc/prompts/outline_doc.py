@@ -48,7 +48,7 @@ def _outline_doc_prompt(
 
 
 def build_outline_doc_prompt(state: PlanState, plan_dir: Path) -> str:
-    """Public builder name matching the T5 ``build_*_prompt`` convention."""
+    """Public builder name matching the doc prompt builder convention."""
     return _outline_doc_prompt(state, plan_dir)
 
 

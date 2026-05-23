@@ -4686,6 +4686,118 @@ def _setup_init_worktree(args: argparse.Namespace) -> None:
         )
 
 
+def _setup_chain_worktree(args: argparse.Namespace) -> None:
+    """Create a shared worktree for ``megaplan chain`` and reroot the command.
+
+    Unlike ``megaplan init --in-worktree``, this creates one worktree for the
+    entire chain. Every milestone plan initialized by the chain then receives
+    ``--project-dir <that-worktree>`` from the chain driver.
+    """
+    name = getattr(args, "in_worktree", None)
+    clean_worktree = bool(getattr(args, "clean_worktree", False))
+    carry_dirty_flag = bool(getattr(args, "carry_dirty", False))
+    action = getattr(args, "chain_action", None)
+    if clean_worktree and carry_dirty_flag:
+        raise CliError(
+            "invalid_args",
+            "--clean-worktree and --carry-dirty are mutually exclusive",
+        )
+    if name is None:
+        if getattr(args, "worktree_from", None):
+            raise CliError(
+                "invalid_args",
+                "--worktree-from is only valid alongside --in-worktree",
+            )
+        if clean_worktree or carry_dirty_flag:
+            raise CliError(
+                "invalid_args",
+                "--clean-worktree / --carry-dirty are only valid with --in-worktree",
+            )
+        return
+
+    if action not in (None, "start"):
+        raise CliError(
+            "invalid_args",
+            "--in-worktree is only valid for `megaplan chain start`",
+        )
+    if getattr(args, "project_dir", None):
+        raise CliError(
+            "invalid_args",
+            "pass either --project-dir or --in-worktree, not both",
+        )
+
+    from megaplan.bakeoff.worktree import (
+        branch_exists,
+        carry_dirty_state_atomic,
+        create_named_worktree,
+        ensure_no_inprogress_op,
+        has_dirty_state,
+        resolve_ref,
+        validate_worktree_name,
+        worktree_registered,
+    )
+
+    validate_worktree_name(name)
+
+    invoking_repo = _find_git_root(Path.cwd().resolve())
+    if invoking_repo is None:
+        raise CliError(
+            "not_a_git_repo",
+            "--in-worktree requires running from inside a git repository",
+        )
+    ensure_no_inprogress_op(invoking_repo)
+
+    target = (Path.home() / "Documents" / ".megaplan-worktrees" / name).resolve()
+    if target.exists():
+        raise CliError(
+            "worktree_target_exists",
+            f"refusing to create worktree: target path already exists: {target}",
+        )
+    if worktree_registered(invoking_repo, target):
+        raise CliError(
+            "worktree_already_registered",
+            f"git already has a worktree registered at {target} "
+            "(run `git worktree prune` manually if it's stale)",
+        )
+    if branch_exists(invoking_repo, name):
+        raise CliError(
+            "worktree_branch_exists",
+            f"branch {name!r} already exists locally or on a remote; "
+            "pick a different --in-worktree name",
+        )
+
+    base_ref = getattr(args, "worktree_from", None) or "HEAD"
+    base_sha = resolve_ref(invoking_repo, base_ref)
+    create_named_worktree(invoking_repo, target, base_sha, name)
+
+    tracked_carried = 0
+    untracked_carried = 0
+    if not clean_worktree:
+        should_carry = carry_dirty_flag or has_dirty_state(invoking_repo)
+        if should_carry:
+            tracked_carried, untracked_carried = carry_dirty_state_atomic(
+                invoking_repo, target
+            )
+
+    args.project_dir = str(target)
+    from megaplan.workers import set_work_dir_override
+
+    set_work_dir_override(target)
+
+    print(
+        f"Created chain worktree at {target} on branch {name} "
+        f"(base {base_sha[:12]}); running chain inside it...",
+        file=sys.stderr,
+    )
+    if tracked_carried or untracked_carried:
+        print(
+            f"warning: carried {tracked_carried} uncommitted file change(s) "
+            f"and {untracked_carried} untracked file(s) from {invoking_repo} "
+            f"into {target}. Source worktree is unchanged.",
+            file=sys.stderr,
+        )
+
+
 def _find_git_root(start: Path) -> Path | None:
     """Walk up to find the directory containing ``.git``."""
     current = start
@@ -4900,6 +5012,11 @@ def main(argv: list[str] | None = None) -> int:
                     "megaplan init requires --project-dir or --in-worktree",
                 )
             )
+    elif args.command == "chain":
+        try:
+            _setup_chain_worktree(args)
+        except CliError as error:
+            return error_response(error)
 
     try:
         root = _resolve_project_root(args)

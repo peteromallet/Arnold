@@ -1275,6 +1275,7 @@ def apply_profile_expansion(
     # rule (live CLI > persisted CLI > profile).
     cli_phase_models = list(getattr(args, "phase_model", None) or [])
     cli_steps = {pm.split("=", 1)[0] for pm in cli_phase_models if "=" in pm}
+    args._live_phase_model_steps = set(cli_steps)
 
     phase_models = list(cli_phase_models)
 

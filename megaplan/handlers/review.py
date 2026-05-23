@@ -261,6 +261,28 @@ def _resolve_review_outcome(
     with_feedback = state.get("config", {}).get("with_feedback", False)
     return "success", STATE_REVIEWED if with_feedback else STATE_DONE, None
 
+
+def _format_review_success_summary(criteria: list[dict[str, Any]]) -> str:
+    passed = sum(1 for c in criteria if c.get("pass") in (True, "pass"))
+    total = len(criteria)
+    waived = sum(1 for c in criteria if c.get("pass") == "waived")
+    deferred = sum(1 for c in criteria if c.get("pass") == "deferred_human")
+    failed = sum(1 for c in criteria if c.get("pass") in (False, "fail"))
+    details: list[str] = []
+    if waived:
+        details.append(f"{waived} waived")
+    if deferred:
+        details.append(f"{deferred} deferred to human")
+    if failed:
+        details.append(f"{failed} failed but non-blocking")
+    if details:
+        return (
+            f"Review complete: {passed}/{total} success criteria passed "
+            f"({', '.join(details)})."
+        )
+    return f"Review complete: {passed}/{total} success criteria passed."
+
+
 _EXPECTED_BY_CHECK_ID = {
     "coverage": "Extend the fix so every concrete failing example, symptom, or 'X should Y' statement in the issue is addressed by at least one diff line.",
     "placement": "Move the fix upstream to where the bad state is first introduced, or extend it to cover any alternate entry points identified in the finding.",
@@ -421,8 +443,7 @@ def _finalize_review_outcome(
         log.warning("Review receipt emission failed", exc_info=True)
     save_state_merge_meta(plan_dir, state)
 
-    passed = sum(1 for c in worker.payload.get("criteria", []) if c.get("pass") in (True, "pass"))
-    total = len(worker.payload.get("criteria", []))
+    criteria = worker.payload.get("criteria", [])
     if result == "blocked":
         summary = _build_review_blocked_message(
             verdict_count=verdict_count, total_tasks=total_tasks,
@@ -432,7 +453,7 @@ def _finalize_review_outcome(
     elif result == "needs_rework":
         summary = "Review requested another execute pass. Re-run execute using the review findings as context."
     else:
-        summary = f"Review complete: {passed}/{total} success criteria passed."
+        summary = _format_review_success_summary(criteria if isinstance(criteria, list) else [])
 
     response: StepResponse = {
         "success": result == "success",

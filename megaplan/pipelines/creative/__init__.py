@@ -1,8 +1,6 @@
-"""Python composition of the ``creative`` pipeline (0.23, T7).
+"""Python composition of the first-class ``creative`` pipeline.
 
-First-class creative pipeline replacing the legacy ``--mode creative``
-and ``--mode joke`` overlays on ``planning``. ``--form`` is a
-first-class input on the pipeline (validated against
+``--form`` is a first-class input on the pipeline (validated against
 :func:`megaplan.forms.available_form_ids` — the canonical registry the
 init handler also consults at ``megaplan/handlers/init.py:62-64``);
 ``--primary-criterion`` is a first-class creative-pipeline input (it is
@@ -17,17 +15,12 @@ non-creative modules — the creative pipeline imports from
 ``megaplan.forms`` like any other consumer; the package is NOT
 relocated. Provocations + director's-notes sidecar wiring lives in the
 per-stage prompt modules (relocated under
-``megaplan/pipelines/creative/prompts/`` in T8) and is preserved by
-passing the form id through to each stage's ``prompt_key`` (the
-PromptRegistry resolves form-specialised slots via the
-``<key>:<form>`` convention introduced in T8).
+``megaplan/pipelines/creative/prompts/``). The default joke form uses
+runnable joke-specialised prompt keys. Non-joke forms use the generic
+creative keys and pass the form id through stage params/state.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Mapping
 
 from megaplan.forms import available_form_ids
 from megaplan.types import CliError
@@ -35,15 +28,11 @@ from megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Stage,
-    StepContext,
-    StepResult,
 )
+from megaplan.pipelines.creative.steps import CreativeStep
 
 # Import the prompts sub-package for its register_pipeline_prompt side-effects.
 from megaplan.pipelines.creative import prompts as _prompts  # noqa: F401, E402
-
-
-_PIPELINE_DIR: Path = Path(__file__).parent / "creative"
 
 
 # ── Module-level metadata surfaced via PipelineRegistry ────────────────
@@ -58,39 +47,47 @@ supported_modes: tuple[str, ...] = ()
 recommended_profiles: tuple[str, ...] = ()
 
 
-# ── Stage step shells ─────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class _CreativeStep:
-    """Form-aware stage shell.
-
-    Each stage carries the form id and (optional) primary_criterion as
-    dataclass fields so that the prompt-rendering layer relocated in T8
-    can resolve form-specialised prompts via ``prompt_key`` lookups
-    keyed off ``{base_key}:{form}``. The shell here writes an empty
-    artifact placeholder so the pipeline can be exercised end-to-end
-    against a mocked worker (T9 test path).
-    """
-
-    name: str = ""
-    kind: str = "produce"
-    prompt_key: str | None = None
-    slot: str | None = None
-    form: str = ""
-    primary_criterion: str | None = None
-    next_label: str = "halt"
-
-    def run(self, ctx: StepContext) -> StepResult:
-        out_dir = Path(ctx.plan_dir) / self.name
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / "v1.md"
-        if not out.exists():
-            out.write_text("")
-        return StepResult(outputs={self.name: out}, next=self.next_label)
+STAGE_SPECS: tuple[tuple[str, str | None, str], ...] = (
+    ("prep", "prep", "execute_creative"),
+    ("execute_creative", "execute_creative", "critique_creative"),
+    ("critique_creative", "critique_creative", "revise_creative"),
+    ("revise_creative", "revise_creative", "finalize"),
+    ("finalize", None, "halt"),
+)
 
 
 # ── Pipeline assembly ──────────────────────────────────────────────────
+
+
+def _stage(
+    name: str,
+    *,
+    prompt_key: str | None,
+    next_label: str,
+    form: str,
+    primary_criterion: str | None,
+) -> Stage:
+    target = "halt" if next_label == "halt" else next_label
+    edges = () if next_label == "halt" else (Edge(label=next_label, target=target),)
+    return Stage(
+        name=name,
+        step=CreativeStep(
+            name=name,
+            prompt_key=prompt_key,
+            form=form,
+            primary_criterion=primary_criterion,
+            next_label=next_label,
+        ),
+        edges=edges,
+    )
+
+
+def _prompt_key_for_form(prompt_key: str | None, form: str) -> str | None:
+    if prompt_key is None:
+        return None
+    if form == "joke":
+        return f"{prompt_key}:joke"
+    return prompt_key
 
 
 def build_pipeline(
@@ -104,8 +101,8 @@ def build_pipeline(
     init handler stay aligned on the same registry.
 
     *primary_criterion*, when set, is threaded through to each stage as
-    a dataclass field so the relocated prompt modules (T8) can render
-    it into the form-specific prompt body.
+    a dataclass field so prompt modules can render it into the
+    form-specific prompt body.
 
     The default *form='joke'* keeps :func:`build_pipeline` callable
     with zero arguments — required so the pipeline registry's discovery
@@ -120,68 +117,18 @@ def build_pipeline(
             "invalid_args",
             f"Unknown creative form: {form!r}. Available: "
             f"{', '.join(valid_forms)}",
+            exit_code=2,
         )
 
-    common: Mapping[str, object] = {
-        "form": form,
-        "primary_criterion": primary_criterion,
-    }
-
-    stages: dict[str, Stage] = {
-        "prep": Stage(
-            name="prep",
-            step=_CreativeStep(
-                name="prep",
-                prompt_key=f"prep:{form}",
-                next_label="execute_creative",
-                **common,  # type: ignore[arg-type]
-            ),
-            edges=(Edge(label="execute_creative", target="execute_creative"),),
-        ),
-        "execute_creative": Stage(
-            name="execute_creative",
-            step=_CreativeStep(
-                name="execute_creative",
-                prompt_key=f"execute_creative:{form}",
-                next_label="critique_creative",
-                **common,  # type: ignore[arg-type]
-            ),
-            edges=(
-                Edge(label="critique_creative", target="critique_creative"),
-            ),
-        ),
-        "critique_creative": Stage(
-            name="critique_creative",
-            step=_CreativeStep(
-                name="critique_creative",
-                prompt_key=f"critique_creative:{form}",
-                next_label="revise_creative",
-                **common,  # type: ignore[arg-type]
-            ),
-            edges=(
-                Edge(label="revise_creative", target="revise_creative"),
-            ),
-        ),
-        "revise_creative": Stage(
-            name="revise_creative",
-            step=_CreativeStep(
-                name="revise_creative",
-                prompt_key=f"revise_creative:{form}",
-                next_label="finalize",
-                **common,  # type: ignore[arg-type]
-            ),
-            edges=(Edge(label="finalize", target="finalize"),),
-        ),
-        "finalize": Stage(
-            name="finalize",
-            step=_CreativeStep(
-                name="finalize",
-                prompt_key=None,
-                next_label="halt",
-                **common,  # type: ignore[arg-type]
-            ),
-            edges=(),
-        ),
+    stages = {
+        name: _stage(
+            name,
+            prompt_key=_prompt_key_for_form(prompt_key, form),
+            next_label=next_label,
+            form=form,
+            primary_criterion=primary_criterion,
+        )
+        for name, prompt_key, next_label in STAGE_SPECS
     }
 
     return Pipeline(stages=stages, entry="prep")

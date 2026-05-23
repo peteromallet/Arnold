@@ -16,8 +16,9 @@ Final artifact set under ``artifact_root`` is EXACTLY:
 
 The :class:`ParallelStage` ``join`` deliberately writes NO aggregate file
 (eliminates extra-artifact ambiguity vs. the brief's literal 3+1 count).
-The synthesize Step locates the three judge verdicts via paths injected
-into ``ctx.inputs`` by :func:`run_demo`.
+The synthesize Step locates the three judge verdicts via
+``StepResult.outputs['verdict']`` from each judge, passed through the
+state patch emitted by the ``judges`` join.
 """
 
 from __future__ import annotations
@@ -166,6 +167,7 @@ def _join_judges(results: list[StepResult], ctx: StepContext) -> StepResult:
     paths: list[str] = []
     scores: list[float] = []
     for r in results:
+        verdict_path = r.outputs["verdict"]
         name: str | None = None
         if r.verdict is not None:
             payload = r.verdict.payload
@@ -174,13 +176,11 @@ def _join_judges(results: list[StepResult], ctx: StepContext) -> StepResult:
                 if isinstance(value, str):
                     name = value
         if name is None:
-            verdict_path = next(iter(r.outputs.values()), None)
-            name = Path(verdict_path).parent.name if verdict_path else "unknown"
+            name = Path(verdict_path).parent.name
         score = float(r.verdict.score) if r.verdict is not None else 0.0
         judges[name] = score
         scores.append(score)
-        for p in r.outputs.values():
-            paths.append(str(p))
+        paths.append(str(verdict_path))
     mean = sum(scores) / len(scores) if scores else 0.0
     return StepResult(
         outputs={},
@@ -199,19 +199,17 @@ class Synthesize:
     slot = None
 
     def run(self, ctx: StepContext) -> StepResult:
-        verdict_paths = {
-            "judge_clarity": Path(ctx.inputs["verdict_clarity"]),
-            "judge_concreteness": Path(ctx.inputs["verdict_concreteness"]),
-            "judge_brevity": Path(ctx.inputs["verdict_brevity"]),
-        }
+        raw_paths = ctx.state.get("judge_verdict_paths", [])
+        verdict_paths = [Path(path) for path in raw_paths]
         scores: dict[str, float] = {}
         lines: list[str] = ["# Synthesis", ""]
-        for judge_name, vpath in verdict_paths.items():
+        for vpath in verdict_paths:
             data = json.loads(vpath.read_text())
+            judge_name = str(data.get("judge") or vpath.parent.name)
             score = float(data.get("score", 0.0))
             scores[judge_name] = score
             lines.append(f"- **{judge_name}**: {score:.4f}")
-        mean = sum(scores.values()) / len(scores)
+        mean = sum(scores.values()) / len(scores) if scores else 0.0
         lines.extend(
             [
                 "",
@@ -249,31 +247,18 @@ def build_pipeline() -> Pipeline:
 
 
 def run_demo(fixture_path: Path, artifact_root: Path) -> dict[str, Any]:
-    """Run the fan-out judges demo on ``fixture_path``, writing under ``artifact_root``.
-
-    Precomputes the three judge verdict paths and threads them into
-    ``ctx.inputs`` so the synthesize Step can locate them deterministically.
-    """
+    """Run the fan-out judges demo on ``fixture_path`` under ``artifact_root``."""
 
     fixture_path = Path(fixture_path)
     artifact_root = Path(artifact_root)
     artifact_root.mkdir(parents=True, exist_ok=True)
-    inputs: dict[str, Path] = {
-        "doc": fixture_path,
-        "verdict_clarity": artifact_root / "judges" / "judge_clarity" / "verdict.json",
-        "verdict_concreteness": artifact_root
-        / "judges"
-        / "judge_concreteness"
-        / "verdict.json",
-        "verdict_brevity": artifact_root / "judges" / "judge_brevity" / "verdict.json",
-    }
     pipeline = build_pipeline()
     ctx = StepContext(
         plan_dir=artifact_root,
         state={},
         profile=None,
         mode="demo",
-        inputs=inputs,
+        inputs={"doc": fixture_path},
         budget=None,
     )
     return run_pipeline(pipeline, ctx, artifact_root=artifact_root)
