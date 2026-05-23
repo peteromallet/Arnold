@@ -219,7 +219,10 @@ def test_auto_lifecycle_failure_emits_progress_without_losing_resume_cursor(tmp_
 
     assert outcome.status == "failed"
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["current_state"] == "failed"
+    # A driver-lifecycle exit (status lookup failed) records the failure + resume
+    # cursor for audit/retry but preserves the plan's actual current_state — the
+    # driver giving up does not itself terminate the plan.
+    assert state["current_state"] == "initialized"
     assert state["latest_failure"]["kind"] == "status_lookup_failed"
     assert state["resume_cursor"] == {"phase": "status", "retry_strategy": "rerun_status"}
     events = setup_store.list_progress_events(epic_id=epic.id, plan_id="demo")
