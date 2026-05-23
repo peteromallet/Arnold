@@ -24,7 +24,7 @@ import megaplan._core.io as io_module
 import megaplan.cli
 import megaplan.workers
 
-from megaplan._pipeline.planning import compile_pipeline_for
+from megaplan._pipeline.planning import compile_planning_pipeline
 from megaplan._pipeline.stages.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
@@ -135,7 +135,7 @@ def _drive_pipeline(
     revise_step = build_revise_step()
     review_step = build_review_step()
 
-    pipeline = compile_pipeline_for(robustness="robust")
+    pipeline = compile_planning_pipeline()
 
     state_payload: dict[str, Any] = {"name": plan_name}
     ctx_profile = {"root": root, "project_dir": project_dir}

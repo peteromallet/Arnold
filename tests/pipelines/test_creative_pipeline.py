@@ -8,9 +8,10 @@ Exercises the new first-class ``creative`` pipeline through the same
 Required assertions (per the batch sense check, SC9):
 
 (a) Form dispatch wires joke-specific prompts when ``--form joke`` —
-    the stage shells carry ``prompt_key=f"<base>:{form}"`` and the
-    ``creative/<base>:<form>`` slots are registered against the
-    PromptRegistry. ``--form poem`` routes to the poem slots instead.
+    the stage shells carry ``prompt_key=f"<base>:joke"`` and those
+    slots are registered against the PromptRegistry. ``--form poem``
+    routes to the generic creative slots while carrying poem metadata
+    in state/params.
 (b) Provocations sidecar + stance validation are wired in via the
     relocated prompt modules (``critique_creative`` imports
     ``select_active_checks`` from ``megaplan.forms.provocations`` and
@@ -26,6 +27,7 @@ Required assertions (per the batch sense check, SC9):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,8 @@ def _make_run_args(
     plan_dir: Path,
     state: dict[str, Any] | None = None,
     mode: str | None = None,
+    form: str | None = None,
+    primary_criterion: str | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         list_pipelines=False,
@@ -52,6 +56,8 @@ def _make_run_args(
         describe=False,
         resume_choice=None,
         vendor=None,
+        form=form,
+        primary_criterion=primary_criterion,
     )
 
 
@@ -73,29 +79,27 @@ def test_creative_form_joke_dispatches_joke_prompt_keys() -> None:
     assert stage_prompt_keys["finalize"] is None
 
 
-def test_creative_form_poem_dispatches_poem_prompt_keys() -> None:
+def test_creative_form_poem_dispatches_generic_prompt_keys() -> None:
     from megaplan.pipelines.creative import build_pipeline
 
     pipeline = build_pipeline(form="poem")
     stage_prompt_keys = {
         name: stage.step.prompt_key for name, stage in pipeline.stages.items()
     }
-    assert stage_prompt_keys["prep"] == "prep:poem"
-    assert stage_prompt_keys["execute_creative"] == "execute_creative:poem"
-    assert stage_prompt_keys["critique_creative"] == "critique_creative:poem"
-    assert stage_prompt_keys["revise_creative"] == "revise_creative:poem"
+    assert stage_prompt_keys["prep"] == "prep"
+    assert stage_prompt_keys["execute_creative"] == "execute_creative"
+    assert stage_prompt_keys["critique_creative"] == "critique_creative"
+    assert stage_prompt_keys["revise_creative"] == "revise_creative"
+    assert stage_prompt_keys["finalize"] is None
 
 
-def test_creative_pipeline_registers_form_specialised_prompt_slots() -> None:
-    """The relocated creative+joke prompt modules register their
-    renderers under both ``creative/<key>:joke`` (rule-1 lookup with
-    explicit mode) AND ``creative/<key>:joke`` as a literal key (rule-2
-    lookup; the creative pipeline's stage shells carry the form baked
-    into ``prompt_key`` as ``"<key>:<form>"``)."""
+def test_creative_pipeline_registers_generic_and_joke_prompt_slots() -> None:
+    """The creative prompt modules register generic and joke slots only."""
 
     # Force registration by importing the creative package.
     import megaplan.pipelines.creative  # noqa: F401
     from megaplan._pipeline.prompts import registered_keys
+    from megaplan.forms import available_form_ids
 
     keys = set(registered_keys())
     for base in ("prep", "execute_creative", "critique_creative", "revise_creative"):
@@ -109,6 +113,148 @@ def test_creative_pipeline_registers_form_specialised_prompt_slots() -> None:
             f"missing joke-specialised creative slot creative/{base}:joke; got "
             f"{sorted(k for k in keys if k.startswith('creative/'))}"
         )
+        for form_id in available_form_ids():
+            if form_id == "joke":
+                continue
+            assert f"creative/{base}:{form_id}" not in keys, (
+                f"non-joke form {form_id!r} should use generic creative/{base}, "
+                f"not a form-baked slot; got "
+                f"{sorted(k for k in keys if k.startswith('creative/'))}"
+            )
+
+
+def test_generic_creative_poem_prompts_render_from_fresh_state(
+    tmp_path: Path,
+) -> None:
+    import megaplan.pipelines.creative  # noqa: F401
+    from megaplan._pipeline.prompts import resolve_prompt
+    from megaplan._pipeline.types import StepContext
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state: dict[str, Any] = {
+        "idea": "write a small poem about a blue door",
+        "config": {
+            "mode": "creative",
+            "form": "poem",
+            "project_dir": str(project_dir),
+            "output_path": "poem.md",
+            "primary_criterion": "most surprising exact image",
+            "robustness": "standard",
+        },
+        "iteration": 1,
+    }
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state=state,
+        profile=None,
+        mode="creative",
+        inputs={"_pipeline": "creative"},
+    )
+
+    rendered: dict[str, str] = {}
+    artifacts: dict[str, str] = {}
+    for stage_name in ("prep", "execute_creative", "critique_creative", "revise_creative"):
+        stage_dir = plan_dir / stage_name
+        stage_dir.mkdir()
+        ctx = dataclasses.replace(
+            ctx,
+            state={**state, "_creative_artifacts": artifacts},
+            inputs={"_pipeline": "creative"},
+        )
+        assert ctx.inputs["_pipeline"] == "creative"
+        rendered[stage_name] = resolve_prompt(
+            ctx,
+            stage_name,
+            params={
+                "stage": stage_name,
+                "form": "poem",
+                "primary_criterion": "most surprising exact image",
+                "previous_artifacts": artifacts,
+            },
+        )
+        artifact = stage_dir / "v1.md"
+        artifact.write_text(rendered[stage_name], encoding="utf-8")
+        artifacts[stage_name] = str(artifact)
+
+    combined = "\n\n".join(rendered.values())
+    assert "Poem" in combined
+    assert "opening_image" in combined
+    assert "most surprising exact image" in combined
+    assert "joke-mode" not in rendered["prep"]
+    assert "comic" not in rendered["prep"].lower()
+    assert "laugh" not in rendered["prep"].lower()
+    assert "button" not in rendered["prep"].lower()
+    for forbidden in ("plan_versions", "finalize.json", "gate.json"):
+        assert forbidden not in combined
+
+
+def test_joke_specific_prompts_render_from_fresh_state_without_planning_artifacts(
+    tmp_path: Path,
+) -> None:
+    import megaplan.pipelines.creative  # noqa: F401
+    from megaplan._pipeline.prompts import resolve_prompt
+    from megaplan._pipeline.types import StepContext
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state: dict[str, Any] = {
+        "idea": "write a short scene about a haunted vending machine",
+        "config": {
+            "mode": "creative",
+            "form": "joke",
+            "project_dir": str(project_dir),
+            "primary_criterion": "weirdest coherent",
+            "robustness": "standard",
+        },
+        "iteration": 1,
+    }
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state=state,
+        profile=None,
+        mode="creative",
+        inputs={"_pipeline": "creative"},
+    )
+
+    rendered: dict[str, str] = {}
+    artifacts: dict[str, str] = {}
+    for prompt_key in (
+        "prep:joke",
+        "execute_creative:joke",
+        "critique_creative:joke",
+        "revise_creative:joke",
+    ):
+        ctx = dataclasses.replace(
+            ctx,
+            state={**state, "_creative_artifacts": artifacts},
+            inputs={"_pipeline": "creative"},
+        )
+        rendered[prompt_key] = resolve_prompt(
+            ctx,
+            prompt_key,
+            params={
+                "stage": prompt_key.split(":", 1)[0],
+                "form": "joke",
+                "primary_criterion": "weirdest coherent",
+                "previous_artifacts": artifacts,
+            },
+        )
+        artifact = plan_dir / f"{prompt_key.replace(':', '_')}.md"
+        artifact.write_text(rendered[prompt_key], encoding="utf-8")
+        artifacts[prompt_key] = str(artifact)
+
+    combined = "\n\n".join(rendered.values())
+    assert "Joke-form emphasis" in combined
+    assert "Joke-form critique pressure" in combined
+    assert "Joke-form revision pressure" in combined
+    assert "weirdest coherent" in combined
+    for forbidden in ("plan_versions", "finalize.json", "gate.json"):
+        assert forbidden not in combined
 
 
 # ── (b) Provocations sidecar + stance validation are wired in ────────────
@@ -214,9 +360,7 @@ def test_creative_pipeline_runs_through_cli_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """End-to-end smoke via ``cli_run`` — drives the creative pipeline
-    to its terminal ``finalize`` stage with the registry-default
-    ``form='joke'`` (registry discovery invokes ``build_pipeline()``
-    with no kwargs)."""
+    to its terminal ``finalize`` stage with the default ``form='joke'``."""
 
     from megaplan._pipeline import preflight as preflight_module
     from megaplan._pipeline.run_cli import cli_run
@@ -229,8 +373,8 @@ def test_creative_pipeline_runs_through_cli_run(
     plan_dir.mkdir(parents=True, exist_ok=True)
     args = _make_run_args(pipeline_name="creative", plan_dir=plan_dir)
     rc = cli_run(args)
-    assert rc == 0, f"cli_run('creative') returned non-zero exit code {rc}"
-    # Each placeholder stage wrote its v1.md artifact.
+    assert rc == 0, f"default cli_run('creative') returned non-zero exit code {rc}"
+    # Each stage wrote its rendered artifact and prompt snapshot.
     for stage_name in (
         "prep",
         "execute_creative",
@@ -240,4 +384,81 @@ def test_creative_pipeline_runs_through_cli_run(
     ):
         assert (plan_dir / stage_name / "v1.md").exists(), (
             f"missing artifact for stage {stage_name!r}"
+        )
+        assert (plan_dir / stage_name / "prompt_v1.md").exists(), (
+            f"missing rendered prompt for stage {stage_name!r}"
+        )
+
+    prep_prompt = (plan_dir / "prep" / "prompt_v1.md").read_text()
+    execute_prompt = (plan_dir / "execute_creative" / "prompt_v1.md").read_text()
+    critique_prompt = (plan_dir / "critique_creative" / "prompt_v1.md").read_text()
+    revise_prompt = (plan_dir / "revise_creative" / "prompt_v1.md").read_text()
+    assert "Prepare a concise scene-writing brief for the joke-mode task" in prep_prompt
+    assert "Joke-form emphasis" in execute_prompt
+    assert "Joke-form critique pressure" in critique_prompt
+    assert "Joke-form revision pressure" in revise_prompt
+    for prompt in (execute_prompt, critique_prompt, revise_prompt):
+        assert "finalize.json" not in prompt
+        assert "gate.json" not in prompt
+        assert "plan_versions" not in prompt
+    assert "## prep" in execute_prompt
+    assert "## execute_creative" in critique_prompt
+    assert "## critique_creative" in revise_prompt
+
+
+def test_creative_pipeline_cli_run_threads_form_and_primary_criterion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from megaplan._pipeline import preflight as preflight_module
+    from megaplan._pipeline.run_cli import cli_run
+
+    monkeypatch.setattr(
+        preflight_module, "preflight_or_raise", lambda *a, **kw: None
+    )
+
+    plan_dir = tmp_path / "creative-poem-cli-run"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    args = _make_run_args(
+        pipeline_name="creative",
+        plan_dir=plan_dir,
+        form="poem",
+        primary_criterion="most surprising exact image",
+    )
+    rc = cli_run(args)
+    assert rc == 0
+    state = json.loads((plan_dir / "state.json").read_text())
+    assert state["_pipeline_name"] == "creative"
+    assert state["config"]["form"] == "poem"
+    assert state["config"]["primary_criterion"] == "most surprising exact image"
+    assert set(state["_creative_artifacts"]) == {
+        "prep",
+        "execute_creative",
+        "critique_creative",
+        "revise_creative",
+        "finalize",
+    }
+    assert (plan_dir / "execute_creative" / "v1.md").exists()
+    rendered = (plan_dir / "execute_creative" / "v1.md").read_text()
+    assert "most surprising exact image" in rendered
+    prompt = (plan_dir / "execute_creative" / "prompt_v1.md").read_text()
+    assert "most surprising exact image" in prompt
+    assert "finalize.json" not in prompt
+    assert "gate.json" not in prompt
+
+
+def test_creative_run_builder_receives_cli_parameters() -> None:
+    from megaplan._pipeline.run_cli import _build_pipeline_for_run
+
+    args = _make_run_args(
+        pipeline_name="creative",
+        plan_dir=Path("unused"),
+        form="poem",
+        primary_criterion="most surprising exact image",
+    )
+    pipeline = _build_pipeline_for_run(args)
+    for stage in pipeline.stages.values():
+        assert getattr(stage.step, "form", None) == "poem"
+        assert (
+            getattr(stage.step, "primary_criterion", None)
+            == "most surprising exact image"
         )

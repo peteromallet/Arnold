@@ -27,12 +27,15 @@ ALL TESTS USE FAKE / MOCK TOOL HANDLERS.  No real model is ever invoked.
 from __future__ import annotations
 
 import asyncio
+import ast
 import atexit
 import contextvars
+import inspect
 import logging
 import os
 import sys
 import threading
+import textwrap
 import types
 from pathlib import Path
 from typing import Any
@@ -333,6 +336,18 @@ def test_root_logger_handlers_identical_objects_after_construction(
         assert after_handlers[idx] is bh, (
             f"Handler at index {idx} was replaced: {bh} → {after_handlers[idx]}"
         )
+
+
+def test_run_hermes_step_does_not_configure_logging_on_worker_hot_path() -> None:
+    """Worker execution must not mutate root logger setup per task."""
+    from megaplan.workers.hermes import run_hermes_step
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(run_hermes_step)))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "run_agent":
+            assert all(alias.name != "configure_logging" for alias in node.names)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            assert node.func.id != "configure_logging"
 
 
 # ---------------------------------------------------------------------------
@@ -835,16 +850,16 @@ def test_worker_async_loop_isolation() -> None:
     ``asyncio.new_event_loop()`` + ``asyncio.set_event_loop()`` or
     ``asyncio.run()`` (which creates a new loop internally).
     """
-    loop_ids: dict[int, int] = {}
+    loops_by_worker: dict[int, asyncio.AbstractEventLoop] = {}
 
     def _worker(idx: int) -> None:
         # Simulate what a worker thread does for an async tool call.
         # Using asyncio.run() creates a fresh loop every time.
         async def _fake_tool_call():
-            return id(asyncio.get_running_loop())
+            return asyncio.get_running_loop()
 
-        loop_id = asyncio.run(_fake_tool_call())
-        loop_ids[idx] = loop_id
+        loop = asyncio.run(_fake_tool_call())
+        loops_by_worker[idx] = loop
 
     num_workers = 5
     threads = [
@@ -856,27 +871,33 @@ def test_worker_async_loop_isolation() -> None:
     for t in threads:
         t.join(timeout=5)
 
-    # Every worker must have a distinct loop id
-    assert len(set(loop_ids.values())) == num_workers, (
-        f"Expected {num_workers} distinct event loops, got {len(set(loop_ids.values()))}: {loop_ids}"
+    assert len(loops_by_worker) == num_workers
+    loops = list(loops_by_worker.values())
+    assert all(
+        left is not right
+        for index, left in enumerate(loops)
+        for right in loops[index + 1:]
+    ), (
+        f"Expected {num_workers} distinct event loops, got ids: "
+        f"{ {idx: id(loop) for idx, loop in loops_by_worker.items()} }"
     )
 
 
 def test_worker_async_loop_not_persistent_across_calls() -> None:
     """The same thread calling async tool code twice must get two distinct
     event loops (no persistent loop reuse)."""
-    loop_ids: list[int] = []
+    loops: list[asyncio.AbstractEventLoop] = []
 
     async def _fake_tool_call():
-        return id(asyncio.get_running_loop())
+        return asyncio.get_running_loop()
 
     # First call
-    loop_ids.append(asyncio.run(_fake_tool_call()))
+    loops.append(asyncio.run(_fake_tool_call()))
     # Second call — must be a different loop
-    loop_ids.append(asyncio.run(_fake_tool_call()))
+    loops.append(asyncio.run(_fake_tool_call()))
 
-    assert loop_ids[0] != loop_ids[1], (
-        f"Same thread reused event loop across calls: {loop_ids[0]} == {loop_ids[1]}"
+    assert loops[0] is not loops[1], (
+        f"Same thread reused event loop across calls: {id(loops[0])} == {id(loops[1])}"
     )
 
 
@@ -900,15 +921,15 @@ def test_worker_async_loop_closes_after_call() -> None:
 
 def test_worker_async_loop_no_cross_thread_contamination() -> None:
     """An event loop created in thread A must never be visible in thread B."""
-    loop_from_a: int | None = None
-    loop_seen_in_b: list[int] = []
+    loop_from_a: asyncio.AbstractEventLoop | None = None
+    loop_seen_in_b: list[asyncio.AbstractEventLoop] = []
     ready = threading.Event()
     done = threading.Event()
 
     def _thread_a():
         nonlocal loop_from_a
         async def _tool():
-            return id(asyncio.get_running_loop())
+            return asyncio.get_running_loop()
         loop_from_a = asyncio.run(_tool())
         done.set()
 
@@ -916,7 +937,7 @@ def test_worker_async_loop_no_cross_thread_contamination() -> None:
         ready.wait()
         # Thread B gets its own loop
         async def _tool():
-            return id(asyncio.get_running_loop())
+            return asyncio.get_running_loop()
         my_loop = asyncio.run(_tool())
         loop_seen_in_b.append(my_loop)
 
@@ -933,6 +954,6 @@ def test_worker_async_loop_no_cross_thread_contamination() -> None:
 
     assert loop_from_a is not None
     assert len(loop_seen_in_b) == 1
-    assert loop_from_a != loop_seen_in_b[0], (
-        f"Event loop from thread A ({loop_from_a}) leaked into thread B ({loop_seen_in_b[0]})"
+    assert loop_from_a is not loop_seen_in_b[0], (
+        f"Event loop from thread A ({id(loop_from_a)}) leaked into thread B ({id(loop_seen_in_b[0])})"
     )

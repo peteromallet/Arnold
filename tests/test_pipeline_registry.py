@@ -25,7 +25,6 @@ from megaplan._pipeline import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
 )
 from megaplan._pipeline.registry import (
     PipelineRegistry,
@@ -88,22 +87,26 @@ def test_run_doc_critique_by_name_drives_to_done(tmp_path: Path) -> None:
 def test_run_judges_by_name_writes_fan_out_artifacts(tmp_path: Path) -> None:
     fixture = tmp_path / "doc.md"
     fixture.write_text("A short document for the judges to score together.")
+    artifact_root = tmp_path / "artifacts"
 
     run_pipeline_by_name(
         "judges",
-        plan_dir=tmp_path,
-        inputs={
-            "doc": fixture,
-            "verdict_clarity": tmp_path / "judges" / "judge_clarity" / "verdict.json",
-            "verdict_concreteness": tmp_path / "judges" / "judge_concreteness" / "verdict.json",
-            "verdict_brevity": tmp_path / "judges" / "judge_brevity" / "verdict.json",
-        },
+        plan_dir=artifact_root,
+        inputs={"doc": fixture},
         state={},
     )
 
-    # The judges pipeline writes 3 verdict.json + 1 synthesis.md.
-    assert len(list(tmp_path.rglob("verdict.json"))) == 3
-    assert len(list(tmp_path.rglob("synthesis.md"))) == 1
+    assert {
+        path.relative_to(artifact_root).as_posix()
+        for path in artifact_root.rglob("*")
+        if path.is_file()
+    } == {
+        "judges/judge_clarity/verdict.json",
+        "judges/judge_concreteness/verdict.json",
+        "judges/judge_brevity/verdict.json",
+        "synthesis/synthesis.md",
+        "state.json",
+    }
 
 
 # ---------------------------------------------------------------------------

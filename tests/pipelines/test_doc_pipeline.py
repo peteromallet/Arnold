@@ -23,7 +23,7 @@ Required assertions (per the batch sense check, SC6):
 The doc pipeline's stage shells write placeholder files (no real worker
 is invoked), so cli_run drives the pipeline end-to-end without needing
 a worker mock — the test pre-seeds ``<plan_dir>/outline/sections.json``
-so the ``_OutlineArtifactReader`` generator inside the SubloopStep
+so the ``OutlineArtifactReader`` generator inside the SubloopStep
 finds 3 specs and the fanout fires 3 times.
 """
 
@@ -97,8 +97,7 @@ def test_doc_pipeline_metadata_surfaces_through_registry() -> None:
 
     assert "doc" in registered_pipelines()
     meta = pipeline_metadata("doc")
-    # supported_modes is the empty tuple (doc has no modes — was code-mode
-    # under the legacy planning overlay).
+    # supported_modes is the empty tuple; doc has no mode variants.
     assert tuple(meta.get("supported_modes", ()) or ()) == ()
     description = meta.get("description") or ""
     assert isinstance(description, str) and description.strip(), description
@@ -131,13 +130,14 @@ def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
 ) -> None:
     """Pre-seeding outline/sections.json with 3 specs makes the
     ``dynamic_fanout`` SubloopStep fire its ``base_prompt`` (the
-    ``_SectionDraftStep``) exactly 3 times, producing 3 section files."""
+    ``SectionDraftStep``) exactly 3 times, producing 3 section files."""
 
-    from megaplan.pipelines.doc import build_pipeline, _SectionDraftStep
+    from megaplan.pipelines.doc import build_pipeline
+    from megaplan.pipelines.doc.steps import SectionDraftStep
 
     plan_dir = tmp_path / "doc-run"
     plan_dir.mkdir(parents=True, exist_ok=True)
-    # Pre-seed the outline artifact so _OutlineStep.run() does NOT
+    # Pre-seed the outline artifact so OutlineStep.run() does NOT
     # overwrite it (it only writes [] when the file is absent).
     outline_path = plan_dir / "outline" / "sections.json"
     outline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,11 +148,11 @@ def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
     ]
     outline_path.write_text(json.dumps(specs))
 
-    # Count base_prompt invocations by spying on _SectionDraftStep.run.
+    # Count base_prompt invocations by spying on SectionDraftStep.run.
     call_section_ids: list[str] = []
-    original_run = _SectionDraftStep.run
+    original_run = SectionDraftStep.run
 
-    def spy_run(self: _SectionDraftStep, ctx: Any) -> Any:  # noqa: ANN401
+    def spy_run(self: SectionDraftStep, ctx: Any) -> Any:  # noqa: ANN401
         call_section_ids.append(self.section_id)
         return original_run(self, ctx)
 
@@ -172,11 +172,11 @@ def test_doc_pipeline_fanout_invokes_base_prompt_per_section(
     )
     # Patch on the class so all specialised clones (via dataclasses.replace)
     # share the spied run().
-    _SectionDraftStep.run = spy_run  # type: ignore[assignment]
+    SectionDraftStep.run = spy_run  # type: ignore[assignment]
     try:
         run_pipeline(pipeline, ctx, artifact_root=plan_dir)
     finally:
-        _SectionDraftStep.run = original_run  # type: ignore[assignment]
+        SectionDraftStep.run = original_run  # type: ignore[assignment]
 
     assert call_section_ids == ["intro", "body", "conclusion"], (
         f"Expected 3 fanout invocations with intro/body/conclusion ids; "

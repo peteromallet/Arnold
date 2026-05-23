@@ -432,6 +432,89 @@ def test_auto_attribute_clean_worktree_keeps_missing_evidence(tmp_path: Path) ->
     assert _missing_code_task_evidence(finalize_data["tasks"]) == ["T1"]
 
 
+def test_auto_attribute_backfills_single_done_task_from_batch_metadata(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": []}
+        ]
+    }
+    payload = {
+        "files_changed": ["src/a.py"],
+        "commands_run": ["pytest -q"],
+        "task_updates": [{"task_id": "T1", "files_changed": [], "commands_run": []}],
+    }
+    deviations: list[str] = []
+    calls = 0
+
+    def snapshot(_project_dir: Path) -> tuple[dict[str, str], str | None]:
+        nonlocal calls
+        calls += 1
+        return {"src/a.py": "<hash>"}, None
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=snapshot,
+    )
+
+    assert calls == 0
+    assert finalize_data["tasks"][0]["files_changed"] == ["src/a.py"]
+    assert finalize_data["tasks"][0]["commands_run"] == ["pytest -q"]
+    assert payload["task_updates"][0]["files_changed"] == ["src/a.py"]
+    assert payload["task_updates"][0]["commands_run"] == ["pytest -q"]
+    assert "Backfilled batch-level metadata to task T1: 1 file(s), 1 command(s)" in deviations
+    assert result.records == [
+        {
+            "task_id": "T1",
+            "files": ["src/a.py"],
+            "commands": ["pytest -q"],
+            "ambiguous": False,
+            "source": "batch_payload",
+        }
+    ]
+    assert _missing_code_task_evidence(finalize_data["tasks"]) == []
+
+
+def test_auto_attribute_backfills_single_done_task_from_batch_commands_only(tmp_path: Path) -> None:
+    finalize_data = {
+        "tasks": [
+            {"id": "T1", "status": "done", "files_changed": [], "commands_run": []}
+        ]
+    }
+    payload = {
+        "files_changed": [],
+        "commands_run": ["pytest -q"],
+        "task_updates": [{"task_id": "T1", "files_changed": [], "commands_run": []}],
+    }
+    deviations: list[str] = []
+
+    result = _auto_attribute_unclaimed_paths(
+        project_dir=tmp_path,
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=["T1"],
+        issues=deviations,
+        capture_recursive_snapshot_fn=lambda _p: ({"unused.py": "<hash>"}, None),
+    )
+
+    assert finalize_data["tasks"][0]["files_changed"] == []
+    assert finalize_data["tasks"][0]["commands_run"] == ["pytest -q"]
+    assert payload["task_updates"][0]["commands_run"] == ["pytest -q"]
+    assert result.records == [
+        {
+            "task_id": "T1",
+            "files": [],
+            "commands": ["pytest -q"],
+            "ambiguous": False,
+            "source": "batch_payload",
+        }
+    ]
+    assert _missing_code_task_evidence(finalize_data["tasks"]) == []
+
+
 def test_auto_attribute_populated_files_changed_short_circuits(tmp_path: Path) -> None:
     finalize_data = {
         "tasks": [

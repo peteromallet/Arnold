@@ -154,18 +154,20 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
     plan = "active-plan"
     _make_plan_dir(tmp_path, plan)
     run_calls: list[list[str]] = []
+    poll_count = {"n": 0}
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
-        return _active_wait_status(plan_name, state="initialized", next_step="plan")
+        poll_count["n"] += 1
+        # Return "wait" for the first 3 polls so the driver exercises the
+        # healthy-wait branch, then transition to "done" to simulate the
+        # plan finishing on its own (without consuming iteration budget).
+        if poll_count["n"] <= 3:
+            return _active_wait_status(plan_name, state="initialized", next_step="plan")
+        return _done_status(plan_name)
 
     def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
         run_calls.append(list(args))
-        healthy_lock_payload = {
-            "success": False,
-            "error": "plan_locked",
-            "active_step": _active_wait_status(plan, state="initialized", next_step="plan")["active_step"],
-        }
-        return 1, json.dumps(healthy_lock_payload), ""
+        return 0, "{}", ""
 
     with patch.object(auto, "_status", side_effect=fake_status), \
          patch.object(auto, "_run_megaplan", side_effect=fake_run):
@@ -178,9 +180,13 @@ def test_auto_waits_for_healthy_active_step_instead_of_rerunning_phase(tmp_path:
             writer=lambda _m: None,
         )
 
-    assert outcome.status == "cap"
-    assert run_calls == []
-    assert any("still running" in event.get("msg", "") for event in outcome.events)
+    # The plan should complete normally (the healthy waits didn't consume
+    # the iteration budget, so the driver kept waiting until done).
+    assert outcome.status == "done", f"expected done, got {outcome.status}: {outcome.reason}"
+    assert run_calls == [], "driver should not have launched any phases"
+    assert any("still running" in event.get("msg", "") for event in outcome.events), (
+        "driver should have logged wait messages"
+    )
 
 
 def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> None:
@@ -772,7 +778,10 @@ def test_generic_execute_failure_uses_stall_path_not_fresh_retry(tmp_path: Path)
     assert len(calls) == 1
     assert all("--fresh" not in call for call in calls)
     state_data = json.loads((tmp_path / ".megaplan" / "plans" / plan / "state.json").read_text(encoding="utf-8"))
-    assert state_data["current_state"] == "blocked"
+    # Driver stall is a driver-lifecycle exit, not a plan failure — current_state
+    # is preserved so a future driver can pick up where work left off.
+    # Audit trail (latest_failure, resume_cursor) IS still recorded.
+    assert state_data["current_state"] != "blocked"
     assert state_data["latest_failure"]["kind"] == "stalled"
     assert state_data["resume_cursor"]["phase"] == "execute"
 
@@ -794,7 +803,9 @@ def test_phase_failure_persists_failure_before_next_status(tmp_path: Path) -> No
 
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert outcome.status == "failed"
-    assert state_data["current_state"] == "failed"
+    # Phase exiting with internal_error is a driver-lifecycle observation, not a
+    # plan-failure verdict — current_state is preserved. Audit trail IS recorded.
+    assert state_data["current_state"] != "failed"
     assert state_data["latest_failure"]["kind"] == "phase_failed"
     assert state_data["latest_failure"]["phase"] == "prep"
     assert state_data["latest_failure"]["metadata"]["exit_code"] == 7
@@ -1031,22 +1042,9 @@ def _write_blocked_execute_history(plan_dir: Path, deviations: list[str] | None 
 def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) -> None:
     plan = "worker-blocked-cap"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json with blocked_by_quality so the auto driver
-    # sees the structured outcome directly — replaces the old state.json
-    # history + execution_batch_*.json globbing path.
     from megaplan.orchestration.phase_result import Deviation
-    from tests.conftest import make_fake_phase_result
+    from tests.conftest import fake_run_with_phase_result
 
-    make_fake_phase_result(
-        plan_dir,
-        exit_kind="blocked_by_quality",
-        deviations=(
-            Deviation(
-                kind="quality_gate",
-                message="done tasks missing both files_changed and commands_run: T1, T2",
-            ),
-        ),
-    )
     # Also write execution_batch for last_artifact assertion
     (plan_dir / "execution_batch_1.json").write_text(
         json.dumps({"deviations": ["done tasks missing both files_changed and commands_run: T1, T2"]}),
@@ -1056,12 +1054,21 @@ def test_worker_blocked_after_max_retries_emits_terminal_status(tmp_path: Path) 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
-    def fake_run(args, cwd=None, timeout=None):
-        # Worker exits 0; PhaseResult on disk carries the exit_kind.
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(
+                 plan_dir,
+                 exit_kind="blocked_by_quality",
+                 deviations=(
+                     Deviation(
+                         kind="quality_gate",
+                         message="done tasks missing both files_changed and commands_run: T1, T2",
+                     ),
+                 ),
+             ),
+         ):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1124,32 +1131,30 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
     """
     plan = "execute-blocked-awaiting-human"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json with blocked_by_prereq + BlockedTask entries
-    # so the auto driver reads the structured outcome directly.
     from megaplan.orchestration.phase_result import BlockedTask
-    from tests.conftest import make_fake_phase_result
+    from tests.conftest import fake_run_with_phase_result
 
-    make_fake_phase_result(
-        plan_dir,
-        exit_kind="blocked_by_prereq",
-        blocked_tasks=(
-            BlockedTask(
-                task_id="T10",
-                reason="blocked",
-                notes="DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
-            ),
-        ),
-    )
     _write_blocked_task_update_batch(plan_dir)
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(
+                 plan_dir,
+                 exit_kind="blocked_by_prereq",
+                 blocked_tasks=(
+                     BlockedTask(
+                         task_id="T10",
+                         reason="blocked",
+                         notes="DEV_LIVE_UPDATE_CHANNEL_ID missing from .env.",
+                     ),
+                 ),
+             ),
+         ):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1186,20 +1191,17 @@ def test_execute_blocked_task_routes_to_awaiting_human_without_retry(
 def test_worker_blocked_does_not_loop_forever_with_zero_retries(tmp_path: Path) -> None:
     plan = "worker-blocked-zero"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json directly — auto driver reads it instead of
-    # state.json history / execution_batch globbing.
-    from tests.conftest import make_fake_phase_result
-
-    make_fake_phase_result(plan_dir, exit_kind="blocked_by_quality")
+    from tests.conftest import fake_run_with_phase_result
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return _execute_status(plan)
 
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(plan_dir, exit_kind="blocked_by_quality"),
+         ):
         outcome = drive(
             plan,
             cwd=tmp_path,
@@ -1216,24 +1218,63 @@ def test_worker_blocked_detection_skipped_when_execute_result_is_success(tmp_pat
     """A clean execute (result=success) must NOT trigger the worker_blocked path."""
     plan = "execute-success-no-blocked"
     plan_dir = _make_plan_dir(tmp_path, plan)
-    # Write phase_result.json with success exit_kind — auto driver reads it.
-    from tests.conftest import make_fake_phase_result
-
-    make_fake_phase_result(plan_dir, exit_kind="success")
+    from tests.conftest import fake_run_with_phase_result
     statuses = [_execute_status(plan), _done_status(plan)]
 
     def fake_status(plan_name: str, cwd=None, timeout=60):
         return statuses.pop(0)
 
-    def fake_run(args, cwd=None, timeout=None):
-        return 0, "", ""
-
     with patch.object(auto, "_status", side_effect=fake_status), \
-         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+         patch.object(
+             auto,
+             "_run_megaplan",
+             side_effect=fake_run_with_phase_result(plan_dir, exit_kind="success"),
+         ):
         outcome = drive(plan, cwd=tmp_path, poll_sleep=0, writer=lambda _m: None)
 
     assert outcome.status == "done"
     assert outcome.blocked_retries_used == 0
+
+
+def test_stale_phase_result_from_previous_phase_does_not_mask_failure(tmp_path: Path) -> None:
+    plan = "stale-phase-result"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(plan_dir, phase="critique", exit_kind="success")
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return {
+            "success": True,
+            "step": "status",
+            "plan": plan,
+            "state": "critiqued",
+            "iteration": 1,
+            "summary": "Plan is in state 'critiqued'.",
+            "next_step": "gate",
+            "valid_next": ["gate", "step"],
+        }
+
+    def fake_run(args, cwd=None, timeout=None):
+        return 1, "", "gate crashed before phase_result emission"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stall_threshold=1,
+            max_iterations=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert any(
+        event["msg"].startswith("phase 'gate' exited with internal_error")
+        and "gate crashed" in event["msg"]
+        for event in outcome.events
+    )
+    assert outcome.status in {"stalled", "cap"}
 
 
 def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step(tmp_path: Path) -> None:
@@ -1676,3 +1717,47 @@ def test_drive_escalates_to_force_proceed_after_max_add_note_attempts(
     # Outcome can be `done`/`stalled`/etc. depending on later flow; what
     # matters is that the loop did not stay stuck on add-note.
     assert outcome.status in {"done", "stalled", "failed", "aborted", "cap"}
+
+
+def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
+    from megaplan.orchestration.phase_result import ExternalError
+    from tests.conftest import fake_run_with_phase_result
+
+    plan = "external-error-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    phase_runner = fake_run_with_phase_result(
+        plan_dir,
+        exit_kind="external_error",
+        code=1,
+        stderr="provider failed",
+        external_error=ExternalError(
+            provider="deepseek",
+            error_kind="rate_limit",
+            message="429 Too Many Requests",
+            status_code=429,
+            retry_after_s=60.0,
+        ),
+    )
+    statuses = [_execute_status(plan), _done_status(plan)]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=phase_runner,
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _message: None,
+        )
+
+    assert any(
+        event.get("msg", "").startswith("phase 'execute' external_error [deepseek]")
+        for event in outcome.events
+    )

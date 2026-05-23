@@ -1133,6 +1133,48 @@ def test_update_session_state_creates_new_entry() -> None:
     assert entry["mode"] == "persistent"
 
 
+def test_update_session_state_preserves_token_snapshot_for_same_session() -> None:
+    existing = {
+        "codex_executor": {
+            "id": "sess-abc",
+            "mode": "persistent",
+            "last_total_tokens": {"input_tokens": 1000},
+        }
+    }
+    result = update_session_state(
+        "execute",
+        "codex",
+        "sess-abc",
+        mode="persistent",
+        refreshed=False,
+        existing_sessions=existing,
+    )
+    assert result is not None
+    _key, entry = result
+    assert entry["last_total_tokens"] == {"input_tokens": 1000}
+
+
+def test_update_session_state_does_not_copy_token_snapshot_to_new_session() -> None:
+    existing = {
+        "codex_executor": {
+            "id": "old-session",
+            "mode": "persistent",
+            "last_total_tokens": {"input_tokens": 1000},
+        }
+    }
+    result = update_session_state(
+        "execute",
+        "codex",
+        "new-session",
+        mode="persistent",
+        refreshed=True,
+        existing_sessions=existing,
+    )
+    assert result is not None
+    _key, entry = result
+    assert "last_total_tokens" not in entry
+
+
 # ---------------------------------------------------------------------------
 # validate_payload edge cases
 # ---------------------------------------------------------------------------
@@ -3186,6 +3228,144 @@ def test_codex_step_incremental_cost_within_session(
     assert second.cost_usd == pytest.approx(expected_second)
     # Cumulative bookkeeping advanced.
     assert state["sessions"][session_key]["last_total_tokens"]["input_tokens"] == 3000
+
+
+def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    codex_home = tmp_path / "codex_home_fresh"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    old_session = "old-review-session"
+    new_session = "new-review-session"
+    state["sessions"]["codex_planner"] = {"id": old_session}
+    _write_codex_rollout(
+        codex_home,
+        old_session,
+        {
+            "input_tokens": 900000,
+            "cached_input_tokens": 0,
+            "output_tokens": 90000,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 990000,
+        },
+    )
+    _write_codex_rollout(
+        codex_home,
+        new_session,
+        {
+            "input_tokens": 1000,
+            "cached_input_tokens": 0,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 1100,
+        },
+    )
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=f'{{"type":"thread.started","thread_id":"{new_session}"}}\n',
+            stderr="",
+            duration_ms=200,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=True,
+        )
+
+    assert result.session_id == new_session
+    assert result.prompt_tokens == 1000
+    assert result.completion_tokens == 100
+    assert state["sessions"]["codex_planner"]["id"] == new_session
+    assert state["sessions"]["codex_planner"]["last_total_tokens"]["input_tokens"] == 1000
+
+
+def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan._core.state import apply_session_update
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+
+    codex_home = tmp_path / "codex_home_apply"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    session_id = "session-apply-0001"
+    _write_codex_rollout(
+        codex_home,
+        session_id,
+        {
+            "input_tokens": 1000,
+            "cached_input_tokens": 0,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 1100,
+        },
+    )
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=f'{{"type":"thread.started","thread_id":"{session_id}"}}\n',
+            stderr="",
+            duration_ms=200,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=True,
+        )
+
+    apply_session_update(
+        state,
+        "plan",
+        "codex",
+        result.session_id,
+        mode="persistent",
+        refreshed=True,
+    )
+    assert state["sessions"]["codex_planner"]["last_total_tokens"]["input_tokens"] == 1000
 
 
 # =============================================================================

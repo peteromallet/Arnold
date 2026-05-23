@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from megaplan._pipeline.planning import compile_pipeline_for
+from megaplan._pipeline.planning import compile_planning_pipeline
 
 
 _PROFILE_DIR = Path(__file__).resolve().parent.parent / "megaplan" / "profiles"
@@ -67,7 +67,7 @@ def test_planning_pipeline_phase_names_are_slot_addressable() -> None:
     instances bind to slots by name, not by inventing a new taxonomy.
     """
 
-    pipeline = compile_pipeline_for(robustness="standard")
+    pipeline = compile_planning_pipeline()
     # Stages named after live phases — these are the ones a profile slot
     # would resolve a model for. Post-Sprint-5 the canonical Pipeline
     # uses phase-name stages.

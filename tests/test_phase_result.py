@@ -11,6 +11,7 @@ from megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,
     ExitKind,
+    ExternalError,
     PhaseResult,
     _emit_phase_result,
     atomic_write_phase_result,
@@ -501,3 +502,94 @@ class TestGenerateInvocationId:
     def test_unique_across_calls(self) -> None:
         ids = {generate_invocation_id() for _ in range(100)}
         assert len(ids) == 100, "expected unique IDs across calls"
+
+
+# ---------------------------------------------------------------------------
+# (8) ExternalError classification and transport
+# ---------------------------------------------------------------------------
+
+
+class TestExternalError:
+    def test_round_trip(self) -> None:
+        error = ExternalError(
+            provider="deepseek",
+            error_kind="rate_limit",
+            message="429 Too Many Requests",
+            status_code=429,
+            retry_after_s=30.0,
+            request_id="req_123",
+        )
+
+        restored = ExternalError.from_dict(error.to_dict())
+
+        assert restored == error
+
+    @pytest.mark.parametrize(
+        ("message", "kind", "status"),
+        [
+            ("429 Too Many Requests retry_after: 12", "rate_limit", 429),
+            ("402 Payment Required: insufficient balance", "balance", 402),
+            ("401 Unauthorized: invalid API key", "auth", 401),
+            ("HTTP 403 Forbidden", "auth", 403),
+            ("502 Bad Gateway from provider", "provider_failure", 502),
+            ("Connection timed out while contacting API", "network", None),
+        ],
+    )
+    def test_from_exception_classifies_external_failures(
+        self,
+        message: str,
+        kind: str,
+        status: int | None,
+    ) -> None:
+        error = ExternalError.from_exception(RuntimeError(message), provider="deepseek")
+
+        assert error is not None
+        assert error.provider == "deepseek"
+        assert error.error_kind == kind
+        assert error.status_code == status
+
+    def test_from_exception_does_not_match_incidental_rate_substrings(self) -> None:
+        assert ExternalError.from_exception(ValueError("failed to generate artifact")) is None
+
+    def test_phase_result_round_trip_with_external_error(self) -> None:
+        error = ExternalError(
+            provider="openrouter",
+            error_kind="auth",
+            message="bad key",
+            status_code=401,
+        )
+        result = PhaseResult(
+            phase="execute",
+            invocation_id="inv",
+            exit_kind=ExitKind.external_error.value,
+            external_error=error,
+        )
+
+        restored = PhaseResult.from_dict(result.to_dict())
+
+        assert restored.exit_kind == ExitKind.external_error.value
+        assert restored.external_error == error
+
+    def test_phase_result_guard_emits_external_error(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "meta": {"current_invocation_id": "inv"},
+                    "active_step": {"step": "execute"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(RuntimeError):
+            with phase_result_guard(plan_dir):
+                raise RuntimeError("429 Too Many Requests retry_after: 9")
+
+        result = read_phase_result(plan_dir)
+        assert result is not None
+        assert result.exit_kind == ExitKind.external_error.value
+        assert result.external_error is not None
+        assert result.external_error.error_kind == "rate_limit"
+        assert result.external_error.retry_after_s == 9.0
