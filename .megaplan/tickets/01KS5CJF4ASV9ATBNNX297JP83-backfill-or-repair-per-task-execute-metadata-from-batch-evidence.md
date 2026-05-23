@@ -10,7 +10,11 @@ tags:
 - observability
 codebase_id: null
 created_at: '2026-05-21T13:46:02.762926+00:00'
-last_edited_at: '2026-05-21T13:46:02.762926+00:00'
+last_edited_at: '2026-05-21T20:31:00+00:00'
+resolution_note: 'Reopened 2026-05-21: the previous fix only covered current-batch
+  payload attribution. Astrid M8 showed stale hollow task evidence already persisted
+  in finalize.json can continue to block recovery after later retry batches and quality
+  resolutions.'
 epics: []
 ---
 
@@ -43,3 +47,18 @@ Concrete evidence from this run:
 - Rework metadata block: `Done tasks missing both files_changed and commands_run: T2`.
 - Final repair pass summary: `T2 metadata repaired: files_changed=['sisypy/universal_checks.py'], commands_run populated` and `54 passed`.
 
+Additional evidence from Astrid timeline-event-sourcing M8 on 2026-05-21:
+
+- Plan: `milestone-8-migration-20260521-1713`.
+- PR: Astrid #20, branch `epic/timeline/m8-migration-tests`.
+- Execute had already completed `15/15` tasks and `7/7` batches.
+- `execution_batch_3.json` and `execution_checkpoint.json` were repaired for T9, but `finalize.json` still had T9 marked `done` with `files_changed: []` and `commands_run: []`.
+- `override recover-blocked` continued to fail because blocker construction and `validate_execution_evidence(finalize_data, ...)` read the stale hollow task from final evidence, not the repaired historical batch/checkpoint metadata.
+- Re-running `execute --retry-blocked-tasks` did not repair T9 because retry execution was scoped to later/current work; T9 was an earlier completed batch task.
+- The practical operator fix was to backfill T9 directly in `finalize.json` with `tests/timeline/test_backend_contract.py`, `tests/timeline/conftest.py`, and the passing pytest commands.
+
+Root tooling gap:
+
+- Evidence repair must reconcile stale hollow task records in `finalize.json`, not only the latest/current execution batch payload.
+- Recovery should distinguish implementation blockers from metadata-only blockers and provide a first-class repair path that updates the canonical final evidence artifact.
+- Quality blocker IDs can be regenerated for the same stale review claim after retries; recovery should dedupe semantically equivalent resolved quality blockers or verify stale claims against current file content before creating a new hard blocker.
