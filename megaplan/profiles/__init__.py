@@ -961,13 +961,26 @@ def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# Cross-vendor capability equivalents for model-pinned Claude specs. Claude
+# distinguishes Sonnet/Opus by model name; Codex (GPT-5.5) is a single model
+# distinguished by effort. These mirror the variable-codex routing table
+# (tier-4 sonnet == codex:medium, tier-5 opus == codex:high), so the routed
+# tier profiles (directed/partnered/premium) honour --vendor codex instead of
+# refusing on their Sonnet/Opus tier pins.
+_CLAUDE_MODEL_TO_CODEX_EFFORT: tuple[tuple[str, str], ...] = (
+    ("sonnet", "codex:medium"),
+    ("opus", "codex:high"),
+)
+
+
 def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     """Swap claude:X <-> codex:X to match ``target_vendor``.
 
     Non-premium specs (hermes, shannon) are returned unchanged.
     Effort-only and bare specs are swapped cleanly (claude:low → codex:low).
-    Explicit model pins raise ``vendor_swap_model_conflict`` because
-    a model like ``sonnet-4.6`` cannot be run on the other vendor.
+    A Claude model pin (sonnet/opus) maps to its Codex capability equivalent
+    (codex:medium / codex:high). Any other model pin raises
+    ``vendor_swap_model_conflict`` because it has no cross-vendor equivalent.
     """
     parsed = parse_agent_spec(spec)
     if parsed.agent not in _PREMIUM_VENDORS:
@@ -980,7 +993,17 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     # Effort-only → swap vendor, keep effort
     if parsed.model is None and parsed.effort is not None:
         return f"{target_vendor}:{parsed.effort}"
-    # Model pinned → cannot swap vendor
+    # Model pinned, no explicit effort → map by capability tier where a
+    # cross-vendor equivalent exists (claude sonnet/opus → codex effort). This
+    # is the routing-table form (e.g. "claude:claude-sonnet-4-6"). A pin that
+    # ALSO carries an effort (e.g. "claude:sonnet-4.6:high") is ambiguous —
+    # the capability map and the explicit effort can't both win — so it falls
+    # through to the conflict below.
+    if parsed.agent == "claude" and target_vendor == "codex" and parsed.effort is None:
+        model_l = parsed.model.lower()
+        for needle, codex_spec in _CLAUDE_MODEL_TO_CODEX_EFFORT:
+            if needle in model_l:
+                return codex_spec
     raise CliError(
         "vendor_swap_model_conflict",
         f"Vendor swap would overwrite explicit model pin '{parsed.model}' "
@@ -1282,6 +1305,13 @@ def apply_profile_expansion(
     profile_name = getattr(args, "profile", None)
     if profile_name is None and state is not None:
         profile_name = (state.get("config") or {}).get("profile")
+    if profile_name is None:
+        vendor_without_profile = getattr(args, "vendor", None)
+        if vendor_without_profile is None and state is not None:
+            vendor_without_profile = (state.get("config") or {}).get("vendor")
+        if vendor_without_profile in VALID_VENDORS:
+            profile_name = f"all-{vendor_without_profile}"
+            args.profile = profile_name
 
     profile_steps: set[str] = set()
     if profile_name:

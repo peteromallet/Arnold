@@ -116,11 +116,17 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
             "revise": DEEPSEEK_DIRECT,
         },
     ),
+    # directed-vendor-codex: --vendor codex now raises vendor_swap_model_conflict
+    # (tier_models.execute has pinned claude:claude-sonnet-4-6 / claude:claude-opus-4-7).
+    # This case has been removed from the success matrix; see
+    # test_directed_profile_flips_to_codex_under_vendor_codex in test_profiles.py.
     (
-        "directed-vendor-codex",
+        "directed-default-finalize-premium",
         "directed",
-        {"vendor": "codex"},
-        {"plan": "codex:low", "loop_plan": "codex:low", "critique": DEEPSEEK_DIRECT, "review": DEEPSEEK_DIRECT},
+        {},
+        # finalize is now claude:low (premium finalize).
+        {"plan": "claude:low", "loop_plan": "claude:low", "finalize": "claude:low",
+         "critique": DEEPSEEK_DIRECT, "review": DEEPSEEK_DIRECT},
     ),
     (
         "directed-depth-high",
@@ -153,18 +159,22 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
             "review": KIMI,
         },
     ),
+    # partnered-vendor-codex-depth-medium-critic-cross: --vendor codex on partnered
+    # now raises vendor_swap_model_conflict (tier_models.execute has pinned specs).
+    # Replaced with a partnered default entry that verifies finalize is now premium.
     (
-        "partnered-vendor-codex-depth-medium-critic-cross",
+        "partnered-default-finalize-premium",
         "partnered",
-        {"vendor": "codex", "depth": "medium", "critic": "cross"},
+        {},
         {
-            # Author phases: codex at the depth tier.
-            "plan": "codex:medium",
-            "revise": "codex:medium",
-            # Critic phases: vendor=codex, cross -> claude. Effort
-            # tier preserved from the profile's existing critic depth.
+            "plan": "claude:low",
             "critique": "claude:low",
+            "revise": "claude:low",
             "review": "claude:low",
+            # finalize is now claude:low (premium finalize).
+            "finalize": "claude:low",
+            "prep": DEEPSEEK_DIRECT,
+            "execute": DEEPSEEK_DIRECT,
         },
     ),
     (
@@ -193,15 +203,19 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
             "prep": "claude:low",
         },
     ),
+    # premium-vendor-codex: --vendor codex on premium now raises vendor_swap_model_conflict
+    # (tier_models.execute has pinned claude:claude-sonnet-4-6 / claude:claude-opus-4-7).
+    # Replaced with premium-depth-high to keep coverage of the premium profile dials.
     (
-        "premium-vendor-codex",
+        "premium-depth-high",
         "premium",
-        {"vendor": "codex"},
+        {"depth": "high"},
         {
-            "plan": "codex:low",
-            "critique": "codex:low",
-            "execute": "codex:low",
-            "review": "codex:low",
+            "plan": "claude:high",
+            "revise": "claude:high",
+            # Critic phases stay at existing :low (asymmetry principle).
+            "critique": "claude:low",
+            "review": "claude:low",
         },
     ),
     (
@@ -342,6 +356,10 @@ def test_handle_init_persists_full_dial_set_into_state(
 
     This is the "one place to look" check that args -> state -> downstream
     subprocess phases stays wired correctly.
+
+    Uses all-claude (flat, no tier_models) so --vendor codex can swap freely.
+    partnered/directed/premium tier_models now contain model-pinned specs that
+    block vendor swap (see test_profiles.py for those assertions).
     """
     _pin_user_config(tmp_path, monkeypatch)
 
@@ -354,7 +372,7 @@ def test_handle_init_persists_full_dial_set_into_state(
         root,
         _init_args(
             project_dir,
-            profile="partnered",
+            profile="all-claude",
             vendor="codex",
             depth="medium",
             critic="kimi",
@@ -366,7 +384,7 @@ def test_handle_init_persists_full_dial_set_into_state(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     config = state["config"]
 
-    assert config["profile"] == "partnered"
+    assert config["profile"] == "all-claude"
     assert config["vendor"] == "codex"
     assert config["critic"] == "kimi"
     assert config["depth"] == "medium"

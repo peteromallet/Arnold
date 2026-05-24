@@ -34,7 +34,7 @@ prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 revise                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+finalize              = "claude:low"
 execute               = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 feedback              = "claude:low"
 loop_plan             = "claude:low"
@@ -42,3 +42,10 @@ loop_execute          = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 review                = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 tiebreaker_researcher = "claude:low"
 tiebreaker_challenger = "claude:low"
+
+[profiles.directed.tier_models.execute]
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+4 = "claude:claude-sonnet-4-6"
+5 = "claude:claude-opus-4-7"

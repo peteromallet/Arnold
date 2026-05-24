@@ -35,7 +35,7 @@ def test_get_effective_returns_default(isolated_config_dir: Path) -> None:
 def test_max_critique_concurrency_default_covers_full_core_checks(
     isolated_config_dir: Path,
 ) -> None:
-    # The 'full' robustness tier defines 5 core sub-checks. A default fanout
+    # The 'full' robustness tier defines 6 core sub-checks. A default fanout
     # below that count forces serial batches and triples critique wall time
     # (see ticket 01KS03H13JWMVSED6V4584P1P3). Lock the default at the core
     # check count so a regression here can't quietly bring back the 25-min

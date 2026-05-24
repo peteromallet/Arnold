@@ -17,8 +17,11 @@ from megaplan.chain import (
     ChainState,
     MilestoneSpec,
     _commit_and_push_phase,
+    _command_env,
     _enable_auto_merge,
     _pr_state,
+    _run_command,
+    _should_retry_gh_without_env,
     _state_path_for,
     format_chain_status,
     load_chain_state,
@@ -1562,6 +1565,80 @@ def test_ensure_milestone_pr_skips_when_gh_missing(tmp_path: Path) -> None:
     run_command.assert_not_called()
 
 
+def test_command_env_clears_gh_token_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GH_TOKEN", "bad-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "other-bad-token")
+    monkeypatch.setenv("KEEP_ME", "yes")
+
+    env = _command_env(["gh", "pr", "view", "1"])
+
+    assert env is not None
+    assert "GH_TOKEN" not in env
+    assert "GITHUB_TOKEN" not in env
+    assert env["KEEP_ME"] == "yes"
+
+
+def test_command_env_leaves_non_gh_commands_on_default_env() -> None:
+    assert _command_env(["git", "status"]) is None
+
+
+def test_should_retry_gh_without_env_only_on_token_auth_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "bad-token")
+    auth_failure = subprocess.CompletedProcess(
+        ["gh", "pr", "view", "1"],
+        1,
+        "",
+        "HTTP 401: Bad credentials",
+    )
+    not_found = subprocess.CompletedProcess(
+        ["gh", "pr", "view", "1"],
+        1,
+        "",
+        "could not resolve to a PullRequest",
+    )
+
+    assert _should_retry_gh_without_env(["gh", "pr", "view", "1"], auth_failure)
+    assert not _should_retry_gh_without_env(["gh", "pr", "view", "1"], not_found)
+    assert not _should_retry_gh_without_env(["git", "status"], auth_failure)
+
+
+def test_run_command_retries_gh_auth_failure_without_env_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", "bad-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "other-bad-token")
+    calls: list[dict[str, object]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                "",
+                "HTTP 401: Bad credentials",
+            )
+        env = kwargs.get("env")
+        assert isinstance(env, dict)
+        assert "GH_TOKEN" not in env
+        assert "GITHUB_TOKEN" not in env
+        return subprocess.CompletedProcess(cmd, 0, '{"state":"MERGED"}', "")
+
+    with patch("megaplan.chain.subprocess.run", side_effect=fake_run):
+        proc = _run_command(
+            tmp_path,
+            ["gh", "pr", "view", "1"],
+            writer=lambda _m: None,
+        )
+
+    assert proc.returncode == 0
+    assert len(calls) == 2
+    assert "env" not in calls[0]
+
+
 def test_checkout_milestone_branch_starts_from_configured_base_branch(tmp_path: Path) -> None:
     from megaplan.chain import _checkout_milestone_branch
 
@@ -1896,6 +1973,75 @@ def test_run_chain_review_policy_awaits_and_resumes_after_pr_merge(tmp_path: Pat
     saved = load_chain_state(spec_path)
     assert saved.current_milestone_index == 2
     assert [item["label"] for item in saved.completed] == ["m1", "m2"]
+
+
+def test_run_chain_reconciles_terminal_completed_pr_state(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea)}]},
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=1,
+            current_plan_name=None,
+            last_state="done",
+            completed=[
+                {
+                    "label": "m1",
+                    "plan": "plan-m1",
+                    "status": "done",
+                    "pr_number": 16,
+                    "pr_state": "draft",
+                }
+            ],
+        ),
+    )
+
+    with patch("megaplan.chain._pr_state", return_value="merged") as pr_state:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, one=True)
+
+    assert result["status"] == "done"
+    pr_state.assert_called_once_with(tmp_path, 16, writer=ANY)
+    saved = load_chain_state(spec_path)
+    assert saved.completed[0]["pr_state"] == "merged"
+
+
+def test_run_chain_terminal_pr_reconcile_failure_is_non_fatal(tmp_path: Path) -> None:
+    idea = _touch_idea(tmp_path, "m1.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "m1", "idea": str(idea)}]},
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=1,
+            last_state="done",
+            completed=[
+                {
+                    "label": "m1",
+                    "plan": "plan-m1",
+                    "status": "done",
+                    "pr_number": 16,
+                    "pr_state": "draft",
+                }
+            ],
+        ),
+    )
+    messages: list[str] = []
+
+    with patch(
+        "megaplan.chain._pr_state",
+        side_effect=CliError("gh_pr_view_failed", "gh failed"),
+    ):
+        result = run_chain(spec_path, tmp_path, writer=messages.append, one=True)
+
+    assert result["status"] == "done"
+    assert "terminal PR reconciliation skipped" in "".join(messages)
+    saved = load_chain_state(spec_path)
+    assert saved.completed[0]["pr_state"] == "draft"
 
 
 # ---------------------------------------------------------------------------
