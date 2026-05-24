@@ -385,6 +385,25 @@ _BLOCKED_RECOVERY_STATES: dict[str, str] = {
 }
 
 
+_EXTERNAL_ERROR_RETRY_STRATEGIES = {"wait_and_retry", "check_provider_and_retry"}
+
+
+def _external_error_requires_resume(
+    state: PlanState,
+    resume_cursor: dict[str, Any],
+    phase_result: Any | None,
+) -> bool:
+    latest_failure = state.get("latest_failure")
+    if (
+        isinstance(latest_failure, dict)
+        and latest_failure.get("kind") == "external_error"
+    ):
+        return True
+    if getattr(phase_result, "exit_kind", None) == "external_error":
+        return True
+    return resume_cursor.get("retry_strategy") in _EXTERNAL_ERROR_RETRY_STRATEGIES
+
+
 def _override_recover_blocked(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
@@ -421,6 +440,28 @@ def _override_recover_blocked(
     finalize_path = plan_dir / "finalize.json"
     finalize_data = read_json(finalize_path) if finalize_path.exists() else {}
     phase_result = read_phase_result(plan_dir)
+    if _external_error_requires_resume(state, resume_cursor, phase_result):
+        plan_name = state.get("name") or getattr(args, "plan", None) or plan_dir.name
+        resume_command = f"megaplan resume --plan {plan_name}"
+        raise CliError(
+            "external_error_resume_required",
+            (
+                "recover-blocked is for explicit task or quality blockers. "
+                "This blocked plan stopped on an external provider error; "
+                f"fix provider/profile settings if needed, then run `{resume_command}`."
+            ),
+            extra={
+                "resume_cursor": resume_cursor,
+                "phase_result_exit_kind": (
+                    getattr(phase_result, "exit_kind", None)
+                    if phase_result is not None
+                    else None
+                ),
+                "latest_failure": state.get("latest_failure"),
+                "resume_command": resume_command,
+                "suggested_recovery_commands": [resume_command],
+            },
+        )
     if phase_result is None:
         raise CliError(
             "missing_phase_result",

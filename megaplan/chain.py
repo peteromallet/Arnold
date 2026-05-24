@@ -77,6 +77,8 @@ from megaplan.profiles import (
     VALID_CRITIC_CHOICES,
     VALID_DEEPSEEK_PROVIDER_CHOICES,
     VALID_DEPTH_CHOICES,
+    _resolve_default_vendor,
+    load_profile_metadata,
 )
 from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED
 
@@ -1454,6 +1456,12 @@ def _init_plan(
     writer,
 ) -> str:
     """Run `megaplan init --idea-file ...` and return the plan name."""
+    _warn_vendor_ignored_for_locked_profile(
+        root,
+        profile=profile,
+        vendor=vendor,
+        writer=writer,
+    )
     args = [sys.executable, "-m", "megaplan", "init", "--project-dir", str(root)]
     if auto_approve:
         args.append("--auto-approve")
@@ -1496,6 +1504,38 @@ def _init_plan(
         raise CliError("init_failed", "megaplan init did not return a plan name")
     writer(f"[chain] launched plan={plan}\n")
     return plan
+
+
+def _warn_vendor_ignored_for_locked_profile(
+    root: Path,
+    *,
+    profile: str | None,
+    vendor: str | None,
+    writer,
+) -> None:
+    if not profile:
+        return
+    try:
+        metadata = load_profile_metadata(project_dir=root)
+    except Exception:
+        return
+    if not bool((metadata.get(profile) or {}).get("vendor_locked", False)):
+        return
+    effective_vendor = vendor
+    inherited = False
+    if effective_vendor is None:
+        try:
+            effective_vendor = _resolve_default_vendor()
+            inherited = True
+        except Exception:
+            effective_vendor = None
+    if effective_vendor not in VALID_VENDORS:
+        return
+    source = "inherited " if inherited else ""
+    writer(
+        f"[chain] WARNING: profile {profile} is vendor-locked; "
+        f"{source}vendor={effective_vendor} is ignored.\n"
+    )
 
 
 def _drive_plan(

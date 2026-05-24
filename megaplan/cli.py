@@ -454,6 +454,25 @@ def _unique_strings(values: list[str]) -> list[str]:
     return sorted({value for value in values if value})
 
 
+def _external_error_resume_command(state: dict[str, Any]) -> str | None:
+    if state.get("current_state") != STATE_BLOCKED:
+        return None
+    latest_failure = state.get("latest_failure")
+    resume_cursor = state.get("resume_cursor")
+    if not isinstance(latest_failure, dict):
+        return None
+    if latest_failure.get("kind") != "external_error":
+        return None
+    if not isinstance(resume_cursor, dict) or not isinstance(
+        resume_cursor.get("phase"), str
+    ):
+        return None
+    plan_name = state.get("name")
+    if not isinstance(plan_name, str) or not plan_name:
+        return None
+    return f"resume --plan {plan_name}"
+
+
 def _build_blocker_recovery_context(
     plan_dir: Path,
     finalize_data: dict[str, Any],
@@ -998,6 +1017,20 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
             response["suggested_recovery_commands"] = blocker_recovery[
                 "suggested_commands"
             ]
+    external_resume_command = _external_error_resume_command(state)
+    if external_resume_command is not None:
+        response["external_error_recovery"] = {
+            "recommended_action": "resume",
+            "resume_cursor": state.get("resume_cursor"),
+            "latest_failure": state.get("latest_failure"),
+            "suggested_commands": [external_resume_command],
+        }
+        response["suggested_recovery_commands"] = _unique_strings(
+            [
+                *response.get("suggested_recovery_commands", []),
+                external_resume_command,
+            ]
+        )
     runtime = build_next_step_runtime(
         response.get("next_step"),
         configured_timeout_seconds=int(
