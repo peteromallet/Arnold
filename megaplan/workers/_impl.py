@@ -56,6 +56,7 @@ from megaplan.prompts import (
     create_hermes_prompt,
     _resolve_prompt_root,
 )
+from megaplan.runtime.process import TmuxSession, kill_group, spawn
 
 
 _EXECUTE_STEPS = {"execute", "loop_execute"}
@@ -310,48 +311,7 @@ def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
-    """SIGTERM the subprocess's whole process group, escalate to SIGKILL after grace.
 
-    Worker subprocesses are launched with ``start_new_session=True`` so the
-    immediate child is the leader of its own process group (pgid == pid). The
-    stall/timeout watchdog must signal the whole group so shannon/bun/claude
-    grandchildren are reaped too. A bare ``process.kill()`` would only reap the
-    immediate shannon node wrapper and leave the bun runtime and tmux-attached
-    claude CLI as orphans (reparented to PID 1) holding the persistent
-    ``--resume <session-id>`` lease.
-    """
-
-    if process.poll() is not None:
-        return
-    try:
-        pgid = os.getpgid(process.pid)
-    except (ProcessLookupError, OSError):
-        # Already gone or platform without getpgid; fall back to plain kill.
-        try:
-            process.kill()
-            process.wait(timeout=1)
-        except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
-            pass
-        return
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            return
-        time.sleep(0.1)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, OSError):
-        pass
-    try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        # Group has had SIGKILL delivered; caller proceeds.
-        pass
 
 
 def run_command(
@@ -364,36 +324,239 @@ def run_command(
     activity_callback: Callable[[str, str], None] | None = None,
     idle_timeout: float | None = None,
     pre_first_byte_timeout: float | None = None,
+    tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
-    started = time.monotonic()
-    timeout = timeout or get_effective("execution", "worker_timeout_seconds")
-    if activity_callback is None:
+    try:
+        started = time.monotonic()
+        timeout = timeout or get_effective("execution", "worker_timeout_seconds")
+        if activity_callback is None:
+            try:
+                process = subprocess.run(
+                    command,
+                    input=stdin_text,
+                    text=True,
+                    cwd=str(cwd),
+                    capture_output=True,
+                    timeout=timeout,
+                    env=env,
+                )
+            except subprocess.TimeoutExpired as exc:
+                def _coerce_timeout_output(value: str | bytes | None) -> str:
+                    if value is None:
+                        return ""
+                    if isinstance(value, bytes):
+                        return value.decode("utf-8", errors="replace")
+                    return value
+
+                raise CliError(
+                    "worker_timeout",
+                    f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                    extra={
+                        "raw_output": _coerce_timeout_output(exc.output)
+                        + _coerce_timeout_output(exc.stderr)
+                    },
+                ) from exc
+            except FileNotFoundError as exc:
+                raise CliError(
+                    "agent_not_found",
+                    f"Command not found: {command[0]}",
+                ) from exc
+            return CommandResult(
+                command=command,
+                cwd=cwd,
+                returncode=process.returncode,
+                stdout=process.stdout or "",
+                stderr=process.stderr or "",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
         try:
-            process = subprocess.run(
+            process = spawn(
                 command,
-                input=stdin_text,
-                text=True,
                 cwd=str(cwd),
-                capture_output=True,
-                timeout=timeout,
+                stdin=subprocess.PIPE if stdin_text is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 env=env,
             )
-        except subprocess.TimeoutExpired as exc:
-            def _coerce_timeout_output(value: str | bytes | None) -> str:
-                if value is None:
-                    return ""
-                if isinstance(value, bytes):
-                    return value.decode("utf-8", errors="replace")
-                return value
+            stdout_parts: list[bytes] = []
+            stderr_parts: list[bytes] = []
 
-            raise CliError(
-                "worker_timeout",
-                f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
-                extra={
-                    "raw_output": _coerce_timeout_output(exc.output)
-                    + _coerce_timeout_output(exc.stderr)
-                },
-            ) from exc
+            # Idle-output watchdog state. Updated ONLY on real stdout/stderr chunks
+            # (never by the liveness heartbeat) so a stalled-but-alive subprocess is
+            # detected while a healthy, actively-streaming call keeps resetting it.
+            # ``last_output`` is a single-element list so the reader closures can
+            # mutate it without a nonlocal declaration.
+            last_output = [time.monotonic()]
+            # Pre-first-byte watchdog state: distinct from idle_timeout. Set True
+            # the moment any real stdout/stderr chunk arrives. The liveness
+            # heartbeat does NOT flip this — that's the entire point: a wedged
+            # codex subprocess produces zero output but keeps the heartbeat
+            # ticking, which masks the stall. See diagnostic
+            # /tmp/codex_wedge_diagnostic.md.
+            first_byte_seen = [False]
+
+            def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
+                if stream is None:
+                    return
+                # Use read1() so we deliver bytes as soon as the OS makes them
+                # available (one underlying read) rather than blocking until a full
+                # 4096-byte buffer fills. The plain read(4096) would not return until
+                # the pipe accumulated 4096 bytes OR closed, so a worker streaming
+                # small frames (e.g. shannon JSON deltas) would surface NO activity
+                # mid-stream — both starving the liveness/activity callback and
+                # hiding genuine progress from the idle-output watchdog below.
+                # read1() falls back to read() for any stream lacking it.
+                reader = getattr(stream, "read1", None) or stream.read
+                while True:
+                    chunk = reader(4096)
+                    if not chunk:
+                        break
+                    last_output[0] = time.monotonic()
+                    first_byte_seen[0] = True
+                    parts.append(chunk)
+                    if activity_callback is not None:
+                        activity_callback(kind, chunk.decode("utf-8", errors="replace"))
+
+            threads = [
+                threading.Thread(target=_reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
+                threading.Thread(target=_reader, args=(process.stderr, stderr_parts, "stderr"), daemon=True),
+            ]
+            # Liveness heartbeat: some subprocess workers (notably ``codex exec``)
+            # can run a single long task while emitting nothing on stdout/stderr for
+            # many minutes — a tool turn or a stalled-then-resuming network call.
+            # The reader-driven ``activity_callback`` only fires on output, so a
+            # provably-alive worker would otherwise look idle and trip the outer
+            # `megaplan auto` idle-timeout, killing the whole phase. Emit a periodic
+            # liveness signal while the process is alive so that watchdog sees a
+            # heartbeat. The callback is rate-limited and routes to
+            # ``touch_active_step`` (bumping state.json mtime, which the auto driver
+            # recognizes as activity); this is a no-op for the in-process hermes path
+            # and for any worker whose activity_callback is None.
+            heartbeat_stop = threading.Event()
+
+            def _heartbeat() -> None:
+                while not heartbeat_stop.wait(5.0):
+                    if process.poll() is not None:
+                        return
+                    try:
+                        activity_callback("liveness", "worker subprocess alive")
+                    except Exception:
+                        pass
+
+            threads.append(threading.Thread(target=_heartbeat, daemon=True))
+            for thread in threads:
+                thread.start()
+            if process.stdin is not None and stdin_text is not None:
+                process.stdin.write(stdin_text.encode("utf-8"))
+                process.stdin.close()
+
+            def _coerce_timeout_output(parts: list[bytes]) -> str:
+                return b"".join(parts).decode("utf-8", errors="replace")
+
+            # When the caller opts in to the idle-output watchdog (e.g. the shannon
+            # worker) OR the pre-first-byte watchdog (e.g. the codex worker), poll
+            # process.wait() in short slices so we can also enforce those bounds
+            # between slices. When both timeouts are None (no watchdog opt-in),
+            # this collapses to the original single process.wait(timeout=timeout)
+            # — no behavioral change for those callers.
+            first_byte_deadline = (
+                started + pre_first_byte_timeout
+                if pre_first_byte_timeout is not None
+                else None
+            )
+            if idle_timeout is not None or first_byte_deadline is not None:
+                deadline = started + timeout
+                try:
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(command, timeout)
+                        # Poll on at most a 1s slice so both watchdogs fire promptly.
+                        wait_slice = min(1.0, remaining)
+                        try:
+                            returncode = process.wait(timeout=wait_slice)
+                            break
+                        except subprocess.TimeoutExpired:
+                            # Still running: check the pre-first-byte bound first.
+                            # Only real stdout/stderr flips first_byte_seen; the
+                            # heartbeat explicitly does not, so a wedged subprocess
+                            # that produces zero bytes will trip this even while
+                            # heartbeats keep ``state.json`` mtime fresh.
+                            if (
+                                first_byte_deadline is not None
+                                and not first_byte_seen[0]
+                                and time.monotonic() > first_byte_deadline
+                            ):
+                                kill_group(process)
+                                returncode = process.poll() if process.poll() is not None else -1
+                                heartbeat_stop.set()
+                                for thread in threads:
+                                    thread.join(timeout=1)
+                                raise CliError(
+                                    "codex_pre_first_byte_stall",
+                                    (
+                                        f"Worker produced no output before pre-first-byte "
+                                        f"deadline ({pre_first_byte_timeout:.0f}s); "
+                                        f"likely codex wedge at startup: "
+                                        f"{' '.join(command[:3])}..."
+                                    ),
+                                    extra={
+                                        "raw_output": _coerce_timeout_output(stdout_parts)
+                                        + _coerce_timeout_output(stderr_parts)
+                                    },
+                                )
+                            # Then the idle-output bound. Only real stdout/stderr
+                            # resets last_output; the heartbeat does not.
+                            if (
+                                idle_timeout is not None
+                                and time.monotonic() - last_output[0] > idle_timeout
+                            ):
+                                kill_group(process)
+                                returncode = process.poll() if process.poll() is not None else -1
+                                heartbeat_stop.set()
+                                for thread in threads:
+                                    thread.join(timeout=1)
+                                raise CliError(
+                                    "worker_stall",
+                                    (
+                                        f"Worker produced no output for {idle_timeout:.0f}s "
+                                        f"(stalled stream): {' '.join(command[:3])}..."
+                                    ),
+                                    extra={
+                                        "raw_output": _coerce_timeout_output(stdout_parts)
+                                        + _coerce_timeout_output(stderr_parts)
+                                    },
+                                )
+                            continue
+                except subprocess.TimeoutExpired as exc:
+                    kill_group(process)
+                    returncode = process.poll() if process.poll() is not None else -1
+                    heartbeat_stop.set()
+                    for thread in threads:
+                        thread.join(timeout=1)
+                    raise CliError(
+                        "worker_timeout",
+                        f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                        extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
+                    ) from exc
+            else:
+                try:
+                    returncode = process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired as exc:
+                    kill_group(process)
+                    returncode = process.poll() if process.poll() is not None else -1
+                    heartbeat_stop.set()
+                    for thread in threads:
+                        thread.join(timeout=1)
+                    raise CliError(
+                        "worker_timeout",
+                        f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                        extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
+                    ) from exc
+            heartbeat_stop.set()
+            for thread in threads:
+                thread.join(timeout=1)
         except FileNotFoundError as exc:
             raise CliError(
                 "agent_not_found",
@@ -402,221 +565,14 @@ def run_command(
         return CommandResult(
             command=command,
             cwd=cwd,
-            returncode=process.returncode,
-            stdout=process.stdout or "",
-            stderr=process.stderr or "",
+            returncode=returncode,
+            stdout=b"".join(stdout_parts).decode("utf-8", errors="replace"),
+            stderr=b"".join(stderr_parts).decode("utf-8", errors="replace"),
             duration_ms=int((time.monotonic() - started) * 1000),
         )
-
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=str(cwd),
-            stdin=subprocess.PIPE if stdin_text is not None else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            # POSIX session isolation: make this subprocess the leader of a new
-            # process group (pgid == pid). The watchdog below kills the whole
-            # group, which is the only way to reach shannon/bun/claude
-            # grandchildren whose stdio is wired to a tmux pane rather than to
-            # this parent's pipes. Without start_new_session, process.kill()
-            # only reaps the immediate shannon node wrapper; the bun runtime
-            # and the tmux-attached claude CLI survive as orphans and keep
-            # holding the persistent --resume <session-id> lease.
-            start_new_session=True,
-        )
-        stdout_parts: list[bytes] = []
-        stderr_parts: list[bytes] = []
-
-        # Idle-output watchdog state. Updated ONLY on real stdout/stderr chunks
-        # (never by the liveness heartbeat) so a stalled-but-alive subprocess is
-        # detected while a healthy, actively-streaming call keeps resetting it.
-        # ``last_output`` is a single-element list so the reader closures can
-        # mutate it without a nonlocal declaration.
-        last_output = [time.monotonic()]
-        # Pre-first-byte watchdog state: distinct from idle_timeout. Set True
-        # the moment any real stdout/stderr chunk arrives. The liveness
-        # heartbeat does NOT flip this — that's the entire point: a wedged
-        # codex subprocess produces zero output but keeps the heartbeat
-        # ticking, which masks the stall. See diagnostic
-        # /tmp/codex_wedge_diagnostic.md.
-        first_byte_seen = [False]
-
-        def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
-            if stream is None:
-                return
-            # Use read1() so we deliver bytes as soon as the OS makes them
-            # available (one underlying read) rather than blocking until a full
-            # 4096-byte buffer fills. The plain read(4096) would not return until
-            # the pipe accumulated 4096 bytes OR closed, so a worker streaming
-            # small frames (e.g. shannon JSON deltas) would surface NO activity
-            # mid-stream — both starving the liveness/activity callback and
-            # hiding genuine progress from the idle-output watchdog below.
-            # read1() falls back to read() for any stream lacking it.
-            reader = getattr(stream, "read1", None) or stream.read
-            while True:
-                chunk = reader(4096)
-                if not chunk:
-                    break
-                last_output[0] = time.monotonic()
-                first_byte_seen[0] = True
-                parts.append(chunk)
-                if activity_callback is not None:
-                    activity_callback(kind, chunk.decode("utf-8", errors="replace"))
-
-        threads = [
-            threading.Thread(target=_reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
-            threading.Thread(target=_reader, args=(process.stderr, stderr_parts, "stderr"), daemon=True),
-        ]
-        # Liveness heartbeat: some subprocess workers (notably ``codex exec``)
-        # can run a single long task while emitting nothing on stdout/stderr for
-        # many minutes — a tool turn or a stalled-then-resuming network call.
-        # The reader-driven ``activity_callback`` only fires on output, so a
-        # provably-alive worker would otherwise look idle and trip the outer
-        # `megaplan auto` idle-timeout, killing the whole phase. Emit a periodic
-        # liveness signal while the process is alive so that watchdog sees a
-        # heartbeat. The callback is rate-limited and routes to
-        # ``touch_active_step`` (bumping state.json mtime, which the auto driver
-        # recognizes as activity); this is a no-op for the in-process hermes path
-        # and for any worker whose activity_callback is None.
-        heartbeat_stop = threading.Event()
-
-        def _heartbeat() -> None:
-            while not heartbeat_stop.wait(5.0):
-                if process.poll() is not None:
-                    return
-                try:
-                    activity_callback("liveness", "worker subprocess alive")
-                except Exception:
-                    pass
-
-        threads.append(threading.Thread(target=_heartbeat, daemon=True))
-        for thread in threads:
-            thread.start()
-        if process.stdin is not None and stdin_text is not None:
-            process.stdin.write(stdin_text.encode("utf-8"))
-            process.stdin.close()
-
-        def _coerce_timeout_output(parts: list[bytes]) -> str:
-            return b"".join(parts).decode("utf-8", errors="replace")
-
-        # When the caller opts in to the idle-output watchdog (e.g. the shannon
-        # worker) OR the pre-first-byte watchdog (e.g. the codex worker), poll
-        # process.wait() in short slices so we can also enforce those bounds
-        # between slices. When both timeouts are None (no watchdog opt-in),
-        # this collapses to the original single process.wait(timeout=timeout)
-        # — no behavioral change for those callers.
-        first_byte_deadline = (
-            started + pre_first_byte_timeout
-            if pre_first_byte_timeout is not None
-            else None
-        )
-        if idle_timeout is not None or first_byte_deadline is not None:
-            deadline = started + timeout
-            try:
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise subprocess.TimeoutExpired(command, timeout)
-                    # Poll on at most a 1s slice so both watchdogs fire promptly.
-                    wait_slice = min(1.0, remaining)
-                    try:
-                        returncode = process.wait(timeout=wait_slice)
-                        break
-                    except subprocess.TimeoutExpired:
-                        # Still running: check the pre-first-byte bound first.
-                        # Only real stdout/stderr flips first_byte_seen; the
-                        # heartbeat explicitly does not, so a wedged subprocess
-                        # that produces zero bytes will trip this even while
-                        # heartbeats keep ``state.json`` mtime fresh.
-                        if (
-                            first_byte_deadline is not None
-                            and not first_byte_seen[0]
-                            and time.monotonic() > first_byte_deadline
-                        ):
-                            _kill_process_group(process)
-                            returncode = process.poll() if process.poll() is not None else -1
-                            heartbeat_stop.set()
-                            for thread in threads:
-                                thread.join(timeout=1)
-                            raise CliError(
-                                "codex_pre_first_byte_stall",
-                                (
-                                    f"Worker produced no output before pre-first-byte "
-                                    f"deadline ({pre_first_byte_timeout:.0f}s); "
-                                    f"likely codex wedge at startup: "
-                                    f"{' '.join(command[:3])}..."
-                                ),
-                                extra={
-                                    "raw_output": _coerce_timeout_output(stdout_parts)
-                                    + _coerce_timeout_output(stderr_parts)
-                                },
-                            )
-                        # Then the idle-output bound. Only real stdout/stderr
-                        # resets last_output; the heartbeat does not.
-                        if (
-                            idle_timeout is not None
-                            and time.monotonic() - last_output[0] > idle_timeout
-                        ):
-                            _kill_process_group(process)
-                            returncode = process.poll() if process.poll() is not None else -1
-                            heartbeat_stop.set()
-                            for thread in threads:
-                                thread.join(timeout=1)
-                            raise CliError(
-                                "worker_stall",
-                                (
-                                    f"Worker produced no output for {idle_timeout:.0f}s "
-                                    f"(stalled stream): {' '.join(command[:3])}..."
-                                ),
-                                extra={
-                                    "raw_output": _coerce_timeout_output(stdout_parts)
-                                    + _coerce_timeout_output(stderr_parts)
-                                },
-                            )
-                        continue
-            except subprocess.TimeoutExpired as exc:
-                _kill_process_group(process)
-                returncode = process.poll() if process.poll() is not None else -1
-                heartbeat_stop.set()
-                for thread in threads:
-                    thread.join(timeout=1)
-                raise CliError(
-                    "worker_timeout",
-                    f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
-                    extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
-                ) from exc
-        else:
-            try:
-                returncode = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired as exc:
-                _kill_process_group(process)
-                returncode = process.poll() if process.poll() is not None else -1
-                heartbeat_stop.set()
-                for thread in threads:
-                    thread.join(timeout=1)
-                raise CliError(
-                    "worker_timeout",
-                    f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
-                    extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
-                ) from exc
-        heartbeat_stop.set()
-        for thread in threads:
-            thread.join(timeout=1)
-    except FileNotFoundError as exc:
-        raise CliError(
-            "agent_not_found",
-            f"Command not found: {command[0]}",
-        ) from exc
-    return CommandResult(
-        command=command,
-        cwd=cwd,
-        returncode=returncode,
-        stdout=b"".join(stdout_parts).decode("utf-8", errors="replace"),
-        stderr=b"".join(stderr_parts).decode("utf-8", errors="replace"),
-        duration_ms=int((time.monotonic() - started) * 1000),
-    )
+    finally:
+        if tmux_session:
+            tmux_session.teardown()
 
 
 def _activity_callback_for_state(state: PlanState, plan_dir: Path) -> Callable[[str, str], None] | None:
