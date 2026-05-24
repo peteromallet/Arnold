@@ -96,6 +96,50 @@ class CommandResult:
     duration_ms: int
 
 
+# Idle-output (inter-chunk inactivity) watchdog for streaming subprocess workers
+# such as ``shannon`` (Claude via the shannon CLI, ``--output-format=json``).
+#
+# Background / failure mode this guards against: a shannon subprocess can
+# establish its SSE stream to the model, emit some output, then STALL — the
+# process stays alive (and a packaged 180s/2h turn watchdog is raised above the
+# megaplan budget) but produces no further stdout/stderr for many minutes. The
+# blocking reader threads in ``run_command`` sit in ``stream.read(4096)`` with no
+# idle bound, and the liveness heartbeat keeps bumping the OUTER ``megaplan auto``
+# idle watchdog, so nothing aborts until the coarse phase wall-clock
+# ``worker_timeout_seconds`` (~30m+) finally fires — failing the WHOLE plan.
+#
+# This watchdog mirrors the hermes/DeepSeek per-chunk read-timeout
+# (HERMES_STREAM_READ_TIMEOUT in megaplan/agent/run_agent.py): if no NEW
+# stdout/stderr chunk arrives within the bound, kill the subprocess and raise a
+# retryable ``worker_stall`` CliError so the phase retries (bounded) instead of
+# the plan failing. The liveness heartbeat deliberately does NOT reset the bound
+# — only real output does — so a genuinely-stalled-but-alive process is caught,
+# while a healthy long-but-active call (which keeps emitting tokens) never trips.
+DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 240.0
+
+
+def _worker_stream_idle_timeout_seconds() -> float:
+    """Inter-chunk stdout/stderr inactivity bound (seconds) for streaming
+    subprocess workers.
+
+    Configurable via ``SHANNON_STREAM_READ_TIMEOUT`` (mirrors the hermes
+    ``HERMES_STREAM_READ_TIMEOUT`` convention). Falls back to a generous default
+    (4 min) that tolerates legitimately slow tool turns / first-token latency
+    while still catching a true zero-output stall well before the coarse phase
+    wall-clock timeout. Clamped to a sane floor so a misconfigured tiny value
+    can never abort a healthy stream.
+    """
+    try:
+        value = float(os.getenv(
+            "SHANNON_STREAM_READ_TIMEOUT",
+            DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS
+    # Never allow a sub-30s idle bound that could abort a healthy slow tool turn.
+    return max(value, 30.0)
+
+
 @dataclass
 class WorkerResult:
     payload: dict[str, Any]
@@ -236,6 +280,7 @@ def run_command(
     env: dict[str, str] | None = None,
     timeout: int | None = None,
     activity_callback: Callable[[str, str], None] | None = None,
+    idle_timeout: float | None = None,
 ) -> CommandResult:
     started = time.monotonic()
     timeout = timeout or get_effective("execution", "worker_timeout_seconds")
@@ -292,13 +337,30 @@ def run_command(
         stdout_parts: list[bytes] = []
         stderr_parts: list[bytes] = []
 
+        # Idle-output watchdog state. Updated ONLY on real stdout/stderr chunks
+        # (never by the liveness heartbeat) so a stalled-but-alive subprocess is
+        # detected while a healthy, actively-streaming call keeps resetting it.
+        # ``last_output`` is a single-element list so the reader closures can
+        # mutate it without a nonlocal declaration.
+        last_output = [time.monotonic()]
+
         def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
             if stream is None:
                 return
+            # Use read1() so we deliver bytes as soon as the OS makes them
+            # available (one underlying read) rather than blocking until a full
+            # 4096-byte buffer fills. The plain read(4096) would not return until
+            # the pipe accumulated 4096 bytes OR closed, so a worker streaming
+            # small frames (e.g. shannon JSON deltas) would surface NO activity
+            # mid-stream — both starving the liveness/activity callback and
+            # hiding genuine progress from the idle-output watchdog below.
+            # read1() falls back to read() for any stream lacking it.
+            reader = getattr(stream, "read1", None) or stream.read
             while True:
-                chunk = stream.read(4096)
+                chunk = reader(4096)
                 if not chunk:
                     break
+                last_output[0] = time.monotonic()
                 parts.append(chunk)
                 if activity_callback is not None:
                     activity_callback(kind, chunk.decode("utf-8", errors="replace"))
@@ -307,27 +369,100 @@ def run_command(
             threading.Thread(target=_reader, args=(process.stdout, stdout_parts, "stdout"), daemon=True),
             threading.Thread(target=_reader, args=(process.stderr, stderr_parts, "stderr"), daemon=True),
         ]
+        # Liveness heartbeat: some subprocess workers (notably ``codex exec``)
+        # can run a single long task while emitting nothing on stdout/stderr for
+        # many minutes — a tool turn or a stalled-then-resuming network call.
+        # The reader-driven ``activity_callback`` only fires on output, so a
+        # provably-alive worker would otherwise look idle and trip the outer
+        # `megaplan auto` idle-timeout, killing the whole phase. Emit a periodic
+        # liveness signal while the process is alive so that watchdog sees a
+        # heartbeat. The callback is rate-limited and routes to
+        # ``touch_active_step`` (bumping state.json mtime, which the auto driver
+        # recognizes as activity); this is a no-op for the in-process hermes path
+        # and for any worker whose activity_callback is None.
+        heartbeat_stop = threading.Event()
+
+        def _heartbeat() -> None:
+            while not heartbeat_stop.wait(5.0):
+                if process.poll() is not None:
+                    return
+                try:
+                    activity_callback("liveness", "worker subprocess alive")
+                except Exception:
+                    pass
+
+        threads.append(threading.Thread(target=_heartbeat, daemon=True))
         for thread in threads:
             thread.start()
         if process.stdin is not None and stdin_text is not None:
             process.stdin.write(stdin_text.encode("utf-8"))
             process.stdin.close()
-        try:
-            returncode = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            process.kill()
-            returncode = process.wait()
-            for thread in threads:
-                thread.join(timeout=1)
 
-            def _coerce_timeout_output(parts: list[bytes]) -> str:
-                return b"".join(parts).decode("utf-8", errors="replace")
+        def _coerce_timeout_output(parts: list[bytes]) -> str:
+            return b"".join(parts).decode("utf-8", errors="replace")
 
-            raise CliError(
-                "worker_timeout",
-                f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
-                extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
-            ) from exc
+        # When the caller opts in to the idle-output watchdog (e.g. the shannon
+        # worker), poll process.wait() in short slices so we can also enforce the
+        # inter-chunk inactivity bound between slices. When idle_timeout is None
+        # (codex/claude paths), this collapses to the original single
+        # process.wait(timeout=timeout) — no behavioral change for those callers.
+        if idle_timeout is not None:
+            deadline = started + timeout
+            try:
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    try:
+                        returncode = process.wait(timeout=min(1.0, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        # Still running: check the idle-output bound. Only real
+                        # stdout/stderr resets last_output; the heartbeat does not.
+                        if time.monotonic() - last_output[0] > idle_timeout:
+                            process.kill()
+                            returncode = process.wait()
+                            heartbeat_stop.set()
+                            for thread in threads:
+                                thread.join(timeout=1)
+                            raise CliError(
+                                "worker_stall",
+                                (
+                                    f"Worker produced no output for {idle_timeout:.0f}s "
+                                    f"(stalled stream): {' '.join(command[:3])}..."
+                                ),
+                                extra={
+                                    "raw_output": _coerce_timeout_output(stdout_parts)
+                                    + _coerce_timeout_output(stderr_parts)
+                                },
+                            )
+                        continue
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                returncode = process.wait()
+                heartbeat_stop.set()
+                for thread in threads:
+                    thread.join(timeout=1)
+                raise CliError(
+                    "worker_timeout",
+                    f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                    extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
+                ) from exc
+        else:
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                returncode = process.wait()
+                heartbeat_stop.set()
+                for thread in threads:
+                    thread.join(timeout=1)
+                raise CliError(
+                    "worker_timeout",
+                    f"Command timed out after {timeout}s: {' '.join(command[:3])}...",
+                    extra={"raw_output": _coerce_timeout_output(stdout_parts) + _coerce_timeout_output(stderr_parts)},
+                ) from exc
+        heartbeat_stop.set()
         for thread in threads:
             thread.join(timeout=1)
     except FileNotFoundError as exc:
@@ -1519,6 +1654,8 @@ def _default_mock_finalize_payload(state: PlanState, plan_dir: Path) -> dict[str
                 "description": f"Implement: {state['idea']}",
                 "depends_on": [],
                 "status": "pending",
+                "complexity": 3,
+                "complexity_justification": "Mock implementation task; assumes multi-file non-trivial logic → tier 3.",
                 "executor_notes": "",
                 "files_changed": [],
                 "commands_run": [],
@@ -1530,6 +1667,8 @@ def _default_mock_finalize_payload(state: PlanState, plan_dir: Path) -> dict[str
                 "description": "Verify success criteria",
                 "depends_on": [],
                 "status": "pending",
+                "complexity": 2,
+                "complexity_justification": "Mock verification task; running and reading tests → tier 2.",
                 "executor_notes": "",
                 "files_changed": [],
                 "commands_run": [],
@@ -2561,36 +2700,51 @@ def run_step_with_worker(
                     root=root,
                     fresh=effective_refreshed,
                     model=model,
-                    prompt_override=prompt_override,
-                )
-            elif agent == "claude":
-                from megaplan.workers.shannon import run_shannon_step
-                worker = run_shannon_step(
-                    step,
-                    state,
-                    plan_dir,
-                    root=root,
-                    fresh=effective_refreshed,
-                    prompt_override=prompt_override,
-                    prompt_kwargs=prompt_kwargs,
                     effort=effort,
-                    session_agent="claude",
-                    model=resolved_model,
+                    prompt_override=prompt_override,
                 )
-            elif agent == "shannon":
-                # Deferred import to avoid circular import
+            elif agent in ("claude", "shannon"):
+                # Both the ``claude`` agent (Claude via the shannon CLI, e.g.
+                # the ``partnered`` profile) and the explicit ``shannon`` agent
+                # run through run_shannon_step. A stalled SSE stream now surfaces
+                # promptly as a retryable ``worker_stall`` (idle-output watchdog
+                # in run_command) instead of hanging until the coarse phase
+                # wall-clock ``worker_timeout``. Give it the same bounded one-shot
+                # retry the codex branch grants transient failures so a single
+                # stall retries (fresh session) rather than failing the plan.
                 from megaplan.workers.shannon import run_shannon_step
-                worker = run_shannon_step(
-                    step,
-                    state,
-                    plan_dir,
+                shannon_kwargs: dict[str, Any] = dict(
                     root=root,
-                    fresh=effective_refreshed,
                     prompt_override=prompt_override,
                     prompt_kwargs=prompt_kwargs,
                     effort=effort,
                     model=resolved_model,
                 )
+                if agent == "claude":
+                    shannon_kwargs["session_agent"] = "claude"
+                attempted_retry = False
+                while True:
+                    try:
+                        worker = run_shannon_step(
+                            step,
+                            state,
+                            plan_dir,
+                            fresh=effective_refreshed,
+                            **shannon_kwargs,
+                        )
+                        break
+                    except CliError as error:
+                        if (
+                            attempted_retry
+                            or step in _EXECUTE_STEPS
+                            or error.code not in {"worker_stall", "worker_timeout", "connection_error"}
+                        ):
+                            raise
+                        attempted_retry = True
+                        # Retry on a fresh session so a wedged stream is not
+                        # resumed back into the same stall.
+                        effective_refreshed = True
+                        continue
             else:
                 attempted_retry = False
                 while True:

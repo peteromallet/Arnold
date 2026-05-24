@@ -837,10 +837,15 @@ def handle_execute_one_batch(
             if tier_model != fallback_model:
                 refreshed = True
             # Update active-step state to reflect the tier-selected model
-            # while this batch runs.
+            # while this batch runs. Persist immediately so the run_id on disk
+            # matches the one the worker's liveness callback uses for
+            # ``touch_active_step`` — otherwise the per-batch run_id would
+            # diverge from the on-disk state and the liveness heartbeat would
+            # silently no-op for every batch after the first.
             set_active_step(
                 state, step="execute", agent=agent, mode=mode, model=model
             )
+            save_state_merge_meta(plan_dir, state)
 
     try:
         result = _run_and_merge_batch(
@@ -1386,7 +1391,11 @@ def handle_execute_auto_loop(
                     if new_identity != prev_batch_identity:
                         batch_refreshed = True
                 # Update active-step state to reflect the tier-selected model
-                # while this batch runs.
+                # while this batch runs. Persist immediately so the on-disk
+                # run_id matches the one the worker's liveness callback uses for
+                # ``touch_active_step`` (see the matching note in
+                # handle_execute_one_batch) — otherwise the liveness heartbeat
+                # silently no-ops for every batch after the first.
                 set_active_step(
                     state,
                     step="execute",
@@ -1394,6 +1403,7 @@ def handle_execute_auto_loop(
                     mode=batch_mode,
                     model=batch_model,
                 )
+                save_state_merge_meta(plan_dir, state)
 
         try:
             result = _run_and_merge_batch(
