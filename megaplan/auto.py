@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import find_plan_dir
+from megaplan.runtime.process import kill_group, spawn
 from megaplan.observability.events import emit as emit_event, EventKind
 from megaplan.orchestration.phase_result import (
     ExitKind,
@@ -154,47 +155,7 @@ def _non_negative_float(value: str) -> float:
     return parsed
 
 
-def _kill_process_group(proc: subprocess.Popen[bytes], *, label: str) -> None:
-    """SIGTERM the subprocess's whole process group, escalate to SIGKILL after a grace period.
 
-    The subprocess is launched with ``start_new_session=True`` so its pgid == pid.
-    The watchdog must signal the whole group (not just the immediate child) to
-    reach shannon/bun/claude grandchildren whose stdio is wired to a tmux pane
-    rather than to this parent's pipes. ``proc.kill()`` alone leaves those
-    grandchildren running, reparented to PID 1, where they keep holding the
-    persistent ``--resume <session-id>`` lease and wedge the next watchdog cycle.
-    """
-
-    if proc.poll() is not None:
-        return
-    try:
-        pgid = os.getpgid(proc.pid)
-    except (ProcessLookupError, OSError):
-        # Process already gone or platform without getpgid; nothing to do.
-        try:
-            proc.kill()
-            proc.wait(timeout=1)
-        except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
-            pass
-        return
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            return
-        time.sleep(0.1)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, OSError):
-        pass
-    try:
-        proc.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        # Caller can decide what to do; the group has had SIGKILL delivered.
-        pass
 
 
 def _run_megaplan(
@@ -245,21 +206,12 @@ def _run_megaplan(
         except FileNotFoundError as error:
             return 127, "", str(error)
     try:
-        proc = subprocess.Popen(
+        proc = spawn(
             [sys.executable, "-m", "megaplan", *args],
             cwd=str(cwd) if cwd else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            # Make the executor the leader of a new POSIX session so its pgid
-            # equals its pid. The idle-output watchdog below kills the whole
-            # group, which is the only way to reach shannon/bun/claude
-            # grandchildren whose stdio is wired to a tmux pane rather than to
-            # this parent's pipes. Without start_new_session, proc.kill() would
-            # only signal the immediate executor PID and the grandchildren
-            # would survive, get reparented to PID 1, and keep holding the
-            # persistent --resume <session-id> lease — wedging the next cycle.
-            start_new_session=True,
         )
     except FileNotFoundError as error:
         return 127, "", str(error)
@@ -331,7 +283,7 @@ def _run_megaplan(
         time.sleep(0.2)
 
     if timed_out_reason is not None:
-        _kill_process_group(proc, label="megaplan auto idle/timeout")
+        kill_group(proc, label="megaplan auto idle/timeout")
         for thread in threads:
             thread.join(timeout=1)
         stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")

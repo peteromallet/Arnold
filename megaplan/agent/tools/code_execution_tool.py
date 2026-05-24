@@ -31,6 +31,7 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
+from megaplan.runtime.process import kill_group
 from typing import Any, Dict, List, Optional
 
 # Availability gate: UDS requires a POSIX OS
@@ -533,11 +534,11 @@ def execute_code(
         status = "success"
         while proc.poll() is None:
             if _interrupt_event.is_set():
-                _kill_process_group(proc)
+                kill_group(proc, escalate=False)
                 status = "interrupted"
                 break
             if time.monotonic() > deadline:
-                _kill_process_group(proc, escalate=True)
+                kill_group(proc, grace_s=5.0, escalate=True)
                 status = "timeout"
                 break
             time.sleep(0.2)
@@ -629,36 +630,7 @@ def execute_code(
             pass  # already cleaned up or never created
 
 
-def _kill_process_group(proc, escalate: bool = False):
-    """Kill the child and its entire process group."""
-    try:
-        if _IS_WINDOWS:
-            proc.terminate()
-        else:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError) as e:
-        logger.debug("Could not kill process group: %s", e, exc_info=True)
-        try:
-            proc.kill()
-        except Exception as e2:
-            logger.debug("Could not kill process: %s", e2, exc_info=True)
 
-    if escalate:
-        # Give the process 5s to exit after SIGTERM, then SIGKILL
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                if _IS_WINDOWS:
-                    proc.kill()
-                else:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError) as e:
-                logger.debug("Could not kill process group with SIGKILL: %s", e, exc_info=True)
-                try:
-                    proc.kill()
-                except Exception as e2:
-                    logger.debug("Could not kill process: %s", e2, exc_info=True)
 
 
 def _load_config() -> dict:

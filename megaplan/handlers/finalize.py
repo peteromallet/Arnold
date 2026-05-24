@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -513,8 +514,7 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
 
     try:
         result = subprocess.run(
-            cmd_string,
-            shell=True,
+            shlex.split(cmd_string),
             cwd=project_dir,
             timeout=120,
             capture_output=True,

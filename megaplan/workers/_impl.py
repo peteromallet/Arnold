@@ -56,6 +56,7 @@ from megaplan.prompts import (
     create_hermes_prompt,
     _resolve_prompt_root,
 )
+from megaplan.runtime.process import kill_group, spawn
 
 
 _EXECUTE_STEPS = {"execute", "loop_execute"}
@@ -310,48 +311,7 @@ def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
-    """SIGTERM the subprocess's whole process group, escalate to SIGKILL after grace.
 
-    Worker subprocesses are launched with ``start_new_session=True`` so the
-    immediate child is the leader of its own process group (pgid == pid). The
-    stall/timeout watchdog must signal the whole group so shannon/bun/claude
-    grandchildren are reaped too. A bare ``process.kill()`` would only reap the
-    immediate shannon node wrapper and leave the bun runtime and tmux-attached
-    claude CLI as orphans (reparented to PID 1) holding the persistent
-    ``--resume <session-id>`` lease.
-    """
-
-    if process.poll() is not None:
-        return
-    try:
-        pgid = os.getpgid(process.pid)
-    except (ProcessLookupError, OSError):
-        # Already gone or platform without getpgid; fall back to plain kill.
-        try:
-            process.kill()
-            process.wait(timeout=1)
-        except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
-            pass
-        return
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        return
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            return
-        time.sleep(0.1)
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, OSError):
-        pass
-    try:
-        process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
-        # Group has had SIGKILL delivered; caller proceeds.
-        pass
 
 
 def run_command(
@@ -408,22 +368,13 @@ def run_command(
         )
 
     try:
-        process = subprocess.Popen(
+        process = spawn(
             command,
             cwd=str(cwd),
             stdin=subprocess.PIPE if stdin_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            # POSIX session isolation: make this subprocess the leader of a new
-            # process group (pgid == pid). The watchdog below kills the whole
-            # group, which is the only way to reach shannon/bun/claude
-            # grandchildren whose stdio is wired to a tmux pane rather than to
-            # this parent's pipes. Without start_new_session, process.kill()
-            # only reaps the immediate shannon node wrapper; the bun runtime
-            # and the tmux-attached claude CLI survive as orphans and keep
-            # holding the persistent --resume <session-id> lease.
-            start_new_session=True,
         )
         stdout_parts: list[bytes] = []
         stderr_parts: list[bytes] = []
@@ -511,7 +462,7 @@ def run_command(
                         # Still running: check the idle-output bound. Only real
                         # stdout/stderr resets last_output; the heartbeat does not.
                         if time.monotonic() - last_output[0] > idle_timeout:
-                            _kill_process_group(process)
+                            kill_group(process)
                             returncode = process.poll() if process.poll() is not None else -1
                             heartbeat_stop.set()
                             for thread in threads:
@@ -529,7 +480,7 @@ def run_command(
                             )
                         continue
             except subprocess.TimeoutExpired as exc:
-                _kill_process_group(process)
+                kill_group(process)
                 returncode = process.poll() if process.poll() is not None else -1
                 heartbeat_stop.set()
                 for thread in threads:
@@ -543,7 +494,7 @@ def run_command(
             try:
                 returncode = process.wait(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
-                _kill_process_group(process)
+                kill_group(process)
                 returncode = process.poll() if process.poll() is not None else -1
                 heartbeat_stop.set()
                 for thread in threads:
