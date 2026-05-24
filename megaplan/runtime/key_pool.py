@@ -207,9 +207,73 @@ def report_failure(provider: str, key: str) -> None:
     _pool.report_failure(provider, key)
 def has_keys(provider: str) -> bool:
     return _pool.has_keys(provider)
+def _raise_claude_via_openrouter_blocked(reason: str) -> None:
+    """Refuse to silently route Claude through OpenRouter.
+
+    The harness historically defaulted bare hermes calls (model=None, or a
+    non-prefixed ``anthropic/claude-*`` slash form) to OpenRouter's
+    ``anthropic/claude-opus-4.6`` endpoint. That route consumes OPENROUTER_API_KEY
+    quotas instead of the operator's Claude Code (shannon) subscription, and the
+    fallback was completely silent. The user pays for Claude Code; they do not
+    want Claude calls billed against OpenRouter without explicit opt-in.
+
+    We block the silent path here and tell the caller exactly how to recover.
+    Explicit ``openrouter:`` prefixed models still work — only the silent
+    *default* is removed.
+    """
+    # Import lazily to keep this module import-cycle-safe (megaplan.types is
+    # otherwise independent of megaplan.runtime, but the lazy import is
+    # the cheapest insurance).
+    from megaplan.types import CliError
+
+    raise CliError(
+        code="claude_via_openrouter_blocked",
+        message=(
+            "Refusing to route Claude through OpenRouter. " + reason + " "
+            "The megaplan harness silently defaulted Claude calls to "
+            "anthropic/claude-opus-4.6 via OpenRouter, but the operator has a "
+            "Claude Code subscription that should be used instead. Pick an "
+            "explicit path:\n"
+            "  --agent shannon   (use Claude Code, recommended)\n"
+            "  --agent claude    (same as shannon)\n"
+            "  --phase-model <phase>=claude:claude-opus-4-7:medium\n"
+            "If you actually want OpenRouter for some reason, set the model "
+            "explicitly with a provider prefix, e.g. "
+            "--hermes openrouter:anthropic/claude-opus-4.6"
+        ),
+        valid_next=[
+            "rerun with --agent shannon",
+            "rerun with --phase-model <phase>=claude:claude-opus-4-7:medium",
+            "rerun with --hermes openrouter:anthropic/claude-opus-4.6 (explicit)",
+        ],
+    )
+
+
+def _is_claude_model_name(name: str) -> bool:
+    lowered = name.lower()
+    return (
+        lowered.startswith("anthropic/claude")
+        or lowered.startswith("claude-")
+        or lowered.startswith("claude/")
+    )
+
+
 def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
     agent_kwargs: dict[str, str] = {}
-    resolved_model = model or "anthropic/claude-opus-4.6"
+    if model is None or not str(model).strip():
+        # No model specified — the previous behaviour silently defaulted to
+        # anthropic/claude-opus-4.6 via OpenRouter. Refuse that silent path.
+        _raise_claude_via_openrouter_blocked(
+            "No model was specified, so no provider could be selected."
+        )
+    resolved_model = str(model).strip()
+    # Allow an explicit ``openrouter:`` prefix to opt into OpenRouter for any
+    # model (Claude included). This is the documented escape hatch.
+    if resolved_model.startswith("openrouter:"):
+        resolved_model = resolved_model[len("openrouter:"):]
+        agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["openrouter"]
+        agent_kwargs["api_key"] = acquire_key("openrouter")
+        return resolved_model, agent_kwargs
     if resolved_model.startswith("zhipu:"):
         resolved_model = resolved_model[len("zhipu:"):]
         agent_kwargs["base_url"] = _get_api_credential(_PROVIDER_BASE_URL_VARS["zhipu"]) or _DEFAULT_BASE_URLS["zhipu"]
@@ -237,7 +301,15 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
             agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["openrouter"]
             agent_kwargs["api_key"] = acquire_key("openrouter")
     else:
-        # Non-prefixed models (e.g. "qwen/qwen3.5-27b") → route through OpenRouter
+        # Non-prefixed models (e.g. "qwen/qwen3.5-27b") → route through OpenRouter.
+        # Exception: Claude models (anthropic/claude-*) are refused here to
+        # prevent silently consuming OpenRouter quotas when the user has a
+        # Claude Code subscription. Use ``openrouter:anthropic/claude-...`` to
+        # opt in explicitly, or ``--agent shannon`` to go through Claude Code.
+        if _is_claude_model_name(resolved_model):
+            _raise_claude_via_openrouter_blocked(
+                f"Model {resolved_model!r} would silently route to OpenRouter."
+            )
         or_key = acquire_key("openrouter")
         if or_key:
             agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["openrouter"]

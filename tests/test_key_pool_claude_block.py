@@ -1,0 +1,70 @@
+"""Regression: silent OpenRouter fallback for Claude must be refused.
+
+The harness historically defaulted ``resolve_model(None)`` and bare
+``anthropic/claude-*`` model names to OpenRouter's
+``anthropic/claude-opus-4.6`` endpoint. That route consumes
+``OPENROUTER_API_KEY`` quota instead of the operator's Claude Code (shannon)
+subscription, and the fallback was completely silent. These tests pin the
+new behaviour: refuse the silent path, allow the explicit
+``openrouter:`` opt-in.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from megaplan.runtime.key_pool import resolve_model
+from megaplan.types import CliError
+
+
+def test_resolve_model_none_raises_claude_via_openrouter_blocked() -> None:
+    with pytest.raises(CliError) as excinfo:
+        resolve_model(None)
+    assert excinfo.value.code == "claude_via_openrouter_blocked"
+    assert "shannon" in excinfo.value.message
+    assert "OpenRouter" in excinfo.value.message
+
+
+def test_resolve_model_empty_string_raises_claude_via_openrouter_blocked() -> None:
+    with pytest.raises(CliError) as excinfo:
+        resolve_model("   ")
+    assert excinfo.value.code == "claude_via_openrouter_blocked"
+
+
+def test_resolve_model_bare_anthropic_claude_raises() -> None:
+    """A non-prefixed ``anthropic/claude-*`` model must NOT silently fall
+    through to OpenRouter."""
+    with pytest.raises(CliError) as excinfo:
+        resolve_model("anthropic/claude-opus-4.6")
+    assert excinfo.value.code == "claude_via_openrouter_blocked"
+
+
+def test_resolve_model_bare_claude_dash_raises() -> None:
+    with pytest.raises(CliError) as excinfo:
+        resolve_model("claude-opus-4.6")
+    assert excinfo.value.code == "claude_via_openrouter_blocked"
+
+
+def test_resolve_model_explicit_openrouter_claude_allowed(monkeypatch) -> None:
+    """The documented escape hatch: explicit ``openrouter:`` prefix opts in."""
+    # acquire_key may return "" if no OPENROUTER_API_KEY is set; that's fine —
+    # the path just shouldn't *raise*. We only verify the routing decision.
+    resolved, kwargs = resolve_model("openrouter:anthropic/claude-opus-4.6")
+    assert resolved == "anthropic/claude-opus-4.6"
+    assert kwargs.get("base_url") == "https://openrouter.ai/api/v1"
+
+
+def test_resolve_model_non_claude_openrouter_still_routes(monkeypatch) -> None:
+    """Non-Claude bare models (e.g. qwen/...) keep the existing OpenRouter
+    fallback so non-Claude users aren't disrupted."""
+    # No raise expected. acquire_key may return "" without keys present;
+    # in that case kwargs may be empty — what matters is that no CliError fires.
+    resolved, _kwargs = resolve_model("qwen/qwen3-235b")
+    assert resolved == "qwen/qwen3-235b"
+
+
+def test_resolve_model_zhipu_prefix_unaffected() -> None:
+    resolved, kwargs = resolve_model("zhipu:glm-5.1")
+    assert resolved == "glm-5.1"
+    # base_url should be zhipu-shaped, never openrouter
+    assert "openrouter" not in kwargs.get("base_url", "")
