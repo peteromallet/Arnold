@@ -26,31 +26,15 @@ panel's confidence was discounted on grounds the (repo-bounded) reviewers couldn
 - **Sequence Shannon-first + prove the write axis early (lens 3).** Genuine improvement; adopted.
 - **Do the cheap dedup before anything (lens 4's minimal cut).** Real win regardless of the rest.
 
-**⚠️ CORRECTION (2026-05-23, supersedes the earlier "headless door" finding below).** The
-`claude -p` headless path is **rejected for the Claude backend** — confirmed, not speculative:
-- **Why.** Shannon drives Claude *interactively in tmux specifically to use the Claude subscription
-  via OAuth* (`shannon.py:937-948`: empty `ANTHROPIC_API_KEY` → "falls back to OAuth credentials").
-  `claude -p` print mode forces **metered API-key billing**. The "$0.21, schema-valid" probe I ran
-  earlier was not a win — it cost $0.21 *because it billed the API*, i.e. it demonstrated exactly the
-  path megaplan avoids. So "headless door is feasible" was the wrong conclusion: it's *technically*
-  feasible but *economically* rejected.
-- **What this breaks in this brief.** The clean "headless `run_oneshot` on Claude" story has a hole:
-  a stateless Claude per-call contract still can't use `-p` without losing subscription billing, so
-  Claude's `run_oneshot` would itself have to ride *hardened interactive Shannon*, not a `-p`
-  subprocess. The Hermes/Codex `run_oneshot` story is unaffected; only Claude is constrained.
-- **The real Shannon root cause (diagnosed empirically 2026-05-23).** Shannon runs Claude as an
-  *interactive TTY app in a detached tmux session*. Two proven failure modes: (1) interactive gates
-  (workspace-trust dialog) hang capture — Claude only skips the trust dialog for non-TTY/`-p`, and a
-  tmux pane *is* a TTY (reproduced: a clean `shannon -p` hung 240s on "Do you trust this folder?",
-  zero stdout); (2) the detached tmux session survives its launcher's death, so a killed worker
-  *silently strands* finished work in an orphaned pane (observed: 2+ leaked `shannon-*` sessions).
-- **The real fix (not `claude -p`).** Harden the interactive-tmux worker, keeping OAuth billing:
-  (a) pre-seed Claude's first-run gates (`hasTrustDialogAccepted` etc.) in `~/.claude.json` for the
-  work-dir, atomic+locked against concurrent writers; (b) make capture **file-based** + deterministic
-  tmux session teardown (`finally`/`atexit`/signal) + an orphan janitor; (c) add staleness-based
-  `active_step` recovery in megaplan-core so a dead worker → retry/fail, not eternal freeze. Sized
-  `partnered/full/medium @codex +prep` — run on **Codex** (you can't build the Shannon fix on Shannon).
-
+**Discounted (panel over-confident):**
+- **Shannon "may be infeasible" — DISPROVEN (empirical, 2026-05-23).** Real run:
+  `claude -p --output-format json --json-schema <.megaplan/schemas/critique.json> --no-session-persistence`
+  → exit 0, no tmux, $0.21, 16.4s, and `structured_output` validates against the real critique
+  schema (jsonschema VALID) with a substantive single-check critique. Bonus: `--json-schema` gives
+  native schema-enforced output (no defensive parsing needed); `--no-session-persistence` IS the
+  stateless mode; `--fallback-model` handles overload in `-p`. The headless capability exists and is
+  well-suited; only megaplan wiring is missing. The latency pessimism below was premised on Shannon's
+  tmux handshake, which `-p` does not have — parallel-headless likely *wins* on latency.
 - **"Quality regresses" — UNPROVEN, likely tolerable.** Claude/Codex critique is bundled today, true.
   But **Hermes already isolates checks and that is the default robustness path** — strong evidence
   the interaction-reasoning loss is acceptable, and bundling has its own failure mode (dilution
@@ -63,12 +47,10 @@ panel's confidence was discounted on grounds the (repo-bounded) reviewers couldn
    `_merge_unique` → `_core`; a shared `_scatter_gather_hermes_checks(checks, run_one_fn, reduce_fn,
    *, max_concurrent)` that both `run_parallel_critique` and `run_parallel_review` call; and a
    `_with_429_openrouter_fallback(...)` wrapper.
-2. **Land the Shannon-hardening sprint** (see ⚠️ CORRECTION above) — *not* a headless `-p` worker.
-   This is a prerequisite for any Claude-backend `run_oneshot`, and it fixes the production wedge
-   (Claude-vendor megaplan runs silently strand on a killed driver). `partnered/full/medium @codex +prep`.
+2. **Run the Shannon-headless feasibility spike** (`claude -p … --output-format json` → valid critique
+   payload). Low-risk; gates `run_oneshot`.
 3. **Keep the two-API direction (`fan_out` / `compete`) live** on roadmap authority — but build it
-   only after (2) lands and the read-side dedup has shaken out the shared harness shape. Note Claude's
-   `run_oneshot` must ride hardened-interactive-Shannon (OAuth billing), not `claude -p`.
+   only after (2) is green and the read-side dedup has shaken out the shared harness shape.
 4. **Real residual risks to carry (panel was right):** no 429 retry on CLI paths; deeper-than-"small"
    Codex `state` coupling; `faults.json` fold is last-write-wins (needs a serial reduce step);
    `_run_parallel_stage` shallow-copies only top-level state. Multi-branch (not single-winner) merge
