@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -84,6 +85,7 @@ DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
 # only synthesize a stub note, and if even that fails twice the only
 # remaining safe escape valve is force-proceed.
 DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
+DEFAULT_PHASE_HEARTBEAT_SECONDS = 60.0
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
 PHASE_NAMES = frozenset(
@@ -152,6 +154,49 @@ def _non_negative_float(value: str) -> float:
     return parsed
 
 
+def _kill_process_group(proc: subprocess.Popen[bytes], *, label: str) -> None:
+    """SIGTERM the subprocess's whole process group, escalate to SIGKILL after a grace period.
+
+    The subprocess is launched with ``start_new_session=True`` so its pgid == pid.
+    The watchdog must signal the whole group (not just the immediate child) to
+    reach shannon/bun/claude grandchildren whose stdio is wired to a tmux pane
+    rather than to this parent's pipes. ``proc.kill()`` alone leaves those
+    grandchildren running, reparented to PID 1, where they keep holding the
+    persistent ``--resume <session-id>`` lease and wedge the next watchdog cycle.
+    """
+
+    if proc.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, OSError):
+        # Process already gone or platform without getpgid; nothing to do.
+        try:
+            proc.kill()
+            proc.wait(timeout=1)
+        except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
+            pass
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        # Caller can decide what to do; the group has had SIGKILL delivered.
+        pass
+
+
 def _run_megaplan(
     args: list[str],
     *,
@@ -206,6 +251,15 @@ def _run_megaplan(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            # Make the executor the leader of a new POSIX session so its pgid
+            # equals its pid. The idle-output watchdog below kills the whole
+            # group, which is the only way to reach shannon/bun/claude
+            # grandchildren whose stdio is wired to a tmux pane rather than to
+            # this parent's pipes. Without start_new_session, proc.kill() would
+            # only signal the immediate executor PID and the grandchildren
+            # would survive, get reparented to PID 1, and keep holding the
+            # persistent --resume <session-id> lease — wedging the next cycle.
+            start_new_session=True,
         )
     except FileNotFoundError as error:
         return 127, "", str(error)
@@ -215,6 +269,9 @@ def _run_megaplan(
     last_activity = time.monotonic()
     last_hard_progress = last_activity
     last_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
+    heartbeat_interval = _phase_heartbeat_interval_seconds()
+    last_heartbeat = last_activity
+    liveness_changed_since_heartbeat = False
 
     def _reader(stream: Any, parts: list[bytes]) -> None:
         nonlocal last_activity, last_hard_progress
@@ -250,6 +307,20 @@ def _run_megaplan(
             last_liveness_mtime = current_liveness_mtime
             last_activity = now
             last_hard_progress = now
+            liveness_changed_since_heartbeat = True
+        if heartbeat_interval is not None and now - last_heartbeat >= heartbeat_interval:
+            print(
+                _format_phase_heartbeat(
+                    args,
+                    elapsed_s=now - started,
+                    plan_dir=liveness_plan_dir,
+                    progress_changed=liveness_changed_since_heartbeat,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            last_heartbeat = now
+            liveness_changed_since_heartbeat = False
         timeout_base = last_hard_progress if idle_timeout is not None else started
         if timeout is not None and now - timeout_base >= timeout:
             timed_out_reason = f"subprocess timed out after {timeout}s"
@@ -260,8 +331,7 @@ def _run_megaplan(
         time.sleep(0.2)
 
     if timed_out_reason is not None:
-        proc.kill()
-        proc.wait()
+        _kill_process_group(proc, label="megaplan auto idle/timeout")
         for thread in threads:
             thread.join(timeout=1)
         stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
@@ -295,6 +365,60 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
         if newest is None or mtime > newest:
             newest = mtime
     return newest
+
+
+def _phase_heartbeat_interval_seconds() -> float | None:
+    raw = os.getenv("MEGAPLAN_AUTO_HEARTBEAT_SECONDS")
+    if raw is None:
+        return DEFAULT_PHASE_HEARTBEAT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_PHASE_HEARTBEAT_SECONDS
+    if value <= 0:
+        return None
+    return value
+
+
+def _format_phase_heartbeat(
+    args: list[str],
+    *,
+    elapsed_s: float,
+    plan_dir: Path | None,
+    progress_changed: bool,
+) -> str:
+    command = "megaplan " + " ".join(args)
+    bits = [
+        f"[megaplan auto] heartbeat command={command!r}",
+        f"elapsed={int(elapsed_s)}s",
+        f"progress_mtime_changed={'yes' if progress_changed else 'no'}",
+    ]
+    state_path = plan_dir / "state.json" if plan_dir is not None else None
+    if state_path is not None:
+        try:
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raw = None
+        if isinstance(raw, dict):
+            plan_name = raw.get("name")
+            current_state = raw.get("current_state")
+            active = raw.get("active_step")
+            if isinstance(plan_name, str) and plan_name:
+                bits.append(f"plan={plan_name}")
+            if isinstance(current_state, str) and current_state:
+                bits.append(f"state={current_state}")
+            if isinstance(active, dict):
+                step = active.get("step")
+                agent = active.get("agent")
+                mode = active.get("mode")
+                worker = "/".join(
+                    part for part in (str(agent) if agent else "", str(mode) if mode else "") if part
+                )
+                if isinstance(step, str) and step:
+                    bits.append(f"active_step={step}")
+                if worker:
+                    bits.append(f"worker={worker}")
+    return " ".join(bits)
 
 
 def _status(
