@@ -146,6 +146,39 @@ def _stream_content_stall_timeout_seconds() -> float:
     return max(value, 1.0)
 
 
+# Reasoning-only "first content" watchdog. A reasoning model (DeepSeek-V4-Pro,
+# DeepSeek-R1) can emit ``reasoning_content`` deltas for many minutes before
+# producing its first ``content`` delta. The content_stall watchdog above treats
+# reasoning chunks as progress (intentionally — a slow thinking phase must not
+# be aborted), so it can't bound that regime. This separate timer resets ONLY
+# on real ``content`` deltas — never on reasoning — and aborts the stream with
+# a retryable APITimeoutError if no content delta has arrived within the bound.
+# Configurable via HERMES_STREAM_FIRST_CONTENT_TIMEOUT. 300s default leaves
+# plenty of room for a healthy reasoning prefill (~80s observed in the wild)
+# while still catching the 21+ minute reasoning-only wedge observed on
+# 2026-05-24 (plan vibecomfy-template-refactor-20260524-1400).
+DEFAULT_STREAM_FIRST_CONTENT_TIMEOUT_SECONDS = 300.0
+
+
+def _stream_first_content_timeout_seconds() -> float:
+    """First-content-delta deadline (seconds) for streaming reads.
+
+    Configurable via HERMES_STREAM_FIRST_CONTENT_TIMEOUT. Reset only by a real
+    ``content`` delta — never by ``reasoning_content`` chunks — so a reasoning
+    model stuck inside an unbounded thinking phase is aborted with a retryable
+    APITimeoutError instead of streaming reasoning forever.
+    """
+    try:
+        value = float(os.getenv(
+            "HERMES_STREAM_FIRST_CONTENT_TIMEOUT",
+            DEFAULT_STREAM_FIRST_CONTENT_TIMEOUT_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_STREAM_FIRST_CONTENT_TIMEOUT_SECONDS
+    # Floor: never allow a sub-30s value that would abort healthy reasoning.
+    return max(value, 30.0)
+
+
 # Sentinels for the streaming producer/consumer queue (see _call_chat_completions).
 # A daemon producer thread runs the blocking `for chunk in stream:` and pushes
 # chunks onto a bounded-wait queue; the consumer (main streaming thread) dequeues
@@ -3965,6 +3998,18 @@ class AIAgent:
             # covered; reset on every real content/reasoning delta below.
             last_content_token_time = time.monotonic()
 
+            # Separate "first-content" watchdog: a reasoning model can stream
+            # ``reasoning_content`` indefinitely without ever producing a
+            # ``content`` delta. The content_stall watchdog above is reset by
+            # reasoning chunks (so a healthy thinking phase isn't aborted), so a
+            # separate bound is required to catch the reasoning-only wedge.
+            # Reset ONLY on real content deltas — never on reasoning. Tracks
+            # ``first_content_seen``: once True, this watchdog is disabled (the
+            # content_stall watchdog handles mid-stream stalls thereafter).
+            first_content_timeout = _stream_first_content_timeout_seconds()
+            first_content_deadline = time.monotonic() + first_content_timeout
+            first_content_seen = False
+
             chunk_queue: "_queue.Queue" = _queue.Queue(maxsize=256)
 
             def _produce_chunks():
@@ -4023,6 +4068,17 @@ class AIAgent:
                 if time.monotonic() - last_content_token_time > content_stall_timeout:
                     _abort_stalled_stream()
 
+                # First-content watchdog: catches the reasoning-only wedge that
+                # the content_stall watchdog above CANNOT see, because reasoning
+                # deltas reset that timer. Disabled once a real content delta
+                # has arrived; until then, reasoning deltas (no matter how many)
+                # do NOT reset this deadline.
+                if (
+                    not first_content_seen
+                    and time.monotonic() > first_content_deadline
+                ):
+                    _abort_stalled_stream()
+
                 if not chunk.choices:
                     if hasattr(chunk, "model") and chunk.model:
                         model_name = chunk.model
@@ -4047,6 +4103,10 @@ class AIAgent:
                 # Accumulate text content — fire callback only when no tool calls
                 if delta and delta.content:
                     last_content_token_time = time.monotonic()
+                    # First real content delta retires the first-content
+                    # watchdog. From here on the content_stall watchdog above
+                    # handles mid-stream stalls.
+                    first_content_seen = True
                     content_parts.append(delta.content)
                     if not tool_calls_acc:
                         _fire_first_delta()
@@ -6921,6 +6981,32 @@ class AIAgent:
                             f"(streak={self._streaming_timeout_streak}).",
                             force=True,
                         )
+
+                    # Surface the silent retry to any registered observer so an
+                    # otherwise-invisible wedge becomes immediately visible.
+                    # Today the retry loop swallows TimeoutError/APITimeoutError
+                    # silently and reissues — from the worker's view there is
+                    # no event between llm_call_start and llm_call_end. The
+                    # ``_megaplan_retry_error_callback`` attribute is set by the
+                    # hermes worker (see ``megaplan/workers/hermes.py``); when
+                    # present, it is invoked once per retry-classified error
+                    # with a structured payload that the worker maps onto
+                    # ``llm_call_error``. Failures inside the callback are
+                    # swallowed — observability must never crash the retry loop.
+                    retry_cb = getattr(self, "_megaplan_retry_error_callback", None)
+                    if retry_cb is not None:
+                        try:
+                            retry_cb({
+                                "error_type": error_type,
+                                "error_message": str(api_error),
+                                "retry_count": retry_count,
+                                "max_retries": max_retries,
+                                "is_streaming_timeout": is_streaming_timeout,
+                                "status_code": status_code,
+                                "elapsed_seconds": elapsed_time,
+                            })
+                        except Exception:
+                            pass
                     
                     if is_context_length_error:
                         compressor = self.context_compressor

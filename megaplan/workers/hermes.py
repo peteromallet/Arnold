@@ -82,17 +82,40 @@ class _StreamTracker:
 
     Replaces the no-op sentinel so we get observable token throughput
     while still forcing ``stream=True`` on the provider.
+
+    Tracks two independent streams of chunks:
+
+    * ``tokens_emitted`` / ``last_token_at`` — incremented by ``__call__`` which
+      is wired in as the agent's ``stream_callback``. This fires only on real
+      ``content`` deltas.
+    * ``reasoning_emitted`` / ``last_reasoning_at`` — incremented by
+      ``on_reasoning`` which is wired in as the agent's ``reasoning_callback``.
+      This fires only on ``reasoning_content`` (i.e. "thinking") deltas.
+
+    Splitting the two means a reasoning model that streams thousands of
+    ``reasoning_content`` deltas before its first ``content`` delta is no
+    longer invisible to the heartbeat (where ``tokens_emitted_so_far`` would
+    otherwise sit at 0 for the entire pre-content window — the exact failure
+    mode that masked the 21-minute wedge observed on 2026-05-24).
     """
 
     def __init__(self) -> None:
         self.tokens_emitted: int = 0
         self.last_token_at: float = 0.0
+        self.reasoning_emitted: int = 0
+        self.last_reasoning_at: float = 0.0
         self.request_id: str | None = None
 
     def __call__(self, text: str) -> None:
         import time as _t
         self.tokens_emitted += 1  # rough: one "token" per chunk; fine-grained enough for heartbeat
         self.last_token_at = _t.monotonic()
+
+    def on_reasoning(self, text: str) -> None:
+        """Increment the reasoning counter. Wired in as ``reasoning_callback``."""
+        import time as _t
+        self.reasoning_emitted += 1
+        self.last_reasoning_at = _t.monotonic()
 
 
 _StreamTracker._megaplan_force_stream = True  # type: ignore[attr-defined]
@@ -226,6 +249,7 @@ def _start_heartbeat(
         # a spurious first touch — a genuinely wedged stream must still be
         # allowed to idle-timeout.
         last_tokens = 0
+        last_reasoning = 0
         while not stop_event.wait(1.0):
             try:
                 from megaplan.observability.events import emit, EventKind
@@ -237,22 +261,38 @@ def _start_heartbeat(
                     payload={
                         "tokens_emitted_so_far": tracker.tokens_emitted,
                         "last_token_at": tracker.last_token_at,
+                        # Reasoning-stream visibility: a reasoning model that
+                        # spends minutes in the "thinking" phase before its
+                        # first content delta now shows non-zero progress here
+                        # even though tokens_emitted_so_far is still 0. Without
+                        # this, the only liveness signal during a long thinking
+                        # phase was the elapsed wall-clock — masking real
+                        # wedges (see 2026-05-24 DeepSeek-V4-Pro wedge).
+                        "reasoning_emitted_so_far": tracker.reasoning_emitted,
+                        "last_reasoning_at": tracker.last_reasoning_at,
                     },
                 )
             except Exception:
                 pass
             # Liveness: only touch state when the provider is actually
-            # producing tokens, so a genuinely wedged stream is still allowed
-            # to idle-timeout. touch_active_step no-ops unless the on-disk
-            # run_id matches, preserving the stale-worker guard.
-            if run_id and tracker.tokens_emitted != last_tokens:
+            # producing tokens (content OR reasoning), so a genuinely wedged
+            # stream is still allowed to idle-timeout. touch_active_step
+            # no-ops unless the on-disk run_id matches, preserving the
+            # stale-worker guard.
+            content_progress = tracker.tokens_emitted != last_tokens
+            reasoning_progress = tracker.reasoning_emitted != last_reasoning
+            if run_id and (content_progress or reasoning_progress):
                 last_tokens = tracker.tokens_emitted
+                last_reasoning = tracker.reasoning_emitted
                 try:
                     touch_active_step(
                         plan_dir,
                         run_id=run_id,
                         kind="llm_stream",
-                        detail=f"{tracker.tokens_emitted} chunks",
+                        detail=(
+                            f"{tracker.tokens_emitted} chunks, "
+                            f"{tracker.reasoning_emitted} reasoning"
+                        ),
                     )
                 except Exception:
                     pass
@@ -852,6 +892,33 @@ def run_hermes_step(
         tracker = run_kwargs.pop("_megaplan_stream_tracker", None)
         is_streaming = tracker is not None
 
+        # Wire the reasoning_callback to the tracker so reasoning_emitted_so_far
+        # advances on every reasoning_content delta. Without this, a reasoning
+        # model (DeepSeek-V4-Pro, DeepSeek-R1) that streams reasoning before
+        # producing its first content delta is invisible to the heartbeat:
+        # tokens_emitted_so_far stays at 0 while chunks pour in (the exact
+        # failure mode that masked the 21-minute wedge on 2026-05-24).
+        if is_streaming and tracker is not None:
+            current_agent.reasoning_callback = tracker.on_reasoning
+            # Surface silent in-agent retries (TimeoutError / APITimeoutError
+            # that the retry loop catches and reissues without emitting any
+            # event) as llm_call_error so observability sees the wedge fast.
+            current_agent._megaplan_retry_error_callback = (
+                lambda info: _emit_llm_error(
+                    plan_dir,
+                    step,
+                    (
+                        f"{info.get('error_type', 'APIError')}: "
+                        f"{info.get('error_message', '')} "
+                        f"(retry {info.get('retry_count', 0)}/"
+                        f"{info.get('max_retries', 0)}, "
+                        f"streaming_timeout="
+                        f"{info.get('is_streaming_timeout', False)})"
+                    ),
+                    retry_after_s=None,
+                )
+            )
+
         # Emit llm_call_start
         prompt_text = rendered_prompt or prompt_override or ""
         prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
@@ -871,6 +938,12 @@ def run_hermes_step(
         finally:
             if is_streaming:
                 heartbeat_stop.set()
+            # Clear the retry-error hook so it doesn't leak across attempts.
+            if is_streaming and tracker is not None:
+                try:
+                    current_agent._megaplan_retry_error_callback = None
+                except Exception:
+                    pass
 
         current_payload, current_raw_output = parse_agent_output(
             current_agent,
