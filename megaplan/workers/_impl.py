@@ -363,6 +363,7 @@ def run_command(
     timeout: int | None = None,
     activity_callback: Callable[[str, str], None] | None = None,
     idle_timeout: float | None = None,
+    pre_first_byte_timeout: float | None = None,
 ) -> CommandResult:
     started = time.monotonic()
     timeout = timeout or get_effective("execution", "worker_timeout_seconds")
@@ -434,6 +435,13 @@ def run_command(
         # ``last_output`` is a single-element list so the reader closures can
         # mutate it without a nonlocal declaration.
         last_output = [time.monotonic()]
+        # Pre-first-byte watchdog state: distinct from idle_timeout. Set True
+        # the moment any real stdout/stderr chunk arrives. The liveness
+        # heartbeat does NOT flip this — that's the entire point: a wedged
+        # codex subprocess produces zero output but keeps the heartbeat
+        # ticking, which masks the stall. See diagnostic
+        # /tmp/codex_wedge_diagnostic.md.
+        first_byte_seen = [False]
 
         def _reader(stream: Any, parts: list[bytes], kind: str) -> None:
             if stream is None:
@@ -452,6 +460,7 @@ def run_command(
                 if not chunk:
                     break
                 last_output[0] = time.monotonic()
+                first_byte_seen[0] = True
                 parts.append(chunk)
                 if activity_callback is not None:
                     activity_callback(kind, chunk.decode("utf-8", errors="replace"))
@@ -493,24 +502,63 @@ def run_command(
             return b"".join(parts).decode("utf-8", errors="replace")
 
         # When the caller opts in to the idle-output watchdog (e.g. the shannon
-        # worker), poll process.wait() in short slices so we can also enforce the
-        # inter-chunk inactivity bound between slices. When idle_timeout is None
-        # (codex/claude paths), this collapses to the original single
-        # process.wait(timeout=timeout) — no behavioral change for those callers.
-        if idle_timeout is not None:
+        # worker) OR the pre-first-byte watchdog (e.g. the codex worker), poll
+        # process.wait() in short slices so we can also enforce those bounds
+        # between slices. When both timeouts are None (no watchdog opt-in),
+        # this collapses to the original single process.wait(timeout=timeout)
+        # — no behavioral change for those callers.
+        first_byte_deadline = (
+            started + pre_first_byte_timeout
+            if pre_first_byte_timeout is not None
+            else None
+        )
+        if idle_timeout is not None or first_byte_deadline is not None:
             deadline = started + timeout
             try:
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise subprocess.TimeoutExpired(command, timeout)
+                    # Poll on at most a 1s slice so both watchdogs fire promptly.
+                    wait_slice = min(1.0, remaining)
                     try:
-                        returncode = process.wait(timeout=min(1.0, remaining))
+                        returncode = process.wait(timeout=wait_slice)
                         break
                     except subprocess.TimeoutExpired:
-                        # Still running: check the idle-output bound. Only real
-                        # stdout/stderr resets last_output; the heartbeat does not.
-                        if time.monotonic() - last_output[0] > idle_timeout:
+                        # Still running: check the pre-first-byte bound first.
+                        # Only real stdout/stderr flips first_byte_seen; the
+                        # heartbeat explicitly does not, so a wedged subprocess
+                        # that produces zero bytes will trip this even while
+                        # heartbeats keep ``state.json`` mtime fresh.
+                        if (
+                            first_byte_deadline is not None
+                            and not first_byte_seen[0]
+                            and time.monotonic() > first_byte_deadline
+                        ):
+                            _kill_process_group(process)
+                            returncode = process.poll() if process.poll() is not None else -1
+                            heartbeat_stop.set()
+                            for thread in threads:
+                                thread.join(timeout=1)
+                            raise CliError(
+                                "codex_pre_first_byte_stall",
+                                (
+                                    f"Worker produced no output before pre-first-byte "
+                                    f"deadline ({pre_first_byte_timeout:.0f}s); "
+                                    f"likely codex wedge at startup: "
+                                    f"{' '.join(command[:3])}..."
+                                ),
+                                extra={
+                                    "raw_output": _coerce_timeout_output(stdout_parts)
+                                    + _coerce_timeout_output(stderr_parts)
+                                },
+                            )
+                        # Then the idle-output bound. Only real stdout/stderr
+                        # resets last_output; the heartbeat does not.
+                        if (
+                            idle_timeout is not None
+                            and time.monotonic() - last_output[0] > idle_timeout
+                        ):
                             _kill_process_group(process)
                             returncode = process.poll() if process.poll() is not None else -1
                             heartbeat_stop.set()
@@ -2240,6 +2288,19 @@ def run_codex_step(
         command.extend(["--output-schema", str(schema_file), "-"])
 
     try:
+        # Pre-first-byte timeout: codex CLI can hang at startup (auth handshake,
+        # default-endpoint connect, etc.) producing zero bytes while megaplan's
+        # liveness heartbeat keeps the auto driver thinking everything is fine.
+        # Bound the no-output startup phase to ~3min so wedges surface as a
+        # retryable ``codex_pre_first_byte_stall`` instead of consuming the full
+        # phase wall-clock. Env override:
+        # MEGAPLAN_CODEX_PRE_FIRST_BYTE_TIMEOUT_S (default 180).
+        try:
+            pre_first_byte_s = float(
+                os.getenv("MEGAPLAN_CODEX_PRE_FIRST_BYTE_TIMEOUT_S", "180")
+            )
+        except (TypeError, ValueError):
+            pre_first_byte_s = 180.0
         result = run_command(
             command,
             cwd=Path.cwd(),
@@ -2247,6 +2308,7 @@ def run_codex_step(
             env=_codex_child_env(turn_id=f'plan_worker_{state["name"]}'),
             timeout=timeout_seconds,
             activity_callback=_activity_callback_for_state(state, plan_dir),
+            pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
         )
     except CliError as error:
         error.extra["raw_output"] = _merge_partial_output(
@@ -2793,6 +2855,14 @@ def run_step_with_worker(
     model = am.model if isinstance(am, AgentMode) else am[3]
     effort = am.effort if isinstance(am, AgentMode) else None
     resolved_model = am.resolved_model if isinstance(am, AgentMode) else am[3]
+    # Backstop: legacy callers (tests, older sites) still pass a 4-tuple
+    # ``resolved=`` which drops ``resolved_model``. If we ended up with a
+    # codex/claude agent but no resolved_model, auto-apply the pinned default
+    # here so downstream dispatch is never invoked with model=None. The
+    # diagnostic in /tmp/codex_wedge_diagnostic.md shows that this was the
+    # silent path leading to the wedge.
+    if resolved_model is None and agent in ("claude", "codex"):
+        resolved_model = resolved_default_model_for_agent(agent)
     # Cross-call persistence is only valid for execute-shaped phases. Every
     # other phase receives all needed context in its prompt, so resuming prior
     # planner/critic/reviewer sessions risks cache-replay no-ops.
@@ -2858,6 +2928,21 @@ def run_step_with_worker(
                         effective_refreshed = True
                         continue
             else:
+                # Defensive guard: codex must receive an explicit model. The
+                # diagnostic in /tmp/codex_wedge_diagnostic.md shows that when
+                # ``resolved_model`` silently becomes ``None`` (e.g. via a
+                # 4-tuple ``resolved=`` that drops the AgentMode's
+                # ``resolved_model`` field), the codex CLI launches with no
+                # ``-c model=...`` and hangs at startup. Fail loud instead.
+                if os.getenv(MOCK_ENV_VAR) != "1":
+                    assert resolved_model is not None and resolved_model != "", (
+                        "run_step_with_worker about to invoke run_codex_step "
+                        "with empty resolved_model. AgentMode.resolved_model "
+                        "should hold e.g. 'gpt-5.5'. Upstream callers using a "
+                        "4-tuple ``resolved=`` drop this field — pass the "
+                        "AgentMode instance instead. See "
+                        "/tmp/codex_wedge_diagnostic.md."
+                    )
                 attempted_retry = False
                 while True:
                     try:
@@ -2880,7 +2965,12 @@ def run_step_with_worker(
                         if (
                             attempted_retry
                             or step in _EXECUTE_STEPS
-                            or error.code not in {"worker_timeout", "connection_error"}
+                            or error.code
+                            not in {
+                                "worker_timeout",
+                                "connection_error",
+                                "codex_pre_first_byte_stall",
+                            }
                         ):
                             raise
                         attempted_retry = True
@@ -2915,4 +3005,14 @@ def run_step_with_worker(
             }
             agent = fallback_agent
             model = None
+            effort = None
+            # Re-resolve the default model for the new agent so codex/claude
+            # fallback paths still get an explicit ``-c model=...`` and don't
+            # hang on the CLI default. The original ``resolved_model`` belonged
+            # to the previously-tried agent and is no longer valid here.
+            resolved_model = (
+                resolved_default_model_for_agent(fallback_agent)
+                if fallback_agent in ("claude", "codex")
+                else None
+            )
             effective_refreshed = True

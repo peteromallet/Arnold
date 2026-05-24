@@ -559,6 +559,8 @@ def _run_and_merge_batch(
     mode: str,
     refreshed: bool,
     model: str | None = None,
+    effort: str | None = None,
+    resolved_model: str | None = None,
     prompt_override: str | None,
     batch_task_ids: list[str],
     batch_sense_check_ids: list[str],
@@ -579,13 +581,27 @@ def _run_and_merge_batch(
     else:
         before_snapshot, before_error = capture_git_status_snapshot_fn(project_dir)
         before_line_counts = capture_before_line_counts(project_dir, before_snapshot.keys())
+    # Pass a full AgentMode (with effort + resolved_model) rather than a bare
+    # 4-tuple. The 4-tuple form drops both fields downstream, which causes
+    # ``run_codex_step`` to be invoked with ``model=None`` / ``effort=None`` and
+    # leads to the codex CLI hanging at startup. See diagnostic
+    # /tmp/codex_wedge_diagnostic.md.
+    from megaplan.types import AgentMode as _AgentMode
+    am_for_worker = _AgentMode(
+        agent=agent,
+        mode=mode,
+        refreshed=refreshed,
+        model=model,
+        effort=effort,
+        resolved_model=resolved_model if resolved_model is not None else model,
+    )
     worker, agent, mode, refreshed = worker_module.run_step_with_worker(
         "execute",
         state,
         plan_dir,
         args,
         root=root,
-        resolved=(agent, mode, refreshed, model),
+        resolved=am_for_worker,
         prompt_override=prompt_override,
     )
     payload = dict(worker.payload)
@@ -754,6 +770,8 @@ def handle_execute_one_batch(
     mode: str,
     refreshed: bool,
     model: str | None = None,
+    effort: str | None = None,
+    resolved_model: str | None = None,
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -857,6 +875,8 @@ def handle_execute_one_batch(
             mode=mode,
             refreshed=refreshed,
             model=model,
+            effort=effort,
+            resolved_model=resolved_model,
             prompt_override=batch_prompt,
             batch_task_ids=batch_task_ids,
             batch_sense_check_ids=batch_sense_check_ids,
@@ -1157,6 +1177,8 @@ def handle_execute_auto_loop(
     mode: str,
     refreshed: bool,
     model: str | None = None,
+    effort: str | None = None,
+    resolved_model: str | None = None,
     tier_map: dict[int, str] | None = None,
 ) -> StepResponse:
     finalize_data = read_json(plan_dir / "finalize.json")
@@ -1406,6 +1428,15 @@ def handle_execute_auto_loop(
                 save_state_merge_meta(plan_dir, state)
 
         try:
+            # Per-batch tier routing may have replaced ``batch_model`` with a
+            # tier-resolved literal (already a real model name). For the
+            # fallback / non-tier case, ``batch_model`` is the unresolved
+            # ``model`` and ``resolved_model`` carries the default-applied
+            # version. Use the tier-resolved literal when present (it is
+            # already concrete), otherwise the caller-supplied resolved_model.
+            batch_resolved_model = (
+                batch_model if batch_model is not None else resolved_model
+            )
             result = _run_and_merge_batch(
                 root=root,
                 plan_dir=plan_dir,
@@ -1415,6 +1446,8 @@ def handle_execute_auto_loop(
                 mode=batch_mode,
                 refreshed=batch_refreshed,
                 model=batch_model,
+                effort=effort,
+                resolved_model=batch_resolved_model,
                 prompt_override=batch_prompt,
                 batch_task_ids=batch_task_ids,
                 batch_sense_check_ids=batch_sense_check_ids,

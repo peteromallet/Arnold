@@ -1505,10 +1505,19 @@ def test_run_codex_step_uses_prompt_override_without_builder(tmp_path: Path) -> 
 
 
 def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
+    from megaplan.types import AgentMode
     from megaplan.workers import run_step_with_worker
 
     plan_dir, state = _mock_state(tmp_path)
     payload = {"output": "done", "files_changed": [], "commands_run": [], "deviations": [], "task_updates": [], "sense_check_acknowledgments": []}
+    am = AgentMode(
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+        model=None,
+        effort="medium",
+        resolved_model="gpt-5.5",
+    )
     with patch(
         "megaplan.workers._impl.run_codex_step",
         return_value=type("Result", (), {"payload": payload, "raw_output": "", "duration_ms": 1, "cost_usd": 0.0, "session_id": "sess", "trace_output": None})(),
@@ -1519,10 +1528,184 @@ def test_run_step_with_worker_passes_prompt_override(tmp_path: Path) -> None:
             plan_dir,
             _make_args(agent="codex"),
             root=tmp_path,
-            resolved=("codex", "persistent", False, None),
+            resolved=am,
             prompt_override="custom execute prompt",
         )
     assert run_codex.call_args.kwargs["prompt_override"] == "custom execute prompt"
+    # The resolved model + effort must reach run_codex_step. Before the fix
+    # (see /tmp/codex_wedge_diagnostic.md), a 4-tuple ``resolved=`` dropped
+    # both fields and codex was invoked with model=None / effort=None.
+    assert run_codex.call_args.kwargs["model"] == "gpt-5.5"
+    assert run_codex.call_args.kwargs["effort"] == "medium"
+
+
+def test_run_step_with_worker_codex_backstops_resolved_model_from_4tuple(tmp_path: Path) -> None:
+    """Regression: 4-tuple ``resolved=`` with model=None used to silently drop
+    the resolved default, causing codex to launch without ``-c model=...`` and
+    hang at startup. The dispatcher now backstops resolved_model via
+    ``resolved_default_model_for_agent`` so codex gets an explicit model.
+    """
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": []}
+    fake_result = type(
+        "Result",
+        (),
+        {
+            "payload": payload,
+            "raw_output": "",
+            "duration_ms": 1,
+            "cost_usd": 0.0,
+            "session_id": "sess-1",
+            "trace_output": None,
+        },
+    )()
+    with patch(
+        "megaplan.workers._impl.run_codex_step",
+        return_value=fake_result,
+    ) as run_codex:
+        run_step_with_worker(
+            "plan",
+            state,
+            plan_dir,
+            _make_args(agent="codex"),
+            root=tmp_path,
+            resolved=("codex", "persistent", False, None),
+        )
+    # Backstop should have filled in the pinned default ("gpt-5.5") so codex
+    # never sees model=None.
+    assert run_codex.call_args.kwargs["model"] == "gpt-5.5"
+
+
+def test_run_step_with_worker_codex_asserts_when_backstop_also_fails(tmp_path: Path) -> None:
+    """Assert-of-last-resort: if even the default-model backstop returns None
+    (e.g. configuration corruption), fail loudly rather than launch codex
+    without a model.
+    """
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    with patch(
+        "megaplan.workers._impl.resolved_default_model_for_agent",
+        return_value=None,
+    ):
+        with pytest.raises(AssertionError, match="resolved_model"):
+            run_step_with_worker(
+                "execute",
+                state,
+                plan_dir,
+                _make_args(agent="codex"),
+                root=tmp_path,
+                resolved=("codex", "persistent", False, None),
+                prompt_override="any",
+            )
+
+
+def test_handlers_execute_resolves_codex_model_into_command(tmp_path: Path) -> None:
+    """End-to-end (handler -> dispatcher -> _run_and_merge_batch -> worker)
+    assertion that the codex command-line carries the resolved model + effort.
+
+    Before the fix, ``handlers/execute.py`` only forwarded ``(agent, mode,
+    refreshed, model)`` to the dispatcher and the dispatcher built a 4-tuple
+    ``resolved=`` for ``run_step_with_worker``. Both ``effort`` and
+    ``resolved_model`` were dropped on that boundary, so codex was invoked
+    with no ``-c model='gpt-5.5'`` / ``-c model_reasoning_effort=medium``.
+    """
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.types import AgentMode
+    from megaplan.workers import CommandResult, run_step_with_worker
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    # parse_agent_spec("codex:medium") returns (agent='codex', model=None,
+    # effort='medium'); resolved_default_model_for_agent('codex') then
+    # produces 'gpt-5.5'. Simulate that AgentMode here.
+    am = AgentMode(
+        agent="codex",
+        mode="persistent",
+        refreshed=True,
+        model=None,
+        effort="medium",
+        resolved_model="gpt-5.5",
+    )
+    payload = {"plan": "x", "questions": [], "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": []}
+    fake_result = type(
+        "Result",
+        (),
+        {
+            "payload": payload,
+            "raw_output": "",
+            "duration_ms": 1,
+            "cost_usd": 0.0,
+            "session_id": "sess-1",
+            "trace_output": None,
+        },
+    )()
+    with patch(
+        "megaplan.workers._impl.run_codex_step",
+        return_value=fake_result,
+    ) as run_codex:
+        run_step_with_worker(
+            "plan",
+            state,
+            plan_dir,
+            _make_args(agent="codex"),
+            root=tmp_path,
+            resolved=am,
+        )
+    assert run_codex.call_args.kwargs["model"] == "gpt-5.5"
+    assert run_codex.call_args.kwargs["effort"] == "medium"
+
+
+def test_run_codex_step_emits_model_and_effort_flags(tmp_path: Path) -> None:
+    """When ``run_codex_step`` is invoked with an explicit model + effort, the
+    resulting codex CLI command must contain both ``-c model='<model>'`` and
+    ``-c model_reasoning_effort=<effort>``. The wedge in the diagnostic
+    happened because both flags were missing.
+    """
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    plan_payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    captured: dict[str, list[str]] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(plan_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=1,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        run_codex_step(
+            "plan",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=False,
+            fresh=True,
+            model="gpt-5.5",
+            effort="medium",
+        )
+    cmd = captured["command"]
+    # The codex command builder appends both ``-c model='gpt-5.5'`` and
+    # ``-c model_reasoning_effort=medium`` (see _impl.py:2231-2234).
+    assert "model='gpt-5.5'" in cmd, f"missing model flag in {cmd}"
+    assert "model_reasoning_effort=medium" in cmd, f"missing effort flag in {cmd}"
 
 
 def test_run_codex_step_parses_output_file(tmp_path: Path) -> None:
