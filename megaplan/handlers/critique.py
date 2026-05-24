@@ -99,9 +99,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             recovered_payload = _recover_valid_critique_output(plan_dir, expected_ids=expected_ids)
             if recovered_payload is None:
                 _raise_step_validation_error(plan_dir=plan_dir, state=state, step="critique", iteration=iteration, worker=worker, code="invalid_critique", message="Critique output failed check validation: " + ", ".join(invalid_checks))
+            _append_to_meta(state, "critique_validation_warnings", {"iteration": iteration, "invalid_checks": invalid_checks})
             worker = WorkerResult(
                 payload=recovered_payload,
-                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json",
+                raw_output=worker.raw_output + "\n[megaplan] recovered critique payload from critique_output.json; original worker failed validation for checks: " + ", ".join(invalid_checks),
                 duration_ms=worker.duration_ms,
                 cost_usd=worker.cost_usd,
                 session_id=worker.session_id,
