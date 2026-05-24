@@ -32,6 +32,7 @@ from megaplan.workers._impl import (
     _extract_claude_usage,
     _external_worker_env,
     _normalize_worker_payload,
+    _worker_stream_idle_timeout_seconds,
     mock_worker_output,
     resolve_work_dir,
     run_command,
@@ -997,6 +998,7 @@ def run_shannon_step(
                 env=env,
                 timeout=_shannon_readiness_timeout_seconds(),
                 activity_callback=_activity_callback_for_state(state, plan_dir),
+                idle_timeout=_worker_stream_idle_timeout_seconds(),
             )
         except CliError as error:
             if error.code == "worker_timeout":
@@ -1026,10 +1028,12 @@ def run_shannon_step(
             stdin_text=None,
             env=env,
             activity_callback=_activity_callback_for_state(state, plan_dir),
+            idle_timeout=_worker_stream_idle_timeout_seconds(),
         )
     except CliError as error:
-        # (j) timeout → enrich with session_id
-        if error.code == "worker_timeout":
+        # (j) timeout / idle-output stall → enrich with session_id so the
+        # downstream CLI can resume the tmux pane / retry the session.
+        if error.code in ("worker_timeout", "worker_stall"):
             error.extra["session_id"] = session_id
         raise
 

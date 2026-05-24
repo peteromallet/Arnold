@@ -312,6 +312,36 @@ def test_update_session_state_preserves_created_at() -> None:
     assert entry["created_at"] == "2026-01-01T00:00:00Z"
 
 
+def test_run_command_heartbeats_while_subprocess_is_silent_but_alive() -> None:
+    """A subprocess that runs without emitting output must still produce
+    activity_callback liveness beats, so a long-but-alive worker (e.g. codex
+    exec mid-turn) does not look idle to the outer `megaplan auto` watchdog.
+    """
+    import sys as _sys
+    import threading as _threading
+
+    from megaplan.workers._impl import run_command
+
+    calls: list[tuple[str, str]] = []
+    lock = _threading.Lock()
+
+    def _cb(kind: str, detail: str) -> None:
+        with lock:
+            calls.append((kind, detail))
+
+    # Sleep ~7s emitting nothing on stdout/stderr — longer than the 5s
+    # heartbeat interval, so at least one liveness beat must fire.
+    run_command(
+        [_sys.executable, "-c", "import time; time.sleep(7)"],
+        cwd=Path.cwd(),
+        timeout=30,
+        activity_callback=_cb,
+    )
+
+    liveness_beats = [c for c in calls if c[0] == "liveness"]
+    assert liveness_beats, f"expected at least one liveness beat, got {calls!r}"
+
+
 def test_extract_session_id_supports_jsonl() -> None:
     raw = '{"type":"thread.started","thread_id":"abc-123"}\n'
     assert extract_session_id(raw) == "abc-123"
@@ -4504,3 +4534,33 @@ def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
     assert _reasoning_config_for_model("deepseek-v4-pro") is None
     assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None
     assert _reasoning_config_for_model("deepseek/deepseek-r1") == {"enabled": False}
+
+
+def test_hermes_reasoning_config_maps_profile_depth() -> None:
+    from megaplan.workers.hermes import _reasoning_config_for_model
+
+    # Effort maps onto a route-safe reasoning budget.
+    assert _reasoning_config_for_model("deepseek-v4-pro", "low") == {
+        "enabled": True,
+        "effort": "low",
+    }
+    assert _reasoning_config_for_model("deepseek-v4-pro", "high") == {
+        "enabled": True,
+        "effort": "high",
+    }
+    # xhigh/max pass through unchanged — DeepSeek-direct accepts max and maps
+    # xhigh→max itself; the OpenRouter-only clamp lives in the request builder.
+    assert _reasoning_config_for_model("deepseek-v4-pro", "xhigh") == {
+        "enabled": True,
+        "effort": "xhigh",
+    }
+    assert _reasoning_config_for_model("deepseek-v4-pro", "max") == {
+        "enabled": True,
+        "effort": "max",
+    }
+    # minimal disables thinking entirely.
+    assert _reasoning_config_for_model("deepseek-v4-pro", "minimal") == {"enabled": False}
+    # Unknown token leaves the provider default untouched.
+    assert _reasoning_config_for_model("deepseek-v4-pro", "bogus") is None
+    # Family override wins over requested depth.
+    assert _reasoning_config_for_model("deepseek/deepseek-r1", "high") == {"enabled": False}

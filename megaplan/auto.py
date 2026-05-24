@@ -56,7 +56,14 @@ DEFAULT_STALL_THRESHOLD = 5
 DEFAULT_MAX_ITERATIONS = 200
 DEFAULT_POLL_SLEEP_SECONDS = 1.0
 DEFAULT_PHASE_TIMEOUT_SECONDS = 3600
-DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS = 900
+# Backstop for when liveness heartbeats fail to report (e.g. a non-streaming
+# worker path, or an undiscovered heartbeat gap). Deliberately generous: a
+# false kill of a healthy phase is catastrophic and currently recovers only by
+# manual state surgery, whereas over-waiting on a genuinely-dead phase only
+# costs wall-clock. Tighten once a stall becomes cheaply recoverable (resume
+# the resume_cursor instead of terminal-failing). The accurate per-stream
+# heartbeat (workers/hermes.py) is the primary signal; this is the net.
+DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS = 1800
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_CONTEXT_RETRIES = 2
 CONTEXT_EXHAUSTION_FRAGMENT = "ran out of room in the model's context"

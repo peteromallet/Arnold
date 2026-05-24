@@ -206,12 +206,26 @@ def _start_heartbeat(
     step: str,
     tracker: "_StreamTracker",
     stop_event: threading.Event,
+    *,
+    run_id: str | None = None,
 ) -> None:
-    """Start a daemon thread that emits llm_token_heartbeat every ~1s."""
+    """Start a daemon thread that emits llm_token_heartbeat every ~1s.
+
+    When ``run_id`` is provided the beat also bumps ``state.json``'s
+    ``active_step.last_activity_at`` via ``touch_active_step`` whenever the
+    stream tracker has observed new tokens since the previous beat. This is the
+    *only* liveness signal a silently-streaming provider (e.g. DeepSeek on the
+    execute phase) produces: ``quiet_mode`` agents write nothing to stderr, so
+    the ``_ActivityStream`` stderr wrapper never fires, and without this the
+    phase-idle monitor — which watches the ``state.json`` mtime — sees the file
+    frozen at phase-start and false-stalls a healthy long-running batch.
+    """
 
     def _beat() -> None:
-        import time as _t
-
+        # Start at 0 (not -1) so a stream that emits *no* tokens never produces
+        # a spurious first touch — a genuinely wedged stream must still be
+        # allowed to idle-timeout.
+        last_tokens = 0
         while not stop_event.wait(1.0):
             try:
                 from megaplan.observability.events import emit, EventKind
@@ -227,6 +241,21 @@ def _start_heartbeat(
                 )
             except Exception:
                 pass
+            # Liveness: only touch state when the provider is actually
+            # producing tokens, so a genuinely wedged stream is still allowed
+            # to idle-timeout. touch_active_step no-ops unless the on-disk
+            # run_id matches, preserving the stale-worker guard.
+            if run_id and tracker.tokens_emitted != last_tokens:
+                last_tokens = tracker.tokens_emitted
+                try:
+                    touch_active_step(
+                        plan_dir,
+                        run_id=run_id,
+                        kind="llm_stream",
+                        detail=f"{tracker.tokens_emitted} chunks",
+                    )
+                except Exception:
+                    pass
 
     t = threading.Thread(target=_beat, daemon=True)
     t.start()
@@ -256,12 +285,34 @@ def _streaming_run_kwargs(model: str | None, max_tokens: int | None, *, plan_dir
     return {}
 
 
-def _reasoning_config_for_model(resolved_model: str | None) -> dict | None:
-    """Return a reasoning override only for models known to need one.
+# Effort tokens (the profile `--depth` vocabulary) we recognize. They are
+# forwarded to the route *unchanged*; each provider normalizes on its own terms.
+# DeepSeek's direct API accepts high/max and maps low/medium→high and
+# xhigh→max server-side (https://api-docs.deepseek.com/guides/thinking_mode),
+# so passing the raw token preserves the `max` budget. OpenRouter only takes
+# low/medium/high, so its xhigh/max clamp lives in the agent's request builder
+# (run_agent._build_api_kwargs), where the route is known. `minimal` is
+# special-cased here to disable thinking outright.
+_KNOWN_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
-    DeepSeek V4 worked through Fireworks without a reasoning override. Keep the
-    direct DeepSeek API route aligned with that behavior: do not send
-    `thinking: disabled` or an equivalent override for `deepseek-v4-*`.
+
+def _reasoning_config_for_model(
+    resolved_model: str | None, effort: str | None = None
+) -> dict | None:
+    """Return a reasoning override for a hermes model and requested depth.
+
+    Two inputs feed the override:
+
+    * model family — some families (qwen3, deepseek-r1) emit structured output
+      inside reasoning/think tags, so thinking is forced *off* and depth is
+      ignored. DeepSeek V4 worked through Fireworks without a reasoning
+      override, so the direct DeepSeek API route stays aligned: no
+      `thinking: disabled` override for `deepseek-v4-*`.
+    * effort — the megaplan profile depth (`--depth`). When set, it is forwarded
+      as ``{"enabled": True, "effort": <token>}`` and normalized per-route.
+      ``minimal`` disables thinking; unknown tokens leave the provider default.
+
+    Family wins over depth: an off-family model stays off regardless of effort.
     """
     model_lower = (resolved_model or "").lower()
     reasoning_off_families = (
@@ -270,7 +321,16 @@ def _reasoning_config_for_model(resolved_model: str | None) -> dict | None:
     )
     if any(model_lower.startswith(prefix) for prefix in reasoning_off_families):
         return {"enabled": False}
-    return None
+
+    if effort is None:
+        return None
+
+    token = effort.strip().lower()
+    if token == "minimal":
+        return {"enabled": False}
+    if token not in _KNOWN_EFFORTS:
+        return None  # unknown token → leave the provider's default thinking mode
+    return {"enabled": True, "effort": token}
 
 
 def _toolsets_for_phase(phase: str) -> list[str] | None:
@@ -581,6 +641,7 @@ def run_hermes_step(
     root: Path,
     fresh: bool,
     model: str | None = None,
+    effort: str | None = None,
     prompt_override: str | None = None,
 ) -> WorkerResult:
     """Run a megaplan phase using Hermes Agent via OpenRouter.
@@ -705,8 +766,9 @@ def run_hermes_step(
     # and sys.stderr globally — instead the stream is passed explicitly to
     # AIAgent (output_stream) and used via the activity_print helper.
     active_step = state.get("active_step")
-    run_id = active_step.get("run_id") if isinstance(active_step, dict) else None
-    activity_stderr = _ActivityStream(sys.stderr, plan_dir=plan_dir, run_id=run_id if isinstance(run_id, str) else None)
+    _raw_run_id = active_step.get("run_id") if isinstance(active_step, dict) else None
+    run_id = _raw_run_id if isinstance(_raw_run_id, str) else None
+    activity_stderr = _ActivityStream(sys.stderr, plan_dir=plan_dir, run_id=run_id)
 
     def activity_print(*args, **kwargs):
         kwargs.pop('file', None)
@@ -718,10 +780,11 @@ def run_hermes_step(
     from megaplan.runtime.key_pool import resolve_model as _resolve_model, acquire_key, report_429
     resolved_model, agent_kwargs = _resolve_model(model)
 
-    # Disable reasoning/thinking only for model families that otherwise return
-    # structured output outside the normal content field. DeepSeek V4 is not in
-    # this list so the direct API route matches the Fireworks route.
-    _reasoning_off = _reasoning_config_for_model(resolved_model)
+    # Resolve the reasoning override from model family + profile depth. Off
+    # families (which return structured output outside the content field) stay
+    # disabled; otherwise the requested effort sets the thinking budget. DeepSeek
+    # V4 with no effort yields None, matching the Fireworks route's default.
+    _reasoning_off = _reasoning_config_for_model(resolved_model, effort)
 
     # Cap output tokens to prevent repetition loops (Qwen generates 330K+
     # of repeated text without a limit). Sized to fit large finalize.json
@@ -797,7 +860,7 @@ def run_hermes_step(
         # Heartbeat thread for streaming calls
         heartbeat_stop = threading.Event()
         if is_streaming and tracker is not None:
-            _start_heartbeat(plan_dir, step, tracker, heartbeat_stop)
+            _start_heartbeat(plan_dir, step, tracker, heartbeat_stop, run_id=run_id)
 
         try:
             current_result = current_agent.run_conversation(
