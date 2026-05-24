@@ -10,6 +10,7 @@ tracking, timeouts, error handling, and receipts as the native Claude path.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import random
 import re
@@ -21,6 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from megaplan.runtime.process import OrphanDetectedError, TmuxSession, pane_pids
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan._core import creative_form_id, json_dump, read_json, schemas_root
 from megaplan.prompts import create_claude_prompt
@@ -477,6 +479,26 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
             count=1,
         )
 
+    # Patch megaplanTmuxSessionName to honour SHANNON_TMUX_SESSION_NAME so
+    # megaplan can supply a deterministic tmux session name for lifecycle
+    # ownership (cross-process orphan prevention).
+    _tmux_name_anchor = (
+        "return sessionId ? `shannon-${sessionId}` : `shannon-${randomUUID()}`;"
+    )
+    _tmux_name_replacement = (
+        "return Bun.env.SHANNON_TMUX_SESSION_NAME ?? "
+        "(sessionId ? `shannon-${sessionId}` : `shannon-${randomUUID()}`);"
+    )
+    if _tmux_name_anchor in patched and _tmux_name_replacement not in patched:
+        patched = patched.replace(_tmux_name_anchor, _tmux_name_replacement, 1)
+    elif _tmux_name_anchor not in patched and "Bun.env.SHANNON_TMUX_SESSION_NAME" not in patched:
+        logging.getLogger(__name__).warning(
+            "Shannon megaplanTmuxSessionName anchor not found in %s — "
+            "skipping patch; deterministic tmux session naming will not be "
+            "available.",
+            entrypoint,
+        )
+
     if patched == original:
         return
 
@@ -828,6 +850,12 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _tmux_slug(text: str) -> str:
+    """Sanitize *text* to tmux-safe characters (no ``.``, ``:``, whitespace)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug or "plan"
+
+
 def run_shannon_step(
     step: str,
     state: PlanState,
@@ -854,6 +882,36 @@ def run_shannon_step(
             prompt_kwargs=prompt_kwargs,
         )
     fresh = fresh or step != "execute"
+
+    # Derive a deterministic, plan+step-scoped tmux session name once and
+    # reuse it for env injection, TmuxSession construction, and eventual
+    # reconciliation (no attempt suffix; sanitized to tmux-safe chars).
+    session_name = f"megaplan-{_tmux_slug(state['name'])}-{_tmux_slug(step)}"
+    tmux_session = TmuxSession(session_name)
+
+    # ── reconcile-then-backstop ─────────────────────────────────────────
+    # Reap any residual same-(plan,step) tmux session left by a prior
+    # attempt (recovery path; subsumes the old dispatcher-side reap — no
+    # handle threading needed). If the plan's own session survives teardown,
+    # it is genuinely unkillable and must fail the step. Wrap in CliError
+    # so the execute loop's CliError-only handlers produce a clean
+    # failed-state write instead of a raw traceback (gate warning).
+    try:
+        pids = pane_pids(session_name)
+        tmux_session.teardown()
+        if tmux_session.exists():
+            raise OrphanDetectedError(
+                sessions=[session_name],
+                pids=pids,
+                remediation=f"tmux kill-session -t {session_name}",
+            )
+    except OrphanDetectedError as e:
+        raise CliError(
+            "worker_error",
+            f"Orphan tmux session survived teardown: {session_name}. "
+            f"Manual remediation: {e.remediation}",
+            extra={"sessions": e.sessions, "pids": e.pids},
+        ) from e
 
     # ── (b) resolve working directory and session ───────────────────────
     _ensure_shannon_parent_timeout_control()
@@ -935,6 +993,7 @@ def run_shannon_step(
     # ── (e) execute with timeout / activity callback ────────────────────
     started = time.monotonic()
     env = _external_worker_env(turn_id=f'plan_worker_{state["name"]}')
+    env["SHANNON_TMUX_SESSION_NAME"] = session_name
     # Shannon normally drives an interactive Claude Code session. Do not let an
     # inherited API key force local interactive Claude into its first-run "use
     # this key?" prompt. Root cloud workers are different: the Shannon package
@@ -989,6 +1048,12 @@ def run_shannon_step(
                 session_id,
             ]
         )
+        # Both the readiness-probe and the main run_command below share the
+        # same tmux_session (deterministic session_name from above). They are
+        # serialized by run_command's finally block (probe returns →
+        # teardown → main launches), so they must not be parallelized (gate
+        # warning). The shared env/SHANNON_TMUX_SESSION_NAME ensures both
+        # resolve to the same tmux session.
         time.sleep(_shannon_random_handshake_delay_seconds())
         try:
             readiness = run_command(
@@ -999,6 +1064,7 @@ def run_shannon_step(
                 timeout=_shannon_readiness_timeout_seconds(),
                 activity_callback=_activity_callback_for_state(state, plan_dir),
                 idle_timeout=_worker_stream_idle_timeout_seconds(),
+                tmux_session=tmux_session,
             )
         except CliError as error:
             if error.code == "worker_timeout":
@@ -1029,6 +1095,7 @@ def run_shannon_step(
             env=env,
             activity_callback=_activity_callback_for_state(state, plan_dir),
             idle_timeout=_worker_stream_idle_timeout_seconds(),
+            tmux_session=tmux_session,
         )
     except CliError as error:
         # (j) timeout / idle-output stall → enrich with session_id so the

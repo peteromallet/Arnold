@@ -661,3 +661,7 @@ class CliError(Exception):
         self.valid_next = valid_next or []
         self.extra = extra or {}
         self.exit_code = exit_code
+
+
+# Re-export runtime exceptions for convenience (SD3).
+from megaplan.runtime.process import OrphanDetectedError  # noqa: E402, F401
