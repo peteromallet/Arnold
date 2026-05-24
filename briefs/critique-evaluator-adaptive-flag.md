@@ -136,6 +136,12 @@ These were open in earlier drafts; locking them so they don't resurface as criti
 2. **Model picks use a concrete, ranked roster.** The evaluator is given an explicit strength-ranked model list (with cost), not "rough" descriptors and not an abstract tier it can't resolve. It assigns a concrete model per fired lens (v2) / one concrete model for the run (v1) from that ranked list.
 3. **The `LENS_CATALOG` registry refactor is deferred to v2.** v1 reads the existing `CRITIQUE_CHECKS` / `_CORE_CRITIQUE_CHECKS` as-is. *Anti-scope: do not refactor the lens catalog into a unified registry in v1* — it's a maintainer nicety, not a v1 requirement (tracked as a v2 follow-up).
 4. **v1 is selection-only, one critic model.** No per-lens model map; `run_parallel_critique`'s signature is **not** widened in v1. *Anti-scope: do not modify `run_parallel_critique`'s `model` parameter.*
+5. **Two-mode evaluator — cold on iteration 1, DIFFERENTIAL on revise loops.** The evaluator runs at the start of *every* critique iteration, not just the first. On a revise loop (iteration N≥2) it must NOT re-select blind — it re-targets the critique using loop history that megaplan **already computes** (reuse, do not recompute):
+   - `faults.json` flag lifecycle (`status`: open / addressed / verified / reopened, with `addressed_in`),
+   - `compute_iteration_pressure()` (`addressed_then_reopened_count` + fuzzy-grouped recurrences),
+   - gate(N-1)'s `build_gate_signals` (`unresolved_flags`, `recurring_critiques`, weighted trajectory).
+
+   Differential behavior: **escalate** (stronger critic) the lenses tied to recurring / addressed-then-reopened flags; **fire** lenses that verify the flags revise just marked `addressed`; **don't re-litigate** `verified` flags. Keep the decision distinct from gate's (gate decides *whether* to loop; the evaluator decides *what the re-critique examines*) but consume gate's signals rather than duplicating them. *Anti-scope: area-based pruning (skip a lens because its plan section looks unchanged) is DEFERRED — there is no structured per-section plan delta, only the scalar `compute_plan_delta_percent`; do NOT build a structured diff in v1. v1 differential is flag-centric only.*
 
 ## 9. Risks (accepted)
 - **Calibration is the residual risk, not pick-accuracy.** The owner is confident in picks; the surviving exposure is the confident-but-wrong *skip* on a subtle plan, where the downstream-critic escalation net is weakest. Mitigation: fire-by-default/justify-to-skip + §6 telemetry. (Phase-0 validation deliberately skipped.)
@@ -149,3 +155,4 @@ These were open in earlier drafts; locking them so they don't resurface as criti
 - The resolved lens set drives `active_checks`, `expected_ids`, `_recover_valid_critique_output`, and the parallel→sequential fallback from **one** source — a test proves the verdict survives the sequential fallback path.
 - `robustness` / `normalize_robustness` are **untouched** (grep-level assertion: `"variable"`/`"adaptive"` never added to `ROBUSTNESS_LEVELS`).
 - rater ≥ dispatchee holds for the evaluator's assignment; the finalize violation is fixed for `variable`/`directed`/`apex`.
+- **Revise-loop differential**: on iteration N≥2 the evaluator reads `faults.json` + `compute_iteration_pressure()` + gate(N-1) signals and produces a differential critique plan (escalates recurring/reopened flags, fires to verify just-`addressed` flags, drops `verified` ones); a test exercises the iteration-N differential path and confirms it does not blindly re-run iteration-1's selection.
