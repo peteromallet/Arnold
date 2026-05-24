@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import entries_from_scratchpad_path, extract_from_raw_workflow
-
-FLUX2_PRE_POLICY_WORKFLOW = Path("workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json")
 
 
 def test_extract_from_raw_workflow_normalises_model_metadata() -> None:
@@ -150,6 +146,45 @@ def test_entries_from_scratchpad_path_reads_materialized_requirements(tmp_path: 
     ]
 
 
+def test_entries_from_scratchpad_path_resolves_literal_module_constants(tmp_path: Path) -> None:
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        "MODEL_ASSETS = ["
+        "{'name': 'from_constant.safetensors', 'url': 'https://example.test/from_constant.safetensors', 'subdir': 'vae'}"
+        "]\n"
+        "READY_REQUIREMENTS = {'models': MODEL_ASSETS, 'custom_nodes': []}\n",
+        encoding="utf-8",
+    )
+
+    assert entries_from_scratchpad_path(scratchpad) == [
+        {
+            "name": "from_constant.safetensors",
+            "url": "https://example.test/from_constant.safetensors",
+            "subdir": "vae",
+        }
+    ]
+
+
+def test_entries_from_scratchpad_path_respects_explicit_subdir_for_non_split_asset(tmp_path: Path) -> None:
+    scratchpad = tmp_path / "scratch.py"
+    scratchpad.write_text(
+        "READY_REQUIREMENTS = {'models': ["
+        "{'name': 'flux-2-klein-4b-fp8.safetensors', "
+        "'url': 'https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors', "
+        "'subdir': 'diffusion_models'}"
+        "], 'custom_nodes': []}\n",
+        encoding="utf-8",
+    )
+
+    assert entries_from_scratchpad_path(scratchpad) == [
+        {
+            "name": "flux-2-klein-4b-fp8.safetensors",
+            "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors",
+            "subdir": "diffusion_models",
+        }
+    ]
+
+
 def test_real_wan_t2v_extracts_three_assets() -> None:
     entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/official/video/wan_t2v.json"))
 
@@ -161,13 +196,8 @@ def test_real_wan_t2v_extracts_three_assets() -> None:
     assert all("?download=true" not in entry["url"] for entry in entries)
 
 
-@pytest.mark.xfail(
-    not FLUX2_PRE_POLICY_WORKFLOW.exists(),
-    raises=FileNotFoundError,
-    reason="M1 safety gate: pre-policy Flux2 corpus workflow is absent in this checkout.",
-)
 def test_real_flux2_subgraph_extracts_pre_policy_assets() -> None:
-    entries = extract_from_raw_workflow(load_workflow_json(FLUX2_PRE_POLICY_WORKFLOW))
+    entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/official/image/flux2_klein_9b_t2i.json"))
 
     assert [(entry["name"], entry["subdir"]) for entry in entries] == [
         ("flux-2-klein-base-9b-fp8.safetensors", "diffusion_models"),

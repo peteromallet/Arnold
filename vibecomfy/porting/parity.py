@@ -1,0 +1,226 @@
+"""Compile-equivalence checker for ready-template conversion.
+
+Lifted from `tools/_compile_equivalence.py` so the converter and the test
+can share the same counters. `compile_equivalent(api_a, api_b)` returns
+`(True, [])` if both API dicts represent the same workflow modulo node-id
+renumbering and ordering, otherwise `(False, [diff_strings])`.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from typing import Any
+
+
+# UI-only node classes the converter strips at IR build. Match the
+# stripped set in `tools/format_as_python.py`.
+UI_ONLY = frozenset(
+    {
+        "Note",
+        "MarkdownNote",
+    }
+)
+
+
+def _is_link(value: Any) -> bool:
+    if not (isinstance(value, list) and len(value) == 2):
+        return False
+    nid, slot = value
+    if not isinstance(slot, int):
+        return False
+    nid_s = str(nid)
+    return all(p.isdigit() for p in nid_s.split(":"))
+
+
+def _is_ui_only(class_type: str) -> bool:
+    return class_type in UI_ONLY
+
+
+def _canonical_key(
+    class_type: str,
+    key: str,
+    *,
+    class_widget_aliases: dict[str, list[str | None]] | None = None,
+) -> str | None:
+    """Translate widget_N -> canonical name when the schema knows it.
+
+    Lets the equality check treat `LoadImage.widget_0='x'` and
+    `LoadImage.image='x'` as the same logical input - necessary for
+    the converter, which promotes widget_X to canonical names.
+
+    Returns None when the position is a UI-only widget (e.g. KSampler
+    `control_after_generate` at index 1) so callers can drop it; both
+    sides should normalise the same way to keep equivalence stable.
+
+    When *class_widget_aliases* is provided (a mapping of class_type ->
+    ordered widget-only input names from schema-source evidence), it is
+    preferred over the static `WIDGET_SCHEMA` table.  This prevents the
+    parity comparison from masking incorrect aliases by canonicalising
+    both sides through the same (potentially wrong) static table.
+    """
+    if not key.startswith("widget_"):
+        return key
+    try:
+        idx = int(key.split("_", 1)[1])
+    except ValueError:
+        return key
+
+    # 1. Schema-source evidence (highest priority - parity guardrail).
+    if class_widget_aliases is not None:
+        names = class_widget_aliases.get(class_type)
+        if names is not None and 0 <= idx < len(names):
+            alias = names[idx]
+            if alias is not None:
+                return alias
+            # None entry = UI-only widget, drop it.
+            return None
+
+    # 2. Static WIDGET_SCHEMA fallback.
+    try:
+        from vibecomfy.porting.widget_aliases import resolve_widget_name
+    except Exception:
+        return key
+    return resolve_widget_name(class_type, idx)
+
+
+def class_type_counter(api: dict) -> Counter[str]:
+    return Counter(
+        node["class_type"]
+        for node in api.values()
+        if not _is_ui_only(node.get("class_type", ""))
+    )
+
+
+def _is_runtime_ignored_input(key: str, value: Any) -> bool:
+    if value is None:
+        return True
+    if key == "add_noise_to_samples" and value == "":
+        return True
+    if key.startswith("unused_"):
+        return True
+    if key in {"videopreview", "preview", "preview_image"} and isinstance(value, dict):
+        return True
+    return False
+
+
+def widget_value_counter(
+    api: dict,
+    *,
+    class_widget_aliases: dict[str, list[str | None]] | None = None,
+) -> Counter[tuple[str, str, str]]:
+    values: Counter[tuple[str, str, str]] = Counter()
+    for node in api.values():
+        class_type = node.get("class_type")
+        if _is_ui_only(class_type):
+            continue
+        seen_for_node: set[tuple[str, str]] = set()
+        for key, value in node.get("inputs", {}).items():
+            if _is_link(value):
+                continue
+            canonical = _canonical_key(class_type, key, class_widget_aliases=class_widget_aliases)
+            if canonical is None:
+                continue  # UI-only widget; drop from both sides for stable equivalence
+            if _is_runtime_ignored_input(canonical, value):
+                continue
+            # Some legacy API fixtures contain both widget_N and the schema
+            # alias for the same Comfy input. Generated Python intentionally
+            # emits the canonical field once, so equivalence must not count
+            # the duplicate legacy representation twice.
+            value_repr = repr(value)
+            if (canonical, value_repr) in seen_for_node:
+                continue
+            seen_for_node.add((canonical, value_repr))
+            values[(class_type, canonical, value_repr)] += 1
+    return values
+
+
+def topology_counter(
+    api: dict,
+    *,
+    class_widget_aliases: dict[str, list[str | None]] | None = None,
+) -> Counter[tuple[str, str, str, int]]:
+    topology: Counter[tuple[str, str, str, int]] = Counter()
+    for _node_id, node in api.items():
+        class_type = node.get("class_type")
+        if _is_ui_only(class_type):
+            continue
+        for key, value in node.get("inputs", {}).items():
+            if not _is_link(value):
+                continue
+            source = api.get(str(value[0]), {})
+            source_class = source.get("class_type")
+            if _is_ui_only(source_class):
+                continue
+            canonical = _canonical_key(class_type, key, class_widget_aliases=class_widget_aliases)
+            if canonical is None:
+                continue  # UI-only widget edge - shouldn't happen in practice but defensive.
+            topology[(class_type, canonical, source_class, int(value[1]))] += 1
+    return topology
+
+
+def compile_equivalent(
+    api_a: dict,
+    api_b: dict,
+    *,
+    class_widget_aliases: dict[str, list[str | None]] | None = None,
+) -> tuple[bool, list[str]]:
+    """Compare two compiled API workflows for semantic equivalence.
+
+    Returns `(True, [])` if both API dicts have the same class-type
+    multiset, the same widget value multiset (per (class, key, repr)), and
+    the same topology (per (target_class, target_input, source_class,
+    source_slot)).
+
+    Returns `(False, diffs)` with one human-readable diff line per
+    mismatching counter group when not equivalent.
+
+    When *class_widget_aliases* is provided, widget_N keys on the source
+    (`api_a`) side are canonicalised using schema-source evidence rather
+    than the static `WIDGET_SCHEMA` table - preventing both sides from
+    comparing equal under the same (potentially wrong) alias mapping.
+    """
+    diffs: list[str] = []
+
+    classes_a, classes_b = class_type_counter(api_a), class_type_counter(api_b)
+    if classes_a != classes_b:
+        only_a = (classes_a - classes_b)
+        only_b = (classes_b - classes_a)
+        if only_a:
+            diffs.append(f"class_types only in A: {dict(only_a)}")
+        if only_b:
+            diffs.append(f"class_types only in B: {dict(only_b)}")
+
+    widgets_a = widget_value_counter(api_a, class_widget_aliases=class_widget_aliases)
+    widgets_b = widget_value_counter(api_b)
+    if widgets_a != widgets_b:
+        only_a = (widgets_a - widgets_b)
+        only_b = (widgets_b - widgets_a)
+        # Cap the diff lines to keep output actionable.
+        for key, count in list(only_a.items())[:10]:
+            diffs.append(f"widget_value only in A x{count}: {key}")
+        for key, count in list(only_b.items())[:10]:
+            diffs.append(f"widget_value only in B x{count}: {key}")
+        if len(only_a) > 10 or len(only_b) > 10:
+            diffs.append(f"... (additional widget_value diffs truncated; +{len(only_a) + len(only_b) - 20})")
+
+    topo_a = topology_counter(api_a, class_widget_aliases=class_widget_aliases)
+    topo_b = topology_counter(api_b)
+    if topo_a != topo_b:
+        only_a = (topo_a - topo_b)
+        only_b = (topo_b - topo_a)
+        for key, count in list(only_a.items())[:10]:
+            diffs.append(f"topology only in A x{count}: {key}")
+        for key, count in list(only_b.items())[:10]:
+            diffs.append(f"topology only in B x{count}: {key}")
+        if len(only_a) > 10 or len(only_b) > 10:
+            diffs.append(f"... (additional topology diffs truncated; +{len(only_a) + len(only_b) - 20})")
+
+    return (not diffs, diffs)
+
+
+__all__ = [
+    "compile_equivalent",
+    "class_type_counter",
+    "widget_value_counter",
+    "topology_counter",
+]

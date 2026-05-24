@@ -33,7 +33,8 @@ READY_REQUIREMENTS = {'models': [],
                   'ComfyUI-KJNodes',
                   'ComfyUI-LTXVideo',
                   'ComfyUI-VideoHelperSuite',
-                  'comfyui_controlnet_aux']}
+                  'comfyui_controlnet_aux',
+                  'rgthree-comfy']}
 
 
 def build() -> VibeWorkflow:
@@ -80,10 +81,8 @@ def build() -> VibeWorkflow:
         type='ltxv',
         device='default',
     )
-    vaeloaderkj = _node(wf, 'VAELoaderKJ', '5127',
-        widget_0='LTX23_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '5127',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     vaeloader_2 = _node(wf, 'VAELoader', '5129',
         vae_name='taeltx2_3.safetensors',
@@ -409,11 +408,6 @@ def build() -> VibeWorkflow:
         strength_model=0.6,
         model=unetloader.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '5187',
-        widget_0=8,
-        model=getnode_31.out(0),
-        vae=getnode_32.out(0),
-    )
     vhs_loadvideoffmpeg = _node(wf, 'VHS_LoadVideoFFmpeg', '5192',
         force_rate=getnode_41.out(0),
         frame_load_cap=getnode_40.out(0),
@@ -539,7 +533,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_31.out(0),
         nag_cond_audio=getnode_47.out(0),
         nag_cond_video=getnode_47.out(0),
     )
@@ -598,7 +592,7 @@ def build() -> VibeWorkflow:
         input=imageresizekjv2.out(0),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '5231',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=ltxicloraloadermodelonly.out(0),
     )
@@ -714,7 +708,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
     setnode_34 = _node(wf, 'SetNode', '5293',
@@ -866,4 +860,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

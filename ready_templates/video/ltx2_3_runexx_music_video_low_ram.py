@@ -29,7 +29,7 @@ READY_METADATA = {'model_assets': [],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
 READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+ 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']}
 
 
 def build() -> VibeWorkflow:
@@ -71,10 +71,8 @@ def build() -> VibeWorkflow:
         type='ltxv',
         device='default',
     )
-    vaeloaderkj = _node(wf, 'VAELoaderKJ', '1567',
-        widget_0='LTX23_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '1567',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     vaeloader_2 = _node(wf, 'VAELoader', '1569',
         vae_name='taeltx2_3.safetensors',
@@ -475,11 +473,6 @@ def build() -> VibeWorkflow:
         shift=13,
         model=getnode_28.out(0),
     )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '2188',
-        widget_0=8,
-        model=getnode_24.out(0),
-        vae=getnode_23.out(0),
-    )
     setnode_28 = _node(wf, 'SetNode', '2196',
         widget_0='sampler',
         SAMPLER=ksamplerselect_2.out(0),
@@ -544,7 +537,7 @@ def build() -> VibeWorkflow:
         _extras={'variables.a': getnode_49.out(0)},
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '268',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )
@@ -583,7 +576,7 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_24.out(0),
         nag_cond_audio=getnode_26.out(0),
         nag_cond_video=getnode_26.out(0),
     )
@@ -715,7 +708,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
     setnode_17 = _node(wf, 'SetNode', '1615',
@@ -888,4 +881,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

@@ -13,6 +13,11 @@ def models_root() -> Path:
         value = os.environ.get(env_name)
         if value:
             return Path(value)
+    extra_model_paths = os.environ.get("COMFYUI_EXTRA_MODEL_PATHS_PATH")
+    if extra_model_paths:
+        path = Path(extra_model_paths)
+        if path.suffix.lower() not in {".yaml", ".yml"}:
+            return path
     try:
         from comfy.cmd.folder_paths import folder_names_and_paths
 
@@ -23,7 +28,16 @@ def models_root() -> Path:
 
 def local_path(entry: Mapping[str, Any], *, root: Path | None = None) -> Path:
     base = root if root is not None else models_root()
-    return base / str(entry["subdir"]) / str(entry["name"])
+    target_path = entry.get("target_path")
+    if isinstance(target_path, str) and target_path:
+        target = Path(target_path)
+        if target.is_absolute():
+            return target
+        return base.parent / target
+    subdir = entry.get("subdir") or entry.get("directory")
+    if not isinstance(subdir, str) or not subdir:
+        raise KeyError("model asset entry requires 'subdir' or 'directory'")
+    return base / subdir / str(entry["name"])
 
 
 def is_present(entry: Mapping[str, Any], *, root: Path | None = None) -> bool:

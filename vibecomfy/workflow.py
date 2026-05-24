@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import TYPE_CHECKING, Any
 
 from vibecomfy.handles import Handle
+from vibecomfy.porting import helpers as porting_helpers
+from vibecomfy.porting.widget_aliases import apply_positional_widget_aliases
 
 if TYPE_CHECKING:
     from vibecomfy.schema.provider import SchemaProvider
+
+
+OPAQUE_COMPONENT_CLASS_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -50,6 +59,20 @@ class VibeInput:
     node_id: str
     field: str
     value: Any = None
+    type: str | None = None
+    default: Any = None
+    required: bool = False
+    range: Any = None
+    aliases: tuple[str, ...] = field(default_factory=tuple)
+    media_semantics: str | None = None
+
+    @property
+    def media(self) -> str | None:
+        return self.media_semantics
+
+    @media.setter
+    def media(self, value: str | None) -> None:
+        self.media_semantics = value
 
 
 @dataclass(slots=True)
@@ -57,6 +80,10 @@ class VibeOutput:
     node_id: str
     output_type: str
     name: str | None = None
+    artifact_kind: str | None = None
+    mime_type: str | None = None
+    filename_prefix: str | None = None
+    expected_cardinality: str | int | None = None
 
 
 @dataclass(slots=True)
@@ -109,12 +136,46 @@ class VibeWorkflow:
         self.requirements = _infer_requirements(self)
         return self
 
-    def register_input(self, name: str, node_id: str, field: str, value: Any = None) -> "VibeWorkflow":
-        self.inputs[name] = VibeInput(name=name, node_id=str(node_id), field=field, value=value)
+    def register_input(
+        self,
+        name: str,
+        node_id: str,
+        field: str,
+        value: Any = None,
+        *,
+        type: str | None = None,
+        default: Any = None,
+        required: bool = False,
+        range: Any = None,
+        aliases: list[str] | tuple[str, ...] | None = None,
+        media_semantics: str | None = None,
+        media: str | None = None,
+    ) -> "VibeWorkflow":
+        if media_semantics is not None and media is not None and media_semantics != media:
+            raise ValueError(
+                f"register_input({name!r}): media_semantics and legacy media "
+                "must match when both are provided"
+            )
+        resolved_media_semantics = media_semantics if media_semantics is not None else media
+        alias_tuple = _normalize_input_aliases(aliases)
+        self._validate_input_aliases(name, alias_tuple)
+        self._validate_input_target(name, node_id, field)
+        self.inputs[name] = VibeInput(
+            name=name,
+            node_id=str(node_id),
+            field=field,
+            value=value,
+            type=type,
+            default=value if default is None else default,
+            required=required,
+            range=range,
+            aliases=alias_tuple,
+            media_semantics=resolved_media_semantics,
+        )
         return self
 
     def set_input(self, name: str, value: Any) -> "VibeWorkflow":
-        target = self.inputs.get(name)
+        target = self._resolve_input(name)
         if target and target.node_id in self.nodes:
             node = self.nodes[target.node_id]
             if target.field in node.inputs:
@@ -126,6 +187,56 @@ class VibeWorkflow:
 
         self.metadata.setdefault("unbound_inputs", {})[name] = value
         return self
+
+    def _resolve_input(self, name: str) -> VibeInput | None:
+        if name in self.inputs:
+            return self.inputs[name]
+        matches = [item for item in self.inputs.values() if name in item.aliases]
+        if len(matches) > 1:
+            raise ValueError(f"Input alias {name!r} is ambiguous in workflow {self.id!r}")
+        return matches[0] if matches else None
+
+    def _validate_input_aliases(self, name: str, aliases: tuple[str, ...]) -> None:
+        if len(set(aliases)) != len(aliases):
+            raise ValueError(f"register_input({name!r}): duplicate aliases are not allowed")
+        if name in aliases:
+            raise ValueError(f"register_input({name!r}): alias cannot equal its primary input name")
+        existing_primary_names = {existing_name for existing_name in self.inputs if existing_name != name}
+        if name in {
+            alias
+            for existing_name, item in self.inputs.items()
+            if existing_name != name
+            for alias in item.aliases
+        }:
+            raise ValueError(f"register_input({name!r}): primary input name conflicts with an existing alias")
+        primary_conflicts = existing_primary_names.intersection(aliases)
+        if primary_conflicts:
+            conflict = sorted(primary_conflicts)[0]
+            raise ValueError(f"register_input({name!r}): alias {conflict!r} conflicts with an existing primary input")
+        existing_aliases = {
+            alias
+            for existing_name, item in self.inputs.items()
+            if existing_name != name
+            for alias in item.aliases
+        }
+        alias_conflicts = existing_aliases.intersection(aliases)
+        if alias_conflicts:
+            conflict = sorted(alias_conflicts)[0]
+            raise ValueError(f"register_input({name!r}): alias {conflict!r} conflicts with an existing alias")
+
+    def _validate_input_target(self, name: str, node_id: str, field: str) -> None:
+        node_key = str(node_id)
+        if node_key not in self.nodes:
+            raise ValueError(
+                f"register_input({name!r}): target node {node_key!r} does not exist "
+                f"in workflow {self.id!r}"
+            )
+        node = self.nodes[node_key]
+        if field not in node.inputs and field not in node.widgets:
+            raise ValueError(
+                f"register_input({name!r}): field {field!r} not found in "
+                f"node {node_key!r} ({node.class_type}) inputs or widgets"
+            )
 
     def add_node(self, class_type: str, **inputs: Any) -> VibeNode:
         node_id = self._next_node_id()
@@ -162,6 +273,27 @@ class VibeWorkflow:
                 return True
         return False
 
+    def remove_node(self, node_id: str) -> "VibeWorkflow":
+        """Remove a node and all edges attached to it."""
+        node_id = str(node_id)
+        self.nodes.pop(node_id, None)
+        self.edges = [
+            edge
+            for edge in self.edges
+            if str(edge.from_node) != node_id and str(edge.to_node) != node_id
+        ]
+        self.inputs = {
+            name: target
+            for name, target in self.inputs.items()
+            if str(target.node_id) != node_id
+        }
+        self.outputs = [
+            output
+            for output in self.outputs
+            if str(output.node_id) != node_id
+        ]
+        return self
+
     def replace_edge(self, to_ref: str, new_from_ref: str) -> "VibeWorkflow":
         """Redirect the edge feeding ``to_ref`` so it now originates from ``new_from_ref``.
 
@@ -175,6 +307,34 @@ class VibeWorkflow:
         issues: list[ValidationIssue] = []
         if not self.nodes:
             issues.append(ValidationIssue("empty_workflow", "Workflow contains no nodes."))
+        for node_id, node in self.nodes.items():
+            if OPAQUE_COMPONENT_CLASS_RE.match(node.class_type):
+                issues.append(
+                    ValidationIssue(
+                        "opaque_component_class_type",
+                        (
+                            f"Node {node_id} has opaque component class_type "
+                            f"{node.class_type!r}; inline or replace the subgraph before runtime."
+                        ),
+                        severity="warning",
+                        detail={"node_id": str(node_id), "class_type": node.class_type},
+                    )
+                )
+            if node.class_type == "VAELoaderKJ":
+                vae_name = node.inputs.get("vae_name") or node.inputs.get("widget_0")
+                if isinstance(vae_name, str):
+                    normalized_vae_name = vae_name.lower().replace("\\", "/")
+                    if "ltx" in normalized_vae_name and "audio" in normalized_vae_name:
+                        issues.append(
+                            ValidationIssue(
+                                "ltx_audio_vae_wrong_loader",
+                                (
+                                    f"Node {node_id} loads LTX audio VAE {vae_name!r} with VAELoaderKJ; "
+                                    "use LTXVAudioVAELoader and stage the file under checkpoints."
+                                ),
+                                detail={"node_id": str(node_id), "class_type": node.class_type, "vae_name": vae_name},
+                            )
+                        )
         for edge in self.edges:
             if edge.from_node not in self.nodes:
                 issues.append(ValidationIssue("missing_edge_source", f"Missing source node {edge.from_node}."))
@@ -192,18 +352,48 @@ class VibeWorkflow:
                 issues.extend(validate_api_link_shapes(api, schema_provider))
         return ValidationReport(ok=not any(issue.severity == "error" for issue in issues), issues=issues)
 
+    def runtime_nodes(self) -> dict[str, VibeNode]:
+        return porting_helpers.helper_stripped_nodes(self.nodes)
+
+    def runtime_class_types(self) -> list[str]:
+        return porting_helpers.helper_stripped_class_types(self.nodes)
+
+    def helper_diagnostics(self) -> list[ValidationIssue]:
+        return [
+            ValidationIssue(
+                diagnostic.code,
+                diagnostic.message,
+                severity=diagnostic.severity,
+                detail={
+                    **diagnostic.detail,
+                    "node_id": diagnostic.node_id,
+                    "class_type": diagnostic.class_type,
+                },
+            )
+            for diagnostic in porting_helpers.collect_helper_diagnostics(self.nodes, self.edges)
+        ]
+
     def compile(self, backend: str = "api") -> dict[str, Any]:
         if backend == "graphbuilder":
             return self._compile_graphbuilder()
         if backend != "api":
             raise ValueError(f"Unknown compile backend: {backend}")
+        broadcast_sources = porting_helpers.collect_broadcast_sources(self.nodes, self.edges)
         api: dict[str, Any] = {}
         for node_id, node in self.nodes.items():
-            inputs = dict(node.inputs)
-            inputs.update(node.widgets)
+            if _is_ui_only_node(node):
+                continue
+            inputs = _rewrite_broadcast_links(_compile_node_inputs(node), self.nodes, broadcast_sources)
             api[str(node_id)] = {"class_type": node.class_type, "inputs": inputs}
         for edge in self.edges:
-            api[str(edge.to_node)]["inputs"][edge.to_input] = [str(edge.from_node), int(edge.from_output)]
+            if str(edge.to_node) not in api:
+                continue
+            edge_source = _resolve_edge_source(edge, self.nodes, broadcast_sources)
+            if edge_source is None:
+                continue
+            if str(edge_source[0]) in self.nodes and str(edge_source[0]) not in api:
+                continue
+            api[str(edge.to_node)]["inputs"][edge.to_input] = edge_source
         return api
 
     def _compile_graphbuilder(self) -> dict[str, Any]:
@@ -212,14 +402,19 @@ class VibeWorkflow:
         except ImportError as exc:
             raise RuntimeError("GraphBuilder backend requires the installed HiddenSwitch ComfyUI runtime.") from exc
 
+        broadcast_sources = porting_helpers.collect_broadcast_sources(self.nodes, self.edges)
         edge_inputs: dict[str, dict[str, Any]] = {}
         for edge in self.edges:
-            edge_inputs.setdefault(str(edge.to_node), {})[edge.to_input] = [str(edge.from_node), int(edge.from_output)]
+            edge_source = _resolve_edge_source(edge, self.nodes, broadcast_sources)
+            if edge_source is None:
+                continue
+            edge_inputs.setdefault(str(edge.to_node), {})[edge.to_input] = edge_source
 
         builder = GraphBuilder(prefix="")
         for node_id, node in self.nodes.items():
-            inputs = dict(node.inputs)
-            inputs.update(node.widgets)
+            if _is_ui_only_node(node):
+                continue
+            inputs = _rewrite_broadcast_links(_compile_node_inputs(node), self.nodes, broadcast_sources)
             inputs.update(edge_inputs.get(str(node_id), {}))
             builder.node(node.class_type, id=str(node_id), **inputs)
         return builder.finalize()
@@ -240,10 +435,119 @@ class _NodeBuilder:
 
     def out(self, slot: int | str) -> Handle:
         try:
-            int(str(slot))
+            output_slot = int(str(slot))
         except ValueError as exc:
+            output_names = self.node.metadata.get("output_names")
+            if isinstance(output_names, (list, tuple)) and slot in output_names:
+                return Handle(node_id=self.node.id, output_slot=output_names.index(slot), name=str(slot))
             raise NotImplementedError(
-                f"Named outputs (e.g. .out({slot!r})) require MP-6 schema integration; "
-                "pass an integer slot for P1."
+                f"Named output {slot!r} is not registered for {self.node.class_type} node {self.node.id}; "
+                "MP-6 schema integration must register output_names metadata, or pass an integer slot."
             ) from exc
-        return Handle(node_id=self.node.id, output_slot=slot)
+        return Handle(node_id=self.node.id, output_slot=output_slot)
+
+
+def _compile_node_inputs(node: VibeNode) -> dict[str, Any]:
+    inputs = dict(node.widgets)
+    inputs.update(node.inputs)
+    _apply_positional_widget_aliases(inputs, node.class_type)
+    _drop_unused_positional_aliases(inputs)
+    return {
+        key: value
+        for key, value in inputs.items()
+        if not _is_ui_only_prompt_input(key, value)
+    }
+
+
+def _normalize_input_aliases(aliases: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    if aliases is None:
+        return ()
+    return tuple(str(alias) for alias in aliases)
+
+
+def _is_ui_only_prompt_input(key: str, value: Any) -> bool:
+    if value is None:
+        return True
+    if key == "control_after_generate":
+        return True
+    if key == "add_noise_to_samples" and value == "":
+        return True
+    if key in {"videopreview", "preview", "preview_image"} and isinstance(value, dict):
+        return True
+    return False
+
+
+def _is_ui_only_node(node: VibeNode) -> bool:
+    return porting_helpers.is_helper_class_type(node.class_type)
+
+
+def _broadcast_name(node: VibeNode) -> str | None:
+    return porting_helpers.broadcast_name(node)
+
+
+def _first_link_input(inputs: dict[str, Any]) -> list[Any] | None:
+    return porting_helpers.first_link_input(inputs)
+
+
+def _rewrite_broadcast_links(
+    inputs: dict[str, Any],
+    nodes: dict[str, VibeNode],
+    broadcast_sources: dict[str, list[Any]],
+) -> dict[str, Any]:
+    return {
+        key: _resolve_link_value(value, nodes, broadcast_sources)
+        for key, value in inputs.items()
+    }
+
+
+def _resolve_edge_source(
+    edge: VibeEdge,
+    nodes: dict[str, VibeNode],
+    broadcast_sources: dict[str, list[Any]],
+) -> list[Any] | None:
+    source_node = nodes.get(str(edge.from_node))
+    if source_node is None:
+        return [str(edge.from_node), int(edge.from_output)]
+    if source_node.class_type == "GetNode":
+        name = _broadcast_name(source_node)
+        if name is None:
+            return None
+        return broadcast_sources.get(name)
+    if source_node.class_type == "SetNode":
+        name = _broadcast_name(source_node)
+        if name is None:
+            return None
+        return broadcast_sources.get(name)
+    if _is_ui_only_node(source_node):
+        return None
+    return [str(edge.from_node), int(edge.from_output)]
+
+
+def _resolve_link_value(
+    value: Any,
+    nodes: dict[str, VibeNode],
+    broadcast_sources: dict[str, list[Any]],
+) -> Any:
+    if not _is_api_link(value):
+        return value
+    source_node = nodes.get(str(value[0]))
+    if source_node is None or source_node.class_type not in {"GetNode", "SetNode"}:
+        return value
+    name = _broadcast_name(source_node)
+    if name is None:
+        return value
+    return broadcast_sources.get(name, value)
+
+
+def _is_api_link(value: Any) -> bool:
+    return porting_helpers.is_api_link(value)
+
+
+def _apply_positional_widget_aliases(inputs: dict[str, Any], class_type: str) -> None:
+    apply_positional_widget_aliases(inputs, class_type)
+
+
+def _drop_unused_positional_aliases(inputs: dict[str, Any]) -> None:
+    for key in list(inputs):
+        if key.startswith("unused_"):
+            inputs.pop(key, None)

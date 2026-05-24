@@ -28,6 +28,9 @@ OUT_PREVIEW_ROOT = REPO_ROOT / "out" / "converted"
 SNAPSHOT_ROOT = REPO_ROOT / "tests" / "snapshots"
 VENDOR_COMFY = REPO_ROOT / "vendor" / "ComfyUI"
 
+# Shared safety gates from the porting package (Sprint 1).
+from vibecomfy.porting.convert import _check_manual_refusal, ManualTemplateRefusal  # noqa: E402
+
 
 # --- bootstrap: make vendor/ComfyUI importable so normalize_to_api works -----
 
@@ -90,15 +93,16 @@ def _classify_shape(path: Path) -> tuple[str, str]:
     """Return (shape, note). Shapes: legacy | authored | manual | converted | unknown."""
     text = _read_module_source(path)
     first_line = text.splitlines()[0] if text.splitlines() else ""
-    if "vibecomfy: manual" in first_line:
-        return ("manual", "manual marker on first line")
-    if "vibecomfy: generated" in first_line:
-        return ("converted", "previously generated")
     # Inspect symbol presence.
     has_api = re.search(r"^API_WORKFLOW\s*=", text, re.MULTILINE)
     has_nodes = re.search(r"^NODES\s*=", text, re.MULTILINE)
     if has_api:
-        return ("legacy", "")
+        note = "manual marker ignored for legacy API_WORKFLOW" if "vibecomfy: manual" in first_line else ""
+        return ("legacy", note)
+    if "vibecomfy: manual" in first_line:
+        return ("manual", "manual marker on first line")
+    if "vibecomfy: generated" in first_line:
+        return ("converted", "previously generated")
     if has_nodes:
         return ("authored", "")
     # Neither symbol — treat as already-converted (no overwrite).
@@ -115,17 +119,31 @@ def _load_override(path: Path) -> dict | None:
     return None
 
 
-def _convert_template(path: Path, *, emit_existing: bool = False) -> tuple[Row, str | None, dict | None]:
+def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
     """Process one template. Returns (row, emitted_text or None, original_compiled_api)."""
     template_id = _template_id_for_path(path)
     row = Row(template_id=template_id)
+
+    # --- shared manual-refusal gate (Sprint 1) --------------------------------
+    try:
+        _check_manual_refusal(path)
+    except ManualTemplateRefusal:
+        row.shape = "manual-refused"
+        row.parse = "skip"
+        row.build = "skip"
+        row.validate = "skip"
+        row.roundtrip = "skip"
+        row.snapshot = "skip"
+        row.note = "manual template refused by shared gate"
+        return (row, None, None)
 
     shape, shape_note = _classify_shape(path)
     row.shape = shape
     if shape_note:
         row.note = shape_note
 
-    if shape in ("manual", "converted") and not emit_existing:
+    # Already-converted templates are skipped (no emission work needed).
+    if shape == "converted":
         row.parse = "skip"
         row.build = "skip"
         row.validate = "skip"
@@ -193,7 +211,7 @@ def _convert_template(path: Path, *, emit_existing: bool = False) -> tuple[Row, 
     # Roundtrip-equality only meaningful for LEGACY (no subgraph divergence).
     if shape == "legacy":
         try:
-            from tools._compile_equivalence import compile_equivalent
+            from vibecomfy.porting.parity import compile_equivalent
             new_api = new_workflow.compile("api")
             ok, diffs = compile_equivalent(original_api, new_api)
             row.roundtrip = "ok" if ok else "fail"
@@ -210,18 +228,41 @@ def _convert_template(path: Path, *, emit_existing: bool = False) -> tuple[Row, 
 
 
 def _write_emitted(path: Path, text: str, *, dry_run: bool) -> Path:
-    """Write emitted text. Dry-run goes to out/converted/, --write replaces in-place."""
+    """Write emitted text. Dry-run goes to out/converted/, --write uses atomic temp+replace.
+
+    Shared safety gates (Sprint 1): manual-template refusal, atomic replace.
+    Validation is already performed by ``_convert_template()`` before this call.
+    """
     if dry_run:
         rel = path.relative_to(READY_ROOT)
         out = OUT_PREVIEW_ROOT / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text, encoding="utf-8")
         return out
+
     # Refuse to write outside READY_ROOT.
     resolved = path.resolve()
     if READY_ROOT.resolve() not in resolved.parents:
         raise RuntimeError(f"refusing to write outside READY_ROOT: {resolved}")
-    path.write_text(text, encoding="utf-8")
+
+    # Shared manual-refusal gate — refuse before any write work.
+    _check_manual_refusal(path)
+
+    # Atomic write: temp file in target directory, validate, then replace.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.parent / f".vibecomfy-convert-{path.name}.tmp"
+    try:
+        tmp_path.write_text(text, encoding="utf-8")
+        # Quick sanity: the temp file must be syntactically valid Python.
+        compile(text, str(path) + " (emitted)", "exec")
+        # Atomic replace — on most filesystems this is a rename.
+        tmp_path.replace(path)
+    except Exception:
+        # Clean up temp file on any failure.
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+
     return path
 
 
@@ -265,9 +306,9 @@ def _regenerate_snapshots() -> None:
         (SNAPSHOT_ROOT / f"{snap_name}.api.json").write_text(
             json.dumps(api, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-        from tools._compile_equivalence import _class_type_counter, _widget_value_counter
-        ct = _class_type_counter(api)
-        wv = _widget_value_counter(api)
+        from vibecomfy.porting.parity import class_type_counter, widget_value_counter
+        ct = class_type_counter(api)
+        wv = widget_value_counter(api)
         (SNAPSHOT_ROOT / f"{snap_name}.class_types.json").write_text(
             json.dumps(sorted(ct.elements()), indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -317,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[Row] = []
     converted = 0
     for path in paths:
-        row, emitted, _ = _convert_template(path, emit_existing=bool(args.dry_run and args.template))
+        row, emitted, _ = _convert_template(path)
         rows.append(row)
         if emitted is None:
             continue
@@ -337,12 +378,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _print_grid(rows)
 
-    total = sum(
-        1
-        for r in rows
-        if r.shape in ("legacy", "authored")
-        or (args.dry_run and args.template and r.shape in ("manual", "converted"))
-    )
+    total = sum(1 for r in rows if r.shape in ("legacy", "authored"))
     print()
     print(f"Converted {converted}/{total} (validate ok + roundtrip pass for LEGACY)")
     failures = [r for r in rows if r.validate == "fail" or r.roundtrip == "fail" or r.parse == "fail" or r.build == "fail"]

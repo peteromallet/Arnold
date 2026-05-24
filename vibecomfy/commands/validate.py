@@ -13,12 +13,13 @@ from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
+    json_output = bool(getattr(args, "json", False))
     try:
         schema_provider = None if args.no_schema else get_schema_provider("auto")
         workflow = load_workflow_any(args.path)
         report = workflow.validate(schema_provider=schema_provider)
     except Exception as exc:
-        if args.json:
+        if json_output:
             emit(_exception_payload(args.path, exc), json=True, text_renderer=_render_exception_payload)
             return 1
         traceback.print_exc(file=sys.stderr)
@@ -27,13 +28,13 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
     payload = _report_payload(workflow, report)
     if not report.ok:
-        if args.json:
+        if json_output:
             emit(payload, json=True, text_renderer=_render_report_payload)
             return 1
         for issue in report.issues:
             print(f"{issue.severity}: {format_issue(issue)}", file=sys.stderr)
         return 1
-    if args.json:
+    if json_output:
         return emit(payload, json=True, text_renderer=_render_report_payload)
     print("ok")
     return 0

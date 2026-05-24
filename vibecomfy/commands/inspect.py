@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 
+from vibecomfy.contracts import build_contract
+from vibecomfy.contracts.surface import build_contract_surface
 from vibecomfy.commands._output import emit
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.ingest.normalize import detect_workflow_shape
@@ -26,6 +28,8 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         {"name": patch.name, "rationale": patch.rationale(workflow)}
         for patch in find_applicable(workflow)
     ]
+    contract = build_contract(workflow).to_dict()
+    surface = build_contract_surface(workflow, contract=contract)
     payload = {
         "id": workflow.id,
         "shape": shape,
@@ -37,6 +41,8 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         "custom_nodes": workflow.requirements.custom_nodes,
         "status": _status_from_report(report),
         "applicable_patches": applicable_patches,
+        "contract": contract,
+        **surface,
     }
     return emit(payload, json=args.json, text_renderer=_render_inspect)
 
@@ -50,8 +56,11 @@ def _render_inspect(payload: dict) -> str:
             f"edges: {payload['edges']}",
             f"inputs: {', '.join(payload['inputs']) or '-'}",
             f"outputs: {', '.join(output['output_type'] for output in payload['outputs']) or '-'}",
+            f"public inputs: {len(payload['public_inputs'])}",
+            f"public outputs: {len(payload['public_outputs'])}",
             f"models: {payload['models']}",
             f"custom nodes: {payload['custom_nodes']}",
+            f"readiness: {payload['readiness_level']}",
             f"status: {payload['status']}",
         ]
     )

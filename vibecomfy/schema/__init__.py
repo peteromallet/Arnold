@@ -1,24 +1,39 @@
 from __future__ import annotations
 
-from .factory import get_schema_provider, schema_provider_from_object_info_file
-from .local import LocalSchemaProvider
-from .object_info import ObjectInfoFileSchemaProvider
-from .registry import schema_for, schema_registry_empty, schemas_for
-from .runtime import RuntimeSchemaProvider
-from .types import InputSpec, NodeSchema, OutputSpec, SchemaIndexError, SchemaProvider
+from .provider import (
+    InputSpec,
+    CompositeSchemaProvider,
+    ConversionSchemaProvider,
+    LocalSchemaProvider,
+    NodeSchema,
+    ObjectInfoSchemaProvider,
+    OutputSpec,
+    RuntimeSchemaProvider,
+    SchemaIndexError,
+    SchemaProvider,
+    SchemaSourceInfo,
+    SourceSchemaProvider,
+    get_schema_provider,
+    schema_for,
+    schema_registry_empty,
+    schemas_for,
+)
 
 __all__ = [
     "InputSpec",
+    "CompositeSchemaProvider",
+    "ConversionSchemaProvider",
     "LocalSchemaProvider",
     "NodeSchema",
-    "ObjectInfoFileSchemaProvider",
+    "ObjectInfoSchemaProvider",
     "OutputSpec",
     "RuntimeSchemaProvider",
     "SchemaIndexError",
     "SchemaProvider",
+    "SchemaSourceInfo",
+    "SourceSchemaProvider",
     "get_schema_provider",
     "schema_for",
     "schema_registry_empty",
-    "schema_provider_from_object_info_file",
     "schemas_for",
 ]

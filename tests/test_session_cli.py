@@ -35,6 +35,15 @@ class FakePopen:
     def poll(self):
         return self.returncode
 
+    def terminate(self):
+        self.returncode = -15
+
+    def kill(self):
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        return self.returncode
+
 
 def test_session_cli_start_list_flush_stop_flow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -66,6 +75,8 @@ def test_session_cli_start_list_flush_stop_flow(
     monkeypatch.setattr(session_cmd.subprocess, "Popen", FakePopen)
     monkeypatch.setattr(session_module.os, "kill", fake_kill)
     monkeypatch.setattr(session_cmd, "ComfyClient", FakeClient)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: True)
 
     start_args = argparse.Namespace(
         id="default",
@@ -88,6 +99,7 @@ def test_session_cli_start_list_flush_stop_flow(
         "cache_policy": "lru:3",
         "warm_policy": "always",
         "disable_smart_memory": True,
+        "server_log_path": "out/sessions/default/comfy.log",
     }
 
     assert session_cmd._cmd_session_list(argparse.Namespace()) == 0
@@ -158,10 +170,65 @@ def test_session_cli_start_without_memory_profile_leaves_config_unchanged(
     assert "memory_profile" not in config
 
 
+def test_session_cli_start_timeout_terminates_daemon_and_records_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    sleep_calls: list[float] = []
+
+    class SlowPopen:
+        instance: "SlowPopen | None" = None
+
+        def __init__(self, cmd, *, stdout, stderr, start_new_session: bool) -> None:
+            self.cmd = list(cmd)
+            self.returncode = None
+            self.terminated = False
+            SlowPopen.instance = self
+            assert start_new_session is True
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(session_cmd.subprocess, "Popen", SlowPopen)
+    monkeypatch.setattr(session_cmd.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    args = argparse.Namespace(
+        id="default",
+        port=8200,
+        vram_policy="auto",
+        reserve_vram_gb=None,
+        cache_policy="smart",
+        warm_policy="auto",
+        disable_smart_memory=False,
+        memory_profile=None,
+        input_directory=None,
+        output_directory=None,
+        temp_directory=None,
+        ready_timeout_sec=1,
+    )
+
+    assert session_cmd._cmd_session_start(args) == 1
+    assert SlowPopen.instance is not None
+    assert SlowPopen.instance.terminated is True
+    assert "did not become ready within 1 seconds" in capsys.readouterr().err
+    assert json.loads((tmp_path / "out/sessions/default/daemon_argv.json").read_text(encoding="utf-8")) == SlowPopen.instance.cmd
+
+
 def test_find_active_session_returns_url_or_cleans_stale_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
     session_dir = tmp_path / "out/sessions/default"
     session_dir.mkdir(parents=True)
     (session_dir / "pid").write_text("4242", encoding="utf-8")
@@ -176,10 +243,112 @@ def test_find_active_session_returns_url_or_cleans_stale_files(
             raise ProcessLookupError(pid)
 
     monkeypatch.setattr(session_module.os, "kill", fake_kill)
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: alive)
 
     assert find_active_session("default") == "http://127.0.0.1:8200"
     alive = False
     assert find_active_session("default") is None
+    assert not (session_dir / "pid").exists()
+    assert not (session_dir / "url").exists()
+    assert not (session_dir / "config.json").exists()
+
+
+def test_find_active_session_rejects_stale_source_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: "new-sha")
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+    (session_dir / "source_revision").write_text("old-sha", encoding="utf-8")
+
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        kill_calls.append((pid, sig))
+
+    monkeypatch.setattr(session_module.os, "kill", fake_kill)
+
+    assert find_active_session("default") is None
+    assert kill_calls == [(4242, signal.SIGTERM)]
+    assert not (session_dir / "pid").exists()
+    assert not (session_dir / "url").exists()
+    assert not (session_dir / "config.json").exists()
+    assert not (session_dir / "source_revision").exists()
+
+
+def test_find_active_session_accepts_matching_source_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: "same-sha")
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: True)
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+    (session_dir / "source_revision").write_text("same-sha", encoding="utf-8")
+
+    monkeypatch.setattr(session_module.os, "kill", lambda pid, sig: None)
+
+    assert find_active_session("default") == "http://127.0.0.1:8200"
+
+
+def test_find_active_session_rejects_dead_server_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: None)
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+    terminated: list[int] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        assert pid == 4242
+        if sig == 0:
+            return
+        if sig == signal.SIGTERM:
+            terminated.append(pid)
+            return
+        raise AssertionError(f"unexpected signal {sig}")
+
+    monkeypatch.setattr(session_module.os, "kill", fake_kill)
+    monkeypatch.setattr(session_module, "_session_url_healthy", lambda _url: False)
+
+    assert find_active_session("default") is None
+    assert terminated == [4242]
+    assert not (session_dir / "pid").exists()
+    assert not (session_dir / "url").exists()
+    assert not (session_dir / "config.json").exists()
+
+
+def test_find_active_session_rejects_missing_source_revision_when_current_known(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "current_source_revision", lambda: "new-sha")
+    session_dir = tmp_path / "out/sessions/default"
+    session_dir.mkdir(parents=True)
+    (session_dir / "pid").write_text("4242", encoding="utf-8")
+    (session_dir / "url").write_text("http://127.0.0.1:8200", encoding="utf-8")
+    (session_dir / "config.json").write_text("{}", encoding="utf-8")
+
+    kill_calls: list[tuple[int, int]] = []
+
+    def fake_kill(pid: int, sig: int) -> None:
+        kill_calls.append((pid, sig))
+
+    monkeypatch.setattr(session_module.os, "kill", fake_kill)
+
+    assert find_active_session("default") is None
+    assert kill_calls == [(4242, signal.SIGTERM)]
     assert not (session_dir / "pid").exists()
     assert not (session_dir / "url").exists()
     assert not (session_dir / "config.json").exists()
@@ -220,6 +389,10 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
         "reserve_vram_gb": 2.0,
         "cache_policy": "lru:3",
         "warm_policy": "always",
+        "input_directory": "/tmp/session-input",
+        "output_directory": "/tmp/session-output",
+        "temp_directory": "/tmp/session-temp",
+        "ready_timeout_sec": 450,
     }
     raw = {
         "reserve_vram": 12,
@@ -238,7 +411,12 @@ def test_daemon_config_carry_through_typed_and_raw_hiddenswitch(
         reserve_vram_gb=2.0,
         cache_policy="lru:3",
         warm_policy="always",
-        extra={},
+        extra={
+            "input_directory": "/tmp/session-input",
+            "output_directory": "/tmp/session-output",
+            "temp_directory": "/tmp/session-temp",
+            "ready_timeout_sec": 450,
+        },
     )
     assert captured[1] == SessionConfig(
         port=8200,

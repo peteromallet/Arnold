@@ -1,11 +1,10 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Promoted because the upstream Lightricks source JSON is not present in this checkout.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_output
 
 
 READY_METADATA = {'model_assets': [],
@@ -18,6 +17,7 @@ READY_METADATA = {'model_assets': [],
  'coverage_tier': 'required',
  'approach': 'official IC-LoRA HDR video guide',
  'runtime_note': None,
+ 'manual_promotion_rationale': 'Promoted during sprint 7 because the declared upstream source workflow is absent; preserve the materialized graph and curate public contracts manually.',
  'discord_signal': 'IC-LoRA, relight/HDR, and guide-video workflows were recurring LTX channel themes.',
  'smoke_resolution': '256x256x5_frames',
  'ltx_best_practices': ['Use the official Lightricks workflows as runtime gates where possible.',
@@ -200,6 +200,16 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_output(
+        wf,
+        '5109',
+        output_type='SaveVideo',
+        name='video',
+        artifact_kind='video',
+        mime_type='video/mp4',
+        filename_prefix='output',
+        expected_cardinality='one',
+    )
     return wf
 
 
@@ -229,4 +239,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

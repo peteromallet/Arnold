@@ -22,6 +22,7 @@ Environment:
 - `VIBECOMFY_RUNPOD_STORAGE`, default `Peter`
 - `VIBECOMFY_RUNPOD_GPU`, default `NVIDIA GeForce RTX 4090`
 - `VIBECOMFY_RUNPOD_MAX_RUNTIME_SECONDS`, default `7200` for the cheap smoke and `21600` for the proper media matrix
+- `VIBECOMFY_ATTENTION_PROFILE`, default `portable`. `portable` rewrites WanVideoWrapper `sageattn` workflow inputs to `sdpa` and does not require SageAttention. `sage` installs and verifies SageAttention before allowing `sageattn` workflows.
 - `VIBECOMFY_RUNPOD_LIFECYCLE_ROOT`, optional local `runpod-lifecycle` checkout override
 - RunPod credentials loaded from the `runpod-lifecycle` `.env`
 
@@ -60,6 +61,33 @@ The validation corpus should be official-template heavy:
 - One official Wan model-backed video workflow: `text_to_video_wan`.
 - One external/custom-node image workflow using `kijai/ComfyUI-KJNodes`.
 - One utility video workflow using `SaveWEBM`.
+
+## SageAttention Profile
+
+Fresh RunPod `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` pods do not include SageAttention. Keep the default validation path portable:
+
+```bash
+VIBECOMFY_ATTENTION_PROFILE=portable python scripts/runpod_corpus_matrix.py
+```
+
+Use the optimized profile only when the pod should compile SageAttention and run workflows that explicitly request `attention_mode=sageattn`:
+
+```bash
+VIBECOMFY_ATTENTION_PROFILE=sage python scripts/runpod_corpus_matrix.py
+```
+
+The RunPod install attempt is:
+
+```bash
+git clone --depth 1 https://github.com/thu-ml/SageAttention.git /tmp/sageattention
+python3 -m pip install --no-build-isolation /tmp/sageattention
+python3 - <<'PY'
+import sageattention
+if not callable(getattr(sageattention, "sageattn", None)):
+    raise RuntimeError("sageattention import succeeded but sageattn is missing")
+print("sageattention verified")
+PY
+```
 
 Last verified live on RunPod pod `4pz5727nh80qe2`:
 

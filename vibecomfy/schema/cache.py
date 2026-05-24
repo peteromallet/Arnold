@@ -2,26 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import sys
 from pathlib import Path
 from typing import Any
+
+from vibecomfy.comfy_command import comfyui_command, has_comfyui_runtime
 
 
 def runtime_fingerprint(server_url: str | None = None) -> str:
     if server_url:
         source = f"server:{server_url.rstrip('/')}"
-    else:
-        executable = shutil.which("comfyui")
-        if executable:
-            path = Path(executable)
+    elif has_comfyui_runtime():
+        command = comfyui_command()
+        source = "embedded:" + " ".join(command)
+        if len(command) == 1:
+            path = Path(command[0])
             try:
                 stat = path.stat()
                 source = f"embedded:{path}:{stat.st_mtime_ns}:{stat.st_size}"
             except OSError:
                 source = f"embedded:{path}"
-        else:
-            source = f"embedded:missing:{sys.executable}"
+    else:
+        source = f"embedded:missing:{sys.executable}"
     return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
 
 
@@ -31,6 +33,19 @@ def object_info_cache_path(
     cache_dir: str | Path = "out/cache",
 ) -> Path:
     return Path(cache_dir) / f"object_info.{runtime_fingerprint(server_url)}.json"
+
+
+def object_info_cache_candidates(cache_dir: str | Path = "out/cache") -> list[Path]:
+    root = Path(cache_dir)
+    if not root.is_dir():
+        return []
+    paths = [path for path in root.glob("object_info*.json") if path.is_file()]
+    return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def latest_object_info_cache_path(cache_dir: str | Path = "out/cache") -> Path | None:
+    candidates = object_info_cache_candidates(cache_dir)
+    return candidates[0] if candidates else None
 
 
 def load_object_info_cache(path: str | Path) -> dict[str, Any] | None:

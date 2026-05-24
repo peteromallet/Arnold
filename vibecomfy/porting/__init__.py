@@ -1,1 +1,79 @@
-"""Packaged helpers for porting ComfyUI workflows into VibeComfy."""
+from __future__ import annotations
+
+from vibecomfy.porting.assets import AssetAnalysis
+from vibecomfy.porting.emitter import (
+    EmissionDiagnostic,
+    READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
+    READABILITY_WARNING_CODES,
+    READABILITY_WARNING_HIDDEN_MODEL_FILENAME,
+    READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY,
+    READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED,
+)
+from vibecomfy.porting.parity import (
+    class_type_counter,
+    compile_equivalent,
+    topology_counter,
+    widget_value_counter,
+)
+from vibecomfy.porting.report import (
+    AssetCandidate,
+    AssetCheckResult,
+    NodePackSuggestion,
+    PortArtifact,
+    PortIssue,
+    PortReport,
+)
+from vibecomfy.porting.strict_ready import (
+    HIDDEN_MODEL_FILENAME,
+    OPAQUE_COMPONENT_NODE_CLASS,
+    STRICT_READY_BROKEN_PUBLIC_INPUT,
+    STRICT_READY_BUILD_FAILED,
+    STRICT_READY_COMPILE_FAILED,
+    STRICT_READY_LOAD_FAILED,
+    STRICT_READY_MISSING_OUTPUT_CONTRACT,
+    STRICT_READY_MISSING_PUBLIC_INPUT,
+    STRICT_READY_UNNAMED_OUTPUT_CONTRACT,
+    STRICT_READY_UNRESOLVED_WIDGETS,
+    STRICT_READY_VIOLATION_CODES,
+    StrictReadyContext,
+    StrictReadyException,
+    apply_strict_ready_exceptions,
+    load_strict_ready_exceptions,
+    validate_strict_ready_workflow,
+)
+
+__all__ = [
+    "AssetAnalysis",
+    "AssetCandidate",
+    "AssetCheckResult",
+    "class_type_counter",
+    "compile_equivalent",
+    "EmissionDiagnostic",
+    "NodePackSuggestion",
+    "PortArtifact",
+    "PortIssue",
+    "PortReport",
+    "READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT",
+    "READABILITY_WARNING_CODES",
+    "READABILITY_WARNING_HIDDEN_MODEL_FILENAME",
+    "READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY",
+    "READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED",
+    "HIDDEN_MODEL_FILENAME",
+    "OPAQUE_COMPONENT_NODE_CLASS",
+    "STRICT_READY_BROKEN_PUBLIC_INPUT",
+    "STRICT_READY_BUILD_FAILED",
+    "STRICT_READY_COMPILE_FAILED",
+    "STRICT_READY_LOAD_FAILED",
+    "STRICT_READY_MISSING_OUTPUT_CONTRACT",
+    "STRICT_READY_MISSING_PUBLIC_INPUT",
+    "STRICT_READY_UNNAMED_OUTPUT_CONTRACT",
+    "STRICT_READY_UNRESOLVED_WIDGETS",
+    "STRICT_READY_VIOLATION_CODES",
+    "StrictReadyContext",
+    "StrictReadyException",
+    "apply_strict_ready_exceptions",
+    "load_strict_ready_exceptions",
+    "topology_counter",
+    "validate_strict_ready_workflow",
+    "widget_value_counter",
+]

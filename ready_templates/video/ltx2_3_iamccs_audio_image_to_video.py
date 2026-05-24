@@ -76,10 +76,8 @@ def build() -> VibeWorkflow:
         widget_1='main_device',
         widget_2='bf16',
     )
-    vaeloaderkj_2 = _node(wf, 'VAELoaderKJ', '311',
-        widget_0='LTX2_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj_2 = _node(wf, 'LTXVAudioVAELoader', '311',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     iamccs_ltx2_lorastack = _node(wf, 'IAMCCS_LTX2_LoRAStack', '321',
         widget_0='ltx-2-19b-distilled-lora-384.safetensors',
@@ -519,4 +517,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 
@@ -10,17 +11,16 @@ from vibecomfy.cli import build_parser
 from vibecomfy.commands import COMMANDS, CommandSpec, load_command
 from vibecomfy.commands.doctor import _doctor_warnings
 from vibecomfy.commands.fetch import _cmd_fetch
-from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore
+from vibecomfy.commands.inspect import _cmd_inspect
+from vibecomfy.commands.nodes import _cmd_nodes_ensure, _cmd_nodes_install, _cmd_nodes_install_plan, _cmd_nodes_list, _cmd_nodes_restore, _cmd_nodes_spec
+from vibecomfy.commands.port import _cmd_port_check, _cmd_port_convert, _cmd_port_widgets
+from vibecomfy.commands.contract import _cmd_contract_inspect, _cmd_contract_doctor
 import vibecomfy.node_packs_install as node_packs_install
+import vibecomfy.commands.workflows as workflows_cmd
 import vibecomfy.commands.validate as validate_cmd
 from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.commands.workflows import _cmd_workflows_list
+from vibecomfy.commands.workflows import _cmd_workflows_contract_validate, _cmd_workflows_enrich_targets, _cmd_workflows_lens, _cmd_workflows_list, _cmd_workflows_source_info
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
-
-
-def _run_cli(argv: list[str]) -> int:
-    args = build_parser().parse_args(argv)
-    return args.func(args)
 
 
 def _top_level_commands(parser: argparse.ArgumentParser) -> list[str]:
@@ -28,16 +28,6 @@ def _top_level_commands(parser: argparse.ArgumentParser) -> list[str]:
         if isinstance(action, argparse._SubParsersAction):
             return list(action.choices)
     raise AssertionError("parser has no subparsers")
-
-
-def _subcommands(parser: argparse.ArgumentParser, command: str) -> list[str]:
-    for action in parser._actions:
-        if isinstance(action, argparse._SubParsersAction):
-            child = action.choices[command]
-            for child_action in child._actions:
-                if isinstance(child_action, argparse._SubParsersAction):
-                    return list(child_action.choices)
-    raise AssertionError(f"{command} parser has no subparsers")
 
 
 def _write_fetch_scratchpad(tmp_path: Path) -> Path:
@@ -69,85 +59,6 @@ def build():
     return scratchpad
 
 
-def _write_raw_model_workflow(path: Path) -> Path:
-    path.write_text(
-        json.dumps(
-            {
-                "nodes": [
-                    {
-                        "id": 1,
-                        "type": "VAELoader",
-                        "properties": {
-                            "models": [
-                                {
-                                    "name": "raw-vae.safetensors",
-                                    "url": "https://example.test/raw-vae.safetensors?download=true",
-                                }
-                            ]
-                        },
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    return path
-
-
-def _write_object_info_cache(tmp_path: Path, *, required_text: bool = True) -> Path:
-    cache = tmp_path / "object_info.fixture.json"
-    text_group = "required" if required_text else "optional"
-    cache.write_text(
-        json.dumps(
-            {
-                "FixtureNode": {
-                    "pack": "fixture-pack",
-                    "input": {
-                        text_group: {"text": ["STRING", {"default": ""}]},
-                        "optional": {
-                            "steps": ["INT", {"default": 1, "min": 1, "max": 8}],
-                            "mode": [["fast", "slow"], {"default": "fast"}],
-                        },
-                    },
-                    "output": ["IMAGE"],
-                    "output_name": ["image"],
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    return cache
-
-
-def _write_validation_scratchpad(tmp_path: Path, *, value: object = True, name: str = "validation_scratch.py") -> Path:
-    scratchpad = tmp_path / name
-    scratchpad.write_text(
-        f"""
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
-
-
-def build():
-    workflow = VibeWorkflow(id="validation-scratch", source=WorkflowSource(id="validation-scratch"))
-    workflow.nodes["1"] = VibeNode(id="1", class_type="FixtureNode", inputs={{"steps": {value!r}}})
-    return workflow
-""",
-        encoding="utf-8",
-    )
-    return scratchpad
-
-
-def _write_build_error_scratchpad(tmp_path: Path) -> Path:
-    scratchpad = tmp_path / "build_error_scratch.py"
-    scratchpad.write_text(
-        """
-def build():
-    raise RuntimeError("build exploded")
-""",
-        encoding="utf-8",
-    )
-    return scratchpad
-
-
 def test_cli_command_registry_is_explicit_and_ordered() -> None:
     assert [spec.name for spec in COMMANDS] == [
         "sources",
@@ -156,7 +67,9 @@ def test_cli_command_registry_is_explicit_and_ordered() -> None:
         "analyze",
         "search",
         "inspect",
+        "port",
         "convert",
+        "contract",
         "validate",
         "doctor",
         "fetch",
@@ -167,7 +80,6 @@ def test_cli_command_registry_is_explicit_and_ordered() -> None:
         "logs",
         "runpod",
         "watchdog",
-        "port",
     ]
 
 
@@ -177,29 +89,47 @@ def test_build_parser_registers_all_known_commands() -> None:
     assert _top_level_commands(parser) == [spec.name for spec in COMMANDS]
 
 
-def test_runtime_cli_exposes_current_subcommands_without_eval_node(capsys: pytest.CaptureFixture[str]) -> None:
+def test_port_help_explains_check_convert_and_related_commands(capsys: pytest.CaptureFixture[str]) -> None:
     parser = build_parser()
 
-    assert _subcommands(parser, "runtime") == ["doctor", "smoke"]
-
     with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["runtime", "--help"])
+        parser.parse_args(["port", "--help"])
 
     assert exc_info.value.code == 0
     help_text = capsys.readouterr().out
-    assert "{doctor,smoke}" in help_text
-    assert "doctor" in help_text
-    assert "smoke" in help_text
-    assert "eval-node" not in help_text
+    for text in [
+        "port check",
+        "port convert",
+        "doctor",
+        "validate",
+        "nodes install-plan",
+        "fetch",
+        "--head-check-models",
+        "RunPod",
+    ]:
+        assert text in help_text
 
 
-def test_runtime_cli_rejects_eval_node_when_eval_modules_absent() -> None:
+def test_port_subcommand_help_is_discoverable(capsys: pytest.CaptureFixture[str]) -> None:
     parser = build_parser()
 
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["runtime", "eval-node"])
+    with pytest.raises(SystemExit) as check_help:
+        parser.parse_args(["port", "check", "--help"])
+    check_text = capsys.readouterr().out
 
-    assert exc_info.value.code == 2
+    with pytest.raises(SystemExit) as convert_help:
+        parser.parse_args(["port", "convert", "--help"])
+    convert_text = capsys.readouterr().out
+
+    assert check_help.value.code == 0
+    assert convert_help.value.code == 0
+    assert "before manual template editing or expensive RunPod validation" in check_text
+    assert "--head-check-models" in check_text
+    assert "--runtime-object-info" in check_text
+    assert "turn source workflows into Python scratchpads" in convert_text
+    assert "--ready-id" in convert_text
+    assert "--head-check-models" in convert_text
+    assert "--runtime-object-info" in convert_text
 
 
 def test_validate_no_schema_skips_schema_provider(
@@ -227,328 +157,215 @@ def build():
         lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("schema provider should not be built")),
     )
 
-    assert validate_cmd._cmd_validate(argparse.Namespace(path=str(scratchpad), json=False, no_schema=True)) == 0
+    assert validate_cmd._cmd_validate(argparse.Namespace(path=str(scratchpad), backend="api", no_schema=True)) == 0
     assert capsys.readouterr().out == "ok\n"
 
 
-def test_validate_rejects_removed_backend_argument(capsys: pytest.CaptureFixture[str]) -> None:
-    parser = build_parser()
-
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["validate", "workflow.py", "--backend", "api"])
-
-    assert exc_info.value.code == 2
-    assert "--backend" in capsys.readouterr().err
-
-
-def test_validate_json_success_failure_and_build_exception(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    (tmp_path / "node_index.json").write_text(
-        json.dumps([{"class_type": "FixtureNode", "inputs": {"steps": "INT"}}]),
-        encoding="utf-8",
-    )
-    valid_scratchpad = _write_validation_scratchpad(tmp_path, value=4, name="valid_validation_scratch.py")
-    invalid_scratchpad = _write_validation_scratchpad(tmp_path, value=True, name="invalid_validation_scratch.py")
-    build_error_scratchpad = _write_build_error_scratchpad(tmp_path)
-    monkeypatch.chdir(tmp_path)
-
-    assert _run_cli(["validate", str(valid_scratchpad), "--json"]) == 0
-    success_payload = json.loads(capsys.readouterr().out)
-    assert success_payload == {
-        "issues": [],
-        "ok": True,
-        "status": "ok",
-        "workflow_id": "validation-scratch",
-    }
-
-    assert _run_cli(["validate", str(invalid_scratchpad), "--json"]) == 1
-    failure_captured = capsys.readouterr()
-    failure_payload = json.loads(failure_captured.out)
-    assert failure_captured.err == ""
-    assert failure_payload["ok"] is False
-    assert failure_payload["status"] == "error"
-    assert failure_payload["workflow_id"] == "validation-scratch"
-    assert [issue["code"] for issue in failure_payload["issues"]] == ["value_type_mismatch"]
-
-    assert _run_cli(["validate", str(build_error_scratchpad), "--json"]) == 1
-    exception_captured = capsys.readouterr()
-    exception_payload = json.loads(exception_captured.out)
-    assert exception_captured.err == ""
-    assert exception_payload["ok"] is False
-    assert exception_payload["status"] == "error"
-    assert exception_payload["path"] == str(build_error_scratchpad)
-    assert exception_payload["errors"] == [
-        {"code": "workflow_load_error", "message": "build exploded", "type": "RuntimeError"}
-    ]
-
-
-def test_nodes_spec_explicit_json_flag_matches_json_default(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def _write_port_node_index(tmp_path: Path) -> None:
     (tmp_path / "node_index.json").write_text(
         json.dumps(
             [
                 {
-                    "class_type": "FixtureNode",
-                    "pack": "fixture-pack",
-                    "inputs": {"steps": "INT"},
-                    "outputs": ["IMAGE"],
-                }
+                    "class_type": "LoadImage",
+                    "pack": "core",
+                    "inputs": {"image": {"type": "STRING", "required": True}},
+                    "outputs": [{"type": "IMAGE", "name": "image"}],
+                },
+                {
+                    "class_type": "SaveImage",
+                    "pack": "core",
+                    "inputs": {
+                        "images": {"type": "IMAGE", "required": True},
+                        "filename_prefix": {"type": "STRING", "required": True},
+                    },
+                    "outputs": [],
+                },
+                {
+                    "class_type": "PromptNode",
+                    "pack": "core",
+                    "inputs": {
+                        "clip": {"type": "CLIP", "required": True},
+                        "text": {"type": "STRING", "required": True},
+                        "mode": {"type": "STRING", "required": False},
+                    },
+                    "outputs": [],
+                },
             ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_port_workflow(tmp_path: Path) -> Path:
+    workflow_path = tmp_path / "port_workflow.json"
+    workflow_path.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "LoadImage", "inputs": {"image": "input.png"}},
+                "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0], "filename_prefix": "out/port"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return workflow_path
+
+
+def _load_emitted_provenance(path: Path) -> dict[str, object]:
+    spec = importlib.util.spec_from_file_location(f"test_emitted_{path.stem}", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.build().source.provenance
+
+
+def test_port_check_json_returns_zero_for_clean_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_check(argparse.Namespace(workflow=str(workflow_path), json=True, head_check_models=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["provenance"]["source_kind"] == "raw_json"
+    assert payload["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert isinstance(payload["public_inputs"], list)
+    assert isinstance(payload["public_outputs"], list)
+    assert isinstance(payload["graph_contract"], dict)
+
+
+def test_port_check_returns_nonzero_for_hard_port_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = tmp_path / "bad_port_workflow.json"
+    workflow_path.write_text(json.dumps({"1": {"class_type": "UnknownRuntimeNode", "inputs": {}}}), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_check(argparse.Namespace(workflow=str(workflow_path), json=False, head_check_models=False))
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "unresolved_runtime_class" in captured.out
+
+
+def test_port_widgets_json_suggests_widget_only_schema_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = tmp_path / "widgets_workflow.json"
+    workflow_path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": 1,
+                        "type": "PromptNode",
+                        "widgets_values": ["hello", "fast", {"collapsed": True}],
+                        "inputs": [],
+                    }
+                ],
+                "links": [],
+            }
         ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
 
-    assert _run_cli(["nodes", "spec", "FixtureNode"]) == 0
-    default_payload = json.loads(capsys.readouterr().out)
-    assert _run_cli(["nodes", "spec", "FixtureNode", "--json"]) == 0
-    explicit_payload = json.loads(capsys.readouterr().out)
-
-    assert explicit_payload == default_payload
-    assert explicit_payload["class_type"] == "FixtureNode"
-    assert explicit_payload["pack"] == "fixture-pack"
-    assert explicit_payload["inputs"]["steps"]["type"] == "INT"
-    assert explicit_payload["outputs"] == [{"name": None, "type": "IMAGE"}]
-
-
-def test_port_validate_call_requires_class_type(capsys: pytest.CaptureFixture[str]) -> None:
-    parser = build_parser()
-    assert "port" in _top_level_commands(parser)
-
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(["port", "validate-call", "--kwargs", "{}"])
-
-    assert exc_info.value.code == 2
-    assert "class_type" in capsys.readouterr().err
-
-
-def test_port_validate_call_reports_malformed_kwargs_json(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cache = _write_object_info_cache(tmp_path)
-
-    assert _run_cli(
-        ["port", "validate-call", "FixtureNode", "--kwargs", "{bad-json", "--object-info-cache", str(cache), "--json"]
-    ) == 2
+    code = _cmd_port_widgets(argparse.Namespace(workflow=str(workflow_path), json=True))
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "status": "error",
-        "errors": [{"code": "invalid_kwargs_json", "message": "--kwargs must be valid JSON."}],
-    }
-
-
-@pytest.mark.parametrize("kwargs_json", ["[]", "1", "null", '"text"'])
-def test_port_validate_call_rejects_non_object_kwargs_json(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    kwargs_json: str,
-) -> None:
-    cache = _write_object_info_cache(tmp_path)
-
-    assert _run_cli(
-        ["port", "validate-call", "FixtureNode", "--kwargs", kwargs_json, "--object-info-cache", str(cache), "--json"]
-    ) == 2
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "status": "error",
-        "errors": [{"code": "kwargs_not_object", "message": "--kwargs JSON must decode to an object."}],
-    }
-
-
-def test_port_validate_call_json_payload_for_valid_node_call(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cache = _write_object_info_cache(tmp_path)
-
-    assert _run_cli(
-        [
-            "port",
-            "validate-call",
-            "FixtureNode",
-            "--kwargs",
-            json.dumps({"text": "hello", "steps": "4", "mode": "fast"}),
-            "--object-info-cache",
-            str(cache),
-            "--json",
-        ]
-    ) == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["class_type"] == "FixtureNode"
-    assert payload["ok"] is True
-    assert payload["issues"] == []
-    assert payload["status"] == "ok"
-    assert payload["provider"] == {"kind": "object_info_file", "path": str(cache)}
-
-
-def test_port_validate_call_json_payload_for_invalid_node_call(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cache = _write_object_info_cache(tmp_path)
-
-    assert _run_cli(
-        [
-            "port",
-            "validate-call",
-            "FixtureNode",
-            "--kwargs",
-            json.dumps({"steps": 99, "mode": "wrong", "extra": True}),
-            "--object-info-cache",
-            str(cache),
-            "--json",
-        ]
-    ) == 1
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["class_type"] == "FixtureNode"
-    assert payload["ok"] is False
-    assert payload["status"] == "error"
-    assert payload["provider"] == {"kind": "object_info_file", "path": str(cache)}
-    assert [issue["code"] for issue in payload["issues"]] == [
-        "missing_required_input",
-        "unknown_input",
-        "value_not_in_enum",
-        "value_out_of_range",
+    assert code == 0
+    assert payload["unresolved_widget_aliases"] == [{"node_id": "1", "class_type": "PromptNode", "input": "widget_2"}]
+    assert payload["suggestions"] == [
+        {
+            "class_type": "PromptNode",
+            "nodes": [
+                {
+                    "node_id": "1",
+                    "unresolved_inputs": ["widget_2"],
+                    "widgets_values": ["hello", "fast", {"collapsed": True}],
+                }
+            ],
+            "observed_widget_count": 3,
+            "schema_source": "schema_provider",
+            "suggested_schema_entry": ["text", "mode", None],
+            "python": "'PromptNode': ['text', 'mode', None]",
+        }
     ]
 
 
-def test_port_validate_call_object_info_cache_controls_schema_selection(
+def test_port_convert_emits_importable_scratchpad_by_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    cache = _write_object_info_cache(tmp_path, required_text=False)
-    (tmp_path / "node_index.json").write_text(
-        json.dumps([{"class_type": "FixtureNode", "inputs": {"required": {"text": "STRING"}}}]),
-        encoding="utf-8",
-    )
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    out = tmp_path / "out" / "scratchpads" / "converted.py"
     monkeypatch.chdir(tmp_path)
 
-    assert _run_cli(
-        [
-            "port",
-            "validate-call",
-            "FixtureNode",
-            "--kwargs",
-            json.dumps({"steps": 2, "mode": "slow"}),
-            "--object-info-cache",
-            str(cache),
-            "--json",
-        ]
+    code = _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            out=str(out),
+            ready_id=None,
+            json=True,
+            head_check_models=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["status"] == "ok"
+    assert payload["conversion"]["mode"] == "scratchpad"
+    text = out.read_text(encoding="utf-8")
+    assert "source_type='scratchpad'" in text
+    assert "READY_METADATA" not in text
+    provenance = _load_emitted_provenance(out)
+    assert provenance["source_hash"] == payload["report"]["source_hash"]
+    assert provenance["workflow_shape"] == payload["report"]["workflow_shape"]
+    assert provenance["output_mode"] == "scratchpad"
+
+
+def test_port_convert_ready_template_mode_requires_ready_id_and_writes_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    out = tmp_path / "candidate.py"
+    monkeypatch.chdir(tmp_path)
+
+    assert _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            out=str(out),
+            ready_id="image/ported",
+            json=True,
+            head_check_models=False,
+        )
     ) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is True
-    assert payload["issues"] == []
-    assert payload["provider"] == {"kind": "object_info_file", "path": str(cache)}
-
-
-def test_port_check_text_mode_uses_canonical_workflow_validation(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cache = _write_object_info_cache(tmp_path)
-    scratchpad = _write_validation_scratchpad(tmp_path, value=4)
-
-    assert _run_cli(["port", "check", str(scratchpad), "--object-info-cache", str(cache)]) == 1
-
-    captured = capsys.readouterr()
-    assert "[missing_required_input]" in captured.out
-    assert "FixtureNode" in captured.out
-    assert captured.err == ""
-
-
-def test_port_check_json_mode_uses_canonical_workflow_validation(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    cache = _write_object_info_cache(tmp_path)
-    scratchpad = _write_validation_scratchpad(tmp_path, value=True)
-
-    assert _run_cli(["port", "check", str(scratchpad), "--object-info-cache", str(cache), "--json"]) == 1
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["workflow_id"] == "validation-scratch"
-    assert payload["ok"] is False
-    assert payload["status"] == "error"
-    assert payload["provider"] == {"kind": "object_info_file", "path": str(cache)}
-    assert [issue["code"] for issue in payload["issues"]] == ["missing_required_input", "value_type_mismatch"]
-
-
-def test_validate_doctor_and_inspect_share_canonical_status_behavior(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    (tmp_path / "node_index.json").write_text(
-        json.dumps([{"class_type": "FixtureNode", "inputs": {"steps": "INT"}}]),
-        encoding="utf-8",
-    )
-    scratchpad = _write_validation_scratchpad(tmp_path, value=True)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
-
-    assert _run_cli(["validate", str(scratchpad)]) == 1
-    assert "[value_type_mismatch]" in capsys.readouterr().err
-
-    assert _run_cli(["doctor", str(scratchpad), "--json"]) == 1
-    doctor_payload = json.loads(capsys.readouterr().out)
-    assert doctor_payload["status"] == "error"
-    assert doctor_payload["layer"] == "VibeWorkflow validation"
-    assert any("[value_type_mismatch]" in error for error in doctor_payload["errors"])
-
-    assert _run_cli(["inspect", str(scratchpad), "--json"]) == 0
-    inspect_payload = json.loads(capsys.readouterr().out)
-    assert inspect_payload["status"] == "unsupported"
-    assert "issues" not in inspect_payload
-    assert "errors" not in inspect_payload
-
-    assert _run_cli(["inspect", str(scratchpad)]) == 0
-    captured = capsys.readouterr()
-    assert "status: unsupported" in captured.out
-    assert "value_type_mismatch" not in captured.out
-    assert "value_type_mismatch" not in captured.err
-
-
-def test_validate_doctor_and_inspect_preserve_valid_output_contracts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    (tmp_path / "node_index.json").write_text(
-        json.dumps([{"class_type": "FixtureNode", "inputs": {"steps": "INT"}}]),
-        encoding="utf-8",
-    )
-    scratchpad = _write_validation_scratchpad(tmp_path, value=4)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("VIBECOMFY_COMFY_CONFIGURATION", raising=False)
-    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
-
-    assert _run_cli(["validate", str(scratchpad)]) == 0
-    captured = capsys.readouterr()
-    assert captured.out == "ok\n"
-    assert captured.err == ""
-
-    assert _run_cli(["doctor", str(scratchpad), "--json"]) == 0
-    doctor_payload = json.loads(capsys.readouterr().out)
-    assert doctor_payload["status"] == "ok"
-    assert "errors" not in doctor_payload
-
-    assert _run_cli(["inspect", str(scratchpad), "--json"]) == 0
-    inspect_payload = json.loads(capsys.readouterr().out)
-    assert inspect_payload["status"] == "runnable"
-    assert "issues" not in inspect_payload
+    text = out.read_text(encoding="utf-8")
+    assert "READY_METADATA =" in text
+    assert "'ready_template': 'image/ported'" in text
+    provenance = _load_emitted_provenance(out)
+    assert provenance["ready_id"] == "image/ported"
+    assert provenance["source_hash"] == payload["report"]["source_hash"]
+    assert provenance["workflow_shape"] == payload["report"]["workflow_shape"]
+    assert provenance["output_mode"] == "ready_template"
 
 
 def test_fetch_cli_dry_run_lists_entries_without_downloading(
@@ -613,21 +430,6 @@ def test_fetch_cli_invokes_download_many(tmp_path: Path, monkeypatch: pytest.Mon
     ]
 
 
-def test_fetch_cli_dry_run_extracts_model_assets_from_raw_json_workflow(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    workflow = _write_raw_model_workflow(tmp_path / "raw_workflow.json")
-    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(tmp_path / "models"))
-
-    assert _cmd_fetch(argparse.Namespace(workflow=str(workflow), force=False, dry_run=True)) == 0
-
-    captured = capsys.readouterr()
-    assert "would fetch raw-vae.safetensors" in captured.out
-    assert str(tmp_path / "models" / "vae" / "raw-vae.safetensors") in captured.out
-
-
 def test_command_modules_expose_register() -> None:
     for spec in COMMANDS:
         assert callable(load_command(spec).register)
@@ -687,6 +489,220 @@ def test_workflows_list_reports_malformed_index_with_recovery_hint(
     assert "vibecomfy sources sync" in captured.err
 
 
+def test_workflows_list_ready_uses_template_index_without_dynamic_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "id": "image/indexed",
+                        "path": "ready_templates/image/indexed.py",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        workflows_cmd,
+        "dynamic_ready_template_rows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("dynamic discovery should be opt-in")),
+    )
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=True, include_dynamic=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert len(payload) == 1
+    assert payload[0]["id"] == "image/indexed"
+    assert payload[0]["media_type"] == "ready"
+    assert payload[0]["path"] == "ready_templates/image/indexed.py"
+    assert payload[0]["source_scope"] == "repo"
+    assert payload[0]["indexed"] is True
+    assert payload[0]["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert payload[0]["public_inputs"] == []
+    assert payload[0]["public_outputs"] == []
+    assert payload[0]["strict_ready_diagnostic_counts"] == {}
+
+
+def test_workflows_list_ready_include_dynamic_marks_unindexed_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "template_index.json").write_text(
+        json.dumps(
+            {
+                "templates": [
+                    {
+                        "id": "image/indexed",
+                        "path": "ready_templates/image/indexed.py",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        workflows_cmd,
+        "dynamic_ready_template_rows",
+        lambda *, exclude_ids: [
+            {
+                "id": "image/dynamic",
+                "path": str(tmp_path / "vibecomfy_extras" / "ready_templates" / "image" / "dynamic.py"),
+                "source_scope": "dynamic",
+                "indexed": False,
+            }
+        ],
+    )
+
+    code = _cmd_workflows_list(argparse.Namespace(ready=True, limit=10, json=True, include_dynamic=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert [row["id"] for row in payload] == ["image/indexed", "image/dynamic"]
+    assert payload[0]["source_scope"] == "repo"
+    assert payload[0]["indexed"] is True
+    assert payload[1]["source_scope"] == "dynamic"
+    assert payload[1]["indexed"] is False
+
+
+def test_workflows_source_info_json_reports_pure_python_source(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = _cmd_workflows_source_info(argparse.Namespace(template_id="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["template_id"] == "image/z_image"
+    assert payload["source_mode"] == "pure_python"
+    assert payload["runtime_source_of_truth"] is True
+
+
+def test_workflows_source_info_accepts_policy_applied_python_fork(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = _cmd_workflows_source_info(
+        argparse.Namespace(
+            template_id="video/ltx2_3_runexx_first_last_raw_video_guide",
+            json=True,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["template_id"] == "video/ltx2_3_runexx_first_last_raw_video_guide"
+    assert payload["source_mode"] == "pure_python"
+    assert payload["runtime_source_of_truth"] is True
+
+
+def test_workflows_enrich_targets_writes_schema_and_asset_metadata(tmp_path: Path) -> None:
+    targets_path = tmp_path / "targets.json"
+    output_path = tmp_path / "enriched.json"
+    models_root = tmp_path / "models"
+    targets_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "selector": {"backend": "vibecomfy"},
+                "selection": {"case_names": ["z_image_turbo"]},
+                "targets": [
+                    {
+                        "case_name": "z_image_turbo",
+                        "task_type": "z_image_turbo",
+                        "route_key": "z_image_turbo",
+                        "template_id": "image/z_image",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_enrich_targets(
+        argparse.Namespace(
+            targets_json=str(targets_path),
+            output=str(output_path),
+            models_root=models_root,
+        )
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["producer"] == "vibecomfy.workflows.enrich-targets"
+    assert payload["templates"] == ["image/z_image"]
+    assert payload["target_count"] == 1
+    assert payload["template_count"] == 1
+    target = payload["targets"][0]
+    assert target["source"]["source_mode"] == "pure_python"
+    assert target["schema"]["node_count"] > 0
+    assert "SaveImage" in target["schema"]["class_types"]
+    assets = {asset["name"]: asset for asset in target["assets"]}
+    assert "z_image_bf16.safetensors" in assets
+    assert assets["z_image_bf16.safetensors"]["expected_path"].startswith(str(models_root))
+    assert assets["z_image_bf16.safetensors"]["present"] is False
+    missing_asset_issues = [item for item in target["issues"] if item["code"] == "missing_model_asset"]
+    assert missing_asset_issues
+    missing_z_image = next(
+        item for item in missing_asset_issues if item["detail"]["name"] == "z_image_bf16.safetensors"
+    )
+    assert missing_z_image["detail"]["expected_path"] == assets["z_image_bf16.safetensors"]["expected_path"]
+    assert missing_asset_issues[0]["detail"]["paths_checked"]
+    assert "curl -L" in (missing_asset_issues[0]["detail"]["remediation"] or "")
+
+
+def test_workflows_enrich_targets_treats_orchestrators_as_non_template_info(tmp_path: Path):
+    targets_path = tmp_path / "targets.json"
+    output_path = tmp_path / "enriched.json"
+    targets_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "selector": {"backend": "vibecomfy"},
+                "selection": {"case_names": ["travel_orchestrator_wan2_1seg"]},
+                "targets": [
+                    {
+                        "case_name": "travel_orchestrator_wan2_1seg",
+                        "task_type": "travel_orchestrator",
+                        "route_key": "travel_orchestrator",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_enrich_targets(
+        argparse.Namespace(
+            targets_json=str(targets_path),
+            output=str(output_path),
+            models_root=str(tmp_path / "models"),
+        )
+    )
+
+    assert code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["target_count"] == 1
+    assert payload["template_count"] == 0
+    assert payload["templates"] == []
+    target = payload["targets"][0]
+    assert target["enrichment_status"] == "skipped"
+    assert target["issues"] == [
+        {
+            "group": "workflow_source",
+            "code": "non_template_target",
+            "severity": "info",
+            "message": "Target does not execute a VibeComfy template directly.",
+        }
+    ]
+
+
 def test_nodes_list_reports_malformed_index_with_recovery_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -711,6 +727,43 @@ def test_doctor_warns_about_optional_video_audio_edge() -> None:
     warnings = _doctor_warnings(workflow)
 
     assert any("CreateVideo node 2 has optional audio input connected from 1:LTXVAudioVAEDecode" in item for item in warnings)
+
+
+def test_nodes_spec_reads_object_info_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cache = tmp_path / "object_info.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "RuntimeOnlyNode": {
+                    "input": {"required": {"latent": ["LATENT", {}]}},
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                    "category": "runtime/test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _cmd_nodes_spec(argparse.Namespace(class_type="RuntimeOnlyNode", object_info_cache=str(cache))) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["class_type"] == "RuntimeOnlyNode"
+    assert payload["inputs"]["latent"]["type"] == "LATENT"
+    assert payload["outputs"][0]["name"] == "image"
+
+
+def test_doctor_warns_about_kj_ltx_audio_vae_loader() -> None:
+    workflow = VibeWorkflow("audio-vae", WorkflowSource("audio-vae"))
+    workflow.nodes["175"] = VibeNode(
+        "175",
+        "VAELoaderKJ",
+        inputs={"vae_name": "LTX23_audio_vae_bf16.safetensors"},
+    )
+
+    warnings = _doctor_warnings(workflow)
+
+    assert any("Use LTXVAudioVAELoader with the file staged under checkpoints" in item for item in warnings)
 
 
 def test_doctor_suggests_custom_node_pack_for_unknown_class(
@@ -745,6 +798,265 @@ def build():
     captured = capsys.readouterr()
     assert "Suggested custom node packs:" in captured.out
     assert "comfyui_controlnet_aux" in captured.out
+    assert "vibecomfy port check" in captured.out
+
+
+def test_doctor_points_helper_diagnostics_to_port_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = tmp_path / "helper_issue.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="helper", source=WorkflowSource(id="helper"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="GetNode", inputs={"widget_0": "missing"})
+    workflow.nodes["2"] = VibeNode(id="2", class_type="SaveImage", inputs={"filename_prefix": "out/helper"})
+    workflow.edges.append(VibeEdge("1", "0", "2", "images"))
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    from vibecomfy.commands.doctor import _cmd_doctor
+
+    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+    assert _cmd_doctor(argparse.Namespace(path=str(scratchpad), json=False, lint=False, allow_drift=False)) == 1
+
+    captured = capsys.readouterr()
+    assert "Porting helper diagnostics" in captured.out
+    assert f"vibecomfy port check {scratchpad} --json" in captured.out
+
+
+def test_strict_ready_template_gate_escalates_unresolved_widgets() -> None:
+    from vibecomfy.commands.port import _apply_strict_ready_template_gate
+    from vibecomfy.porting.report import PortReport
+
+    report = PortReport(
+        source="ready_templates/video/example.py",
+        workflow_shape={"outputs": 1},
+        metadata={
+            "widget_analysis": {
+                "unresolved_widget_aliases": [
+                    {"node_id": "1", "class_type": "ExampleNode", "input": "widget_0"}
+                ],
+                "suggestions": [
+                    {
+                        "class_type": "ExampleNode",
+                        "schema_source": "committed_widget_schema",
+                        "suggested_schema_entry": ["value"],
+                    }
+                ],
+            }
+        },
+    )
+
+    _apply_strict_ready_template_gate(report)
+
+    assert report.has_errors
+    assert report.diagnostics[0].code == "strict_ready_unresolved_widgets"
+    assert report.diagnostics[0].detail["count"] == 1
+
+
+def test_strict_ready_template_gate_requires_output_contract() -> None:
+    from vibecomfy.commands.port import _apply_strict_ready_template_gate
+    from vibecomfy.porting.report import PortReport
+
+    report = PortReport(
+        source="ready_templates/video/example.py",
+        workflow_shape={"outputs": 0},
+        metadata={"widget_analysis": {"unresolved_widget_aliases": [], "suggestions": []}},
+    )
+
+    _apply_strict_ready_template_gate(report)
+
+    assert report.has_errors
+    assert report.diagnostics[0].code == "strict_ready_missing_output_contract"
+    assert "bind_output" in (report.diagnostics[0].recommendation or "")
+    assert "public_outputs" in (report.diagnostics[0].recommendation or "")
+
+
+def test_port_check_strict_ready_json_normalizes_load_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_port_check(
+        argparse.Namespace(
+            workflow="does/not/exist.json",
+            json=True,
+            head_check_models=False,
+            strict_ready_template=True,
+            runtime_object_info=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            server_url=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["strict_ready_ok"] is False
+    assert payload["strict_ready_diagnostics"][0]["code"] == "strict_ready_load_failed"
+    assert payload["diagnostics"][0]["detail"]["target"] == "source"
+
+
+def test_port_check_strict_ready_json_exposes_policy_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    scratchpad = tmp_path / "no_output.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="no_output", source=WorkflowSource(id="no_output"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="LoadImage", inputs={"image": "input.png"})
+    workflow.register_input("image", "1", "image")
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_check(
+        argparse.Namespace(
+            workflow=str(scratchpad),
+            json=True,
+            head_check_models=False,
+            strict_ready_template=True,
+            runtime_object_info=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            server_url=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["strict_ready_ok"] is False
+    assert any(
+        item["code"] == "strict_ready_missing_output_contract"
+        for item in payload["strict_ready_diagnostics"]
+    )
+
+
+def test_port_convert_ready_id_json_refuses_strict_ready_candidate_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    scratchpad = tmp_path / "candidate.py"
+    target = tmp_path / "ready.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="candidate", source=WorkflowSource(id="candidate"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="LoadImage", inputs={"image": "input.png"})
+    return workflow
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(scratchpad),
+            out=str(target),
+            ready_id="image/candidate",
+            json=True,
+            dry_run=False,
+            diff=False,
+            head_check_models=False,
+            strict_ready_template=False,
+            runtime_object_info=False,
+            object_info_cache=None,
+            no_object_info_cache=True,
+            server_url=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert not target.exists()
+    assert payload["status"] == "error"
+    assert payload["strict_ready_ok"] is False
+    assert payload["conversion"]["validation"]["strict_ready_ok"] is False
+    assert any(
+        item["code"] == "strict_ready_missing_output_contract"
+        for item in payload["strict_ready_diagnostics"]
+    )
+
+
+def test_inspect_json_exposes_canonical_public_contract_fields(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["contract_shape"] == payload["contract"]["contract_shape"]
+    assert payload["public_inputs"] == payload["contract"]["public_inputs"]
+    assert payload["public_outputs"] == payload["contract"]["public_outputs"]
+    assert payload["graph_contract"] == payload["contract"]["graph_contract"]
+    assert payload["source_scope"] == "repo"
+    assert payload["indexed"] is True
+    assert payload["readiness_class"] == "ready"
+    assert payload["model_count"] == len(payload["model_assets"])
+    assert payload["custom_node_count"] == len(payload["custom_nodes"])
+    assert "strict_ready_diagnostic_counts" in payload
+    assert isinstance(payload["inputs"], list)
+    assert isinstance(payload["outputs"], list)
+
+
+def test_inspect_text_exposes_public_contract_counts(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=False))
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "public inputs:" in output
+    assert "public outputs:" in output
+    assert "readiness: ready" in output
+
+
+def test_doctor_json_embeds_canonical_public_contract_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vibecomfy.commands.doctor import _cmd_doctor
+
+    scratchpad = tmp_path / "doctor_contract.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+def build():
+    workflow = VibeWorkflow(id="doctor-contract", source=WorkflowSource(id="doctor-contract"))
+    workflow.nodes["1"] = VibeNode(id="1", class_type="SaveImage", inputs={"filename_prefix": "out/test"})
+    workflow.finalize_metadata()
+    return workflow
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+    code = _cmd_doctor(argparse.Namespace(path=str(scratchpad), json=True, lint=False, allow_drift=False))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["contract_shape"] == payload["contract"]["contract_shape"]
+    assert payload["public_inputs"] == payload["contract"]["public_inputs"]
+    assert payload["public_outputs"] == payload["contract"]["public_outputs"]
+    assert payload["graph_contract"] == payload["contract"]["graph_contract"]
+    assert "readiness_class" in payload
+    assert "source_scope" in payload
+    assert "indexed" in payload
+    assert "strict_ready_diagnostic_counts" in payload
 
 
 def test_nodes_install_plan_suggests_pack_for_missing_class(
@@ -775,46 +1087,6 @@ def build():
     captured = capsys.readouterr()
     assert "ComfyUI-Qwen3-TTS" in captured.out
     assert "Qwen3CustomVoice" in captured.out
-
-
-def test_nodes_install_plan_json_uses_shared_payload_shape(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    (tmp_path / "node_index.json").write_text(
-        json.dumps([{"class_type": "PreviewAudio", "pack": "core", "inputs": {}, "outputs": []}]),
-        encoding="utf-8",
-    )
-    scratchpad = tmp_path / "scratch.py"
-    scratchpad.write_text(
-        """
-from vibecomfy.workflow import VibeWorkflow, WorkflowSource, VibeNode
-
-def build():
-    workflow = VibeWorkflow(id="x", source=WorkflowSource(id="x"))
-    workflow.nodes["1"] = VibeNode(id="1", class_type="Qwen3CustomVoice")
-    return workflow
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-
-    assert _run_cli(["nodes", "install-plan", str(scratchpad), "--json"]) == 0
-
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {
-        "path": str(scratchpad),
-        "packs": [
-            {
-                "name": "ComfyUI-Qwen3-TTS",
-                "repo": "https://github.com/DarioFT/ComfyUI-Qwen3-TTS.git",
-                "pip_packages": ["qwen-tts", "modelscope", "soundfile", "librosa", "accelerate"],
-                "classes": ["Qwen3CustomVoice"],
-            }
-        ],
-        "unresolved_class_types": [],
-    }
 
 
 @pytest.mark.parametrize(
@@ -974,3 +1246,267 @@ def build():
     assert code == 0
     assert installed == ["ComfyUI-Qwen3-TTS", "ComfyUI-VideoHelperSuite"]
     assert "Nodepacks installed/refreshed." in captured.out
+
+
+def test_contract_inspect_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_contract_inspect(argparse.Namespace(workflow="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["version"] == 1
+    assert payload["workflow_id"] == "image/z_image"
+    assert isinstance(payload["model_assets"], list)
+    assert len(payload["model_assets"]) > 0
+    assert isinstance(payload["inputs"], list)
+    assert "model" in payload["inputs"]
+    assert isinstance(payload["outputs"], list)
+    assert payload["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert isinstance(payload["public_inputs"], list)
+    assert isinstance(payload["public_outputs"], list)
+    assert isinstance(payload["graph_contract"], dict)
+    assert isinstance(payload["runtime_nodes"], list)
+    assert isinstance(payload["runtime_class_types"], list)
+    assert payload["readiness_level"] == "ready"
+    assert payload["readiness_class"] == "ready"
+    assert payload["source_scope"] == "repo"
+    assert payload["indexed"] is True
+    assert payload["model_count"] == len(payload["model_assets"])
+    assert payload["custom_node_count"] == len(payload["custom_nodes"])
+    assert "strict_ready_diagnostic_counts" in payload
+
+
+def test_contract_text_exposes_public_contract_counts(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_contract_inspect(argparse.Namespace(workflow="image/z_image", json=False))
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "contract_shape: workflow_runtime_contract.v1.public_descriptors.v2" in output
+    assert "public_inputs:" in output
+    assert "public_outputs:" in output
+
+
+def test_contract_doctor_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code = _cmd_contract_doctor(argparse.Namespace(workflow="image/z_image", json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert "status" in payload
+    assert payload["status"] == "ok"
+    assert isinstance(payload["contract"], dict)
+    assert payload["contract"]["version"] == 1
+    assert payload["contract"]["contract_shape"] == "workflow_runtime_contract.v1.public_descriptors.v2"
+    assert isinstance(payload["contract"]["public_inputs"], list)
+    assert isinstance(payload["contract"]["public_outputs"], list)
+    assert payload["public_inputs"] == payload["contract"]["public_inputs"]
+    assert payload["public_outputs"] == payload["contract"]["public_outputs"]
+    assert payload["contract_shape"] == payload["contract"]["contract_shape"]
+    assert payload["readiness_class"] == "ready"
+    assert payload["source_scope"] == "repo"
+    assert payload["indexed"] is True
+    assert isinstance(payload["diagnostics"], list)
+    # No error diagnostics for a clean image/z_image
+    error_diags = [d for d in payload["diagnostics"] if d["severity"] == "error"]
+    assert error_diags == []
+
+
+def test_public_contract_surfaces_align_across_ready_list_inspect_contract_and_doctor(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _cmd_workflows_list(argparse.Namespace(ready=True, limit=1000, json=True, include_dynamic=False)) == 0
+    ready_rows = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    ready_row = ready_rows["image/z_image"]
+
+    assert _cmd_inspect(argparse.Namespace(workflow="image/z_image", json=True)) == 0
+    inspect_payload = json.loads(capsys.readouterr().out)
+
+    assert _cmd_contract_inspect(argparse.Namespace(workflow="image/z_image", json=True)) == 0
+    contract_payload = json.loads(capsys.readouterr().out)
+
+    assert _cmd_contract_doctor(argparse.Namespace(workflow="image/z_image", json=True)) == 0
+    doctor_payload = json.loads(capsys.readouterr().out)
+
+    for payload in [inspect_payload, contract_payload, doctor_payload]:
+        assert payload["contract_shape"] == ready_row["contract_shape"]
+        assert payload["source_scope"] == ready_row["source_scope"] == "repo"
+        assert payload["indexed"] is ready_row["indexed"] is True
+        assert payload["readiness_class"] == ready_row["readiness_class"] == "ready"
+        assert payload["model_count"] == len(payload["model_assets"])
+        assert payload["custom_node_count"] == len(payload["custom_nodes"])
+        assert "strict_ready_diagnostic_counts" in payload
+
+    ready_input_names = {item["name"] for item in ready_row["public_inputs"]}
+    runtime_input_names = {item["name"] for item in contract_payload["public_inputs"]}
+    ready_output_names = {item["name"] for item in ready_row["public_outputs"]}
+    runtime_output_names = {item["name"] for item in contract_payload["public_outputs"]}
+
+    assert ready_input_names == runtime_input_names
+    assert ready_output_names == runtime_output_names
+    assert inspect_payload["public_inputs"] == contract_payload["public_inputs"] == doctor_payload["public_inputs"]
+    assert inspect_payload["public_outputs"] == contract_payload["public_outputs"] == doctor_payload["public_outputs"]
+
+
+# ── T7: workflows lens / contract-validate CLI tests ──────────────────────────
+
+
+def test_workflows_lens_json_output(capsys: pytest.CaptureFixture[str]) -> None:
+    """JSON lens output includes node/edge counts, inputs, outputs, and per-node metadata."""
+    code = _cmd_workflows_lens(
+        argparse.Namespace(template_or_path="video/ltx2_3_lightricks_first_last_parity", json=True)
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["workflow_id"] == "video/ltx2_3_lightricks_first_last_parity"
+    assert payload["node_count"] >= 20
+    assert payload["edge_count"] >= 20
+    assert "prompt" in payload["inputs"]
+    assert "negative_prompt" in payload["inputs"]
+    assert "first_image" in payload["inputs"]
+    assert "last_image" in payload["inputs"]
+    assert "seed_first" in payload["inputs"]
+    assert "seed_last" in payload["inputs"]
+    assert "width" in payload["inputs"]
+    assert "height" in payload["inputs"]
+    assert "first_strength" in payload["inputs"]
+    assert "last_strength" in payload["inputs"]
+    assert "frames" in payload["inputs"]
+    assert "fps" in payload["inputs"]
+    outputs = payload["outputs"]
+    assert any(o["output_type"] == "SaveVideo" for o in outputs)
+    nodes = payload["nodes"]
+    assert len(nodes) == payload["node_count"]
+    class_types = {n["class_type"] for n in nodes}
+    assert "LTXVAddGuide" in class_types
+    assert "RandomNoise" in class_types
+
+
+def test_workflows_lens_human_readable(capsys: pytest.CaptureFixture[str]) -> None:
+    """Human-readable lens diagnostics produce a readable graph summary."""
+    code = _cmd_workflows_lens(
+        argparse.Namespace(template_or_path="video/ltx2_3_lightricks_first_last_parity", json=False)
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 0
+    assert "video/ltx2_3_lightricks_first_last_parity" in captured
+    assert "LTXVAddGuide" in captured
+
+
+def test_workflows_contract_validate_success_json(capsys: pytest.CaptureFixture[str]) -> None:
+    """Successful LTX contract validation produces passing JSON output."""
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path="video/ltx2_3_lightricks_first_last_parity",
+            type="ltx-first-last-two-stage",
+            json=True,
+            no_schema=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["passed"] is True
+    assert payload["contract_name"] == "ltx-first-last-two-stage"
+    assert isinstance(payload["issues"], list)
+    # No errors or warnings for the clean parity template
+    error_issues = [i for i in payload["issues"] if i["severity"] == "error"]
+    assert error_issues == [], f"Unexpected error issues: {error_issues}"
+
+
+def test_workflows_contract_validate_success_human(capsys: pytest.CaptureFixture[str]) -> None:
+    """Successful LTX contract validation produces readable human output."""
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path="video/ltx2_3_lightricks_first_last_parity",
+            type="ltx-first-last-two-stage",
+            json=False,
+            no_schema=False,
+        )
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 0
+    assert "ltx-first-last-two-stage" in captured
+    assert "passed: True" in captured
+
+
+def test_workflows_contract_validate_failure_diagnostic(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A broken workflow produces a stable, readable failure diagnostic."""
+    # Build a deliberately broken workflow: missing named inputs, wrong conditioning, etc.
+    scratchpad = tmp_path / "broken_ltx.py"
+    scratchpad.write_text(
+        """
+from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+
+
+def build():
+    wf = VibeWorkflow("broken-ltx", WorkflowSource("broken-ltx"))
+    # Only add a SaveVideo output with no conditioning pipeline
+    wf.node("SaveVideo", filename_prefix="broken")
+    wf.node("LoadImage", image="broken.png")
+    wf.finalize_metadata()
+    return wf
+""",
+        encoding="utf-8",
+    )
+
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path=str(scratchpad),
+            type="ltx-first-last-two-stage",
+            json=True,
+            no_schema=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["passed"] is False
+    assert payload["contract_name"] == "ltx-first-last-two-stage"
+    issues = payload["issues"]
+    assert len(issues) > 0, "Expected failure diagnostic issues"
+
+    # Verify readable, stable issue codes
+    codes = {i["code"] for i in issues}
+    assert "missing_named_inputs" in codes
+    assert "missing_first_strength_guide" in codes
+    assert "missing_last_strength_guide" in codes
+
+    # Verify issues have human-readable messages
+    for issue in issues:
+        assert isinstance(issue["code"], str) and issue["code"]
+        assert isinstance(issue["message"], str) and issue["message"]
+        assert issue["severity"] in ("error", "warning")
+
+    # Human-readable version should also show the failure
+    code2 = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path=str(scratchpad),
+            type="ltx-first-last-two-stage",
+            json=False,
+            no_schema=False,
+        )
+    )
+    captured2 = capsys.readouterr().out
+    assert code2 == 1
+    assert "passed: False" in captured2
+    assert "missing_named_inputs" in captured2
+
+
+def test_workflows_contract_validate_rejects_unknown_type(capsys: pytest.CaptureFixture[str]) -> None:
+    """Unknown contract type returns exit code 1 with a clear error."""
+    code = _cmd_workflows_contract_validate(
+        argparse.Namespace(
+            template_or_path="video/ltx2_3_lightricks_first_last_parity",
+            type="unknown-contract-type",
+            json=False,
+            no_schema=False,
+        )
+    )
+
+    captured = capsys.readouterr().out
+    assert code == 1
+    assert "unknown contract type" in captured
+    assert "ltx-first-last-two-stage" in captured

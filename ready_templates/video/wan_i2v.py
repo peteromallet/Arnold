@@ -1,11 +1,10 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
 
 
 READY_METADATA = {'model_assets': [{'name': 'wan2.1_i2v_480p_14B_fp16.safetensors',
@@ -132,6 +131,13 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_input(wf, 'image', '52', 'image', type='IMAGE', required=True, aliases=['input_image', 'start_image'], media_semantics='image')
+    bind_input(wf, 'prompt', '6', 'text', type='STRING', required=True, media_semantics='text')
+    bind_input(wf, 'negative_prompt', '7', 'text', type='STRING', aliases=['negative'], media_semantics='text')
+    bind_input(wf, 'seed', '3', 'seed', type='INT')
+    bind_input(wf, 'steps', '3', 'steps', type='INT')
+    bind_input(wf, 'fps', '55', 'fps', type='FLOAT')
+    bind_output(wf, '56', output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', filename_prefix='video/ComfyUI', expected_cardinality='one')
     return wf
 
 
@@ -161,4 +167,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

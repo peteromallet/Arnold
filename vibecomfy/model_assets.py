@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from vibecomfy._graph_utils import node_id_sort_key
@@ -24,12 +24,43 @@ HF_SPLIT_FILES_DIRS = {
 _CLASS_TYPE_SUBDIRS = {
     "CheckpointLoaderSimple": "checkpoints",
     "CLIPLoader": "text_encoders",
+    "DualCLIPLoaderGGUF": "text_encoders",
     "VAELoader": "vae",
+    "VAELoaderKJ": "vae",
     "LoraLoader": "loras",
+    "LoraLoaderModelOnly": "loras",
     "ControlNetLoader": "controlnet",
     "UNETLoader": "diffusion_models",
     "UnetLoaderGGUF": "diffusion_models",
 }
+
+_MODEL_INPUT_SUBDIRS = {
+    "ckpt_name": "checkpoints",
+    "clip_name": "text_encoders",
+    "clip_name1": "text_encoders",
+    "clip_name2": "text_encoders",
+    "lora_name": "loras",
+    "model_name": "diffusion_models",
+    "text_encoder": "text_encoders",
+    "unet_name": "diffusion_models",
+    "upscale_model": "upscale_models",
+    "vae_name": "vae",
+}
+
+_CLASS_FIELD_SUBDIRS = {
+    ("CLIPVisionLoader", "clip_name"): "clip_vision",
+    ("LatentUpscaleModelLoader", "model_name"): "latent_upscale_models",
+    ("LoadWanVideoT5TextEncoder", "model_name"): "text_encoders",
+    ("WanVideoTextEncodeCached", "model_name"): "text_encoders",
+    ("WanVideoVAELoader", "model_name"): "vae",
+    ("WanVideoModelLoader", "model_name"): "diffusion_models",
+    ("WanVideoLoraSelect", "lora"): "loras",
+    ("WanVideoLoraSelectMulti", "lora"): "loras",
+}
+
+if TYPE_CHECKING:
+    from vibecomfy.registry.models_loader import ModelEntry
+    from vibecomfy.workflow import VibeWorkflow
 
 _HF_SPLIT_FILES_RE = re.compile(r"/split_files/([^/]+)/[^/]+$")
 
@@ -60,12 +91,20 @@ def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, str]]:
     """Read structured model assets from a materialized ready scratchpad."""
 
     module_ast = ast.parse(Path(path).read_text(encoding="utf-8"), filename=str(path))
+    constants: dict[str, Any] = {}
     for node in module_ast.body:
         if not isinstance(node, ast.Assign):
             continue
-        if not any(isinstance(target, ast.Name) and target.id == "READY_REQUIREMENTS" for target in node.targets):
+        names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+        try:
+            value = _literal_eval_with_constants(node.value, constants)
+        except (ValueError, TypeError):
             continue
-        requirements = ast.literal_eval(node.value)
+        for name in names:
+            constants[name] = value
+        if "READY_REQUIREMENTS" not in names:
+            continue
+        requirements = value
         if not isinstance(requirements, Mapping):
             return []
         models = requirements.get("models", [])
@@ -73,6 +112,53 @@ def entries_from_scratchpad_path(path: str | Path) -> list[dict[str, str]]:
             return []
         return _normalise_requirement_entries(models)
     return []
+
+
+def resolve_referenced_assets(
+    workflow: VibeWorkflow,
+    *,
+    registry: Sequence[ModelEntry] | None = None,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Resolve model-picker inputs in a built workflow to downloadable assets.
+
+    Authored ``model_assets`` is still the preferred place for bespoke URLs, but
+    runtime workflows can patch model picker fields dynamically. This resolver
+    prevents those final values from drifting away from the files staged by
+    ``--ensure-models``.
+    """
+    from vibecomfy.registry.models_loader import load_registry
+
+    entries = tuple(registry) if registry is not None else load_registry()
+    resolved: list[dict[str, str]] = []
+    unresolved: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for reference in _referenced_model_values(workflow):
+        asset = _asset_for_reference(reference, registry=entries)
+        if asset is None:
+            unresolved.append(reference)
+            continue
+        key = (asset["name"], asset["subdir"])
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(asset)
+    return resolved, unresolved
+
+
+def _literal_eval_with_constants(node: ast.AST, constants: Mapping[str, Any]) -> Any:
+    if isinstance(node, ast.Name) and node.id in constants:
+        return constants[node.id]
+    if isinstance(node, ast.Dict):
+        return {
+            _literal_eval_with_constants(key, constants): _literal_eval_with_constants(value, constants)
+            for key, value in zip(node.keys, node.values)
+            if key is not None
+        }
+    if isinstance(node, ast.List):
+        return [_literal_eval_with_constants(element, constants) for element in node.elts]
+    if isinstance(node, ast.Tuple):
+        return tuple(_literal_eval_with_constants(element, constants) for element in node.elts)
+    return ast.literal_eval(node)
 
 
 def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, str]]:
@@ -89,6 +175,77 @@ def _entries_from_node(node: Mapping[str, Any]) -> Iterable[dict[str, str]]:
         if entry is not None:
             entries.append(entry)
     return entries
+
+
+def _referenced_model_values(workflow: VibeWorkflow) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for node in workflow.runtime_nodes().values():
+        for field, value in node.inputs.items():
+            subdir = _subdir_for_model_reference(node.class_type, field)
+            if subdir is None or not isinstance(value, str) or not value:
+                continue
+            if _looks_like_runtime_input(value):
+                continue
+            key = (node.id, node.class_type, field, value)
+            if key in seen:
+                continue
+            seen.add(key)
+            references.append(
+                {
+                    "node_id": node.id,
+                    "class_type": node.class_type,
+                    "field": field,
+                    "value": value,
+                    "subdir": subdir,
+                }
+            )
+    return references
+
+
+def _subdir_for_model_reference(class_type: str, field: str) -> str | None:
+    return _CLASS_FIELD_SUBDIRS.get((class_type, field), _MODEL_INPUT_SUBDIRS.get(field))
+
+
+def _asset_for_reference(
+    reference: Mapping[str, str],
+    *,
+    registry: Sequence[ModelEntry],
+) -> dict[str, str] | None:
+    value = reference["value"].replace("\\", "/")
+    subdir = reference["subdir"].replace("\\", "/")
+    expected_paths = {f"{subdir}/{value}", f"{subdir}/{Path(value).name}"}
+    for entry in registry:
+        for target in entry.targets:
+            target_path = target.path.replace("\\", "/")
+            if target_path not in expected_paths and not (
+                target_path.startswith(f"{subdir}/") and target_path.endswith(f"/{value}")
+            ):
+                continue
+            url = _url_for_registry_entry(entry)
+            if not url:
+                return None
+            if target_path.startswith(f"{subdir}/"):
+                name = target_path[len(subdir) + 1 :]
+                asset_subdir = subdir
+            else:
+                name = Path(target_path).name
+                asset_subdir = str(Path(target_path).parent)
+            return {"name": name, "url": url, "subdir": asset_subdir}
+    return None
+
+
+def _url_for_registry_entry(entry: ModelEntry) -> str | None:
+    source = entry.source
+    if source.url:
+        return source.url
+    if source.kind == "huggingface" and source.repo and source.filename:
+        return f"https://huggingface.co/{source.repo}/resolve/main/{source.filename}"
+    return None
+
+
+def _looks_like_runtime_input(value: str) -> bool:
+    return value.startswith(("http://", "https://", "/", "./", "../")) or value in {"none", "None"}
 
 
 def _normalise_requirement_entries(models: Iterable[Any]) -> list[dict[str, str]]:
@@ -118,13 +275,20 @@ def _normalise_model_entry(model: Any, *, class_type: str) -> dict[str, str] | N
     if not isinstance(url, str) or not url:
         return None
     subdir = _subdir_for_model(model, class_type=class_type, url=url)
-    return {"name": name, "url": _strip_download_true(url), "subdir": subdir}
+    entry = {"name": name, "url": _strip_download_true(url), "subdir": subdir}
+    target_path = model.get("target_path")
+    if isinstance(target_path, str) and target_path:
+        entry["target_path"] = target_path
+    return entry
 
 
 def _subdir_for_model(model: Mapping[str, Any], *, class_type: str, url: str) -> str:
     directory = model.get("directory")
     if isinstance(directory, str) and directory:
         return directory
+    subdir = model.get("subdir")
+    if isinstance(subdir, str) and subdir:
+        return subdir
     split_subdir = _hf_split_files_subdir(url)
     if split_subdir is not None:
         return split_subdir
@@ -190,4 +354,9 @@ def _node_class_type(node: Mapping[str, Any]) -> str:
     return ""
 
 
-__all__ = ["HF_SPLIT_FILES_DIRS", "entries_from_scratchpad_path", "extract_from_raw_workflow"]
+__all__ = [
+    "HF_SPLIT_FILES_DIRS",
+    "entries_from_scratchpad_path",
+    "extract_from_raw_workflow",
+    "resolve_referenced_assets",
+]

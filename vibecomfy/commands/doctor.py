@@ -14,6 +14,8 @@ from vibecomfy._git_utils import git_head
 from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.commands._model_entries import model_entries_for_workflow
 from vibecomfy.commands._output import emit
+from vibecomfy.contracts import build_contract
+from vibecomfy.contracts.surface import build_contract_surface
 from vibecomfy.diagnostics import (
     DiagnosticFinding,
     PatchSuggestion,
@@ -41,6 +43,24 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print("Layer: Python scratchpad import/build")
         print(f"Error: {type(exc).__name__}: {exc}")
         print("Next: fix the Python file until build() returns a VibeWorkflow.")
+        print(f"Port preflight: vibecomfy port check {args.path} --json")
+        return 1
+    helper_issues = workflow.helper_diagnostics()
+    helper_blockers = [issue for issue in helper_issues if issue.severity != "info"]
+    if helper_blockers:
+        payload = {
+            "status": "error",
+            "layer": "Porting helper diagnostics",
+            "errors": [issue.message for issue in helper_blockers],
+            "recommended_command": f"vibecomfy port check {args.path} --json",
+        }
+        if json_output:
+            emit(payload, json=True, text_renderer=_render_doctor_error)
+        else:
+            print("Layer: Porting helper diagnostics")
+            for issue in helper_issues:
+                print(f"- {issue.message}")
+            print(f"Next: {payload['recommended_command']}")
         return 1
     if lint:
         for warning in _lint_untyped_raw_refs(Path(args.path)):
@@ -76,6 +96,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             print("Layer: VibeWorkflow validation")
             for issue in validation_issues:
                 print(f"- {issue}")
+            print(f"Next: vibecomfy port check {args.path} --json")
         if json_output:
             return 1
         missing_classes = {
@@ -112,7 +133,14 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         "nodepack_warnings": drift_warnings,
         "suggested_patches": suggested_patches,
     }
+    if json_output:
+        _attach_contract(payload, build_contract(workflow).to_dict(), workflow)
     return emit(payload, json=json_output, text_renderer=_render_doctor_ok)
+
+
+def _attach_contract(payload: dict[str, Any], contract: dict[str, Any], workflow: VibeWorkflow) -> None:
+    payload["contract"] = contract
+    payload.update(build_contract_surface(contract=contract, workflow=workflow))
 
 
 def _patch_suggestions(workflow: VibeWorkflow) -> list[PatchSuggestion]:
@@ -126,6 +154,11 @@ def _render_suggested_patches(payload: dict[str, Any]) -> list[str]:
     lines = ["Suggested patches:"]
     lines.extend(f"- {patch['name']}: {patch['rationale']}" for patch in suggested)
     return lines
+
+
+def _render_recommended_command(payload: dict[str, Any]) -> list[str]:
+    command = payload.get("recommended_command")
+    return [f"Next: {command}"] if command else []
 
 
 def _render_doctor_ok(payload: dict[str, Any]) -> str:
@@ -142,6 +175,7 @@ def _render_doctor_error(payload: dict[str, Any]) -> str:
     lines = [f"Layer: {payload.get('layer', 'doctor')}"]
     lines.extend(f"- {error}" for error in payload.get("errors", []))
     lines.extend(_render_suggested_patches(payload))
+    lines.extend(_render_recommended_command(payload))
     return "\n".join(lines)
 
 
@@ -149,6 +183,7 @@ def _render_list_section(title: str, items: list[str], payload: dict[str, Any]) 
     lines = [f"{title}:"]
     lines.extend(f"- {item}" for item in items)
     lines.extend(_render_suggested_patches(payload))
+    lines.extend(_render_recommended_command(payload))
     return "\n".join(lines)
 
 
@@ -348,7 +383,65 @@ def _doctor_warning_findings(workflow: VibeWorkflow) -> list[DiagnosticFinding]:
     warnings: list[DiagnosticFinding] = []
     warnings.extend(_embedded_configuration_findings())
     warnings.extend(_video_audio_findings(workflow))
+    warnings.extend(
+        DiagnosticFinding("video_frame_cap", warning, "warning")
+        for warning in _video_frame_cap_warnings(workflow)
+    )
+    warnings.extend(_ltx_audio_vae_loader_findings(workflow))
     return warnings
+
+
+def _video_frame_cap_warnings(workflow: VibeWorkflow) -> list[str]:
+    unbound_inputs = workflow.metadata.get("unbound_inputs")
+    has_generation_frame_binding = isinstance(unbound_inputs, dict) and any(
+        str(name) in {"num_frames", "frames", "frame_count", "video_length"}
+        for name in unbound_inputs
+    )
+    if not has_generation_frame_binding:
+        return []
+
+    warnings: list[str] = []
+    for node_id, node in sorted(workflow.nodes.items()):
+        if node.class_type == "LoadVideo":
+            warnings.append(
+                f"LoadVideo node {node_id} has no frame-load cap, but the workflow exposes a generated frame-count binding; "
+                "the caller must cap or normalize source video before runtime if preprocessing should only consume generated frames."
+            )
+            continue
+        if node.class_type in {"VHS_LoadVideo", "VHS_LoadVideoPath", "VHS_LoadVideoFFmpeg"}:
+            cap = node.inputs.get("frame_load_cap")
+            if cap in (None, 0, "0"):
+                warnings.append(
+                    f"{node.class_type} node {node_id} has frame_load_cap={cap!r} while the workflow exposes a generated frame-count binding; "
+                    "bind frame_load_cap to the same effective frame count or document why the full source clip is required."
+                )
+    return warnings
+
+
+def _ltx_audio_vae_loader_findings(workflow: VibeWorkflow) -> list[DiagnosticFinding]:
+    findings: list[DiagnosticFinding] = []
+    for node_id, node in sorted(workflow.nodes.items()):
+        if node.class_type != "VAELoaderKJ":
+            continue
+        vae_name = node.inputs.get("vae_name") or node.inputs.get("widget_0")
+        if not isinstance(vae_name, str):
+            continue
+        normalized = vae_name.lower()
+        if "ltx" not in normalized or "audio" not in normalized:
+            continue
+        findings.append(
+            DiagnosticFinding(
+                "ltx_audio_vae_wrong_loader",
+                "VAELoaderKJ node "
+                f"{node_id} loads {vae_name!r}; current KJNodes may misclassify LTX audio VAE files. "
+                "Use LTXVAudioVAELoader with the file staged under checkpoints.",
+                "warning",
+                node_id=str(node_id),
+                class_type=node.class_type,
+                detail={"vae_name": vae_name},
+            )
+        )
+    return findings
 
 
 def _missing_model_warnings(workflow: VibeWorkflow, path: str) -> list[str]:
@@ -357,6 +450,9 @@ def _missing_model_warnings(workflow: VibeWorkflow, path: str) -> list[str]:
 
 def _missing_model_findings(workflow: VibeWorkflow, path: str) -> list[DiagnosticFinding]:
     import vibecomfy.fetch as fetch_assets
+
+    if "VIBECOMFY_MODELS_ROOT" not in os.environ:
+        return []
 
     warnings: list[DiagnosticFinding] = []
     for entry in _model_asset_entries(workflow, path):

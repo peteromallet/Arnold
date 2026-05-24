@@ -2,7 +2,7 @@
 
 Kijai's `ComfyUI-WanVideoWrapper` is treated as a separate Wan coverage source from the official Comfy templates. It exposes many workflows that are not covered by the official template library.
 
-Representative ready templates currently materialized from Kijai examples:
+Representative ready templates currently curated from Kijai examples:
 
 - `video/wanvideo_wrapper_21_14b_t2v`
 - `video/wanvideo_wrapper_21_14b_i2v`

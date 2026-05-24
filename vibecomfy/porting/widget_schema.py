@@ -1,18 +1,14 @@
-"""Positional-widget schema for generated ready-template modules.
+"""Widget-only positional schema shared by porting and conversion tools.
 
-Each entry maps a class type to its ordered POSITIONAL WIDGET names -- the
-sequence ComfyUI's UI uses to populate `widgets_values`. Link-only inputs
-(IMAGE, MODEL, LATENT, etc.) are NOT included; only widget-type inputs
-(STRING, INT, FLOAT, BOOL, dropdown) count for positional indexing.
-
-Cross-checked against `vendor/ComfyUI/comfy/nodes/base_nodes.py` and
-`vendor/ComfyUI/comfy_extras/` `INPUT_TYPES` declarations.
+Entries map a ComfyUI class type to ordered `widgets_values` API input
+names. Link-only sockets such as IMAGE, MODEL, CLIP, VAE, and LATENT are
+intentionally excluded so positional widgets cannot be shifted by object_info
+link inputs.
 """
 
 from __future__ import annotations
 
 WIDGET_SCHEMA: dict[str, list[str | None]] = {
-    # Stock samplers / guiders -- only widget inputs (links omitted).
     "BasicScheduler": ["scheduler", "steps", "denoise"],
     "CFGGuider": ["cfg"],
     "CheckpointLoaderSimple": ["ckpt_name"],
@@ -23,6 +19,7 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "ConditioningSetTimestepRange": ["start", "end"],
     "CreateVideo": ["fps"],
     "DualCLIPLoader": ["clip_name1", "clip_name2", "type", "device"],
+    "DualCLIPLoaderGGUF": ["clip_name1", "clip_name2", "type"],
     "EmptyFlux2LatentImage": ["width", "height", "batch_size"],
     "EmptyHunyuanLatentVideo": ["width", "height", "length", "batch_size"],
     "EmptyLTXVLatentVideo": ["width", "height", "length", "batch_size"],
@@ -32,20 +29,13 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "GetImageSize": [],
     "ImageResize": ["resize_mode", "resolutions", "interpolation", "aspect_ratio_tolerance"],
     "ImageScale": ["upscale_method", "width", "height", "crop"],
+    "ImageScaleBy": ["upscale_method", "scale_by"],
     "ImageScaleToTotalPixels": ["upscale_method", "megapixels", "resolution_steps"],
-    "KSampler": [
-        "seed",
-        None,  # control_after_generate -- UI-only widget, not an API input.
-        "steps",
-        "cfg",
-        "sampler_name",
-        "scheduler",
-        "denoise",
-    ],
+    "KSampler": ["seed", None, "steps", "cfg", "sampler_name", "scheduler", "denoise"],
     "KSamplerAdvanced": [
         "add_noise",
         "noise_seed",
-        None,  # control_after_generate -- UI-only.
+        None,
         "steps",
         "cfg",
         "sampler_name",
@@ -56,8 +46,40 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     ],
     "KSamplerSelect": ["sampler_name"],
     "LoadAudio": ["audio"],
-    "LoadImage": ["image"],
+    "LoadImage": ["image", None],
     "LoraLoaderModelOnly": ["lora_name", "strength_model"],
+    "LTX2AttentionTunerPatch": [
+        "blocks",
+        "video_scale",
+        "audio_scale",
+        "video_to_audio_scale",
+        "audio_to_video_scale",
+        "triton_kernels",
+    ],
+    "LTX2MemoryEfficientSageAttentionPatch": ["triton_kernels"],
+    "LTX2_NAG": ["nag_scale", "nag_alpha", "nag_tau", None],
+    "LTX2SamplingPreviewOverride": ["preview_rate"],
+    "LTXICLoRALoaderModelOnly": ["lora_name", "strength_model"],
+    "LTXAddVideoICLoRAGuide": [
+        "frame_idx",
+        "strength",
+        "crop",
+        "use_tiled_encode",
+        None,
+        "tile_size",
+        "tile_overlap",
+    ],
+    "LTXVConditioning": ["frame_rate"],
+    "LTXVEmptyLatentAudio": ["frames_number", "frame_rate", "batch_size"],
+    "LTXVAddGuide": ["frame_idx", "strength"],
+    "LTXVChunkFeedForward": ["chunks", "dim_threshold"],
+    "LTXVImgToVideoConditionOnly": ["strength", "bypass"],
+    "LTXAVTextEncoderLoader": ["text_encoder", "ckpt_name", "device"],
+    "LTXVPreprocess": ["img_compression"],
+    "LTXVScheduler": ["steps", "max_shift", "base_shift", "stretch", "terminal"],
+    "LTXVTiledVAEDecode": ["horizontal_tiles", "vertical_tiles", "overlap", "last_frame_fix", None, None],
+    "LatentUpscaleModelLoader": ["model_name"],
+    "ManualSigmas": ["sigmas"],
     "ModelSamplingAuraFlow": ["shift"],
     "ModelSamplingFlux": ["max_shift", "base_shift", "width", "height"],
     "ModelSamplingSD3": ["shift"],
@@ -66,34 +88,204 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "PrimitiveInt": ["value"],
     "PrimitiveString": ["value"],
     "PrimitiveStringMultiline": ["value"],
+    "PathchSageAttentionKJ": ["sage_attention", "allow_compile"],
+    "Power Lora Loader (rgthree)": [None, None, None, None],
     "RandomNoise": ["noise_seed", "control_after_generate"],
+    "ResizeImagesByLongerEdge": ["longer_edge"],
     "SamplerCustomAdvanced": [],
     "SaveAudio": ["filename_prefix"],
     "SaveAudioMP3": ["filename_prefix", "quality"],
     "SaveImage": ["filename_prefix"],
     "SaveVideo": ["filename_prefix", "format", "codec"],
+    "SimpleCalculatorKJ": ["expression"],
     "TextEncodeQwenImageEdit": ["prompt"],
     "TripleCLIPLoader": ["clip_name1", "clip_name2", "clip_name3"],
     "UNETLoader": ["unet_name", "weight_dtype"],
+    "UnetLoaderGGUF": ["unet_name"],
     "VAEDecode": [],
     "VAEDecodeTiled": ["tile_size", "overlap", "temporal_size", "temporal_overlap"],
     "VAEEncode": [],
     "VAELoader": ["vae_name"],
+    "VAELoaderKJ": ["vae_name", "device", "weight_dtype"],
+    "LoadWanVideoT5TextEncoder": ["model_name", "precision", "load_device", "quantization"],
+    "WanVideoTextEncode": ["positive_prompt", "negative_prompt", "force_offload", "use_disk_cache", "device"],
+    "WanVideoTextEncodeCached": [
+        "model_name",
+        "precision",
+        "positive_prompt",
+        "negative_prompt",
+        "quantization",
+        "use_disk_cache",
+        "device",
+    ],
+    "CLIPVisionLoader": ["clip_name"],
+    "WanVideoModelLoader": ["model", "base_precision", "quantization", "load_device", "attention_mode", "rms_norm_function"],
+    "WanVideoBlockSwap": [
+        "blocks_to_swap",
+        "offload_img_emb",
+        "offload_txt_emb",
+        "use_non_blocking",
+        "vace_blocks_to_swap",
+        "prefetch_blocks",
+        "block_swap_debug",
+    ],
+    "WanVideoTorchCompileSettings": [
+        "backend",
+        "fullgraph",
+        "mode",
+        "dynamic",
+        "dynamo_cache_size_limit",
+        "compile_transformer_blocks_only",
+        "dynamo_recompile_limit",
+        "force_parameter_static_shapes",
+        "allow_unmerged_lora_compile",
+    ],
+    "WanVideoLoraSelect": ["lora", "strength", "low_mem_load", "merge_loras"],
+    "WanVideoLoraSelectMulti": [
+        "lora_0",
+        "strength_0",
+        "lora_1",
+        "strength_1",
+        "lora_2",
+        "strength_2",
+        "lora_3",
+        "strength_3",
+        "lora_4",
+        "strength_4",
+        "low_mem_load",
+        "merge_loras",
+    ],
+    "WanVideoImageToVideoEncode": [
+        "width",
+        "height",
+        "num_frames",
+        "noise_aug_strength",
+        "start_latent_strength",
+        "end_latent_strength",
+        "force_offload",
+        "tiled_vae",
+        "fun_or_fl2v_model",
+    ],
+    "WanVideoVAELoader": ["model_name", "precision"],
+    "WanVideoDecode": ["enable_vae_tiling", "tile_x", "tile_y", "tile_stride_x", "tile_stride_y", "normalization"],
+    "WanVideoSampler": [
+        "steps",
+        "cfg",
+        "shift",
+        "seed",
+        None,
+        "force_offload",
+        "scheduler",
+        "riflex_freq_index",
+        "denoise_strength",
+        "batched_cfg",
+        "rope_function",
+        "start_step",
+        "end_step",
+        "add_noise_to_samples",
+    ],
+    "CreateCFGScheduleFloatList": [
+        "steps",
+        "cfg_scale_start",
+        "cfg_scale_end",
+        "interpolation",
+        "start_percent",
+        "end_percent",
+    ],
+    "WanVideoAnimateEmbeds": [
+        "width",
+        "height",
+        "num_frames",
+        "force_offload",
+        "frame_window_size",
+        "colormatch",
+        "face_strength",
+        "pose_strength",
+        "unused_8",
+    ],
+    "WanVideoClipVisionEncode": [
+        "strength_1",
+        "strength_2",
+        "crop",
+        "combine_embeds",
+        "force_offload",
+        "tiles",
+        "ratio",
+    ],
+    "WanVideoContextOptions": [
+        "context_schedule",
+        "context_frames",
+        "context_stride",
+        "context_overlap",
+        "freenoise",
+        "verbose",
+        "fuse_method",
+    ],
+    "ImageResizeKJv2": [
+        "width",
+        "height",
+        "upscale_method",
+        "keep_proportion",
+        "pad_color",
+        "crop_position",
+        "divisible_by",
+        "device",
+        None,
+    ],
+    "INTConstant": ["value"],
+    "FloatConstant": ["value"],
+    "ImageConcatMulti": ["inputcount", "direction", "match_image_size", "unused_3"],
+    "BlockifyMask": ["block_size"],
+    "DrawMaskOnImage": ["color"],
+    "GrowMask": ["expand", "tapered_corners"],
+    "DWPreprocessor": [
+        "detect_hand",
+        "detect_body",
+        "detect_face",
+        "resolution",
+        "bbox_detector",
+        "pose_estimator",
+        "scale_stick_for_xinsr_cn",
+    ],
+    "PointsEditor": [
+        "points_store",
+        "coordinates",
+        "neg_coordinates",
+        "bbox_store",
+        "bboxes",
+        "bbox_format",
+        "width",
+        "height",
+        "normalize",
+    ],
+    "CLIPVisionEncode": ["crop"],
+    "LoadVideo": ["file", None],
+    "PixelPerfectResolution": ["resize_mode"],
+    "GrowMaskWithBlur": [
+        "expand",
+        "incremental_expandrate",
+        "tapered_corners",
+        "flip_input",
+        "blur_radius",
+        "lerp_alpha",
+        "decay_factor",
+        "unused_7",
+    ],
+    "DownloadAndLoadSAM2Model": ["model", "segmentor", "device", "precision"],
+    "Sam2Segmentation": ["keep_model_loaded", "individual_objects"],
+    "OnnxDetectionModelLoader": ["vitpose_model", "yolo_model", "onnx_device"],
+    "PoseAndFaceDetection": ["width", "height", "face_padding"],
+    "DrawViTPose": ["width", "height", "retarget_padding", "body_stick_width", "hand_stick_width", "draw_head"],
+    "ResizeImageMaskNode": ["resize_type", None, "scale_method"],
+    "VHS_VideoCombine": [
+        "frame_rate",
+        "loop_count",
+        "filename_prefix",
+        "format",
+        "pingpong",
+        "save_output",
+    ],
 }
 
 
-def resolve_widget_name(class_type: str, idx: int) -> str | None:
-    """Return the real input name for a positional widget, or None to drop it.
-
-    A None entry in WIDGET_SCHEMA marks a UI-only widget (e.g. KSampler's
-    `control_after_generate` at index 1) -- these appear in the UI's
-    `widgets_values` list but are NOT valid API inputs. Callers should
-    skip emitting/comparing widgets resolved to None.
-    """
-    names = WIDGET_SCHEMA.get(class_type)
-    if names is not None and 0 <= idx < len(names):
-        return names[idx]
-    return f"widget_{idx}"
-
-
-__all__ = ["WIDGET_SCHEMA", "resolve_widget_name"]
+__all__ = ["WIDGET_SCHEMA"]

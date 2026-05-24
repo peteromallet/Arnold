@@ -82,10 +82,8 @@ def build() -> VibeWorkflow:
         widget_1='main_device',
         widget_2='bf16',
     )
-    vaeloaderkj_2 = _node(wf, 'VAELoaderKJ', '5221',
-        widget_0='LTX2_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj_2 = _node(wf, 'LTXVAudioVAELoader', '5221',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     dualcliploader = _node(wf, 'DualCLIPLoader', '5222',
         clip_name1='gemma_3_12B_it_fp8_e4m3fn.safetensors',
@@ -419,4 +417,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

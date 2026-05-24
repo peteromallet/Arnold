@@ -1,11 +1,10 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
-# marker on the first line if hand-editing is required.
+# vibecomfy: manual
+# Promoted during sprint 7 to preserve snapshot parity while curating public output contracts.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
 from __future__ import annotations
 
 from vibecomfy.workflow import VibeWorkflow, WorkflowSource
-from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output
 
 
 READY_METADATA = {'model_assets': [{'name': 'qwen_image_2512_fp8_e4m3fn.safetensors',
@@ -146,6 +145,12 @@ def build() -> VibeWorkflow:
 
     wf.finalize_metadata()
     apply_ready_template_policy(wf, READY_METADATA, source_path=__file__, requirements=READY_REQUIREMENTS)
+    bind_input(wf, 'prompt', '238:227', 'text', type='STRING', required=True, media_semantics='text')
+    bind_input(wf, 'negative_prompt', '238:228', 'text', type='STRING', aliases=['negative'], media_semantics='text')
+    bind_input(wf, 'seed', '238:230', 'seed', type='INT')
+    bind_input(wf, 'width', '238:232', 'width', type='INT')
+    bind_input(wf, 'height', '238:232', 'height', type='INT')
+    bind_output(wf, '60', output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', filename_prefix='Qwen-Image-2512', expected_cardinality='one')
     return wf
 
 
@@ -175,4 +180,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-

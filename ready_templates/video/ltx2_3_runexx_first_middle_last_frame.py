@@ -1,4 +1,4 @@
-# vibecomfy: generated — converted by tools/convert_ready_templates.py
+# vibecomfy: manual
 # Edits will be overwritten on regeneration. Add a `# vibecomfy: manual`
 # marker on the first line if hand-editing is required.
 """Auto-generated ready_template — see tools/convert_ready_templates.py."""
@@ -8,7 +8,41 @@ from vibecomfy.workflow import VibeWorkflow, WorkflowSource
 from vibecomfy.registry.ready_template import apply_ready_template_policy
 
 
-READY_METADATA = {'model_assets': [],
+LTX_RUNEXX_MODEL_ASSETS = [
+    {
+        "name": "ltx-2.3_text_projection_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+        "subdir": "text_encoders",
+    },
+    {
+        "name": "LTX23_video_vae_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_video_vae_bf16.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "LTX23_audio_vae_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors",
+        "subdir": "checkpoints",
+    },
+    {
+        "name": "taeltx2_3.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/taeltx2_3.safetensors",
+        "subdir": "vae",
+    },
+    {
+        "name": "ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/diffusion_models/ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors",
+        "subdir": "diffusion_models",
+    },
+    {
+        "name": "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+        "url": "https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/loras/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+        "subdir": "loras",
+    },
+]
+
+
+READY_METADATA = {'model_assets': LTX_RUNEXX_MODEL_ASSETS,
  'unbound_inputs': {'seed': 4831},
  'ready_template': 'video/ltx2_3_runexx_first_middle_last_frame',
  'workflow_template': 'ltx2_3_runexx_first_middle_last_frame',
@@ -29,7 +63,7 @@ READY_METADATA = {'model_assets': [],
  'comfy_configuration': {'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True}}
 
 READY_REQUIREMENTS = {'models': [],
- 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite']}
+ 'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']}
 
 
 def build() -> VibeWorkflow:
@@ -113,10 +147,8 @@ def build() -> VibeWorkflow:
     getnode_15 = _node(wf, 'GetNode', '148',
         widget_0='vae_audio',
     )
-    vaeloaderkj = _node(wf, 'VAELoaderKJ', '175',
-        widget_0='LTX23_audio_vae_bf16.safetensors',
-        widget_1='main_device',
-        widget_2='bf16',
+    vaeloaderkj = _node(wf, 'LTXVAudioVAELoader', '175',
+        ckpt_name='LTX23_audio_vae_bf16.safetensors',
     )
     vaeloader = _node(wf, 'VAELoader', '180',
         vae_name='taeltx2_3.safetensors',
@@ -287,9 +319,13 @@ def build() -> VibeWorkflow:
         clip=getnode_8.out(0),
     )
     vhs_videocombine = _node(wf, 'VHS_VideoCombine', '43',
-        audio=getnode_21.out(0),
+        filename_prefix='reigh_vibecomfy_ltx_first_middle_last',
+        format='video/h264-mp4',
         frame_rate=getnode_13.out(0),
         images=getnode_20.out(0),
+        loop_count=0,
+        pingpong=False,
+        save_output=True,
     )
     imageresizekjv2 = _node(wf, 'ImageResizeKJv2', '44',
         widget_0=960,
@@ -336,11 +372,6 @@ def build() -> VibeWorkflow:
     setnode_9 = _node(wf, 'SetNode', '188',
         widget_0='clip',
         CLIP=dualcliploader.out(0),
-    )
-    ltx2samplingpreviewoverride = _node(wf, 'LTX2SamplingPreviewOverride', '198',
-        widget_0=8,
-        model=getnode_7.out(0),
-        vae=getnode_16.out(0),
     )
     n_8fa4f93a_67ee_463f_ba43_249580c0bfb1 = _node(wf, '8fa4f93a-67ee-463f-ba43-249580c0bfb1', '2070',
         _1=primitivestringmultiline.out(0),
@@ -413,6 +444,9 @@ def build() -> VibeWorkflow:
         text=n_8fa4f93a_67ee_463f_ba43_249580c0bfb1.out(0),
         clip=getnode_8.out(0),
     )
+    wf.replace_edge('16.text', primitivestringmultiline.out(0))
+    wf.remove_node('2070')
+    wf.remove_node('2102')
     emptyltxvlatentvideo = _node(wf, 'EmptyLTXVLatentVideo', '32',
         batch_size=1,
         widget_0=256,
@@ -440,12 +474,12 @@ def build() -> VibeWorkflow:
         widget_1=0.25,
         widget_2=2.5,
         widget_3=True,
-        model=ltx2samplingpreviewoverride.out(0),
+        model=getnode_7.out(0),
         nag_cond_audio=getnode_17.out(0),
         nag_cond_video=getnode_17.out(0),
     )
     pathchsageattentionkj = _node(wf, 'PathchSageAttentionKJ', '226',
-        widget_0='auto',
+        widget_0='disabled',
         widget_1=False,
         model=loraloadermodelonly.out(0),
     )
@@ -487,10 +521,6 @@ def build() -> VibeWorkflow:
         widget_0='model_nag',
         MODEL=ltx2_nag.out(0),
     )
-    ltx2memoryefficientsageattentionpatch = _node(wf, 'LTX2MemoryEfficientSageAttentionPatch', '227',
-        widget_0=True,
-        model=pathchsageattentionkj.out(0),
-    )
     imageresizekjv2_3 = _node(wf, 'ImageResizeKJv2', '2171',
         widget_0=512,
         widget_1=512,
@@ -519,7 +549,7 @@ def build() -> VibeWorkflow:
     ltxvchunkfeedforward = _node(wf, 'LTXVChunkFeedForward', '228',
         widget_0=2,
         widget_1=4096,
-        model=ltx2memoryefficientsageattentionpatch.out(0),
+        model=pathchsageattentionkj.out(0),
     )
     resizeimagesbylongeredge_3 = _node(wf, 'ResizeImagesByLongerEdge', '2168',
         widget_0=1536,
@@ -530,18 +560,12 @@ def build() -> VibeWorkflow:
         IMAGE=imageresizekjv2_3.out(0),
     )
     ltxvaddguidemulti_2 = _node(wf, 'LTXVAddGuideMulti', '2221',
-        widget_0='3',
-        widget_1=0,
-        widget_2=0.7,
-        widget_3=0,
-        widget_4=0.25,
-        widget_5=-1,
-        widget_6=1,
         latent=emptyltxvlatentvideo.out(0),
         negative=ltxvconditioning.out(1),
+        num_guides='3',
         positive=ltxvconditioning.out(0),
         vae=getnode_42.out(0),
-        _extras={'num_guides.frame_idx_2': simplecalculatorkj_3.out(1), 'num_guides.image_1': ltxvpreprocess_2.out(0), 'num_guides.image_2': ltxvpreprocess_3.out(0), 'num_guides.image_3': ltxvpreprocess.out(0), 'num_guides.strength_1': getnode_46.out(0), 'num_guides.strength_2': getnode_48.out(0), 'num_guides.strength_3': getnode_47.out(0)},
+        _extras={'num_guides.frame_idx_1': 0, 'num_guides.frame_idx_2': simplecalculatorkj_3.out(1), 'num_guides.frame_idx_3': -1, 'num_guides.image_1': ltxvpreprocess_2.out(0), 'num_guides.image_2': ltxvpreprocess_3.out(0), 'num_guides.image_3': ltxvpreprocess.out(0), 'num_guides.strength_1': getnode_46.out(0), 'num_guides.strength_2': getnode_48.out(0), 'num_guides.strength_3': getnode_47.out(0)},
     )
     ltxvconcatavlatent = _node(wf, 'LTXVConcatAVLatent', '24',
         audio_latent=getnode_39.out(0),
@@ -559,7 +583,7 @@ def build() -> VibeWorkflow:
         widget_2=1,
         widget_3=1,
         widget_4=1,
-        widget_5=True,
+        widget_5=False,
         model=ltxvchunkfeedforward.out(0),
     )
     setnode_22 = _node(wf, 'SetNode', '2169',
@@ -611,16 +635,12 @@ def build() -> VibeWorkflow:
         positive=getnode_44.out(0),
     )
     ltxvaddguidemulti = _node(wf, 'LTXVAddGuideMulti', '2182',
-        widget_0='2',
-        widget_1=0,
-        widget_2=1,
-        widget_3=-1,
-        widget_4=1,
         latent=ltxvcropguides_2.out(2),
         negative=ltxvcropguides_2.out(1),
+        num_guides='2',
         positive=ltxvcropguides_2.out(0),
         vae=getnode_30.out(0),
-        _extras={'num_guides.image_1': getnode_40.out(0), 'num_guides.image_2': getnode_28.out(0), 'num_guides.strength_1': getnode_45.out(0), 'num_guides.strength_2': getnode_41.out(0)},
+        _extras={'num_guides.frame_idx_1': 0, 'num_guides.frame_idx_2': -1, 'num_guides.image_1': getnode_40.out(0), 'num_guides.image_2': getnode_28.out(0), 'num_guides.strength_1': getnode_45.out(0), 'num_guides.strength_2': getnode_41.out(0)},
     )
     cfgguider = _node(wf, 'CFGGuider', '8',
         cfg=2.5,
@@ -707,4 +727,3 @@ def _node(wf: VibeWorkflow, class_type: str, _id: str, _extras: dict | None = No
             if edge.from_node == old_id:
                 edge.from_node = _id
     return builder
-
