@@ -97,40 +97,44 @@ class CommandResult:
     duration_ms: int
 
 
-# Idle-output (inter-chunk inactivity) watchdog for streaming subprocess workers
-# such as ``shannon`` (Claude via the shannon CLI, ``--output-format=json``).
+# Per-turn duration cap for the shannon worker (Claude via the shannon CLI).
 #
-# Background / failure mode this guards against: a shannon subprocess can
-# establish its SSE stream to the model, emit some output, then STALL — the
-# process stays alive (and a packaged 180s/2h turn watchdog is raised above the
-# megaplan budget) but produces no further stdout/stderr for many minutes. The
-# blocking reader threads in ``run_command`` sit in ``stream.read(4096)`` with no
-# idle bound, and the liveness heartbeat keeps bumping the OUTER ``megaplan auto``
-# idle watchdog, so nothing aborts until the coarse phase wall-clock
-# ``worker_timeout_seconds`` (~30m+) finally fires — failing the WHOLE plan.
+# IMPORTANT — why this is a coarse DURATION cap, not a true inter-chunk idle
+# bound (empirically established 2026-05-24): shannon does NOT passthrough
+# Claude's token stream. It drives Claude in a tmux session and reconstructs
+# output by polling Claude's transcript .jsonl, emitting to its OWN stdout only
+# at turn start (init) and turn end (result). And the transcript file itself is
+# written one row per COMPLETED content block — it stays byte-static for the
+# entire duration of a single long thinking/answer block. So during a long
+# single-block Opus turn there is NO incremental signal on stdout OR the
+# transcript (the only token-by-token signal is the live tmux pane). An
+# "inter-chunk inactivity" bound therefore degenerates into a total-turn
+# duration cap for shannon: the timer effectively counts turn-start → turn-end.
 #
-# This watchdog mirrors the hermes/DeepSeek per-chunk read-timeout
-# (HERMES_STREAM_READ_TIMEOUT in megaplan/agent/run_agent.py): if no NEW
-# stdout/stderr chunk arrives within the bound, kill the subprocess and raise a
-# retryable ``worker_stall`` CliError so the phase retries (bounded) instead of
-# the plan failing. The liveness heartbeat deliberately does NOT reset the bound
-# — only real output does — so a genuinely-stalled-but-alive process is caught,
-# while a healthy long-but-active call (which keeps emitting tokens) never trips.
-DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 240.0
+# Consequence: this value must exceed the longest LEGITIMATE single turn (real
+# transcripts show within-turn gaps up to ~363s) while still catching the
+# original failure mode (a genuinely hung turn that would otherwise run until the
+# ~30m+ phase wall-clock and fail the whole plan). 900s gives ~2.5x headroom over
+# observed legit turns and still kills an infinite hang at 15 min, well inside
+# the phase cap. Override via SHANNON_STREAM_READ_TIMEOUT.
+# (A true fine-grained liveness signal would require scraping the tmux pane —
+# deliberately NOT done; a duration cap is the honest mechanism for a worker with
+# no incremental output. The hermes path, which DOES stream real SSE chunks, uses
+# a genuine inter-chunk bound — HERMES_STREAM_READ_TIMEOUT — and is unaffected.)
+DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 900.0
 DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 80_000_000
 CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
 
 def _worker_stream_idle_timeout_seconds() -> float:
-    """Inter-chunk stdout/stderr inactivity bound (seconds) for streaming
-    subprocess workers.
+    """Per-turn duration cap (seconds) for the shannon worker.
 
-    Configurable via ``SHANNON_STREAM_READ_TIMEOUT`` (mirrors the hermes
-    ``HERMES_STREAM_READ_TIMEOUT`` convention). Falls back to a generous default
-    (4 min) that tolerates legitimately slow tool turns / first-token latency
-    while still catching a true zero-output stall well before the coarse phase
-    wall-clock timeout. Clamped to a sane floor so a misconfigured tiny value
-    can never abort a healthy stream.
+    Because shannon emits no incremental stdout/transcript signal within a
+    content block (see the module comment above), this bound functions as a
+    total-turn duration cap, not a true inter-chunk idle bound. Configurable via
+    ``SHANNON_STREAM_READ_TIMEOUT``. Defaults to 15 min — generous for the
+    longest legitimate Opus turn (~363s observed) while still catching a hung
+    turn well before the coarse phase wall-clock. Clamped to a sane floor.
     """
     try:
         value = float(os.getenv(
