@@ -1129,7 +1129,7 @@ def test_directed_profile_flips_to_codex_under_vendor_codex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """--vendor codex on directed maps the tier_models.execute Claude pins to
-    their Codex equivalents (sonnet→codex:medium, opus→codex:high) instead of
+    their Codex model pins (sonnet→codex:gpt-5.4, opus→codex:gpt-5.5) instead of
     raising; the premium finalize also flips to codex."""
     _isolate_user_config(tmp_path, monkeypatch)
 
@@ -1137,8 +1137,8 @@ def test_directed_profile_flips_to_codex_under_vendor_codex(
     args.vendor = "codex"
     apply_profile_expansion(args, None)
     tiers = args.tier_models["execute"]
-    assert tiers[4] == "codex:medium"
-    assert tiers[5] == "codex:high"
+    assert tiers[4] == "codex:gpt-5.4"
+    assert tiers[5] == "codex:gpt-5.5"
     resolved = _phase_models_to_map(args.phase_model)
     assert resolved["finalize"] == "codex:low"
 
@@ -1176,8 +1176,8 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """--vendor codex on partnered flips the premium reasoning phases to codex
-    and maps the tier_models.execute Claude pins to their Codex equivalents
-    (sonnet→codex:medium, opus→codex:high) instead of raising."""
+    and maps the tier_models.execute Claude pins to their Codex model pins
+    (sonnet→codex:gpt-5.4, opus→codex:gpt-5.5) instead of raising."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered")
@@ -1187,8 +1187,8 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
     assert resolved["plan"] == "codex:low"
     assert resolved["finalize"] == "codex:low"
     tiers = args.tier_models["execute"]
-    assert tiers[4] == "codex:medium"
-    assert tiers[5] == "codex:high"
+    assert tiers[4] == "codex:gpt-5.4"
+    assert tiers[5] == "codex:gpt-5.5"
 
 
 def test_partnered_critic_kimi_overrides_critique_and_review(
@@ -1256,7 +1256,7 @@ def test_deepseek_provider_direct_composes_with_vendor_and_depth(
 ) -> None:
     """--deepseek-provider direct + --vendor codex + --depth high on partnered
     compose: the DeepSeek pro tiers swap to the direct provider, the Claude
-    Sonnet/Opus tiers map to codex:medium/high, and depth applies to authors."""
+    Sonnet/Opus tiers map to codex:gpt-5.4/gpt-5.5 model pins, and depth applies to authors."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered", deepseek_provider="direct")
@@ -1264,11 +1264,11 @@ def test_deepseek_provider_direct_composes_with_vendor_and_depth(
     args.depth = "high"
     apply_profile_expansion(args, None)
     tiers = args.tier_models["execute"]
-    # DeepSeek pro tiers → direct provider; Claude pins → codex equivalents.
+    # DeepSeek pro tiers → direct provider; Claude pins → codex model pins.
     assert tiers[2] == DEEPSEEK_DIRECT
     assert tiers[3] == DEEPSEEK_DIRECT
-    assert tiers[4] == "codex:medium"
-    assert tiers[5] == "codex:high"
+    assert tiers[4] == "codex:gpt-5.4"
+    assert tiers[5] == "codex:gpt-5.5"
     resolved = _phase_models_to_map(args.phase_model)
     assert resolved["plan"] == "codex:high"
 
@@ -1328,7 +1328,7 @@ def test_premium_profile_flips_to_codex_under_vendor_codex(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """--vendor codex on premium maps the tier_models.execute Claude pins to
-    their Codex capability equivalents (sonnet→codex:medium, opus→codex:high),
+    their Codex model pins (sonnet→codex:gpt-5.4, opus→codex:gpt-5.5),
     matching the variable-codex routing convention, instead of raising."""
     _isolate_user_config(tmp_path, monkeypatch)
 
@@ -1336,10 +1336,10 @@ def test_premium_profile_flips_to_codex_under_vendor_codex(
     args.vendor = "codex"
     apply_profile_expansion(args, None)
     tiers = args.tier_models["execute"]
-    # premium routing: 1=pro, 2=pro, 3=sonnet, 4=opus, 5=opus → codex equivalents
-    assert tiers[3] == "codex:medium"
-    assert tiers[4] == "codex:high"
-    assert tiers[5] == "codex:high"
+    # premium routing: 1=pro, 2=pro, 3=sonnet, 4=opus, 5=opus → codex model pins
+    assert tiers[3] == "codex:gpt-5.4"
+    assert tiers[4] == "codex:gpt-5.5"
+    assert tiers[5] == "codex:gpt-5.5"
 
 
 def test_apex_resolves_to_canonical_claude_codex_split(
@@ -1521,7 +1521,7 @@ def test_depth_after_vendor_swap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """--vendor codex --depth high on partnered: the tier_models.execute Claude
-    pins map to their Codex equivalents (sonnet→codex:medium, opus→codex:high)
+    pins map to their Codex model pins (sonnet→codex:gpt-5.4, opus→codex:gpt-5.5)
     rather than raising, and --depth still applies to the author phases."""
     _isolate_user_config(tmp_path, monkeypatch)
 
@@ -1530,9 +1530,9 @@ def test_depth_after_vendor_swap(
     args.depth = "high"
     apply_profile_expansion(args, None)
     tiers = args.tier_models["execute"]
-    # partnered routing: 4=sonnet, 5=opus → codex equivalents
-    assert tiers[4] == "codex:medium"
-    assert tiers[5] == "codex:high"
+    # partnered routing: 4=sonnet, 5=opus → codex model pins
+    assert tiers[4] == "codex:gpt-5.4"
+    assert tiers[5] == "codex:gpt-5.5"
 
 
 def test_depth_honored_on_vendor_locked_apex(

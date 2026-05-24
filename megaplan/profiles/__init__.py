@@ -962,14 +962,17 @@ def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
 
 
 # Cross-vendor capability equivalents for model-pinned Claude specs. Claude
-# distinguishes Sonnet/Opus by model name; Codex (GPT-5.5) is a single model
-# distinguished by effort. These mirror the variable-codex routing table
-# (tier-4 sonnet == codex:medium, tier-5 opus == codex:high), so the routed
-# tier profiles (directed/partnered/premium) honour --vendor codex instead of
-# refusing on their Sonnet/Opus tier pins.
-_CLAUDE_MODEL_TO_CODEX_EFFORT: tuple[tuple[str, str], ...] = (
-    ("sonnet", "codex:medium"),
-    ("opus", "codex:high"),
+# distinguishes Sonnet/Opus by model name; the Codex side mirrors that with its
+# own model ladder so the routed tier profiles (directed/partnered/premium)
+# honour --vendor codex instead of refusing on their Sonnet/Opus tier pins:
+#   * tier-4 sonnet → codex:gpt-5.4
+#   * tier-5 opus   → codex:gpt-5.5
+# Both are MODEL pins with no effort suffix — thinking is kept an independent
+# axis: effort defaults to codex's default and is set separately
+# (--depth / --phase-model), never folded into the tier.
+_CLAUDE_MODEL_TO_CODEX_SPEC: tuple[tuple[str, str], ...] = (
+    ("sonnet", "codex:gpt-5.4"),
+    ("opus", "codex:gpt-5.5"),
 )
 
 
@@ -979,7 +982,7 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     Non-premium specs (hermes, shannon) are returned unchanged.
     Effort-only and bare specs are swapped cleanly (claude:low → codex:low).
     A Claude model pin (sonnet/opus) maps to its Codex capability equivalent
-    (codex:medium / codex:high). Any other model pin raises
+    (codex:gpt-5.4 / codex:gpt-5.5). Any other model pin raises
     ``vendor_swap_model_conflict`` because it has no cross-vendor equivalent.
     """
     parsed = parse_agent_spec(spec)
@@ -1001,7 +1004,7 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     # through to the conflict below.
     if parsed.agent == "claude" and target_vendor == "codex" and parsed.effort is None:
         model_l = parsed.model.lower()
-        for needle, codex_spec in _CLAUDE_MODEL_TO_CODEX_EFFORT:
+        for needle, codex_spec in _CLAUDE_MODEL_TO_CODEX_SPEC:
             if needle in model_l:
                 return codex_spec
     raise CliError(
