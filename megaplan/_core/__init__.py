@@ -138,6 +138,14 @@ from .registries import (
     unresolved_significant_flags,
 )
 
+# -- hermes_fanout.py: shared parallel fan-out primitives --------------------
+from .hermes_fanout import (
+    ScatterResult,
+    _merge_unique,
+    scatter_gather_checks,
+    with_429_openrouter_fallback,
+)
+
 # -- workflow.py: state machine, transitions ---------------------------------
 from megaplan.types import ROBUSTNESS_LEVELS, STATE_EXECUTED, STATE_REVIEWED, STATE_DONE  # noqa: F401 — accessed by tests via megaplan._core
 
@@ -292,4 +300,9 @@ __all__ = [
     "STATE_EXECUTED",
     "STATE_REVIEWED",
     "STATE_DONE",
+    # hermes_fanout
+    "ScatterResult",
+    "_merge_unique",
+    "scatter_gather_checks",
+    "with_429_openrouter_fallback",
 ]

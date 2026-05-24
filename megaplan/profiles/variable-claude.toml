@@ -41,7 +41,7 @@ tiebreaker_challenger = "claude"
 
 [profiles.variable-claude.tier_models.execute]
 1 = "hermes:deepseek:deepseek-v4-flash"
-2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-3 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-4 = "claude:low"
-5 = "claude"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
+4 = "claude:claude-sonnet-4-6"
+5 = "claude:claude-opus-4-7"
