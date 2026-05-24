@@ -371,6 +371,209 @@ def test_auto_orphan_recovery_leaves_non_empty_output_alone(
     assert not (plan_dir / "critique_output.json.orphaned").exists()
 
 
+def _orphaned_rerun_execute_status(plan: str) -> dict:
+    """Status with a stale-but-alive active_step on execute.
+
+    Mirrors what build_phase_observability returns when the worker PID is
+    alive, the step is past the escalation threshold, and the plan lock is
+    not held — health=stale + recommended_action=rerun_execute.
+    """
+    response = _execute_status(plan, state="planned")
+    response["active_step"] = {
+        "step": "execute",
+        "agent": "shannon",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),  # alive
+        "started_at": "2026-05-23T14:00:00Z",
+        "age_seconds": 420,
+        "stale": True,
+        "health": "stale",
+        "worker_pid_alive": True,
+        "recommended_action": "rerun_execute",
+        "recommended_action_reason": (
+            "The active execute step is stale and no process holds the plan lock."
+        ),
+    }
+    return response
+
+
+def _orphaned_rerun_same_step_status(plan: str) -> dict:
+    """Status with a stale-but-alive active_step on plan.
+
+    Mirrors what build_phase_observability returns for a non-execute stale
+    step — health=stale + recommended_action=rerun_same_step.
+    """
+    response = _phase_status(plan, state="planning", next_step="plan")
+    response["active_step"] = {
+        "step": "plan",
+        "agent": "shannon",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),  # alive
+        "started_at": "2026-05-23T14:00:00Z",
+        "age_seconds": 420,
+        "stale": True,
+        "health": "stale",
+        "worker_pid_alive": True,
+        "recommended_action": "rerun_same_step",
+        "recommended_action_reason": (
+            "The active step is stale and no process holds the plan lock."
+        ),
+    }
+    return response
+
+
+def test_auto_clears_rerun_execute_before_redispatch(tmp_path: Path) -> None:
+    """auto.drive must clear stale execute active_step (rerun_execute)
+    before re-dispatching, just as it does for resume_or_recover."""
+    plan = "stale-execute-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    execute_output = plan_dir / "execute_output.json"
+    execute_output.write_text("", encoding="utf-8")
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "planned"
+    state_data["active_step"] = {
+        "step": "execute",
+        "agent": "shannon",
+        "mode": "persistent",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-05-23T14:00:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    poll_count = {"n": 0}
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] == 1:
+            return _orphaned_rerun_execute_status(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done", (
+        f"expected done after stale execute cleanup, got {outcome.status}"
+    )
+    assert run_calls, "driver should have re-dispatched execute"
+    assert outcome.iterations <= 3, (
+        f"stale recovery should not consume the full iteration budget; "
+        f"used {outcome.iterations}"
+    )
+    assert any(
+        "orphaned" in event.get("msg", "") for event in outcome.events
+    ), "driver should have logged the orphan cleanup"
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") is None, (
+        "stale active_step should have been cleared from state.json"
+    )
+    assert not execute_output.exists(), (
+        "empty execute_output.json should have been quarantined"
+    )
+
+
+def test_auto_orphan_recovery_with_shannon_session_id_in_metadata(
+    tmp_path: Path,
+) -> None:
+    """Shannon persists session_id into active_step metadata before launch.
+    The orphan clearing (auto.drive → _clear_orphaned_active_step) must
+    still work when session_id is present — it must not interfere with
+    removal or quarantine."""
+    plan = "shannon-session-orphan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+
+    plan_output = plan_dir / "plan_output.json"
+    plan_output.write_text("", encoding="utf-8")
+
+    state_path = plan_dir / "state.json"
+    state_data = json.loads(state_path.read_text(encoding="utf-8"))
+    state_data["current_state"] = "planning"
+    state_data["active_step"] = {
+        "step": "plan",
+        "agent": "shannon",
+        "mode": "persistent",
+        "worker_pid": 999999,
+        "session_id": "shannon-dead-session-1234",
+        "started_at": "2026-05-23T14:31:00Z",
+    }
+    state_path.write_text(json.dumps(state_data), encoding="utf-8")
+
+    def _orphaned_plan_with_session(plan_name: str) -> dict:
+        response = _phase_status(plan_name, state="planning", next_step="plan")
+        response["active_step"] = {
+            "step": "plan",
+            "agent": "shannon",
+            "mode": "persistent",
+            "worker_pid": 999999,
+            "session_id": "shannon-dead-session-1234",
+            "started_at": "2026-05-23T14:31:00Z",
+            "age_seconds": 420,
+            "stale": True,
+            "health": "dead",
+            "worker_pid_alive": False,
+            "recommended_action": "resume_or_recover",
+            "recommended_action_reason": (
+                "The active step's recorded worker process (pid=999999) is no "
+                "longer alive; the phase is not actually running. Re-run the "
+                "step or recover via override."
+            ),
+        }
+        return response
+
+    poll_count = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        poll_count["n"] += 1
+        if poll_count["n"] == 1:
+            return _orphaned_plan_with_session(plan_name)
+        return _done_status(plan_name)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            stall_threshold=10,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done", (
+        f"expected done after orphan cleanup with session_id, got {outcome.status}"
+    )
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded.get("active_step") is None, (
+        "orphaned active_step with session_id should have been cleared"
+    )
+    assert not plan_output.exists(), (
+        "empty plan_output.json should have been quarantined despite session_id metadata"
+    )
+    assert (plan_dir / "plan_output.json.orphaned").exists(), (
+        "quarantined output should land at .orphaned when session_id is present"
+    )
+
+
 def test_stall_counter_resets_when_review_json_is_rewritten(tmp_path: Path) -> None:
     """Stall detection must be rework-aware.
 
