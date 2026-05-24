@@ -151,3 +151,103 @@ def test_critique_prompt_contains_robustness_instruction(plan_fixture: PlanFixtu
     prompt = create_claude_prompt("critique", state, plan_fixture.plan_dir)
     assert "Robustness level" in prompt
     assert "standard" in prompt
+
+
+def test_handle_critique_preserves_verdict_on_recovery(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When validation fails but recovery from critique_output.json succeeds,
+    the evaluator verdict is preserved in state metadata and the raw_output note."""
+    import json
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Build a complete critique_output.json matching the 5 core checks for
+    # standard robustness: issue_hints, correctness, scope, all_locations, callers.
+    critique_output = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the work fully address the issue hints, user notes, and approved plan requirements?",
+                "findings": [{
+                    "detail": "Mock finding for issue_hints — sufficiently detailed description to pass validation length check.",
+                    "flagged": False,
+                }],
+            },
+            {
+                "id": "correctness",
+                "question": "Are the proposed changes technically correct?",
+                "findings": [{
+                    "detail": "Mock finding for correctness — sufficiently detailed description to pass validation length check.",
+                    "flagged": False,
+                }],
+            },
+            {
+                "id": "scope",
+                "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+                "findings": [{
+                    "detail": "Mock finding for scope — sufficiently detailed description to pass the validation length requirement.",
+                    "flagged": False,
+                }],
+            },
+            {
+                "id": "all_locations",
+                "question": "Does the change touch all locations AND supporting infrastructure?",
+                "findings": [{
+                    "detail": "Mock finding for all_locations — sufficiently detailed description to pass validation length check.",
+                    "flagged": False,
+                }],
+            },
+            {
+                "id": "callers",
+                "question": "Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?",
+                "findings": [{
+                    "detail": "Mock finding for callers — sufficiently detailed description for passing the validation length requirement.",
+                    "flagged": False,
+                }],
+            },
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    (plan_fixture.plan_dir / "critique_output.json").write_text(
+        json.dumps(critique_output, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # Stateful stub: first call -> ["correctness"] (for L97), subsequent -> [] (for L206)
+    call_count = [0]
+
+    def stateful_validator(payload, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return ["correctness"]
+        return []
+
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        stateful_validator,
+    )
+
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+
+    # (a) Step succeeds
+    assert response["success"] is True
+
+    # (b) critique_v1.json exists
+    assert (plan_fixture.plan_dir / "critique_v1.json").exists()
+
+    # (c) state["meta"]["critique_validation_warnings"] contains an entry whose
+    #     invalid_checks includes "correctness"
+    warnings = state["meta"]["critique_validation_warnings"]
+    assert len(warnings) >= 1
+    assert "correctness" in warnings[-1]["invalid_checks"]
+
+    # (d) The recovered payload names "correctness" — the critique_v1.json
+    #     written from the recovered payload must include the correctness check.
+    critique_payload = json.loads((plan_fixture.plan_dir / "critique_v1.json").read_text(encoding="utf-8"))
+    check_ids = [c["id"] for c in critique_payload.get("checks", [])]
+    assert "correctness" in check_ids
