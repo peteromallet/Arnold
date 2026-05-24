@@ -9,20 +9,24 @@ tracking, timeouts, error handling, and receipts as the native Claude path.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import random
 import re
 import shlex
 import shutil
+import signal
 import subprocess
+import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
-from megaplan._core import creative_form_id, json_dump, read_json, schemas_root
+from megaplan._core import atomic_write_json, creative_form_id, read_json, save_state_merge_meta, schemas_root
 from megaplan.prompts import create_claude_prompt
 from megaplan.schemas import get_execution_schema_key
 from megaplan.workers._impl import (
@@ -148,6 +152,189 @@ _SHANNON_READINESS_PROMPTS = (
     "Hey, ready check before I pass over the brief. Say good to go when ready.",
 )
 
+_ACTIVE_SHANNON_TMUX_SESSIONS: set[str] = set()
+_SHANNON_TMUX_LOCK = threading.Lock()
+_SHANNON_TMUX_CLEANUP_INSTALLED = False
+_SHANNON_PREVIOUS_SIGNAL_HANDLERS: dict[int, Any] = {}
+_SHANNON_ORPHAN_MIN_AGE_SECONDS = 120
+
+
+def _shannon_tmux_session_name(session_id: str) -> str:
+    return f"shannon-{session_id}"
+
+
+def _kill_shannon_tmux_session(tmux_session: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["tmux", "kill-session", "-t", tmux_session],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _cleanup_registered_shannon_sessions() -> None:
+    with _SHANNON_TMUX_LOCK:
+        tmux_sessions = list(_ACTIVE_SHANNON_TMUX_SESSIONS)
+        _ACTIVE_SHANNON_TMUX_SESSIONS.clear()
+    for tmux_session in tmux_sessions:
+        _kill_shannon_tmux_session(tmux_session)
+
+
+def _handle_shannon_cleanup_signal(signum: int, frame: Any) -> None:
+    _cleanup_registered_shannon_sessions()
+    previous = _SHANNON_PREVIOUS_SIGNAL_HANDLERS.get(signum)
+    if callable(previous):
+        previous(signum, frame)
+        return
+    if previous == signal.SIG_DFL:
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+
+def _install_shannon_tmux_cleanup_once() -> None:
+    global _SHANNON_TMUX_CLEANUP_INSTALLED
+    with _SHANNON_TMUX_LOCK:
+        if _SHANNON_TMUX_CLEANUP_INSTALLED:
+            return
+        import atexit
+
+        atexit.register(_cleanup_registered_shannon_sessions)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                _SHANNON_PREVIOUS_SIGNAL_HANDLERS[int(sig)] = signal.getsignal(sig)
+                signal.signal(sig, _handle_shannon_cleanup_signal)
+            except (OSError, RuntimeError, ValueError):
+                continue
+        _SHANNON_TMUX_CLEANUP_INSTALLED = True
+
+
+def _register_shannon_session(session_id: str) -> str:
+    _install_shannon_tmux_cleanup_once()
+    tmux_session = _shannon_tmux_session_name(session_id)
+    with _SHANNON_TMUX_LOCK:
+        _ACTIVE_SHANNON_TMUX_SESSIONS.add(tmux_session)
+    return tmux_session
+
+
+def _teardown_shannon_session(session_id: str | None) -> None:
+    if not session_id:
+        return
+    tmux_session = _shannon_tmux_session_name(session_id)
+    with _SHANNON_TMUX_LOCK:
+        _ACTIVE_SHANNON_TMUX_SESSIONS.discard(tmux_session)
+    _kill_shannon_tmux_session(tmux_session)
+
+
+def _process_is_alive(pid: Any) -> bool:
+    try:
+        normalized = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if normalized <= 0:
+        return False
+    try:
+        os.kill(normalized, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _active_shannon_tmux_session_from_state(plan_dir: Path | None) -> str | None:
+    if plan_dir is None:
+        return None
+    try:
+        state = read_json(plan_dir / "state.json")
+    except Exception:
+        return None
+    if not isinstance(state, dict):
+        return None
+    active_step = state.get("active_step")
+    if not isinstance(active_step, dict):
+        return None
+    session_id = active_step.get("session_id")
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    if not _process_is_alive(active_step.get("worker_pid")):
+        return None
+    return _shannon_tmux_session_name(session_id)
+
+
+def _tmux_session_is_too_new(created_at: str, *, now: float | None = None) -> bool:
+    try:
+        created = float(created_at)
+    except (TypeError, ValueError):
+        return True
+    if now is None:
+        now = time.time()
+    return now - created < _SHANNON_ORPHAN_MIN_AGE_SECONDS
+
+
+def _reap_orphan_shannon_sessions(plan_dir: Path | None = None) -> list[str]:
+    """Best-effort cleanup for stale Shannon-owned tmux sessions.
+
+    The janitor is intentionally conservative: it only considers tmux sessions
+    named ``shannon-*``, never kills sessions registered in this process, keeps
+    the current active-step session when its worker PID is still alive, and
+    skips very new sessions so another worker has time to flush ownership into
+    ``state.json``.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}\t#{session_created}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    with _SHANNON_TMUX_LOCK:
+        registered_sessions = set(_ACTIVE_SHANNON_TMUX_SESSIONS)
+    active_session = _active_shannon_tmux_session_from_state(plan_dir)
+    now = time.time()
+    killed: list[str] = []
+
+    for line in (result.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        name, _, created_at = line.partition("\t")
+        if not name.startswith("shannon-"):
+            continue
+        if name in registered_sessions:
+            continue
+        if active_session == name:
+            continue
+        if _tmux_session_is_too_new(created_at, now=now):
+            continue
+        if _kill_shannon_tmux_session(name):
+            killed.append(name)
+    return killed
+
+
+def _persist_active_step_session_id(state: PlanState, plan_dir: Path, session_id: str) -> None:
+    active_step = state.get("active_step")
+    if not isinstance(active_step, dict):
+        return
+    worker_pid = active_step.get("worker_pid")
+    if worker_pid is not None and worker_pid != os.getpid():
+        return
+    if active_step.get("session_id") == session_id:
+        return
+    active_step["session_id"] = session_id
+    state["active_step"] = active_step
+    save_state_merge_meta(plan_dir, state)
+
 
 def _env_truthy(name: str) -> bool | None:
     raw = os.getenv(name)
@@ -209,13 +396,19 @@ def _shannon_random_handshake_delay_seconds() -> float:
 # ---------------------------------------------------------------------------
 
 
-def _append_json_output_contract(prompt: str, *, step: str, schema_text: str) -> str:
+def _append_json_output_contract(
+    prompt: str, *, step: str, schema_text: str, output_path: Path | None = None
+) -> str:
     """Make Shannon's interactive Claude route emulate ``claude -p --json-schema``.
 
     Shannon forwards ``--json-schema`` to Claude, but because it starts an
     interactive Claude session rather than native print mode, Claude may still
     answer with prose. The compatibility layer therefore makes the structured
     output contract explicit in the user prompt.
+
+    When *output_path* is provided, the contract also instructs Claude to
+    atomically write the final JSON to a plan-local file so the caller has a
+    deterministic artifact even if the transcript parse fails.
     """
     extra_contract = ""
     if step == "execute":
@@ -235,6 +428,18 @@ def _append_json_output_contract(prompt: str, *, step: str, schema_text: str) ->
                 "- Do not include completed dependency-context tasks in the final JSON.\n"
                 "- Do not acknowledge sense checks outside the current batch.\n"
             )
+
+    file_contract = ""
+    if output_path is not None:
+        file_contract = (
+            "\nFILE-PRIMARY OUTPUT CONTRACT:\n"
+            f"- After constructing the final JSON, you MUST write it to this exact path: {output_path}\n"
+            "- Use atomic write: write the JSON to a temporary file in the same directory, fsync it, then rename it to the target path.\n"
+            "- Example: write to ``{output_path}.tmp``, flush+fsync, then ``mv {output_path}.tmp {output_path}``.\n"
+            "- You MUST still include the final JSON object as text in your response. The file is the primary artifact; the text response is a backup.\n"
+            "- The file content must be exactly the same JSON you return in your final message.\n"
+        )
+
     return (
         prompt.rstrip()
         + "\n\n"
@@ -246,6 +451,7 @@ def _append_json_output_contract(prompt: str, *, step: str, schema_text: str) ->
         + schema_text
         + "\n"
         + extra_contract
+        + file_contract
     )
 
 
@@ -381,11 +587,26 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
 }
 '''.lstrip()
 
+    tmux_session_name_helper = r'''
+function megaplanTmuxSessionName(options: CliOptions) {
+  const sessionId = typeof options.sessionId === "string" && options.sessionId
+    ? options.sessionId
+    : typeof options.resume === "string" && options.resume
+      ? options.resume
+      : undefined;
+  return sessionId ? `shannon-${sessionId}` : `shannon-${randomUUID()}`;
+}
+'''.lstrip()
+
     # Insertion order is preserved by inserting each in front of the same
-    # anchor in reverse declaration order: maybeSendStartupEnterKeys first,
-    # then rootSafeClaudeArgs, then isRootProcess, so the resulting file
+    # anchor in reverse declaration order: deterministic tmux naming first,
+    # then maybeSendStartupEnterKeys, rootSafeClaudeArgs, and isRootProcess, so the resulting file
     # ordering reads isRootProcess -> rootSafeClaudeArgs ->
-    # maybeSendStartupEnterKeys -> buildClaudeArgs.
+    # maybeSendStartupEnterKeys -> megaplanTmuxSessionName -> buildClaudeArgs.
+    if (
+        "function megaplanTmuxSessionName(options: CliOptions)" not in patched
+    ):
+        patched = _insert_before_build_args(patched, tmux_session_name_helper)
     if (
         "async function maybeSendStartupEnterKeys(tmuxSession: string)" not in patched
     ):
@@ -398,6 +619,10 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
         "function isRootProcess()" not in patched
     ):
         patched = _insert_before_build_args(patched, is_root_helper)
+    patched = patched.replace(
+        "  const tmuxSession = `shannon-${randomUUID()}`;",
+        "  const tmuxSession = megaplanTmuxSessionName(options);",
+    )
     patched = patched.replace(
         '''    if (arg === "--permission-mode" && args[index + 1] === "bypassPermissions") {
       index += 1;
@@ -544,6 +769,159 @@ def _seed_nonroot_claude_home(home: Path) -> None:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Atomic locked Claude project trust seeding
+# ---------------------------------------------------------------------------
+
+_CLAUDE_PROJECT_TRUST_FIELDS: dict[str, Any] = {
+    "hasTrustDialogAccepted": True,
+    "hasCompletedProjectOnboarding": True,
+    "hasClaudeMdExternalIncludesApproved": True,
+    "customApiKeyResponses": {"approved": [], "rejected": []},
+}
+
+
+def _default_claude_json_state() -> dict[str, Any]:
+    """Return the bare-minimum first-run ``~/.claude.json`` fields.
+
+    These match the onboarding/cost/migration flags written by
+    :func:`_seed_nonroot_claude_home` and prevent first-run interactive dialogs
+    that would hang a headless Shannon session.
+    """
+    return {
+        "firstStartTime": "2026-01-01T00:00:00.000Z",
+        "hasCompletedOnboarding": True,
+        "lastOnboardingVersion": "2.1.49",
+        "hasAcknowledgedCostThreshold": True,
+        "migrationVersion": 13,
+        "opusProMigrationComplete": True,
+        "sonnet1m45MigrationComplete": True,
+        "seenNotifications": {},
+        "customApiKeyResponses": {"approved": [], "rejected": []},
+    }
+
+
+def _seed_claude_project_trust(
+    work_dir: Path, *, home: Path | None = None
+) -> None:
+    """Pre-seed per-project trust flags in the Claude home config under an advisory lock.
+
+    Claude Code stores per-directory trust decisions in
+    ``<home>/.claude.json`` under ``projects[str(work_dir)]``.  On first
+    visit to a new directory Claude emits an interactive trust dialog that
+    blocks the tmux pane and produces zero output — exactly the failure mode
+    this helper prevents.
+
+    The helper holds ``<home>/.claude.json.lock`` exclusively (``fcntl.flock``)
+    for the full read-modify-write cycle and writes the result through a
+    same-directory temporary file with ``os.fsync`` + ``Path.replace`` so
+    concurrent Shannon workers cannot corrupt each other's config.
+
+    Parameters
+    ----------
+    work_dir:
+        The project working directory whose trust entry should be seeded.
+    home:
+        The Claude home directory.  Defaults to :func:`pathlib.Path.home`.
+        When ``_prepare_nonroot_shannon_runtime`` runs under a dropped-root
+        user, pass the non-root home explicitly.
+    """
+    if home is None:
+        home = Path.home()
+
+    config_path = home / ".claude.json"
+    lock_path = home / ".claude.json.lock"
+
+    # Ensure the home directory exists (it may not for a brand-new
+    # non-root user inside a container).
+    home.mkdir(parents=True, exist_ok=True)
+
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        try:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            # Advisory locking is not available on this filesystem (e.g. some
+            # network mounts).  Proceed without the lock; worst case two
+            # writers may race, but the temp-file + replace pattern still
+            # keeps the on-disk file valid.
+            pass
+
+        try:
+            # ── Read existing config ─────────────────────────────────────
+            existing: dict[str, Any] = {}
+            is_malformed = False
+            if config_path.exists():
+                try:
+                    raw = config_path.read_text(encoding="utf-8")
+                    if raw.strip():
+                        parsed = json.loads(raw)
+                        if isinstance(parsed, dict):
+                            existing = parsed
+                        else:
+                            is_malformed = True
+                    else:
+                        # Empty or whitespace-only file → recover as missing.
+                        is_malformed = True
+                except (json.JSONDecodeError, OSError):
+                    is_malformed = True
+
+            # ── Build merged config ──────────────────────────────────────
+            if not existing and (is_malformed or not config_path.exists()):
+                # Start from the first-run seeding so Claude does not prompt
+                # for onboarding, cost thresholds, etc.
+                merged = _default_claude_json_state()
+            else:
+                merged = dict(existing)  # shallow copy for mutation
+
+            # ── Merge project trust entry ────────────────────────────────
+            projects: dict[str, Any] = {}
+            existing_projects = merged.get("projects")
+            if isinstance(existing_projects, dict):
+                projects = dict(existing_projects)
+            elif existing_projects is not None:
+                # Non-dict value stored under "projects"; replace it.
+                pass
+
+            work_dir_key = str(work_dir)
+            existing_entry = projects.get(work_dir_key)
+            if isinstance(existing_entry, dict):
+                merged_entry = dict(existing_entry)
+                merged_entry.update(_CLAUDE_PROJECT_TRUST_FIELDS)
+            else:
+                merged_entry = dict(_CLAUDE_PROJECT_TRUST_FIELDS)
+
+            projects[work_dir_key] = merged_entry
+            merged["projects"] = projects
+
+            # ── Write atomically (temp file → fsync → replace) ──────────
+            serialized = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+            fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp",
+                prefix=".claude.json.",
+                dir=str(home),
+                text=True,
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as tmp_handle:
+                    tmp_handle.write(serialized)
+                    tmp_handle.flush()
+                    os.fsync(tmp_handle.fileno())
+                Path(tmp_path).replace(config_path)
+            except OSError:
+                # Best-effort cleanup: remove the temp file if replace failed.
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+
+        finally:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+
+
 def _chmod_tree_for_nonroot(path: Path) -> None:
     try:
         subprocess.run(
@@ -575,6 +953,7 @@ def _prepare_nonroot_shannon_runtime(work_dir: Path, env: dict[str, str]) -> tup
     home = Path(os.getenv("MEGAPLAN_SHANNON_NONROOT_HOME", str(work_dir / ".megaplan" / "shannon-home")))
     home.mkdir(parents=True, exist_ok=True)
     _seed_nonroot_claude_home(home)
+    _seed_claude_project_trust(work_dir, home=home)
 
     try:
         os.chmod(home, 0o777)
@@ -823,6 +1202,120 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Canonical file-primary output spec
+# ---------------------------------------------------------------------------
+
+
+def _shannon_output_spec(step: str) -> dict[str, str] | None:
+    """Return the canonical file-primary output specification for a Shannon phase.
+
+    Every Shannon-supported phase has a plan-local JSON artifact path and a
+    narrow schema-backed sentinel key.  The sentinel is the most specific
+    required field from the step's JSON schema — a field that is always
+    present in a genuine output but absent from unpopulated templates.
+
+    Returns a dict with ``filename`` (plan-local basename) and ``sentinel``
+    (the schema-backed key), or ``None`` when *step* is not recognised.
+    """
+    _SPEC: dict[str, dict[str, str]] = {
+        # ── plan / revise family ───────────────────────────────────────
+        "plan": {"filename": "plan_output.json", "sentinel": "plan"},
+        "revise": {"filename": "revise_output.json", "sentinel": "plan"},
+        # ── scrutiny phases ────────────────────────────────────────────
+        "critique": {"filename": "critique_output.json", "sentinel": "checks"},
+        "review": {"filename": "review_output.json", "sentinel": "review_verdict"},
+        # ── execution ──────────────────────────────────────────────────
+        "execute": {"filename": "execute_output.json", "sentinel": "task_updates"},
+        "loop_execute": {"filename": "loop_execute_output.json", "sentinel": "diagnosis"},
+        # ── pipeline control ───────────────────────────────────────────
+        "finalize": {"filename": "finalize_output.json", "sentinel": "tasks"},
+        "prep": {"filename": "prep_output.json", "sentinel": "task_summary"},
+        "feedback": {"filename": "feedback_output.json", "sentinel": "overall"},
+        "gate": {"filename": "gate_output.json", "sentinel": "recommendation"},
+        # ── loop / tiebreaker ──────────────────────────────────────────
+        "loop_plan": {"filename": "loop_plan_output.json", "sentinel": "next_action"},
+        "tiebreaker_researcher": {
+            "filename": "tiebreaker_researcher_output.json",
+            "sentinel": "preliminary_pick",
+        },
+        "tiebreaker_challenger": {
+            "filename": "tiebreaker_challenger_output.json",
+            "sentinel": "counter_recommendation",
+        },
+    }
+    return _SPEC.get(step)
+
+
+def _sentinel_is_populated(payload: dict[str, Any], sentinel: str) -> bool:
+    """Return True when *payload* has a non-trivial value at *sentinel*."""
+    value = payload.get(sentinel)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    if isinstance(value, bool):
+        return True  # boolean sentinels are always meaningful when present
+    return True
+
+
+def _normalized_valid_payload(step: str, payload: Any) -> dict[str, Any] | None:
+    """Return normalized payload when it validates for *step*, else ``None``."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        normalized = _normalize_worker_payload(step, payload)
+        validate_payload(step, normalized)
+    except CliError:
+        return None
+    return normalized
+
+
+def _shannon_payload_score(
+    step: str,
+    payload: Any,
+    *,
+    sentinel: str | None,
+) -> tuple[int, dict[str, Any] | None]:
+    """Score a Shannon payload candidate after normal schema validation.
+
+    Score 2 means the candidate is schema-valid and its sentinel is populated.
+    Score 1 means it is schema-valid but looks like an empty template for the
+    sentinel field.  Score 0 means it is not a usable payload for this phase.
+    """
+    normalized = _normalized_valid_payload(step, payload)
+    if normalized is None:
+        return 0, None
+    if sentinel and not _sentinel_is_populated(normalized, sentinel):
+        return 1, normalized
+    return 2, normalized
+
+
+def _select_shannon_payload(
+    step: str,
+    *,
+    file_payload: Any,
+    transcript_payload: Any,
+    sentinel: str | None,
+) -> dict[str, Any] | None:
+    """Prefer schema-valid file output while rejecting empty templates.
+
+    The file candidate is evaluated first and wins ties.  A populated transcript
+    candidate still wins over an empty schema-template file, preserving the old
+    critique/review recovery guard in a phase-agnostic form.
+    """
+    best_score = 0
+    best_payload: dict[str, Any] | None = None
+    for candidate in (file_payload, transcript_payload):
+        score, normalized = _shannon_payload_score(step, candidate, sentinel=sentinel)
+        if score > best_score and normalized is not None:
+            best_score = score
+            best_payload = normalized
+    return best_payload
+
+
+# ---------------------------------------------------------------------------
 # Public worker entry-point
 # ---------------------------------------------------------------------------
 
@@ -852,11 +1345,13 @@ def run_shannon_step(
             prompt_override=prompt_override,
             prompt_kwargs=prompt_kwargs,
         )
+    _reap_orphan_shannon_sessions(plan_dir=plan_dir)
     fresh = fresh or step != "execute"
 
     # ── (b) resolve working directory and session ───────────────────────
     _ensure_shannon_parent_timeout_control()
     work_dir = resolve_work_dir(state)
+    _seed_claude_project_trust(work_dir)
     session_key = session_key_for(step, session_agent, model=model)
     session = state["sessions"].get(session_key, {})
     session_id: str | None = session.get("id")
@@ -878,10 +1373,13 @@ def run_shannon_step(
         else STEP_SCHEMA_FILENAMES[step]
     )
     schema_text = json.dumps(read_json(schemas_root(root) / schema_name))
+    output_spec = _shannon_output_spec(step)
+    output_path = plan_dir / output_spec["filename"] if output_spec else None
     prompt = _append_json_output_contract(
         base_prompt,
         step=step,
         schema_text=schema_text,
+        output_path=output_path,
     )
 
     prompt_iteration = _prompt_file_iteration(step, state) if fresh and step != "execute" else None
@@ -930,6 +1428,7 @@ def run_shannon_step(
     else:
         session_id = str(uuid.uuid4())
         command = [*base_command, "--session-id", session_id]
+    assert session_id is not None
 
     # ── (e) execute with timeout / activity callback ────────────────────
     started = time.monotonic()
@@ -958,130 +1457,126 @@ def run_shannon_step(
             return shannon_command
         return [*shannon_prefix, _shell_join_command(shannon_command, work_dir)]
 
-    if (
-        new_session
-        and _shannon_readiness_probe_enabled(session_agent)
-        and _shannon_should_send_handshake()
-    ):
-        readiness_prompt = _shannon_random_handshake_prompt()
-        readiness_command = [
-            "shannon",
-        ]
-        if model is not None:
-            readiness_command.extend(["--model", model])
-        readiness_command.extend([
-            "-p",
-            readiness_prompt,
-            "--output-format=json",
-        ])
-        if effort is not None:
-            readiness_command.extend(["--effort", effort])
-        if drop_root_requested:
-            readiness_command.append("--bare")
-        readiness_command.extend(
-            [
-                "--permission-mode",
-                "bypassPermissions",
-                "--dangerously-skip-permissions",
-                "--allow-dangerously-skip-permissions",
-                "--session-id",
-                session_id,
+    _persist_active_step_session_id(state, plan_dir, session_id)
+    _register_shannon_session(session_id)
+    try:
+        if (
+            new_session
+            and _shannon_readiness_probe_enabled(session_agent)
+            and _shannon_should_send_handshake()
+        ):
+            readiness_prompt = _shannon_random_handshake_prompt()
+            readiness_command = [
+                "shannon",
             ]
-        )
-        time.sleep(_shannon_random_handshake_delay_seconds())
+            if model is not None:
+                readiness_command.extend(["--model", model])
+            readiness_command.extend([
+                "-p",
+                readiness_prompt,
+                "--output-format=json",
+            ])
+            if effort is not None:
+                readiness_command.extend(["--effort", effort])
+            if drop_root_requested:
+                readiness_command.append("--bare")
+            readiness_command.extend(
+                [
+                    "--permission-mode",
+                    "bypassPermissions",
+                    "--dangerously-skip-permissions",
+                    "--allow-dangerously-skip-permissions",
+                    "--session-id",
+                    session_id,
+                ]
+            )
+            time.sleep(_shannon_random_handshake_delay_seconds())
+            try:
+                readiness = run_command(
+                    _launch_command(readiness_command),
+                    cwd=work_dir,
+                    stdin_text=None,
+                    env=env,
+                    timeout=_shannon_readiness_timeout_seconds(),
+                    activity_callback=_activity_callback_for_state(state, plan_dir),
+                )
+            except CliError as error:
+                if error.code == "worker_timeout":
+                    error.extra["session_id"] = session_id
+                    if output_path is not None:
+                        error.extra["expected_output_path"] = str(output_path)
+                raise
+            if readiness.returncode != 0:
+                raise CliError(
+                    "worker_error",
+                    f"Shannon readiness probe failed with exit code {readiness.returncode}",
+                    extra={
+                        "raw_output": (readiness.stdout or "") + (readiness.stderr or ""),
+                        "session_id": session_id,
+                    },
+                )
+            if not ((readiness.stdout or "") + (readiness.stderr or "")).strip():
+                raise CliError(
+                    "worker_error",
+                    "Shannon readiness probe returned no output",
+                    extra={"raw_output": "", "session_id": session_id},
+                )
+            time.sleep(_shannon_random_handshake_delay_seconds())
+            command = [*base_command, "--resume", session_id]
         try:
-            readiness = run_command(
-                _launch_command(readiness_command),
+            result = run_command(
+                _launch_command(command),
                 cwd=work_dir,
                 stdin_text=None,
                 env=env,
-                timeout=_shannon_readiness_timeout_seconds(),
                 activity_callback=_activity_callback_for_state(state, plan_dir),
             )
         except CliError as error:
+            # (j) timeout → enrich with session_id
             if error.code == "worker_timeout":
                 error.extra["session_id"] = session_id
+                if output_path is not None:
+                    error.extra["expected_output_path"] = str(output_path)
             raise
-        if readiness.returncode != 0:
-            raise CliError(
-                "worker_error",
-                f"Shannon readiness probe failed with exit code {readiness.returncode}",
-                extra={
-                    "raw_output": (readiness.stdout or "") + (readiness.stderr or ""),
-                    "session_id": session_id,
-                },
-            )
-        if not ((readiness.stdout or "") + (readiness.stderr or "")).strip():
-            raise CliError(
-                "worker_error",
-                "Shannon readiness probe returned no output",
-                extra={"raw_output": "", "session_id": session_id},
-            )
-        time.sleep(_shannon_random_handshake_delay_seconds())
-        command = [*base_command, "--resume", session_id]
-    try:
-        result = run_command(
-            _launch_command(command),
-            cwd=work_dir,
-            stdin_text=None,
-            env=env,
-            activity_callback=_activity_callback_for_state(state, plan_dir),
-        )
-    except CliError as error:
-        # (j) timeout → enrich with session_id
-        if error.code == "worker_timeout":
-            error.extra["session_id"] = session_id
-        raise
+    finally:
+        _teardown_shannon_session(session_id)
 
     raw = result.stdout or result.stderr
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
-    # ── (f) parse Shannon output ────────────────────────────────────────
-    envelope, payload = _parse_shannon_output(raw)
+    # ── (f) read canonical file first, then parse Shannon transcript ─────
+    file_payload: Any = None
+    if output_path is not None and output_path.exists():
+        try:
+            file_payload = read_json(output_path)
+        except Exception:
+            file_payload = None
 
-    # ── (f.5) on-disk template fallback for steps that write their answer
-    #          to a file (critique/review). Claude sometimes emits a chatty
-    #          summary instead of literal JSON in its final message; in that
-    #          case the on-disk file is the source of truth.
-    _FILE_FALLBACK = {
-        "critique": ("critique_output.json", "checks"),
-        "review": ("review_output.json", "checks"),
-    }
-    if step in _FILE_FALLBACK:
-        fallback_name, sentinel_key = _FILE_FALLBACK[step]
-        fallback_path = plan_dir / fallback_name
-        if fallback_path.exists():
-            try:
-                file_payload = read_json(fallback_path)
-            except Exception:
-                file_payload = None
-            if isinstance(file_payload, dict) and sentinel_key in file_payload:
-                # Prefer the on-disk file: even when the transcript parsed,
-                # the file is what the agent intended as the canonical artifact.
-                # BUT: if the on-disk file is still the unpopulated template
-                # (every check has zero findings) and the parsed transcript
-                # payload carries populated findings, prefer the transcript.
-                # Otherwise an agent that returned its JSON in the final
-                # result message instead of editing the file would have its
-                # work silently discarded.
-                def _has_populated_findings(p: Any) -> bool:
-                    if not isinstance(p, dict):
-                        return False
-                    checks = p.get(sentinel_key)
-                    if not isinstance(checks, list) or not checks:
-                        return False
-                    for check in checks:
-                        if not isinstance(check, dict):
-                            continue
-                        findings = check.get("findings")
-                        if isinstance(findings, list) and findings:
-                            return True
-                    return False
+    parse_error: CliError | None = None
+    try:
+        envelope, payload = _parse_shannon_output(raw)
+    except CliError as error:
+        parse_error = error
+        envelope = {}
+        payload = None
 
-                file_has_findings = _has_populated_findings(file_payload)
-                parsed_has_findings = _has_populated_findings(payload)
-                if file_has_findings or not parsed_has_findings:
-                    payload = file_payload
+    # ── (f.5) file-primary output: every Shannon-supported phase has a
+    #          canonical plan-local JSON artifact.  Claude sometimes emits a
+    #          chatty summary instead of literal JSON in its final message;
+    #          in that case the on-disk file is the source of truth.  The
+    #          sentinel check protects against treating an unpopulated
+    #          template as a valid output.
+    sentinel = output_spec["sentinel"] if output_spec else None
+    selected_payload = _select_shannon_payload(
+        step,
+        file_payload=file_payload,
+        transcript_payload=payload,
+        sentinel=sentinel,
+    )
+    if selected_payload is not None:
+        payload = selected_payload
+    elif parse_error is not None:
+        raise parse_error
 
     # ── (g) normalize + validate ────────────────────────────────────────
     payload = _normalize_worker_payload(step, payload)
@@ -1091,6 +1586,7 @@ def run_shannon_step(
         raise CliError(
             error.code, error.message, extra={"raw_output": raw}
         ) from error
+    atomic_write_json(plan_dir / f"{step}_shannon_output.json", payload)
 
     # ── (h) extract token usage ─────────────────────────────────────────
     prompt_tokens, completion_tokens = _extract_claude_usage(envelope)

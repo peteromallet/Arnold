@@ -260,6 +260,18 @@ def _validate_finalize_payload(plan_dir: Path, state: PlanState, worker: WorkerR
             _reject(f"Finalize task {tid} is missing a non-empty `description`.")
         if task.get("status") != "pending":
             _reject(f"Finalize task {tid} must start with status `pending`.")
+        complexity = task.get("complexity")
+        if not isinstance(complexity, int) or isinstance(complexity, bool) or not 1 <= complexity <= 5:
+            _reject(
+                f"Finalize task {tid} must include an integer `complexity` score in 1..5 "
+                f"(got {complexity!r}). Adjudicate it against the rubric — do not omit or guess."
+            )
+        justification = task.get("complexity_justification")
+        if not isinstance(justification, str) or not justification.strip():
+            _reject(
+                f"Finalize task {tid} is missing a non-empty `complexity_justification`. "
+                "Every complexity score must be argued from the task's concrete files/risk."
+            )
     if (
         state["config"].get("mode", "code") == "code"
         and _strict_finalize_validation_enabled()
@@ -538,10 +550,16 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
     }
 
 def _normalize_task_complexity(payload: dict[str, Any]) -> None:
-    """Normalize every task's ``complexity`` field to a valid 1..5 integer.
+    """Safety net for the complexity fields of programmatically-injected tasks.
 
-    Missing, non-integer, or out-of-range (not 1..5) values are coerced to
-    5 (fail-safe: expensive model).  Valid 1..5 values pass through unchanged.
+    LLM-produced tasks are hard-validated in ``_validate_finalize_payload`` (a
+    missing/invalid ``complexity`` or empty ``complexity_justification`` bounces
+    finalize), so by the time we get here those tasks already carry a deliberate,
+    argued score.  This pass only backfills the tasks finalize injects *after*
+    validation — the verification task and the user-action gate tasks — which the
+    model never scored.  Missing/out-of-range scores are coerced to 5 (fail-safe:
+    expensive model), and a synthetic justification is stamped so the written
+    artifact still satisfies the required schema field.
     """
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
@@ -550,8 +568,18 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
         if not isinstance(task, dict):
             continue
         complexity = task.get("complexity")
-        if not isinstance(complexity, int) or complexity < 1 or complexity > 5:
+        if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity < 1 or complexity > 5:
             task["complexity"] = 5
+            task.setdefault(
+                "complexity_justification",
+                "Auto-injected by finalize after adjudication; defaulted to the conservative "
+                "tier because the model never scored this task.",
+            )
+        justification = task.get("complexity_justification")
+        if not isinstance(justification, str) or not justification.strip():
+            task["complexity_justification"] = (
+                "Auto-injected by finalize after adjudication; no model-supplied justification."
+            )
 
 
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:

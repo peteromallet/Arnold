@@ -36,6 +36,8 @@ def _payload(description: str) -> dict:
                 "description": description,
                 "depends_on": [],
                 "status": "pending",
+                "complexity": 2,
+                "complexity_justification": "Localized change with an obvious test update → tier 2.",
                 "executor_notes": "",
                 "files_changed": [],
                 "commands_run": [],
