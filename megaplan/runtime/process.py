@@ -10,6 +10,7 @@ kill_group(proc, *, grace_s, escalate, label) → None
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import os
 import signal
@@ -188,3 +189,137 @@ def kill_group(
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Orphan detection and Tmux session management
+# ---------------------------------------------------------------------------
+
+
+class OrphanDetectedError(Exception):
+    """Raised when a tmux session survives teardown and cannot be reaped.
+
+    This is a hard-fail signal — the orphaned session owns live processes
+    that may interfere with subsequent steps.  The structured fields allow
+    the caller to log, alert, or attempt a last-resort manual cleanup.
+    """
+
+    def __init__(
+        self,
+        sessions: list[str],
+        pids: list[str],
+        remediation: str,
+    ) -> None:
+        super().__init__(
+            f"Orphaned tmux session(s) detected: {sessions}. "
+            f"Live PIDs: {pids}. {remediation}"
+        )
+        self.sessions = sessions
+        self.pids = pids
+        self.remediation = remediation
+
+
+class TmuxSession:
+    """Handle for a single tmux session, keyed by name.
+
+    Provides idempotent teardown and a lightweight liveness check.  All
+    tmux CLI calls degrade gracefully when ``tmux`` is not installed or
+    the session has already been torn down by another actor.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def teardown(self) -> None:
+        """Kill the tmux session.  Idempotent — safe to call repeatedly.
+
+        Returns ``None`` unconditionally.  A missing ``tmux`` binary or an
+        already-gone session is a no-op, logged at debug level.
+        """
+        try:
+            result = subprocess.run(
+                ["tmux", "kill-session", "-t", self.name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            logger.debug(
+                "TmuxSession.teardown(%r): tmux not found on PATH — nothing to do",
+                self.name,
+            )
+            return
+
+        if result.returncode == 0:
+            logger.debug("TmuxSession.teardown(%r): session killed", self.name)
+        else:
+            # Already-gone sessions produce a non-zero exit; that is
+            # expected for an idempotent teardown.
+            logger.debug(
+                "TmuxSession.teardown(%r): tmux returned %d (already gone?)",
+                self.name,
+                result.returncode,
+            )
+
+    def exists(self) -> bool:
+        """Return ``True`` iff the tmux session is currently live."""
+        try:
+            result = subprocess.run(
+                ["tmux", "has-session", "-t", self.name],
+                check=False,
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            return False
+        return result.returncode == 0
+
+
+def detect_orphans(session_pattern: str) -> list[str]:
+    """Return tmux session names matching *session_pattern* via fnmatch.
+
+    The pattern is **strictly scoped**: only sessions whose name matches
+    ``fnmatch.fnmatch(name, session_pattern)`` are returned.  This prevents
+    a broad glob (``*``) from accidentally reaping unrelated sessions.
+
+    Degrades to ``[]`` when ``tmux`` is absent or the server has no sessions.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    sessions: list[str] = []
+    for line in result.stdout.strip().splitlines():
+        name = line.strip()
+        if name and fnmatch.fnmatch(name, session_pattern):
+            sessions.append(name)
+    return sessions
+
+
+def pane_pids(session_name: str) -> list[str]:
+    """Return the PIDs of every pane in *session_name*.
+
+    Degrades to ``[]`` when ``tmux`` is absent or the session does not exist.
+    """
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    return [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
