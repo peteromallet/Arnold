@@ -6,11 +6,10 @@ import os
 import sys
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from megaplan._core import get_effective, read_json, schemas_root
+from megaplan._core import get_effective, read_json, schemas_root, _merge_unique, with_429_openrouter_fallback, scatter_gather_checks
 from megaplan.workers.hermes import (
     _streaming_run_kwargs,
     _toolsets_for_phase,
@@ -28,20 +27,7 @@ from megaplan.runtime.key_pool import (
     _load_hermes_env,
     _get_api_credential,
     resolve_model as _resolve_model,
-    acquire_key,
-    report_429,
 )
-
-
-def _merge_unique(groups: list[list[str]]) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-    for group in groups:
-        for item in group:
-            if item not in seen:
-                seen.add(item)
-                merged.append(item)
-    return merged
 
 
 def _run_check(
@@ -149,47 +135,21 @@ def _run_check(
     try:
         _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = _run_attempt(agent, output_path)
     except Exception as exc:
-        # Report 429 to key pool so it cools down this key
-        exc_str = str(exc)
-        if "429" in exc_str:
-            if model and model.startswith("minimax:"):
-                report_429("minimax", agent_kwargs.get("api_key", ""), cooldown_secs=60)
-            elif model and model.startswith("zhipu:"):
-                cooldown = 3600 if "Limit Exhausted" in exc_str else 120
-                report_429("zhipu", agent_kwargs.get("api_key", ""), cooldown_secs=cooldown)
-        # Fallback to OpenRouter if primary MiniMax API fails (429, timeout, etc.)
-        if model and model.startswith("minimax:"):
-            or_key = acquire_key("openrouter")
-            if or_key:
-                from megaplan.runtime.key_pool import minimax_openrouter_model
-                fallback_model = minimax_openrouter_model(model[len("minimax:"):])
-                fallback_kwargs = {"base_url": "https://openrouter.ai/api/v1", "api_key": or_key}
-                if isinstance(exc, CliError):
-                    print(
-                        f"[parallel-critique] MiniMax returned bad content ({_failure_reason(exc)}), falling back to OpenRouter",
-                        file=_stream,
-                    )
-                else:
-                    print(f"[parallel-critique] Primary MiniMax failed ({exc}), falling back to OpenRouter", file=_stream)
-                # Re-write template since the previous agent may have corrupted it
-                output_path = write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json")
-                agent = _make_agent(fallback_model, fallback_kwargs)
-                try:
-                    _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = _run_attempt(agent, output_path)
-                except Exception as fallback_exc:
-                    raise CliError(
-                        "worker_error",
-                        (
-                            f"Parallel critique failed for check '{check['id']}' "
-                            f"(both MiniMax and OpenRouter): primary={_failure_reason(exc)}; "
-                            f"fallback={_failure_reason(fallback_exc)}"
-                        ),
-                        extra={"check_id": check["id"]},
-                    ) from fallback_exc
-            else:
-                raise
-        else:
-            raise
+        _result, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = with_429_openrouter_fallback(
+            model=model,
+            agent_kwargs=agent_kwargs,
+            exc=exc,
+            log_prefix="[parallel-critique]",
+            rebuild_template_fn=lambda: write_single_check_template(plan_dir, state, check, f"critique_check_{check['id']}.json"),
+            make_agent_fn=lambda m, kw: _make_agent(m, kw),
+            run_attempt_fn=lambda a, op: _run_attempt(a, op),
+            on_fail_message=lambda primary_exc, fallback_exc: (
+                f"Parallel critique failed for check '{check['id']}' "
+                f"(both MiniMax and OpenRouter): primary={_failure_reason(primary_exc)}; "
+                f"fallback={_failure_reason(fallback_exc)}"
+            ),
+            stream=_stream,
+        )
     return (
         index,
         check_payload,
@@ -223,16 +183,10 @@ def run_parallel_critique(
 
     schema = read_json(schemas_root(root) / STEP_SCHEMA_FILENAMES["critique"])
     project_dir = Path(state["config"]["project_dir"])
-    results: list[tuple[dict[str, Any], list[str], list[str]] | None] = [None] * len(checks)
-    total_cost = 0.0
-    total_prompt_tokens = 0
-    total_completion_tokens = 0
-    total_tokens = 0
-
     output_stream = sys.stderr
-    concurrency = min(max_concurrent or get_effective("orchestration", "max_critique_concurrency"), len(checks))
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [
+
+    def _submit_checks(executor):
+        return [
             executor.submit(
                 _run_check,
                 index,
@@ -247,28 +201,20 @@ def run_parallel_critique(
             )
             for index, check in enumerate(checks)
         ]
-        for future in as_completed(futures):
-            index, check_payload, verified_ids, disputed_ids, cost_usd, pt, ct, tt = future.result()
-            results[index] = (check_payload, verified_ids, disputed_ids)
-            total_cost += cost_usd
-            total_prompt_tokens += pt
-            total_completion_tokens += ct
-            total_tokens += tt
 
-    ordered_checks: list[dict[str, Any]] = []
-    verified_groups: list[list[str]] = []
-    disputed_groups: list[list[str]] = []
-    for item in results:
-        if item is None:
-            raise CliError("worker_error", "Parallel critique did not return all check results")
-        check_payload, verified_ids, disputed_ids = item
-        ordered_checks.append(check_payload)
-        verified_groups.append(verified_ids)
-        disputed_groups.append(disputed_ids)
-
-    disputed_flag_ids = _merge_unique(disputed_groups)
-    disputed_set = set(disputed_flag_ids)
-    verified_flag_ids = [flag_id for flag_id in _merge_unique(verified_groups) if flag_id not in disputed_set]
+    sr = scatter_gather_checks(
+        num_checks=len(checks),
+        submit_check_fn=_submit_checks,
+        side_tasks=None,
+        max_concurrent=max_concurrent,
+    )
+    ordered_checks = sr.ordered_checks
+    verified_flag_ids = sr.verified_flag_ids
+    disputed_flag_ids = sr.disputed_flag_ids
+    total_cost = sr.total_cost
+    total_prompt_tokens = sr.total_prompt_tokens
+    total_completion_tokens = sr.total_completion_tokens
+    total_tokens = sr.total_tokens
     return WorkerResult(
         payload={
             "checks": ordered_checks,
