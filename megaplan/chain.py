@@ -783,6 +783,28 @@ def _run_command(
             f"{' '.join(cmd)} failed with {exc}",
             extra={"command": cmd, "error": str(exc)},
         ) from exc
+    if _should_retry_gh_without_env(cmd, proc):
+        writer(
+            "[chain] gh auth failed with GH_TOKEN/GITHUB_TOKEN present; "
+            "retrying with gh env tokens cleared\n"
+        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(root),
+                env=_command_env(cmd),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+            raise CliError(
+                error_code,
+                f"{' '.join(cmd)} failed with {exc}",
+                extra={"command": cmd, "error": str(exc)},
+            ) from exc
     writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip()
@@ -799,6 +821,40 @@ def _run_command(
             },
         )
     return proc
+
+
+def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProcess[str]) -> bool:
+    if not cmd or cmd[0] != "gh" or proc.returncode == 0:
+        return False
+    if "GH_TOKEN" not in os.environ and "GITHUB_TOKEN" not in os.environ:
+        return False
+    combined = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+    return any(
+        marker in combined
+        for marker in (
+            "bad credentials",
+            "authentication failed",
+            "invalid token",
+            "requires authentication",
+            "http 401",
+            "status code 401",
+        )
+    )
+
+
+def _command_env(cmd: list[str]) -> dict[str, str] | None:
+    """Return a subprocess env for commands whose auth can be poisoned by env.
+
+    gh gives GH_TOKEN/GITHUB_TOKEN precedence over the logged-in keychain auth.
+    In long agent sessions those variables are often stale or scoped for a
+    different identity, so chain-managed gh calls should prefer gh's own auth.
+    """
+    if not cmd or cmd[0] != "gh":
+        return None
+    env = os.environ.copy()
+    env.pop("GH_TOKEN", None)
+    env.pop("GITHUB_TOKEN", None)
+    return env
 
 
 def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
@@ -1351,6 +1407,35 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
     return value.lower()
 
 
+def _reconcile_terminal_pr_state(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    writer,
+) -> ChainState:
+    """Refresh live PR state even when the chain index is already terminal."""
+    pr_number = state.pr_number
+    completed_entry: dict[str, Any] | None = None
+    if pr_number is None:
+        for entry in reversed(state.completed):
+            if isinstance(entry, dict) and isinstance(entry.get("pr_number"), int):
+                completed_entry = entry
+                pr_number = int(entry["pr_number"])
+                break
+    if pr_number is None:
+        return state
+
+    live_state = _pr_state(root, pr_number, writer=writer)
+    reconciled = live_state
+    if state.pr_number is not None:
+        state.pr_state = reconciled
+    if completed_entry is not None:
+        completed_entry["pr_state"] = reconciled
+    save_chain_state(spec_path, state)
+    return state
+
+
 def _init_plan(
     root: Path,
     idea_path: str,
@@ -1678,6 +1763,16 @@ def run_chain(
 
     # ---- Milestones ----
     idx = max(state.current_milestone_index, 0)
+    if idx >= len(spec.milestones):
+        try:
+            state = _reconcile_terminal_pr_state(
+                root,
+                spec_path,
+                state,
+                writer=writer,
+            )
+        except CliError as exc:
+            log(f"terminal PR reconciliation skipped: {exc.message}")
     while idx < len(spec.milestones):
         milestone = spec.milestones[idx]
         log(f"milestone {milestone.label} starting")

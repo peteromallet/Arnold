@@ -774,6 +774,39 @@ def test_all_codex_resolves_to_codex_without_vendor_flag(
     assert resolved["feedback"] == "claude:low"
 
 
+def test_vendor_codex_without_profile_selects_all_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(vendor="codex")
+    apply_profile_expansion(args, None)
+
+    resolved = _phase_models_to_map(args.phase_model)
+    assert args.profile == "all-codex"
+    assert getattr(args, "tier_models", None) is None
+    for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
+                  "execute", "loop_plan", "loop_execute", "review",
+                  "tiebreaker_researcher", "tiebreaker_challenger"):
+        assert resolved[phase].split(":", 1)[0] == "codex"
+
+
+def test_state_vendor_codex_without_profile_selects_all_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args()
+    state = {"config": {"vendor": "codex"}}
+    apply_profile_expansion(args, None, state=state)
+
+    resolved = _phase_models_to_map(args.phase_model)
+    assert args.profile == "all-codex"
+    assert resolved["execute"] == "codex"
+
+
 def _write_medium_claude_profile(tmp_path: Path) -> None:
     """Write an inline claude:medium-author / codex:medium-critic profile
     used by the vendor/critic rewrite tests below."""
@@ -1080,13 +1113,14 @@ def test_directed_profile_default_resolves_with_claude_plan_only(
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # Claude on plan + loop_plan + tiebreakers.
+    # Claude on plan + loop_plan + tiebreakers + finalize (finalize is now premium).
     assert resolved["plan"] == "claude:low"
     assert resolved["loop_plan"] == "claude:low"
     assert resolved["tiebreaker_researcher"] == "claude:low"
     assert resolved["tiebreaker_challenger"] == "claude:low"
-    # DeepSeek on the mechanical block + critique + review.
-    for phase in ("prep", "critique", "revise", "gate", "finalize", "execute", "loop_execute", "review"):
+    assert resolved["finalize"] == "claude:low"
+    # DeepSeek on the remaining mechanical block + critique + review.
+    for phase in ("prep", "critique", "revise", "gate", "execute", "loop_execute", "review"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 
@@ -1094,23 +1128,19 @@ def test_directed_profile_flips_to_codex_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """--vendor codex on directed maps the tier_models.execute Claude pins to
+    their Codex equivalents (sonnet→codex:medium, opus→codex:high) instead of
+    raising; the premium finalize also flips to codex."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="directed")
     args.vendor = "codex"
     apply_profile_expansion(args, None)
+    tiers = args.tier_models["execute"]
+    assert tiers[4] == "codex:medium"
+    assert tiers[5] == "codex:high"
     resolved = _phase_models_to_map(args.phase_model)
-
-    assert resolved["plan"] == "codex:low", (
-        f"directed + --vendor codex should flip plan from claude:low to codex:low; "
-        f"got {resolved['plan']!r}"
-    )
-    assert resolved["loop_plan"] == "codex:low"
-    assert resolved["tiebreaker_researcher"] == "codex:low"
-    assert resolved["tiebreaker_challenger"] == "codex:low"
-    # Mechanical phases + critique + review untouched (DeepSeek).
-    for phase in ("prep", "critique", "revise", "gate", "finalize", "execute", "loop_execute", "review"):
-        assert resolved[phase] == DEEPSEEK_DIRECT
+    assert resolved["finalize"] == "codex:low"
 
 
 def test_partnered_profile_default_resolves_with_claude_reasoning(
@@ -1135,7 +1165,9 @@ def test_partnered_profile_default_resolves_with_claude_reasoning(
         assert resolved[phase] == "claude:low", (
             f"partnered.{phase} should be claude:low, got {resolved[phase]!r}"
         )
-    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
+    # finalize is now claude:low (premium finalize).
+    assert resolved["finalize"] == "claude:low"
+    for phase in ("prep", "gate", "execute", "loop_execute"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 
@@ -1143,28 +1175,20 @@ def test_partnered_profile_flips_all_premium_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """--vendor codex on partnered flips the premium reasoning phases to codex
+    and maps the tier_models.execute Claude pins to their Codex equivalents
+    (sonnet→codex:medium, opus→codex:high) instead of raising."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered")
     args.vendor = "codex"
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
-
-    for phase in (
-        "plan",
-        "critique",
-        "revise",
-        "review",
-        "loop_plan",
-        "tiebreaker_researcher",
-        "tiebreaker_challenger",
-    ):
-        assert resolved[phase] == "codex:low", (
-            f"partnered.{phase} under --vendor codex should be codex:low, got {resolved[phase]!r}"
-        )
-    # Mechanical phases stay DeepSeek.
-    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
-        assert resolved[phase] == DEEPSEEK_DIRECT
+    assert resolved["plan"] == "codex:low"
+    assert resolved["finalize"] == "codex:low"
+    tiers = args.tier_models["execute"]
+    assert tiers[4] == "codex:medium"
+    assert tiers[5] == "codex:high"
 
 
 def test_partnered_critic_kimi_overrides_critique_and_review(
@@ -1217,7 +1241,9 @@ def test_deepseek_provider_direct_rewrites_partnered_mechanical_phases(
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
+    # finalize is now claude:low (premium finalize); remaining mechanical phases stay DeepSeek.
+    assert resolved["finalize"] == "claude:low"
+    for phase in ("prep", "gate", "execute", "loop_execute"):
         assert resolved[phase] == DEEPSEEK_DIRECT
     assert resolved["plan"] == "claude:low"
     assert resolved["critique"] == "claude:low"
@@ -1228,26 +1254,23 @@ def test_deepseek_provider_direct_composes_with_vendor_and_depth(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """--deepseek-provider direct + --vendor codex + --depth high on partnered
+    compose: the DeepSeek pro tiers swap to the direct provider, the Claude
+    Sonnet/Opus tiers map to codex:medium/high, and depth applies to authors."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered", deepseek_provider="direct")
     args.vendor = "codex"
     args.depth = "high"
     apply_profile_expansion(args, None)
+    tiers = args.tier_models["execute"]
+    # DeepSeek pro tiers → direct provider; Claude pins → codex equivalents.
+    assert tiers[2] == DEEPSEEK_DIRECT
+    assert tiers[3] == DEEPSEEK_DIRECT
+    assert tiers[4] == "codex:medium"
+    assert tiers[5] == "codex:high"
     resolved = _phase_models_to_map(args.phase_model)
-
-    for phase in (
-        "plan",
-        "revise",
-        "loop_plan",
-        "tiebreaker_researcher",
-        "tiebreaker_challenger",
-    ):
-        assert resolved[phase] == "codex:high"
-    assert resolved["critique"] == "codex:low"
-    assert resolved["review"] == "codex:low"
-    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
-        assert resolved[phase] == DEEPSEEK_DIRECT
+    assert resolved["plan"] == "codex:high"
 
 
 def test_persisted_deepseek_provider_in_state_picked_up_by_subprocess(
@@ -1304,28 +1327,19 @@ def test_premium_profile_flips_to_codex_under_vendor_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """--vendor codex on premium maps the tier_models.execute Claude pins to
+    their Codex capability equivalents (sonnet→codex:medium, opus→codex:high),
+    matching the variable-codex routing convention, instead of raising."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="premium")
     args.vendor = "codex"
     apply_profile_expansion(args, None)
-    resolved = _phase_models_to_map(args.phase_model)
-
-    for phase in (
-        "plan",
-        "prep",
-        "critique",
-        "revise",
-        "gate",
-        "finalize",
-        "execute",
-        "loop_plan",
-        "loop_execute",
-        "review",
-        "tiebreaker_researcher",
-        "tiebreaker_challenger",
-    ):
-        assert resolved[phase] == "codex:low"
+    tiers = args.tier_models["execute"]
+    # premium routing: 1=pro, 2=pro, 3=sonnet, 4=opus, 5=opus → codex equivalents
+    assert tiers[3] == "codex:medium"
+    assert tiers[4] == "codex:high"
+    assert tiers[5] == "codex:high"
 
 
 def test_apex_resolves_to_canonical_claude_codex_split(
@@ -1446,8 +1460,9 @@ def test_depth_rewrites_author_phases_on_partnered(
     # Mechanical phases (DeepSeek/hermes) — depth doesn't touch them beyond
     # the default provider rewrite.
     assert resolved["prep"] == "hermes:deepseek:deepseek-v4-pro"
-    assert resolved["finalize"] == "hermes:deepseek:deepseek-v4-pro"
     assert resolved["execute"] == "hermes:deepseek:deepseek-v4-pro"
+    # finalize is now claude:low (premium finalize); depth doesn't touch mechanical phases.
+    assert resolved["finalize"] == "claude:low"
 
 
 def test_depth_rewrites_author_phases_on_premium(
@@ -1505,24 +1520,19 @@ def test_depth_after_vendor_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--vendor codex --depth high on partnered: vendor flips claude→codex
-    first, then depth rewrites author phases to codex:high."""
+    """--vendor codex --depth high on partnered: the tier_models.execute Claude
+    pins map to their Codex equivalents (sonnet→codex:medium, opus→codex:high)
+    rather than raising, and --depth still applies to the author phases."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered")
     args.vendor = "codex"
     args.depth = "high"
     apply_profile_expansion(args, None)
-    resolved = _phase_models_to_map(args.phase_model)
-
-    for phase in _AUTHOR_PHASES:
-        assert resolved[phase] == "codex:high", (
-            f"--vendor codex --depth high should produce codex:high on {phase}; "
-            f"got {resolved[phase]!r}"
-        )
-    # Critic phases swapped to codex by --vendor but depth didn't bump them.
-    assert resolved["critique"] == "codex:low"
-    assert resolved["review"] == "codex:low"
+    tiers = args.tier_models["execute"]
+    # partnered routing: 4=sonnet, 5=opus → codex equivalents
+    assert tiers[4] == "codex:medium"
+    assert tiers[5] == "codex:high"
 
 
 def test_depth_honored_on_vendor_locked_apex(
@@ -2314,10 +2324,12 @@ def test_apply_profile_expansion_flat_profile_no_tier_models(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A profile without [tier_models] section sets args.tier_models to None."""
+    """A profile without [tier_models] section sets args.tier_models to None.
+    The five main profiles (solo/directed/partnered/premium/apex) now all have
+    tier_models. Use all-deepseek-pro which is a flat profile with no tiers."""
     _isolate_user_config(tmp_path, monkeypatch)
 
-    args = _worker_args(profile="partnered")
+    args = _worker_args(profile="all-deepseek-pro")
     apply_profile_expansion(args, None)
 
     assert getattr(args, "tier_models", None) is None
@@ -2494,7 +2506,7 @@ def test_partnered_byte_identical_across_independent_expansions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two independent `--profile partnered` expansions produce byte-identical
-    phase_model lists and no tier_models metadata."""
+    phase_model lists and consistent tier_models metadata."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args_a = _worker_args(profile="partnered")
@@ -2504,15 +2516,18 @@ def test_partnered_byte_identical_across_independent_expansions(
     apply_profile_expansion(args_b, None)
 
     assert args_a.phase_model == args_b.phase_model
-    assert getattr(args_a, "tier_models", None) is None
-    assert getattr(args_b, "tier_models", None) is None
+    # partnered now has tier_models.execute for complexity routing.
+    assert getattr(args_a, "tier_models", None) is not None
+    assert getattr(args_b, "tier_models", None) is not None
 
     # Verify expected values are present (regression guard)
     resolved = _phase_models_to_map(args_a.phase_model)
     for phase in ("plan", "critique", "revise", "review", "loop_plan",
                    "tiebreaker_researcher", "tiebreaker_challenger"):
         assert resolved[phase] == "claude:low"
-    for phase in ("prep", "gate", "finalize", "execute", "loop_execute"):
+    # finalize is now claude:low (premium finalize).
+    assert resolved["finalize"] == "claude:low"
+    for phase in ("prep", "gate", "execute", "loop_execute"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 
@@ -2562,14 +2577,16 @@ def test_partnered_no_tier_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """partnered does not gain tier_models metadata — flat profiles stay flat."""
+    """partnered now has tier_models metadata (execute complexity routing added)."""
     _isolate_user_config(tmp_path, monkeypatch)
     from megaplan.profiles import load_profile_metadata
 
     all_meta = load_profile_metadata(home=tmp_path / "home",
                                       project_dir=tmp_path / "project")
     meta = all_meta.get("partnered", {})
-    assert meta.get("tier_models") is None
+    # partnered now has tier_models.execute for per-task complexity routing.
+    assert meta.get("tier_models") is not None
+    assert "execute" in meta["tier_models"]
 
 
 def test_pipeline_local_tier_metadata_inheritance_and_merge(

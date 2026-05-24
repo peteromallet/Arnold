@@ -25,6 +25,8 @@ def test_handle_finalize_validates_payload_shape(plan_fixture: PlanFixture, monk
                 "description": "Ship the change",
                 "depends_on": [],
                 "status": "pending",
+                "complexity": 2,
+                "complexity_justification": "Localized change with an obvious test update → tier 2.",
                 "executor_notes": "",
                 "files_changed": [],
                 "commands_run": [],
@@ -107,6 +109,65 @@ def test_handle_finalize_rejects_invalid_payload(plan_fixture: PlanFixture, monk
 
     state = load_state(plan_fixture.plan_dir)
     assert state["history"][-1]["result"] == "error"
+
+
+@pytest.mark.parametrize(
+    "task_overrides, expected_match",
+    [
+        ({"complexity": None, "complexity_justification": "x"}, "integer `complexity` score"),
+        ({"complexity": 7, "complexity_justification": "x"}, "integer `complexity` score"),
+        ({"complexity": "high", "complexity_justification": "x"}, "integer `complexity` score"),
+        ({"complexity": 3, "complexity_justification": ""}, "complexity_justification"),
+        ({"complexity": 3}, "complexity_justification"),
+    ],
+)
+def test_handle_finalize_rejects_unadjudicated_complexity(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    task_overrides: dict,
+    expected_match: str,
+) -> None:
+    """A finalize task must carry a deliberate 1-5 score AND an argued justification.
+
+    Replaces the old silent coerce-to-5 behaviour for LLM-produced tasks: a missing,
+    non-integer, or out-of-range complexity, or an empty justification, now bounces
+    finalize instead of defaulting to the most expensive model.
+    """
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(plan=plan_fixture.plan_name, override_action="force-proceed", reason="test"),
+    )
+
+    task = {
+        "id": "T1",
+        "description": "Ship the change",
+        "depends_on": [],
+        "status": "pending",
+        "executor_notes": "",
+        "files_changed": [],
+        "commands_run": [],
+        "evidence_files": [],
+        "reviewer_verdict": "",
+    }
+    task.update(task_overrides)
+    worker = WorkerResult(
+        payload={"tasks": [task], "watch_items": [], "sense_checks": []},
+        raw_output="unadjudicated finalize payload",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="finalize-unadjudicated",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *args, **kwargs: (worker, "claude", "persistent", False),
+    )
+
+    with pytest.raises(megaplan.CliError, match=expected_match):
+        megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
 
 
 def test_after_execute_user_actions_are_handoff_artifact_not_executor_task(
