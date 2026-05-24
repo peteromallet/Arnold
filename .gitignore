@@ -47,3 +47,6 @@ megaplan/agent/website/
 
 # Supabase CLI local cache
 supabase/.temp/
+
+# Ephemeral agentic run scaffolding
+.megaplan-agentic/
