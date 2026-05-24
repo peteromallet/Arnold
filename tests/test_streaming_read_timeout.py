@@ -30,10 +30,12 @@ from run_agent import (
     AIAgent,
     DEFAULT_STREAM_READ_TIMEOUT_SECONDS,
     DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS,
+    DEFAULT_POST_CONTENT_STALL_TIMEOUT_SECONDS,
     DEFAULT_STREAM_FIRST_CONTENT_TIMEOUT_SECONDS,
     _build_httpx_timeout,
     _stream_read_timeout_seconds,
     _stream_content_stall_timeout_seconds,
+    _post_content_stall_timeout_seconds,
     _stream_first_content_timeout_seconds,
 )
 
@@ -170,12 +172,15 @@ def test_stalled_stream_aborts_quickly_and_raises_read_timeout(monkeypatch):
     assert created["count"] >= 1
 
 
-def test_content_stall_timeout_default_and_env_override(monkeypatch):
+def test_content_stall_timeout_defaults_to_180_with_env_override(monkeypatch):
+    """Pre-content stall bound. Default raised from 60s → 180s (2026-05-24)
+    to accommodate DeepSeek-V4-Pro reasoning pauses between content tokens.
+    """
     monkeypatch.delenv("HERMES_STREAM_CONTENT_STALL_TIMEOUT", raising=False)
     assert (
         _stream_content_stall_timeout_seconds()
         == DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS
-        == 60.0
+        == 180.0
     )
     monkeypatch.setenv("HERMES_STREAM_CONTENT_STALL_TIMEOUT", "7")
     assert _stream_content_stall_timeout_seconds() == 7.0
@@ -183,6 +188,41 @@ def test_content_stall_timeout_default_and_env_override(monkeypatch):
     assert _stream_content_stall_timeout_seconds() == DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS
     monkeypatch.setenv("HERMES_STREAM_CONTENT_STALL_TIMEOUT", "0.001")
     assert _stream_content_stall_timeout_seconds() == 1.0
+
+
+def test_post_content_stall_timeout_defaults_to_240_with_env_override(monkeypatch):
+    """Post-first-content stall bound. New (2026-05-24): once a real content
+    delta has arrived, allow longer pauses between content chunks because
+    reasoning models pause between content tokens. 60s floor protects against
+    a misconfigured tiny value reintroducing the original bug.
+    """
+    monkeypatch.delenv("HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT", raising=False)
+    assert (
+        _post_content_stall_timeout_seconds()
+        == DEFAULT_POST_CONTENT_STALL_TIMEOUT_SECONDS
+        == 240.0
+    )
+
+    monkeypatch.setenv("HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT", "300")
+    assert _post_content_stall_timeout_seconds() == 300.0
+
+    # Parse failure falls back to default.
+    monkeypatch.setenv("HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT", "not-a-number")
+    assert (
+        _post_content_stall_timeout_seconds()
+        == DEFAULT_POST_CONTENT_STALL_TIMEOUT_SECONDS
+    )
+
+    # Floor: a misconfigured tiny value clamps to 60s.
+    monkeypatch.setenv("HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT", "5")
+    assert _post_content_stall_timeout_seconds() == 60.0
+
+    # Unset → default.
+    monkeypatch.delenv("HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT", raising=False)
+    assert (
+        _post_content_stall_timeout_seconds()
+        == DEFAULT_POST_CONTENT_STALL_TIMEOUT_SECONDS
+    )
 
 
 def _empty_keepalive_chunk():
@@ -500,6 +540,180 @@ def test_keepalive_yielding_stall_aborts_via_inloop_watchdog(monkeypatch):
         f"(took {elapsed:.2f}s)"
     )
     assert keepalive_stream.closed is True
+
+
+# ---------------------------------------------------------------------------
+# Pre/post-content stall split regression tests (2026-05-24)
+# ---------------------------------------------------------------------------
+
+
+def test_pre_content_stall_uses_shorter_value(monkeypatch):
+    """Symmetric to the post-content test below: a stream that yields only
+    keepalive (empty-choices) chunks — no content, no reasoning — must abort
+    via the *pre-content* stall bound (the tighter one), NOT the post-content
+    bound. ``first_content_seen`` is still False so the effective bound used
+    by both ``queue.get`` and the wall-clock check is the pre-content value.
+    """
+    import time as _time
+
+    # Pre-content bound: 0.3s (must fire). Post-content bound: 30s (must NOT
+    # fire — proves the pre-content path is what aborts).
+    monkeypatch.setattr(
+        "run_agent._stream_content_stall_timeout_seconds",
+        lambda: 0.3,
+    )
+    monkeypatch.setattr(
+        "run_agent._post_content_stall_timeout_seconds",
+        lambda: 30.0,
+    )
+    # Set first-content watchdog high so it can't be what fires.
+    monkeypatch.setattr(
+        "run_agent._stream_first_content_timeout_seconds",
+        lambda: 60.0,
+    )
+
+    keepalive_stream = _KeepaliveYieldingStream()
+
+    agent = AIAgent.__new__(AIAgent)
+    agent.api_mode = "chat_completions"
+    agent._interrupt_requested = False
+    agent._streaming_timeout_streak = 0
+    agent._codex_on_first_delta = None
+    agent.base_url = "https://api.deepseek.com"
+    monkeypatch.setattr(agent, "_api_timeout_seconds", lambda: 300.0)
+
+    class _StalledClient:
+        def __init__(self):
+            self.chat = self
+            self.completions = self
+
+        def create(self, **kwargs):
+            return keepalive_stream
+
+    monkeypatch.setattr(
+        agent, "_create_request_openai_client", lambda *, reason: _StalledClient()
+    )
+    monkeypatch.setattr(agent, "_close_request_openai_client", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "_abort_request_client", lambda *a, **k: None)
+    monkeypatch.setattr(
+        agent,
+        "_interruptible_api_call",
+        lambda api_kwargs: (_ for _ in ()).throw(
+            AssertionError("pre-content stall must not fall back to non-streaming")
+        ),
+    )
+
+    start = _time.monotonic()
+    with pytest.raises(openai.APITimeoutError):
+        agent._interruptible_streaming_api_call(
+            {"model": "deepseek-v4-pro", "messages": []}
+        )
+    elapsed = _time.monotonic() - start
+
+    # Fires shortly after the 0.3s pre-content bound — NOT after the 30s
+    # post-content bound (we'd hit the 300s outer watchdog instead before that).
+    assert elapsed < 3.0, (
+        f"pre-content stall did not fire on the tighter bound (took {elapsed:.2f}s)"
+    )
+    assert keepalive_stream.closed is True
+
+
+def test_post_content_stall_used_only_after_first_content_arrives(monkeypatch):
+    """The new post-content stall bound (2026-05-24) must be applied ONLY
+    AFTER ``first_content_seen=True``. Drive a synthetic stream that:
+
+      1. Emits a reasoning delta (must NOT switch to post-content yet)
+      2. Emits a real content delta (flips first_content_seen)
+      3. Pauses LONGER than the pre-content bound but SHORTER than the
+         post-content bound
+      4. Emits a final content delta and finishes
+
+    With the split applied correctly, step (3) is tolerated and the stream
+    completes; without the split (old 60s unified bound or post-content bound
+    misapplied pre-content), step (3) would abort.
+    """
+    import time as _time
+    from types import SimpleNamespace
+
+    # Pre-content: 0.4s (would fire if applied during step 3's 1.0s pause).
+    # Post-content: 5.0s (does NOT fire — step 3 pause is 1.0s).
+    monkeypatch.setattr(
+        "run_agent._stream_content_stall_timeout_seconds",
+        lambda: 0.4,
+    )
+    monkeypatch.setattr(
+        "run_agent._post_content_stall_timeout_seconds",
+        lambda: 5.0,
+    )
+    # Keep first-content watchdog out of the way.
+    monkeypatch.setattr(
+        "run_agent._stream_first_content_timeout_seconds",
+        lambda: 60.0,
+    )
+
+    def _reasoning_chunk(text):
+        delta = SimpleNamespace(
+            content=None, reasoning_content=text, tool_calls=None
+        )
+        choice = SimpleNamespace(delta=delta, finish_reason=None)
+        return SimpleNamespace(
+            choices=[choice], model="deepseek-v4-pro", usage=None
+        )
+
+    def _content_chunk(text, finish=None):
+        delta = SimpleNamespace(
+            content=text, reasoning_content=None, tool_calls=None
+        )
+        choice = SimpleNamespace(delta=delta, finish_reason=finish)
+        return SimpleNamespace(
+            choices=[choice], model="deepseek-v4-pro", usage=None
+        )
+
+    class _MixedStream:
+        def __iter__(self):
+            # (1) reasoning (resets pre-content bound; first_content_seen still False)
+            yield _reasoning_chunk("think ")
+            # (2) first real content → flips first_content_seen
+            yield _content_chunk("hello ")
+            # (3) long pause (1.0s) — longer than pre-content (0.4s) but well
+            # under post-content (5.0s). Must NOT abort.
+            _time.sleep(1.0)
+            # (4) final content
+            yield _content_chunk("world", finish="stop")
+
+    agent = AIAgent.__new__(AIAgent)
+    agent.api_mode = "chat_completions"
+    agent._interrupt_requested = False
+    agent._streaming_timeout_streak = 0
+    agent._codex_on_first_delta = None
+    agent.base_url = "https://api.deepseek.com"
+    agent.stream_delta_callback = None
+    agent._stream_callback = None
+    agent.reasoning_callback = None
+    monkeypatch.setattr(agent, "_api_timeout_seconds", lambda: 300.0)
+    monkeypatch.setattr(agent, "_fire_reasoning_delta", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "_fire_stream_delta", lambda *a, **k: None)
+
+    class _Client:
+        def __init__(self):
+            self.chat = self
+            self.completions = self
+
+        def create(self, **kwargs):
+            return _MixedStream()
+
+    monkeypatch.setattr(
+        agent, "_create_request_openai_client", lambda *, reason: _Client()
+    )
+    monkeypatch.setattr(agent, "_close_request_openai_client", lambda *a, **k: None)
+    monkeypatch.setattr(agent, "_abort_request_client", lambda *a, **k: None)
+
+    resp = agent._interruptible_streaming_api_call(
+        {"model": "deepseek-v4-pro", "messages": []}
+    )
+    # Stream completed: post-content bound tolerated the 1.0s pause that
+    # would have killed it under the old unified 60s/0.4s pre-content rule.
+    assert resp.choices[0].message.content == "hello world"
 
 
 # ---------------------------------------------------------------------------
