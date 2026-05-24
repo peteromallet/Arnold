@@ -33,14 +33,15 @@ def test_checks_for_robustness_returns_expected_check_sets() -> None:
     light_checks = checks_for_robustness("light")
     tiny_checks = checks_for_robustness("tiny")
 
-    assert len(robust_checks) == 8
-    assert len(superrobust_checks) == 8
+    assert len(robust_checks) == 9
+    assert len(superrobust_checks) == 9
     assert [check["id"] for check in standard_checks] == [
         "issue_hints",
         "correctness",
         "scope",
         "all_locations",
         "callers",
+        "prerequisite_ordering",
     ]
     assert get_check_by_id("verification")["tier"] == "extended"
     assert get_check_by_id("conventions")["tier"] == "extended"
@@ -58,6 +59,7 @@ def test_build_empty_template_uses_filtered_checks() -> None:
         "scope",
         "all_locations",
         "callers",
+        "prerequisite_ordering",
     ]
     assert all(entry["findings"] == [] for entry in template)
 

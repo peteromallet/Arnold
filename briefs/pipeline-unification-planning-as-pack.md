@@ -4,6 +4,10 @@
 5-agent architecture sense-check, 5-agent implementation-landmine pass, 4-agent capability
 inventory + a 3-model jury on execution).
 **Authors:** Claude + DeepSeek/Kimi investigation; decisions by Peter.
+**Related:** tracked as ticket `01KSAWQFZBJMXE6JHXN01PJ5SR` (umbrella); vetting methodology in
+`docs/epic-vetting-philosophy.md` (ticket `01KSAQ000G7Q59F3J2NSB14SRF`); the worktree-execute
+subsystem that becomes Body 3's `CodeRealizer` vehicle is ticket `01KS3DCH9Y1NTMTWH18S98RZT4` / PR #43
+(see §14).
 
 **Goal.** Make the canonical planning flow *be* a pipeline like `creative`/`doc`, not just *look*
 like one. End state: a **single execution path** — every flow, planning included, is a discovered
@@ -114,6 +118,85 @@ worker/batch/merge machinery, not a second strategy object. So the realizer abst
 *legitimate refactor of an inline-branch pattern*, not the rescue of a monolith. §5 specifies the
 `Realizer` extraction.
 
+### 2.4 The whole picture (target end-state)
+
+Synthesis of §2–§5 — what the finished system looks like and how it works. Detail lives in the
+sections that follow; this is the north star.
+
+**One line:** the engine knows how to *run* graphs and offers a library of *capabilities*; a pipeline
+is a declaration of which capabilities it composes plus the domain logic to fill them. Planning stops
+being privileged *by mechanism* (a hardcoded built-in) and becomes privileged *by richness* (it
+composes the most capabilities). Execution stops being "the code phase" and becomes a selectable
+backend.
+
+**Three tiers:**
+```
+megaplan/
+  _pipeline/                 ENGINE — pure machinery, zero flow knowledge
+    executor.py              run_pipeline / run_pipeline_with_policy  (the ONE execution path)
+    types.py                 Step, Stage, ParallelStage, Edge, Verdict, Pipeline
+    registry.py              discovery only — no _BUILTIN_NAMES
+    patterns.py              THE capability library (critique_revise_gate_loop, phase_zero_gate,
+                             panel, vote, debate, dynamic_fanout, DeadlockResolver)
+    runtime.py               RuntimePolicy (stall/cost/escalate/retry)
+    dag_runner.py            batching, prereqs, merge, blocked/deviation, phase_result (was execute/)
+    realizer.py  emission.py the Realizer protocol; the single post-step emission hook
+    steps/human_gate.py      reusable engine steps
+  _core / faults / receipts / profiles / modes   SHARED primitives packs call into
+  realizers/                 PLUGGABLE backends: code.py, prose.py, doc.py (future: data/infra/research)
+  pipelines/                 PACKS — discovered, self-contained capability declarations
+    creative/  doc/          shallow
+    planning/                deep (the crown jewel — now just a pack)
+```
+
+**Every pack, same contract** (§3.1): `__init__.py` with `build_pipeline() -> Pipeline` + metadata
+(`description`, `default_profile`, `supported_modes`, `recommended_profiles`, `capabilities`),
+`steps.py`, `prompts/`, `SKILL.md`, and (deep packs) a `config.py`. A *shallow* pack (`creative`) is
+~5 files, `capabilities=()`, linear, imports nothing from `patterns.py`. The *deep* pack (`planning`)
+is the same contract, richer: `capabilities=("gating","subloops","human_gate","override","robustness",
+"policy","realizer")`, composes patterns, ships tiebreaker/override/finalize as steps, declares its
+14-key config schema, exposes `run_planning()`/`mark_plan_executed()`, selects `CodeRealizer` by default.
+
+**Four philosophical moves:**
+1. **One contract + graded capabilities (not two tiers).** The `capabilities` tuple tells the platform
+   what to expect — CLI surfaces approval UX only for `human_gate` packs, override verbs only for
+   `override` packs, the policy loop only for `policy` packs. Depth = how many capabilities you
+   composed, never a privileged class.
+2. **Promote the mechanism, keep the policy (§4).** Engine owns gate *dispatch*; pack owns its verdict
+   *vocabulary*. Engine owns the `DeadlockResolver` *pattern*; planning supplies the flag-wired
+   *instance*. Engine owns the rigour-*dial*; planning declares `bare/light/full` and their meaning.
+3. **Execution is one realizer among many (§5).** `finalize` = decompose into a unit graph (universal);
+   `realize` = dispatch to the selected `Realizer`. Engine DAG-runner owns batching/prereqs/blocked/
+   emission; each `Realizer` owns evidence shape + quality gate + assembly. creative/doc *gain* the
+   DAG+quality gate they lack; code stops being privileged.
+4. **One execution path, one state model, one emission point.** Everything enters
+   `run_pipeline(_with_policy)`; `megaplan plan/auto/run` are thin front doors; no `COMMAND_HANDLERS`,
+   no subprocess shelling. Steps return state deltas, the executor owns the write, one post-step hook
+   emits phase_result/receipts/history/events — uniform observability across every pack.
+
+**A run is a graph walk the executor performs identically for any pack:**
+```
+prep → plan → critique → gate ─┬─ proceed    → finalize → realize → review → halt
+                               ├─ iterate     → revise → critique         (loop)
+                               ├─ tiebreaker  → DeadlockResolver subloop → critique
+                               └─ escalate    → finalize
+        realize picks CodeRealizer (mode=code): DAG-runner executes the unit graph;
+        CodeRealizer supplies git evidence + quality gate + test assembly.
+        Swap mode=doc → same topology, DocRealizer, different evidence/gate, same machinery.
+```
+
+**Author experience:** drop a dir under `pipelines/`, write `build_pipeline()` composing the patterns
+you need, declare `capabilities`, pick or write a `Realizer`, add prompts + SKILL.md — and inherit
+discovery, the policy loop, resume, observability, approval UX, and profile resolution for free. The
+platform stops being "a planner with demo pipelines" and becomes "a pipeline runtime of which planning
+is the flagship tenant."
+
+**Two honesty notes.** (a) This is the destination *after both bodies of work*: post-Epic-1 you have
+the one-execution-path + planning-as-heavy-pack, but `execute/` still has its `is_prose_mode` branches;
+the realizer/capabilities layer is the later platform work (§10 Body 3). (b) The realizer + capabilities
+pieces are still *bets* (architecture taste, not code-verified like the §13 claims) — they should be
+challenged the way the rest was before being committed.
+
 ---
 
 ## 3. The pack contract & capability manifest
@@ -218,6 +301,9 @@ dispatch (`Realizer.for_mode(mode)`). Topology stays `…→finalize→[realizer
 selectable. Planning ships `CodeRealizer` as **first among equals, not the hardwired default**.
 Creative/doc *gain* the DAG + quality gate they currently lack; ~200 LOC of `is_prose_mode`
 conditionals disappear.
+
+**Already prototyped:** the open draft **PR #43** (serial worktree-execute) is effectively an early
+`CodeRealizer` build — it validates this cut empirically. Body 3 inherits its mechanics; see §14.
 
 ---
 
@@ -416,7 +502,9 @@ free.
 ### Body 3 — Platform generalisation (after Body 2; lower urgency, parallelizable)
 - `capabilities` metadata (§2.1) + formalise `patterns.py` as the capability library.
 - Extract the engine DAG-runner + the `Realizer` interface; refactor `execute/` into `CodeRealizer`;
-  make `finalize` mode-agnostic (§5).
+  make `finalize` mode-agnostic (§5). **Vehicle: re-home the parked draft PR #43** (serial
+  worktree-execute) here, rebased onto the unified substrate — inherit its custody/patch/FSM
+  mechanics rather than re-deriving them (§14).
 - Promotions (§4): `FaultRegistry`, `DeadlockResolver`, the intensity dial, the receipt schema, the
   versioned-artifact helper; demote the 4-verdict gate taxonomy to pack policy.
 
@@ -449,12 +537,16 @@ free.
   `gate.py:327-392`, approval check `execute.py:108-116`, `is_prose_mode` branches
   `execute/core.py:575-658`, `assemble_doc` `execute.py:179`, finalize verification-task injection
   `finalize.py:295,475`.
-- **State/persistence:** `_finish_step`+`save_state_merge_meta` `shared.py:355`; `phase_result.json`
-  `shared.py:374` consumed at `auto.py:732`, success-synthesis fallback `auto.py:763-771`;
-  resume key `_pipeline_paused_stage` `run_cli.py:307`.
-- **auto_approve bypass:** `auto.py:316-335` vs `execute.py:108-116`.
-- **Cross-system consumers:** `chain.py:1512` direct `current_state` write; `megaplan/__init__.py:25-34`
-  `__all__`; `cloud/providers/{ssh,railway,local}.py`.
+- **State/persistence:** `save_state_merge_meta` at 30 sites (only 1 in `_finish_step` `shared.py:355`;
+  others scattered — override ×9, execute ×7, …); `phase_result.json` emitted `shared.py:374`,
+  success-synthesis fallback `auto.py:763-771` — but auto picks the next phase from `state.json`/
+  `next_step` via `megaplan status`, NOT from phase_result (see §13 #5); resume read site
+  `run_cli.py:261` (`:307` is the decision site).
+- **auto_approve bypass:** `auto.py:316-335` (≈324-337 injection) vs `execute.py:108-116`.
+- **External state writers (3):** `chain.py:1517` (`_mark_blocked_execute_as_executed`),
+  `_core/workflow.py:352` (`resume_plan`), `store/plan_repository.py:392` (`record_lifecycle_failure`);
+  public API `megaplan/__init__.py` + `megaplan/handlers/__init__.py` `__all__`;
+  cloud `cloud/providers/{ssh,railway,local}.py`.
 - **Pack contract / discovery:** `registry.py:343-407`; `_BUILTIN_NAMES` `:53`, builders `:415-440`;
   other built-ins `_pipeline/demos/doc_critique.py`, `_pipeline/demo_judges.py`. Examples:
   `pipelines/creative/{__init__,steps}.py`, `pipelines/doc/`, `pipelines/writing_panel_strict.py`.
@@ -524,3 +616,60 @@ are solid; the *severity/danger framings* I'd folded in were repeatedly too stro
 persistence already preserves the data. This *strengthens* the skeptics' case (§12) that the
 state-write fix is real-but-bounded, not a corruption emergency — though full scope still holds for
 the platform reasons, now on more honest footing.
+
+---
+
+## 14. PR #43 (serial worktree-execute) — how it fits
+
+**Status (verified 2026-05-23):** OPEN **draft**, not merged — 11,420 / -793 across **98 files**,
+branch `worktree-execute-redesign`. Its own title: *"Serial worktree-execute subsystem (preserved;
+blocked on execute-contract reconciliation)."* It rearchitects how the **code execution backend**
+runs: batch-in-the-checkout → **serial per-task disposable git worktrees**; the worker produces a
+validated **patch bundle** but never commits; a **coordinator** applies it as an `mp-task:<id>` commit
+on the milestone checkout, records it in a **custody registry** (`.megaplan/worktrees/registry/
+<run-id>.jsonl`), then prunes the worktree; a **restartable integration FSM**
+(`patch_captured → apply_checked → applied_to_index → committed → registry_recorded → pushed →
+pr_synced → worktree_pruned`) with **crash-injection tests at each boundary**; plus **migration
+commands** for old plans. Touches the brief's sensitive surfaces directly: `execute/core.py`,
+`handlers/execute.py`, `auto.py`, `chain.py`, `_core/workflow.py`, `store/plan_repository.py`,
+`types.py`, + new `execute/migration*.py`, `execute_resume_cursor.py`.
+
+**How it fits the architecture.** It is a **prototype of `CodeRealizer` + its integration lifecycle,
+built early** (§5). Everything in it — worktree custody, patch bundles, `mp-task` commits, push/PR
+sync, the FSM — is git-specific evidence-and-assembly machinery a prose/doc realizer would never want.
+So it is **empirical validation of the §5 cut** ("execution is one realizer among many"), and its
+FSM + crash-injection discipline is a *template* for the restartability §6 hazard 9 only gestured at.
+The brief **is** the "execute-contract reconciliation" #43 is blocked on (§3.2/§5 define the contract:
+`finalize` = decompose, `realize` = backend dispatch).
+
+**Decision: keep the branch, do not merge as-is, re-home it as Body 3's vehicle.**
+- *Don't discard* — it's a completed spike that already answers "does serial-worktree execute with a
+  restartable integration FSM work?", and it brought its own oracle (crash-injection tests). Keep as a
+  reference / design input.
+- *Don't merge now* — landing 98 files that rewrite the state-write/resume/dispatch surface **before**
+  Body 1 settles the one-write-model would bake in decisions the unification then unpicks; that's why
+  it's self-labelled "blocked." Off the critical path until the substrate (parity gate + state-write
+  model + pack-ification) exists.
+- *Re-home* — Body 3's `CodeRealizer` (§10) **inherits** #43's serial-worktree/custody/patch/FSM
+  mechanics rather than re-deriving them, rebased onto the unified substrate.
+
+**Reconcile #43's new state surface against the hazards:**
+- **Hazard 1 (state-write):** #43 adds *more* persisted state (custody registry + FSM checkpoints) and
+  a *new writer* (the coordinator). The one-write-model choice in Body 1a must cover it.
+- **Hazard 3 (external writers):** #43 modifies `_core/workflow.py:352` and `store/plan_repository.py:392`
+  — exactly the two *extra* writers §13 #7 found beyond `chain.py`. Reconcile, don't duplicate.
+- **Hazard 5 (resume/migration):** #43 already ships **migration commands for old plans** + an
+  `execute_resume_cursor`. Merge this with the brief's resume-migration shim — they are **one effort**,
+  not two.
+- **Hazard 9 (restartability/schema):** adopt #43's FSM checkpointing as the model; it's stronger than
+  what the brief assumed.
+
+**Staleness #43 creates (re-baseline when it lands):** the "batch + auto-loop" framing in §3.2/§5 is
+**obsolete** (serial replaces batch); the merge-loop internals §13 claim-10 cited (`_merge_batch_results`,
+the prose branches, the LOC layout of `execute/core.py`) will move — re-run that verification against
+post-#43 code.
+
+**Open question to verify (not yet done):** whether a *decoupled subset* of #43 — e.g. the worktree-
+isolation robustness win, independent of the state-write changes — could ship early on its own merits
+(the way the skeptics endorsed in-process `auto`), or whether it's too entangled with the contract to
+separate. Reading the diff would settle this.

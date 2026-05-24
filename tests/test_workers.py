@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 from argparse import Namespace
 from pathlib import Path
@@ -717,7 +719,6 @@ def test_resolve_agent_mode_for_review_claude_defaults_to_fresh() -> None:
 
 
 def _mock_state(tmp_path: Path, *, iteration: int = 1) -> tuple[Path, dict]:
-    import textwrap
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
     project_dir = tmp_path / "project"
@@ -3856,6 +3857,111 @@ def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
     assert payload == {"content": "hi"}
 
 
+def test_seed_claude_project_trust_creates_defaults_under_lock_and_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers import shannon
+
+    home = tmp_path / "home"
+    work_dir = tmp_path / "project"
+    work_dir.mkdir()
+    lock_ops: list[int] = []
+    replacements: list[tuple[Path, Path]] = []
+    real_replace = Path.replace
+
+    def tracking_replace(source: Path, target: str | Path) -> Path:
+        target_path = Path(target)
+        replacements.append((source, target_path))
+        return real_replace(source, target_path)
+
+    monkeypatch.setattr(shannon.fcntl, "flock", lambda _fd, op: lock_ops.append(op))
+    monkeypatch.setattr(Path, "replace", tracking_replace)
+
+    shannon._seed_claude_project_trust(work_dir, home=home)
+
+    config_path = home / ".claude.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert (home / ".claude.json.lock").exists()
+    assert lock_ops == [shannon.fcntl.LOCK_EX, shannon.fcntl.LOCK_UN]
+    assert replacements and replacements[-1][1] == config_path
+    assert replacements[-1][0].parent == home
+    assert replacements[-1][0].name.startswith(".claude.json.")
+    assert not list(home.glob(".claude.json.*.tmp"))
+    assert config["hasCompletedOnboarding"] is True
+    assert config["hasAcknowledgedCostThreshold"] is True
+    assert config["projects"][str(work_dir)]["hasTrustDialogAccepted"] is True
+    assert config["projects"][str(work_dir)]["hasCompletedProjectOnboarding"] is True
+
+
+def test_seed_claude_project_trust_merges_project_entry_and_preserves_existing_config(
+    tmp_path: Path,
+) -> None:
+    from megaplan.workers import shannon
+
+    home = tmp_path / "home"
+    work_dir = tmp_path / "project"
+    other_dir = tmp_path / "other"
+    home.mkdir()
+    work_dir.mkdir()
+    original = {
+        "theme": "dark",
+        "projects": {
+            str(work_dir): {"existing": "keep"},
+            str(other_dir): {"other": True},
+        },
+    }
+    (home / ".claude.json").write_text(json.dumps(original), encoding="utf-8")
+
+    shannon._seed_claude_project_trust(work_dir, home=home)
+
+    config = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert config["theme"] == "dark"
+    assert config["projects"][str(other_dir)] == {"other": True}
+    assert config["projects"][str(work_dir)]["existing"] == "keep"
+    assert config["projects"][str(work_dir)]["hasTrustDialogAccepted"] is True
+    assert config["projects"][str(work_dir)]["hasClaudeMdExternalIncludesApproved"] is True
+
+
+def test_run_shannon_step_seeds_project_trust_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    events: list[str] = []
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_seed(work_dir: Path, **_kwargs: object) -> None:
+        assert work_dir == Path(state["config"]["project_dir"])
+        events.append("seed")
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        assert events == ["seed"]
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps([{"type": "result", "result": json.dumps(payload), "session_id": "sess"}]),
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon._seed_claude_project_trust", side_effect=fake_seed), \
+         patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload == payload
+
+
 # ---------------------------------------------------------------------------
 # Timeout test
 # ---------------------------------------------------------------------------
@@ -3884,6 +3990,494 @@ def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
 
     assert exc_info.value.extra["session_id"] != "shannon-session-abc"
     assert exc_info.value.extra["session_id"]
+    assert exc_info.value.extra["expected_output_path"] == str(plan_dir / "plan_output.json")
+
+
+def test_run_shannon_step_tears_down_registered_tmux_session_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import _ACTIVE_SHANNON_TMUX_SESSIONS, run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([{"type": "result", "result": json.dumps(payload), "session_id": "real-shannon-session"}]),
+        stderr="",
+        duration_ms=10,
+    )
+
+    with patch("megaplan.workers.shannon.subprocess.run") as tmux_kill, \
+         patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    launched = run_command.call_args.args[0]
+    session_id = launched[launched.index("--session-id") + 1]
+    tmux_kill.assert_called_with(
+        ["tmux", "kill-session", "-t", f"shannon-{session_id}"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    assert result.payload == payload
+    assert f"shannon-{session_id}" not in _ACTIVE_SHANNON_TMUX_SESSIONS
+
+
+def test_run_shannon_step_tears_down_tmux_on_parse_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import _ACTIVE_SHANNON_TMUX_SESSIONS, run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout="not json",
+        stderr="",
+        duration_ms=10,
+    )
+
+    with patch("megaplan.workers.shannon.subprocess.run") as tmux_kill, \
+         patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        with pytest.raises(CliError):
+            run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    launched = run_command.call_args.args[0]
+    session_id = launched[launched.index("--session-id") + 1]
+    assert tmux_kill.call_args.args[0] == ["tmux", "kill-session", "-t", f"shannon-{session_id}"]
+    assert f"shannon-{session_id}" not in _ACTIVE_SHANNON_TMUX_SESSIONS
+
+
+def test_run_shannon_step_tears_down_tmux_on_readiness_timeout(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import _ACTIVE_SHANNON_TMUX_SESSIONS, run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    timeout_error = CliError("worker_timeout", "readiness timed out", extra={"raw_output": "partial"})
+
+    with (
+        patch("megaplan.workers.shannon.random.random", return_value=0.0),
+        patch("megaplan.workers.shannon.time.sleep"),
+        patch("megaplan.workers.shannon.subprocess.run") as tmux_kill,
+        patch("megaplan.workers.shannon.run_command", side_effect=timeout_error) as run_command,
+    ):
+        with pytest.raises(CliError) as exc_info:
+            run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True, session_agent="claude")
+
+    readiness_command = run_command.call_args.args[0]
+    session_id = readiness_command[readiness_command.index("--session-id") + 1]
+    assert exc_info.value.extra["session_id"] == session_id
+    assert tmux_kill.call_args.args[0] == ["tmux", "kill-session", "-t", f"shannon-{session_id}"]
+    assert f"shannon-{session_id}" not in _ACTIVE_SHANNON_TMUX_SESSIONS
+
+
+def test_run_shannon_step_persists_generated_session_id_before_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    state["active_step"] = {
+        "step": "plan",
+        "agent": "shannon",
+        "mode": "persistent",
+        "run_id": "run-1",
+        "worker_pid": os.getpid(),
+        "started_at": "2026-03-20T00:00:00Z",
+        "attempt": 1,
+        "last_activity_at": "2026-03-20T00:00:00Z",
+        "last_activity_kind": "started",
+    }
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        session_id = command[command.index("--session-id") + 1]
+        persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert state["active_step"]["session_id"] == session_id
+        assert persisted["active_step"]["session_id"] == session_id
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps([{"type": "result", "result": json.dumps(payload), "session_id": session_id}]),
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon.subprocess.run"), \
+         patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload == payload
+
+
+def test_shannon_registered_session_cleanup_kills_all_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    from megaplan.workers import shannon
+
+    shannon._ACTIVE_SHANNON_TMUX_SESSIONS.clear()
+    monkeypatch.setattr(shannon, "_install_shannon_tmux_cleanup_once", lambda: None)
+    with patch("megaplan.workers.shannon.subprocess.run") as tmux_kill:
+        shannon._register_shannon_session("sess-a")
+        shannon._register_shannon_session("sess-b")
+        shannon._cleanup_registered_shannon_sessions()
+
+    killed = {call.args[0][-1] for call in tmux_kill.call_args_list}
+    assert killed == {"shannon-sess-a", "shannon-sess-b"}
+    assert shannon._ACTIVE_SHANNON_TMUX_SESSIONS == set()
+
+
+def test_shannon_signal_cleanup_preserves_previous_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    from megaplan.workers import shannon
+
+    called: list[int] = []
+    previous = lambda signum, frame: called.append(signum)
+
+    monkeypatch.setattr(shannon, "_ACTIVE_SHANNON_TMUX_SESSIONS", {"shannon-sess-a"})
+    monkeypatch.setitem(shannon._SHANNON_PREVIOUS_SIGNAL_HANDLERS, signal.SIGTERM, previous)
+    with patch("megaplan.workers.shannon.subprocess.run") as tmux_kill:
+        shannon._handle_shannon_cleanup_signal(signal.SIGTERM, None)
+
+    assert tmux_kill.call_args.args[0] == ["tmux", "kill-session", "-t", "shannon-sess-a"]
+    assert called == [signal.SIGTERM]
+    assert shannon._ACTIVE_SHANNON_TMUX_SESSIONS == set()
+
+
+def test_shannon_tmux_cleanup_install_is_one_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    import atexit
+
+    from megaplan.workers import shannon
+
+    registered: list[object] = []
+    signal_calls: list[tuple[int, object]] = []
+    previous_handlers = {signal.SIGTERM: object(), signal.SIGINT: object()}
+
+    monkeypatch.setattr(shannon, "_SHANNON_TMUX_CLEANUP_INSTALLED", False)
+    shannon._SHANNON_PREVIOUS_SIGNAL_HANDLERS.clear()
+    monkeypatch.setattr(atexit, "register", lambda callback: registered.append(callback))
+    monkeypatch.setattr(shannon.signal, "getsignal", lambda sig: previous_handlers[sig])
+    monkeypatch.setattr(
+        shannon.signal,
+        "signal",
+        lambda sig, handler: signal_calls.append((sig, handler)),
+    )
+
+    shannon._install_shannon_tmux_cleanup_once()
+    shannon._install_shannon_tmux_cleanup_once()
+
+    assert registered == [shannon._cleanup_registered_shannon_sessions]
+    assert signal_calls == [
+        (signal.SIGTERM, shannon._handle_shannon_cleanup_signal),
+        (signal.SIGINT, shannon._handle_shannon_cleanup_signal),
+    ]
+    assert shannon._SHANNON_PREVIOUS_SIGNAL_HANDLERS == previous_handlers
+
+
+def test_run_shannon_step_tears_down_tmux_on_unexpected_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import _ACTIVE_SHANNON_TMUX_SESSIONS, run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+
+    with patch("megaplan.workers.shannon.subprocess.run") as tmux_kill, \
+         patch("megaplan.workers.shannon.run_command", side_effect=RuntimeError("boom")) as run_command:
+        with pytest.raises(RuntimeError, match="boom"):
+            run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    launched = run_command.call_args.args[0]
+    session_id = launched[launched.index("--session-id") + 1]
+    assert tmux_kill.call_args.args[0] == ["tmux", "kill-session", "-t", f"shannon-{session_id}"]
+    assert f"shannon-{session_id}" not in _ACTIVE_SHANNON_TMUX_SESSIONS
+
+
+def test_reap_orphan_shannon_sessions_kills_only_stale_unowned_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import shannon
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    state["active_step"] = {
+        "step": "plan",
+        "agent": "shannon",
+        "session_id": "active",
+        "worker_pid": os.getpid(),
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    monkeypatch.setattr(shannon, "_ACTIVE_SHANNON_TMUX_SESSIONS", {"shannon-registered"})
+    monkeypatch.setattr(shannon.time, "time", lambda: 1000.0)
+    tmux_stdout = "\n".join(
+        [
+            "shannon-stale\t700",
+            "shannon-registered\t700",
+            "shannon-active\t700",
+            "shannon-new\t950",
+            "other-session\t700",
+        ]
+    )
+    calls: list[list[str]] = []
+
+    def fake_tmux(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[:3] == ["tmux", "list-sessions", "-F"]:
+            return subprocess.CompletedProcess(command, 0, stdout=tmux_stdout, stderr="")
+        if command[:3] == ["tmux", "kill-session", "-t"]:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(shannon.subprocess, "run", fake_tmux)
+
+    assert shannon._reap_orphan_shannon_sessions(plan_dir=plan_dir) == ["shannon-stale"]
+    assert [command[-1] for command in calls if command[:3] == ["tmux", "kill-session", "-t"]] == [
+        "shannon-stale"
+    ]
+
+
+def test_reap_orphan_shannon_sessions_is_nonfatal_when_tmux_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers import shannon
+
+    monkeypatch.setattr(shannon.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+
+    assert shannon._reap_orphan_shannon_sessions() == []
+
+
+def test_reap_orphan_shannon_sessions_does_not_report_failed_kills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.workers import shannon
+
+    monkeypatch.setattr(shannon.time, "time", lambda: 1000.0)
+
+    def fake_tmux(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if command[:3] == ["tmux", "list-sessions", "-F"]:
+            return subprocess.CompletedProcess(command, 0, stdout="shannon-stale\t700\n", stderr="")
+        if command[:3] == ["tmux", "kill-session", "-t"]:
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="no session")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(shannon.subprocess, "run", fake_tmux)
+
+    assert shannon._reap_orphan_shannon_sessions() == []
+
+
+def test_run_shannon_step_mock_shortcut_skips_orphan_janitor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan.types import MOCK_ENV_VAR
+    from megaplan.workers import shannon
+
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv(MOCK_ENV_VAR, "1")
+    with patch("megaplan.workers.shannon._reap_orphan_shannon_sessions") as janitor:
+        result = shannon.run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload["plan"]
+    janitor.assert_not_called()
+
+
+def test_run_shannon_step_prefers_valid_output_file_over_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    file_payload = {
+        "plan": "# File Plan\nUse the file.",
+        "questions": [],
+        "success_criteria": [{"criterion": "file criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    transcript_payload = {
+        "plan": "# Transcript Plan\nDo not use this.",
+        "questions": [],
+        "success_criteria": [{"criterion": "transcript criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        (plan_dir / "plan_output.json").write_text(json.dumps(file_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps([{"type": "result", "result": json.dumps(transcript_payload)}]),
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload == file_payload
+    assert json.loads((plan_dir / "plan_shannon_output.json").read_text(encoding="utf-8")) == file_payload
+
+
+def test_run_shannon_step_uses_valid_output_file_when_transcript_is_not_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    file_payload = {
+        "plan": "# File Plan\nUse the file.",
+        "questions": [],
+        "success_criteria": [{"criterion": "file criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        (plan_dir / "plan_output.json").write_text(json.dumps(file_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout="not json",
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step("plan", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload == file_payload
+    assert json.loads((plan_dir / "plan_shannon_output.json").read_text(encoding="utf-8")) == file_payload
+
+
+def test_run_shannon_step_prefers_execute_output_file_over_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    file_payload = {
+        "output": "file result",
+        "files_changed": ["megaplan/workers/shannon.py"],
+        "commands_run": ["python -m pytest tests/test_workers.py -x --tb=short"],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    transcript_payload = {
+        "output": "transcript result",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        (plan_dir / "execute_output.json").write_text(json.dumps(file_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps([{"type": "result", "result": json.dumps(transcript_payload)}]),
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step("execute", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload == file_payload
+    assert json.loads((plan_dir / "execute_shannon_output.json").read_text(encoding="utf-8")) == file_payload
+
+
+def test_run_shannon_step_rejects_empty_file_template_over_populated_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult
+    from megaplan.workers.shannon import run_shannon_step
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    empty_template = {
+        "checks": [],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+    transcript_payload = {
+        "checks": [
+            {
+                "id": "issue_hints",
+                "question": "Did the plan address the brief?",
+                "findings": [{"detail": "The transcript contains the real critique.", "flagged": True}],
+            }
+        ],
+        "flags": [],
+        "verified_flag_ids": [],
+        "disputed_flag_ids": [],
+    }
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        (plan_dir / "critique_output.json").write_text(json.dumps(empty_template), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout=json.dumps([{"type": "result", "result": json.dumps(transcript_payload)}]),
+            stderr="",
+            duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step("critique", state, plan_dir, root=tmp_path, fresh=True)
+
+    assert result.payload == transcript_payload
+    written = json.loads((plan_dir / "critique_shannon_output.json").read_text(encoding="utf-8"))
+    assert written == transcript_payload
 
 
 def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4504,3 +5098,4 @@ def test_hermes_deepseek_v4_does_not_force_reasoning_disabled() -> None:
     assert _reasoning_config_for_model("deepseek-v4-pro") is None
     assert _reasoning_config_for_model("accounts/fireworks/models/deepseek-v4-pro") is None
     assert _reasoning_config_for_model("deepseek/deepseek-r1") == {"enabled": False}
+

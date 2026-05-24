@@ -21,7 +21,7 @@ The dials are independent — work through each one ignoring the others — then
 
 **The dials measure residual complexity, not nominal scope.** Discount for decisions already made; add for unknowns remaining. A spec-shaped brief with everything known lands a tier lower than the same nominal scope arriving as a sketch.
 
-**Defaults to keep in mind:** `--robustness full`, `--depth` unset (which means the profile's existing depths win — usually `:low` on premium phases), vendor from your config (`claude` if unset). Reach past those only when you can name the specific reason. Built-in profiles live in `megaplan/profiles/`; per-user (`~/.config/megaplan/profiles.toml`) and per-project (`<project>/.megaplan/profiles.toml`) TOML overrides win over them.
+**Defaults to keep in mind:** `--robustness full`, `--depth` unset (which means the profile's existing depths win — usually `:low` on premium phases), vendor from your config (`claude` if unset). **Finalize is premium (except on all-DeepSeek `solo`) and execute is complexity-routed per task** — that's the baseline, not a profile you opt into; the tier only changes the reasoning phases and the routing ceiling. Reach past those only when you can name the specific reason. Built-in profiles live in `megaplan/profiles/`; per-user (`~/.config/megaplan/profiles.toml`) and per-project (`<project>/.megaplan/profiles.toml`) TOML overrides win over them.
 
 ---
 
@@ -70,19 +70,21 @@ A brief missing #3 or #4 surfaces those gaps as critique flags — better to wri
 
 > **"What level of raw capability does this need?"**
 
-Five tiers, named for the **social configuration of minds** working on the problem. Each rung swaps one block of phases from DeepSeek to premium (Claude / Codex). The progression is monotonic — once a phase upgrades, it stays upgraded. Tier 1 (`solo`) is all DeepSeek end-to-end.
+Five tiers, named for the **social configuration of minds** working on the problem. Each rung swaps one block of **reasoning** phases from DeepSeek to premium (Claude / Codex). The progression is monotonic — once a phase upgrades, it stays upgraded. Tier 1 (`solo`) runs every reasoning phase on DeepSeek.
+
+**Execute is not on this ladder.** By default it is **complexity-routed per task** — finalize scores each task 1–5 and the executor dispatches that task to a model chosen by its score, cheap-to-premium, regardless of which tier you picked. The tier sets the *reasoning* strength and the routing *ceiling*; it does not pick one execute model for the whole run. See **"Execute is complexity-routed by default"** below.
 
 ### When to pick each tier
 
 | Tier | Profile | Picks for | Rough cost (light) |
 |---|---|---|---|
-| 1 | **`solo`** | One non-premium model working alone across every phase. Discovery, docs, schema migrations, ports of self-contained code, utility scripts, config changes, mechanical refactors, CRUD over existing schemas, test fixtures — anything where patterns are stable and overlapping concerns are few. This is already the floor; if it feels like too much, `bare` robustness is the answer, not a lower tier. | ~$0.50-2 |
+| 1 | **`solo`** | All DeepSeek, end to end — every reasoning phase, finalize, and execute, with execute routed only within the DeepSeek family (flash for trivial tasks, pro otherwise). Discovery, docs, schema migrations, ports of self-contained code, utility scripts, config changes, mechanical refactors, CRUD over existing schemas, test fixtures — anything where patterns are stable and overlapping concerns are few. This is already the floor; if it feels like too much, `bare` robustness is the answer, not a lower tier. | ~$0.50-2 |
 | 2 | **`directed`** | A premium model writes the plan; DeepSeek executes it. Complex schema migrations where step ordering matters, multi-step refactors needing careful sequencing, features whose architecture demands deliberation but whose code follows patterns, greenfield implementations with non-trivial design but well-shaped pieces. Drop down to `solo` when the plan is obvious — DeepSeek can plan mechanical work just fine. | ~$1-3 |
 | 3 | **`partnered`** | Premium and DeepSeek working together — premium handles every reasoning phase (plan, critique, revise, review), DeepSeek handles mechanical phases. New CLI commands with cross-cutting concerns, inbox/routing rewrites, adapters with non-trivial edge cases, export/import surfaces with format edge cases, novel features in known architecture, refactors with real cross-system implications. Drop down to `directed` when patterns are stable and variables are few — `partnered` is for genuinely novel or cross-cutting work. | ~$5-15 |
 | 4 | **`premium`** | Premium mind everywhere — DeepSeek exits; single-vendor premium end-to-end. Schema definitions, wire formats, security-critical code paths, public API contracts, migration logic against production data, kernel-invariant changes. Drop down to `partnered` when the execution is mechanical once mapped out — decision-difficulty alone doesn't justify tier 4. | ~$30-70 |
 | 5 | **`apex`** | Both Claude and Codex contributing — the only tier where the two premium models stop being interchangeable. Concurrency primitives that cascade, schemas all later sprints build on, wire formats / claim semantics, multi-system migration decisions, huge architectural choices. Drop down to `premium` unless (a) high-stakes — regression = production incident — or (b) the sprint is making a huge architectural decision, and the execution has enough detail to warrant premium implementing it. | ~$30-50 |
 
-Tiers 4 and 5 are the only tiers where a premium model executes the code, not just reasons about it — reach for them when the *implementation* itself is nuanced, not just the decision. Tier 5 specifically combines Claude and Codex's different strengths (Opus on author/repo-reading, Codex on critique/structural-analysis); that pairing is its whole rationale.
+A premium model now executes the code on any tier — routing sends the high-complexity (tier-4/5) tasks to Sonnet/Opus regardless of the reasoning tier you picked. So you no longer pick a tier to get "premium on the implementation"; the router does that per task. What tiers 4–5 buy is **premium reasoning everywhere** (prep, gate, and the full critique/revise/review loop), and the option to **pin execute to premium for every task** when high stakes mean you don't want even trivial tasks on a cheap model (`--phase-model execute=…`). Tier 5 specifically combines Claude and Codex's different strengths (Opus on author/repo-reading, Codex on critique/structural-analysis); that pairing is its whole rationale.
 
 ### Which model handles each phase
 
@@ -93,16 +95,41 @@ Tiers 4 and 5 are the only tiers where a premium model executes the code, not ju
 | **critique** | DeepSeek | DeepSeek | claude   | claude | codex  |
 | **revise**   | DeepSeek | DeepSeek | claude   | claude | claude |
 | **gate**     | DeepSeek | DeepSeek | DeepSeek | claude | claude |
-| **finalize** | DeepSeek | DeepSeek | DeepSeek | claude | claude |
-| **execute**  | DeepSeek | DeepSeek | DeepSeek | claude | codex  |
+| **finalize** | DeepSeek | premium¹ | premium¹ | premium¹ | premium¹ |
+| **execute**  | routed²  | routed²  | routed²  | routed²  | routed²  |
 | **review**   | DeepSeek | DeepSeek | claude   | claude | codex  |
 
 Legend:
 
 - **DeepSeek** = DeepSeek V4 Pro (open-source workhorse; competent, structured, non-premium).
 - **claude** = Claude Opus 4.7. **codex** = Codex GPT-5.5.
+- **¹ finalize is premium on every tier whose execute can route to a premium model** — i.e. everywhere *except* `solo`. It is the adjudicator that scores each task's complexity to drive routing, so wherever a mis-score could send a task to Sonnet/Opus, the scorer must itself be premium. It follows the premium vendor (`--vendor`: Claude or Codex GPT-5.5); apex uses Claude. `solo` is the exception: it stays all-DeepSeek (DeepSeek finalize), because its routing never leaves the flash↔pro family, so a DeepSeek adjudicator is sufficient.
+- **² execute is routed per task** by the adjudicated complexity — not fixed by tier. See the next section.
 
-Each tier upgrades one block of phases to premium; once upgraded, a phase stays upgraded. Tier 5 doesn't add coverage — it splits premium across two vendors.
+Each tier upgrades one block of *reasoning* phases to premium; once upgraded, a phase stays upgraded. Finalize and execute sit outside this ladder (finalize is always premium; execute is routed). Tier 5 doesn't add coverage — it splits the premium reasoning phases across two vendors.
+
+### Execute is complexity-routed by default
+
+The tiers above govern the **reasoning** phases. **Execute is routed per task**, by the task's adjudicated complexity, on every tier.
+
+The mechanism has two halves:
+
+1. **A premium finalize adjudicates the score.** Finalize assigns every task a 1–5 complexity with a written, defensible justification — a deliberate scoring step, not an inline guess. This is *why finalize is premium*: the routing is only as trustworthy as the model that scores it, so a cheap finalize that mis-rates a dangerous task as trivial would silently route it to a model that fails it. Finalize runs on the run's premium vendor (Claude, or Codex GPT-5.5). The score is hard-validated — an un-adjudicated or unjustified finalize is rejected and retried, never defaulted. (The one exception is `solo`: it is all-DeepSeek, and since its routing ceiling never leaves the flash↔pro family, a DeepSeek adjudicator is good enough — a mis-score there only ever swaps one cheap model for another.)
+
+2. **Execute dispatches each task by its score.** Per task, cheapest-model-that-can-safely-do-it:
+
+   | Complexity | Routed to | Typical task |
+   |---|---|---|
+   | 1 | DeepSeek Flash | trivial single-file mechanical change |
+   | 2–3 | DeepSeek Pro | localized / multi-file non-trivial logic |
+   | 4 | Claude Sonnet | cross-cutting, shared-interface change |
+   | 5 | Claude Opus | concurrency / schema / security — subtle-error risk |
+
+A single run sends its trivial tasks to a cheap model and its dangerous tasks to a premium one, instead of paying one flat execute rate for the whole plan. That's why it's the default: for any plan with mixed-difficulty tasks it strictly dominates a fixed execute model.
+
+**The reasoning tier sets the routing ceiling.** `solo` keeps execute within the DeepSeek family (flash↔pro — it stays cheap); the premium reasoning tiers open the ceiling up to Sonnet/Opus for the hardest tasks. Pick the tier for the *reasoning* you need; the router handles execute spend underneath.
+
+**Pinning uniform execute.** When you want one model on *every* task — a high-stakes run where even trivial tasks shouldn't touch a cheap model — pin it with `--phase-model execute=<spec>`, which disables routing for that run.
 
 ### Vendor: Claude and Codex are mostly interchangeable at tiers 2-4
 
@@ -233,7 +260,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 ### The modifier flags
 
-- **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it (no premium phases); tier 5 silently ignores it (vendor-locked).
+- **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it — `solo` is all-DeepSeek, finalize included. Tiers 2–4 use it to pick the premium vendor (which now includes finalize, the adjudicator). Tier 5 silently ignores it (vendor-locked).
 - **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`. Silently ignored at tier 5.
 - **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.
@@ -242,7 +269,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 
 ### The escape hatch
 
-**`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it.
+**`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it. Note `--phase-model execute=<spec>` is also how you **disable complexity routing** and pin one model on every execute task (the high-stakes "premium on everything" case).
 
 ### The critique == review invariant
 
