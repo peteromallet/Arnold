@@ -126,7 +126,7 @@ def _build_httpx_timeout() -> "httpx.Timeout":
 # than this bound, we abort and raise a retryable APITimeoutError. Resets on
 # every real content/reasoning delta, so slow-but-progressing (including pure
 # reasoning) generations are NOT falsely aborted.
-DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS = 60.0
+DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS = 180.0
 
 
 def _stream_content_stall_timeout_seconds() -> float:
@@ -135,6 +135,12 @@ def _stream_content_stall_timeout_seconds() -> float:
     Configurable via HERMES_STREAM_CONTENT_STALL_TIMEOUT. Catches the
     keepalive-frame stall the httpx read timeout cannot see (bytes keep
     arriving, but no content/reasoning delta does).
+
+    Applied BEFORE first content delta arrives (the pre-content regime).
+    After ``first_content_seen=True`` the loop switches to the more permissive
+    ``_post_content_stall_timeout_seconds`` bound — DeepSeek-V4-Pro routinely
+    pauses for reasoning between content tokens, and 60-180s pauses there are
+    normal, not stalls.
     """
     try:
         value = float(os.getenv(
@@ -144,6 +150,35 @@ def _stream_content_stall_timeout_seconds() -> float:
     except (TypeError, ValueError):
         value = DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS
     return max(value, 1.0)
+
+
+# Post-first-content stall watchdog. Once a real content delta has arrived,
+# DeepSeek-V4-Pro (and other reasoning models) emit content tokens in bursts
+# separated by long reasoning pauses — the SSE channel can fall silent for
+# multiple minutes between content batches while the model "thinks" about the
+# next token. The pre-content bound above is the right tool for "model hasn't
+# decided what to say yet" wedges (paired with the first-content watchdog at
+# line ~160), but it's too aggressive for normal mid-stream reasoning pauses
+# once content is flowing. We use a separate, longer bound for the
+# ``first_content_seen=True`` regime.
+DEFAULT_POST_CONTENT_STALL_TIMEOUT_SECONDS = 240.0
+
+
+def _post_content_stall_timeout_seconds() -> float:
+    """Post-first-content delta inactivity bound (seconds).
+
+    After the first real content delta arrives, allow longer pauses between
+    content chunks (DeepSeek-V4-Pro's reasoning between content can run minutes).
+    Configurable via HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT. 60s floor.
+    """
+    raw = os.environ.get("HERMES_STREAM_POST_CONTENT_STALL_TIMEOUT")
+    if raw:
+        try:
+            v = float(raw)
+            return max(60.0, v)  # 60s floor
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_POST_CONTENT_STALL_TIMEOUT_SECONDS
 
 
 # Reasoning-only "first content" watchdog. A reasoning model (DeepSeek-V4-Pro,
@@ -3994,8 +4029,16 @@ class AIAgent:
             # daemon thread and leaks until the connection tears down — acceptable
             # because stalls are rare and execute workers are short-lived.
             content_stall_timeout = _stream_content_stall_timeout_seconds()
+            # Post-content stall bound: applied only AFTER ``first_content_seen``
+            # flips True. DeepSeek-V4-Pro emits content tokens in reasoning-paced
+            # bursts; a 60-180s gap between content chunks is normal post-first-
+            # content and must not abort the stream. Pre-content the tighter
+            # bound above still applies (paired with the first-content watchdog
+            # to bound true zero-content wedges).
+            post_content_stall_timeout = _post_content_stall_timeout_seconds()
             # Initialized before the loop so the zero-content-from-start case is
             # covered; reset on every real content/reasoning delta below.
+            stream_started_at = time.monotonic()
             last_content_token_time = time.monotonic()
 
             # Separate "first-content" watchdog: a reasoning model can stream
@@ -4027,29 +4070,57 @@ class AIAgent:
             )
             producer_thread.start()
 
-            def _abort_stalled_stream():
+            def _abort_stalled_stream(error_layer="stream_content_stall", timeout_s=None):
                 """Raise a retryable timeout and best-effort release the stream."""
                 import openai as _openai_mod
                 try:
                     stream.close()
                 except Exception:
                     pass
-                raise _openai_mod.APITimeoutError(
+                error = _openai_mod.APITimeoutError(
                     request=getattr(self, "_last_stream_request", None)
                     or httpx.Request("POST", self.base_url or "http://stream"),
                 )
+                error.extra = {
+                    "external_error": {
+                        "provider": "unknown",
+                        "error_kind": "stream_content_stall",
+                        "message": "Streaming response stalled without content or reasoning progress.",
+                        "provider_error_code": "timeout",
+                        "error_layer": error_layer,
+                        "stall_timeout_s": float(timeout_s or content_stall_timeout),
+                        "elapsed_s": round(time.monotonic() - stream_started_at, 3),
+                        "content_chunk_count": len(content_parts),
+                        "reasoning_chunk_count": len(reasoning_parts),
+                    }
+                }
+                raise error
 
             while True:
                 if self._interrupt_requested:
                     break
 
+                # Pick the active stall bound based on whether real content has
+                # arrived yet. Pre-content uses the tighter ``content_stall_timeout``
+                # paired with the first-content watchdog; post-content uses the
+                # more permissive ``post_content_stall_timeout`` because a
+                # reasoning model's pauses between content tokens can legitimately
+                # last minutes.
+                effective_stall_timeout = (
+                    post_content_stall_timeout
+                    if first_content_seen
+                    else content_stall_timeout
+                )
+
                 try:
-                    item = chunk_queue.get(timeout=content_stall_timeout)
+                    item = chunk_queue.get(timeout=effective_stall_timeout)
                 except _queue.Empty:
                     # No real chunk (content OR reasoning) for the whole stall
                     # window — the producer is blocked inside __next__ on a
                     # keepalive-only stream. Abort with a retryable error.
-                    _abort_stalled_stream()
+                    _abort_stalled_stream(
+                        "stream_content_stall", effective_stall_timeout
+                    )
 
                 if item is _STREAM_QUEUE_SENTINEL:
                     break
@@ -4065,8 +4136,14 @@ class AIAgent:
                 # delta has arrived for the whole stall window, the stream is
                 # wedged — abort with a retryable timeout so the call is retried
                 # on a fresh connection. Runs every keepalive iteration (~1/s).
-                if time.monotonic() - last_content_token_time > content_stall_timeout:
-                    _abort_stalled_stream()
+                # Same pre/post-content split as the queue.get bound above.
+                if (
+                    time.monotonic() - last_content_token_time
+                    > effective_stall_timeout
+                ):
+                    _abort_stalled_stream(
+                        "stream_content_stall", effective_stall_timeout
+                    )
 
                 # First-content watchdog: catches the reasoning-only wedge that
                 # the content_stall watchdog above CANNOT see, because reasoning
@@ -4077,7 +4154,7 @@ class AIAgent:
                     not first_content_seen
                     and time.monotonic() > first_content_deadline
                 ):
-                    _abort_stalled_stream()
+                    _abort_stalled_stream("stream_first_content_timeout", first_content_timeout)
 
                 if not chunk.choices:
                     if hasattr(chunk, "model") and chunk.model:
