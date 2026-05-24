@@ -30,6 +30,34 @@ def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
     return plan_dir
 
 
+def test_format_phase_heartbeat_includes_plan_step_and_progress(tmp_path: Path) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "heartbeat-plan")
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "heartbeat-plan",
+                "current_state": "planned",
+                "active_step": {"step": "execute", "agent": "codex", "mode": "persistent"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    line = auto._format_phase_heartbeat(
+        ["execute", "--plan", "heartbeat-plan"],
+        elapsed_s=61.8,
+        plan_dir=plan_dir,
+        progress_changed=True,
+    )
+
+    assert "heartbeat" in line
+    assert "elapsed=61s" in line
+    assert "progress_mtime_changed=yes" in line
+    assert "plan=heartbeat-plan" in line
+    assert "active_step=execute" in line
+    assert "worker=codex/persistent" in line
+
+
 def _finalized_status(plan: str) -> dict:
     """Return a status snapshot that looks like 'review is next'."""
     return {

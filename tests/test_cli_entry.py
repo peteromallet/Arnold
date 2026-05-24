@@ -17,7 +17,7 @@ from megaplan.cli import (
 from megaplan.cloud.cli import _register_cloud_subcommands, build_cloud_parser
 from megaplan.handlers import handle_override
 from megaplan.handlers.override import _OVERRIDE_ACTIONS
-from megaplan.orchestration.phase_result import BlockedTask, Deviation
+from megaplan.orchestration.phase_result import BlockedTask, Deviation, ExternalError
 from megaplan.user_actions import (
     VALID_RESOLUTIONS,
     build_resolution_event,
@@ -962,6 +962,117 @@ def test_override_recover_blocked_refuses_active_fixed_quality_blocker(
     assert blocker["suggested_commands"] == ["execute --retry-blocked-tasks"]
     state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state_data["current_state"] == "blocked"
+
+
+def test_blocked_external_error_status_suggests_resume_not_blocker_recovery(
+    tmp_path: Path,
+) -> None:
+    root, plan_dir, state = _setup_resolution_plan_dir(tmp_path)
+    state["current_state"] = "blocked"
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "wait_and_retry"}
+    state["latest_failure"] = {
+        "kind": "external_error",
+        "phase": "execute",
+        "message": "phase 'execute' external dependency failure: [deepseek] rate_limit",
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _write_finalize_with_actions(plan_dir)
+
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(
+        plan_dir,
+        exit_kind="external_error",
+        external_error=ExternalError(
+            provider="deepseek",
+            error_kind="rate_limit",
+            message="429 Too Many Requests",
+            status_code=429,
+            retry_after_s=60.0,
+        ),
+    )
+
+    payload = _build_status_payload(plan_dir, state)
+
+    assert payload["suggested_recovery_commands"] == ["resume --plan test-plan"]
+    assert "blocker_recovery" not in payload
+    assert "quality_blockers" not in payload
+    assert payload["external_error_recovery"]["recommended_action"] == "resume"
+
+
+def test_override_recover_blocked_external_error_requires_resume(
+    tmp_path: Path,
+) -> None:
+    root, plan_dir, state = _setup_resolution_plan_dir(tmp_path)
+    state["current_state"] = "blocked"
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "wait_and_retry"}
+    state["latest_failure"] = {"kind": "external_error", "phase": "execute"}
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _write_finalize_with_actions(plan_dir)
+
+    from tests.conftest import make_fake_phase_result
+
+    make_fake_phase_result(
+        plan_dir,
+        exit_kind="external_error",
+        external_error=ExternalError(
+            provider="deepseek",
+            error_kind="rate_limit",
+            message="429 Too Many Requests",
+        ),
+    )
+
+    args = argparse.Namespace(
+        plan="test-plan",
+        override_action="recover-blocked",
+        reason="operator tried blocker recovery",
+    )
+
+    from megaplan.types import CliError
+
+    with pytest.raises(CliError) as exc_info:
+        handle_override(root, args)
+
+    assert exc_info.value.code == "external_error_resume_required"
+    assert exc_info.value.extra["resume_command"] == "megaplan resume --plan test-plan"
+    assert exc_info.value.extra["suggested_recovery_commands"] == [
+        "megaplan resume --plan test-plan"
+    ]
+    assert exc_info.value.extra["phase_result_exit_kind"] == "external_error"
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["current_state"] == "blocked"
+    assert state_data["resume_cursor"] == state["resume_cursor"]
+    assert state_data["latest_failure"] == state["latest_failure"]
+
+
+def test_set_profile_preserves_external_error_resume_guidance_while_blocked(
+    tmp_path: Path,
+) -> None:
+    root, plan_dir, state = _setup_resolution_plan_dir(tmp_path)
+    state["current_state"] = "blocked"
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "wait_and_retry"}
+    state["latest_failure"] = {"kind": "external_error", "phase": "execute"}
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    _write_finalize_with_actions(plan_dir)
+
+    args = argparse.Namespace(
+        plan="test-plan",
+        override_action="set-profile",
+        profile="all-codex",
+        reason="switch provider before retry",
+    )
+    result = handle_override(root, args)
+
+    assert result["success"] is True
+    assert result["state"] == "blocked"
+
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["resume_cursor"] == state["resume_cursor"]
+    assert state_data["latest_failure"] == state["latest_failure"]
+    assert state_data["config"]["profile"] == "all-codex"
+
+    payload = _build_status_payload(plan_dir, state_data)
+    assert payload["suggested_recovery_commands"] == ["resume --plan test-plan"]
 
 
 def test_override_recover_blocked_requires_reason_in_main(

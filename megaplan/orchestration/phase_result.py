@@ -185,6 +185,20 @@ class ExternalError:
         combined = f"{exc_name} {message}".lower()
 
         status_code = _extract_status_code(exc, message)
+        code = getattr(exc, "code", None)
+        if code == "worker_stall" or "stalled stream" in combined:
+            inferred_provider = provider
+            if inferred_provider == "unknown":
+                if "claude" in combined:
+                    inferred_provider = "claude"
+                elif "shannon" in combined:
+                    inferred_provider = "shannon"
+            return cls(
+                provider=inferred_provider,
+                error_kind="stalled_stream",
+                message=message[:500],
+                status_code=status_code,
+            )
         error_kind: str | None = None
         if status_code == 429 or re.search(
             r"\b(rate[-_\s]?limit(?:ed)?|too many requests)\b", combined

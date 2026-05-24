@@ -1426,6 +1426,65 @@ def test_init_plan_uses_module_launcher(tmp_path: Path) -> None:
     ]
 
 
+def test_init_plan_warns_when_vendor_ignored_by_locked_profile(tmp_path: Path) -> None:
+    idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
+    proc = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"plan": "demo-plan"}',
+        stderr="",
+    )
+    messages: list[str] = []
+
+    with patch("megaplan.chain.subprocess.run", return_value=proc), \
+         patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}):
+        from megaplan.chain import _init_plan
+
+        _init_plan(
+            tmp_path,
+            str(idea_path),
+            robustness="standard",
+            auto_approve=True,
+            profile="apex",
+            vendor="codex",
+            writer=messages.append,
+        )
+
+    joined = "".join(messages)
+    assert "profile apex is vendor-locked" in joined
+    assert "vendor=codex is ignored" in joined
+
+
+def test_init_plan_warns_when_inherited_vendor_ignored_by_locked_profile(tmp_path: Path) -> None:
+    idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
+    proc = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"plan": "demo-plan"}',
+        stderr="",
+    )
+    messages: list[str] = []
+
+    with patch("megaplan.chain.subprocess.run", return_value=proc), \
+         patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
+         patch("megaplan.chain._resolve_default_vendor", return_value="codex"):
+        from megaplan.chain import _init_plan
+
+        _init_plan(
+            tmp_path,
+            str(idea_path),
+            robustness="standard",
+            auto_approve=True,
+            profile="apex",
+            vendor=None,
+            writer=messages.append,
+        )
+
+    joined = "".join(messages)
+    assert "profile apex is vendor-locked" in joined
+    assert "inherited vendor=codex is ignored" in joined
+
+
 def test_init_plan_forwards_prep_direction_flag(tmp_path: Path) -> None:
     idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
     proc = subprocess.CompletedProcess(

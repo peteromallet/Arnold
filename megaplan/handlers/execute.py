@@ -120,6 +120,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         # prior-context bias (poisoned environment beliefs, stale task state).
         if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):
             refreshed = True
+        if agent == "codex" and refreshed:
+            state["sessions"].pop(worker_module.session_key_for("execute", "codex", model=model), None)
         # Detect tier_models.execute from profile expansion.  If present,
         # pass the tier map down to the dispatchers so they can route
         # per-batch by task complexity.  apply_profile_expansion already

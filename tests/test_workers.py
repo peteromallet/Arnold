@@ -3333,6 +3333,74 @@ def test_codex_fresh_step_accounts_against_new_session_not_stored_session(
     assert state["sessions"]["codex_planner"]["last_total_tokens"]["input_tokens"] == 1000
 
 
+def test_codex_execute_headroom_guard_forces_fresh_before_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers import CommandResult, run_codex_step
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS", "1000")
+    state["sessions"]["codex_executor"] = {
+        "id": "old-execute-session",
+        "created_at": "2026-01-01T00:00:00Z",
+        "last_used_at": "2026-01-01T00:00:00Z",
+        "mode": "persistent",
+        "refreshed": False,
+        "last_total_tokens": {"total_tokens": 1001},
+    }
+    execute_payload = {
+        "output": "Implemented the batch.",
+        "files_changed": ["src/example.py"],
+        "commands_run": ["pytest tests/test_workers.py"],
+        "deviations": [],
+        "task_updates": [
+            {
+                "task_id": "T1",
+                "status": "done",
+                "executor_notes": "Done.",
+                "files_changed": ["src/example.py"],
+                "commands_run": ["pytest tests/test_workers.py"],
+            }
+        ],
+        "sense_check_acknowledgments": [],
+    }
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        del kwargs
+        commands.append(command)
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(execute_payload), encoding="utf-8")
+        return CommandResult(
+            command=command,
+            cwd=tmp_path,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"new-execute-session"}\n',
+            stderr="",
+            duration_ms=25,
+        )
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_step(
+            "execute",
+            state,
+            plan_dir,
+            root=tmp_path,
+            persistent=True,
+            fresh=False,
+            json_trace=True,
+            prompt_override="execute prompt",
+        )
+
+    assert result.session_id == "new-execute-session"
+    assert commands
+    assert commands[0][:3] == ["codex", "exec", "--skip-git-repo-check"]
+    assert "resume" not in commands[0]
+    assert "old-execute-session" not in commands[0]
+
+
 def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

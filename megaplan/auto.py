@@ -1601,6 +1601,7 @@ def drive(
                 f"phase '{next_step}' external_error [{provider}] "
                 f"{error_kind}{code_hint}{retry_hint}: {message[:200]}"
             )
+            resume_command = f"python -m megaplan resume --plan {plan}"
             _record_failure(
                 plan_dir=plan_dir,
                 kind="external_error",
@@ -1621,7 +1622,8 @@ def drive(
                 last_artifact=_latest_artifact_name(plan_dir),
                 suggested_action=(
                     f"External provider '{provider}' returned {error_kind}. "
-                    "Verify API key/quota/balance and retry."
+                    "Fix provider/profile settings if needed, then run "
+                    f"`{resume_command}`."
                     + (
                         f" Wait {retry_after_s}s before retrying."
                         if retry_after_s is not None
@@ -1635,6 +1637,8 @@ def drive(
                     "retry_after_s": retry_after_s,
                     "exit_code": code,
                     "iteration": iteration,
+                    "resume_command": resume_command,
+                    "suggested_recovery_commands": [resume_command],
                 },
             )
         elif result is not None and getattr(result, "exit_kind", None) == ExitKind.internal_error.value:

@@ -593,3 +593,30 @@ class TestExternalError:
         assert result.external_error is not None
         assert result.external_error.error_kind == "rate_limit"
         assert result.external_error.retry_after_s == 9.0
+
+    def test_phase_result_guard_classifies_shannon_worker_stall(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / "plan"
+        plan_dir.mkdir()
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "meta": {"current_invocation_id": "inv"},
+                    "active_step": {"step": "plan"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(CliError):
+            with phase_result_guard(plan_dir):
+                raise CliError(
+                    "worker_stall",
+                    "Worker produced no output for 240s (stalled stream): shannon --model claude-opus-4-7...",
+                )
+
+        result = read_phase_result(plan_dir)
+        assert result is not None
+        assert result.exit_kind == ExitKind.external_error.value
+        assert result.external_error is not None
+        assert result.external_error.provider in {"shannon", "claude"}
+        assert result.external_error.error_kind == "stalled_stream"
