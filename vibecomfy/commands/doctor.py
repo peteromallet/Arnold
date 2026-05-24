@@ -10,13 +10,18 @@ import re
 import subprocess
 from typing import Any
 
+from vibecomfy._git_utils import git_head
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.commands._model_entries import model_entries_for_workflow
 from vibecomfy.commands._output import emit
-from vibecomfy.commands._workflow_path import resolve_workflow_path
 from vibecomfy.contracts import build_contract
 from vibecomfy.contracts.surface import build_contract_surface
-from vibecomfy.ingest.loader import load_workflow_json
-from vibecomfy.model_assets import extract_from_raw_workflow
+from vibecomfy.diagnostics import (
+    DiagnosticFinding,
+    PatchSuggestion,
+    finding_messages,
+    patch_suggestions_payload,
+)
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.schema.format import format_issue
@@ -40,10 +45,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         print("Next: fix the Python file until build() returns a VibeWorkflow.")
         print(f"Port preflight: vibecomfy port check {args.path} --json")
         return 1
-    contract_payload = build_contract(workflow).to_dict()
-    if lint:
-        for warning in _lint_untyped_raw_refs(Path(args.path)):
-            print(f"- untyped_raw_ref: {warning}")
     helper_issues = workflow.helper_diagnostics()
     helper_blockers = [issue for issue in helper_issues if issue.severity != "info"]
     if helper_blockers:
@@ -53,7 +54,6 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             "errors": [issue.message for issue in helper_blockers],
             "recommended_command": f"vibecomfy port check {args.path} --json",
         }
-        _attach_contract(payload, contract_payload, workflow)
         if json_output:
             emit(payload, json=True, text_renderer=_render_doctor_error)
         else:
@@ -62,15 +62,18 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 print(f"- {issue.message}")
             print(f"Next: {payload['recommended_command']}")
         return 1
-    suggested_patches = _patch_suggestions(workflow)
-    drift_warnings, drift_errors = _nodepack_lockfile_drift()
+    if lint:
+        for warning in _lint_untyped_raw_refs(Path(args.path)):
+            print(f"- untyped_raw_ref: {warning}")
+    suggested_patches = patch_suggestions_payload(_patch_suggestions(workflow))
+    drift_warning_findings, drift_error_findings = _nodepack_lockfile_drift()
+    drift_warnings = finding_messages(drift_warning_findings)
+    drift_errors = finding_messages(drift_error_findings)
     if drift_errors:
         if allow_drift:
             payload = {"status": "warning", "nodepack_drift": [*drift_warnings, *drift_errors], "suggested_patches": suggested_patches}
-            _attach_contract(payload, contract_payload, workflow)
             return emit(payload, json=json_output, text_renderer=_render_doctor_warning)
         payload = {"status": "error", "layer": "nodepack lockfile drift", "errors": drift_errors, "suggested_patches": suggested_patches}
-        _attach_contract(payload, contract_payload, workflow)
         return emit(payload, json=json_output, text_renderer=_render_doctor_error) or 1
     if drift_warnings and not json_output:
         print("Nodepack lockfile warnings:")
@@ -78,23 +81,22 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             print(f"- {warning}")
     report = workflow.validate(schema_provider=schema_provider)
     if not report.ok:
-        validation_issues = [format_issue(issue) for issue in report.issues]
+        validation_findings = _validation_findings(report)
+        validation_issues = finding_messages(validation_findings)
         payload = {
             "status": "error",
             "layer": "VibeWorkflow validation",
             "errors": validation_issues,
             "nodepack_warnings": drift_warnings,
             "suggested_patches": suggested_patches,
-            "recommended_command": f"vibecomfy port check {args.path} --json",
         }
-        _attach_contract(payload, contract_payload, workflow)
         if json_output:
             emit(payload, json=True, text_renderer=_render_doctor_error)
         else:
             print("Layer: VibeWorkflow validation")
             for issue in validation_issues:
                 print(f"- {issue}")
-            print(f"Next: {payload['recommended_command']}")
+            print(f"Next: vibecomfy port check {args.path} --json")
         if json_output:
             return 1
         missing_classes = {
@@ -115,23 +117,14 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
                 for class_type in unresolved:
                     print(f"- {class_type}")
         return 1
-    warnings = _doctor_warnings(workflow)
-    missing_models = _missing_model_warnings(workflow, args.path)
+    missing_models = finding_messages(_missing_model_findings(workflow, args.path))
     if missing_models:
-        payload = {
-            "status": "error",
-            "missing_models": missing_models,
-            "warnings": warnings,
-            "nodepack_warnings": drift_warnings,
-            "suggested_patches": suggested_patches,
-            "recommended_command": f"vibecomfy port check {args.path} --json",
-        }
-        _attach_contract(payload, contract_payload, workflow)
-        emit(payload, json=json_output, text_renderer=_render_missing_models)
+        payload = {"status": "error", "missing_models": missing_models, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
+        emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Missing models", data["missing_models"], data))
         return 1
+    warnings = _doctor_warnings(workflow)
     if warnings:
         payload = {"status": "warning", "warnings": warnings, "nodepack_warnings": drift_warnings, "suggested_patches": suggested_patches}
-        _attach_contract(payload, contract_payload, workflow)
         emit(payload, json=json_output, text_renderer=lambda data: _render_list_section("Local checks passed with runtime warnings", data["warnings"], data))
         return 0
     payload = {
@@ -140,7 +133,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         "nodepack_warnings": drift_warnings,
         "suggested_patches": suggested_patches,
     }
-    _attach_contract(payload, contract_payload, workflow)
+    if json_output:
+        _attach_contract(payload, build_contract(workflow).to_dict(), workflow)
     return emit(payload, json=json_output, text_renderer=_render_doctor_ok)
 
 
@@ -149,8 +143,8 @@ def _attach_contract(payload: dict[str, Any], contract: dict[str, Any], workflow
     payload.update(build_contract_surface(contract=contract, workflow=workflow))
 
 
-def _patch_suggestions(workflow: VibeWorkflow) -> list[dict[str, str]]:
-    return [{"name": patch.name, "rationale": patch.rationale(workflow)} for patch in find_applicable(workflow)]
+def _patch_suggestions(workflow: VibeWorkflow) -> list[PatchSuggestion]:
+    return [PatchSuggestion(name=patch.name, rationale=patch.rationale(workflow)) for patch in find_applicable(workflow)]
 
 
 def _render_suggested_patches(payload: dict[str, Any]) -> list[str]:
@@ -193,45 +187,88 @@ def _render_list_section(title: str, items: list[str], payload: dict[str, Any]) 
     return "\n".join(lines)
 
 
-def _render_missing_models(payload: dict[str, Any]) -> str:
-    lines = ["Missing models:"]
-    lines.extend(f"- {item}" for item in payload["missing_models"])
-    warnings = payload.get("warnings") or []
-    if warnings:
-        lines.append("Other warnings:")
-        lines.extend(f"- {item}" for item in warnings)
-    lines.extend(_render_suggested_patches(payload))
-    lines.extend(_render_recommended_command(payload))
-    return "\n".join(lines)
+def _validation_findings(report: Any) -> list[DiagnosticFinding]:
+    findings: list[DiagnosticFinding] = []
+    for issue in report.issues:
+        detail = issue.detail or {}
+        findings.append(
+            DiagnosticFinding(
+                code=issue.code,
+                message=format_issue(issue),
+                severity=issue.severity,
+                node_id=str(detail["node_id"]) if "node_id" in detail else None,
+                class_type=str(detail["class_type"]) if "class_type" in detail else None,
+                detail=detail,
+            )
+        )
+    return findings
 
 
 def _read_doctor_lockfile() -> list[LockEntry]:
     return read_lockfile()
 
 
-def _nodepack_lockfile_drift() -> tuple[list[str], list[str]]:
-    warnings: list[str] = []
-    errors: list[str] = []
+def _nodepack_lockfile_drift() -> tuple[list[DiagnosticFinding], list[DiagnosticFinding]]:
+    warnings: list[DiagnosticFinding] = []
+    errors: list[DiagnosticFinding] = []
     for entry in _read_doctor_lockfile():
         pack_dir = _doctor_nodepack_dir(entry.name)
         if pack_dir is None:
-            warnings.append(f"{entry.name} in lockfile but not installed; skipping drift check")
+            warnings.append(
+                DiagnosticFinding(
+                    "nodepack_lockfile_missing_pack",
+                    f"{entry.name} in lockfile but not installed; skipping drift check",
+                    "warning",
+                    detail={"pack": entry.name},
+                )
+            )
             continue
-        actual = _git_head(pack_dir)
+        actual = git_head(pack_dir, runner=subprocess.run)
         if actual is None:
-            warnings.append(f"{entry.name} is installed at {pack_dir} but git HEAD could not be read; skipping drift check")
+            warnings.append(
+                DiagnosticFinding(
+                    "nodepack_lockfile_unreadable_head",
+                    f"{entry.name} is installed at {pack_dir} but git HEAD could not be read; skipping drift check",
+                    "warning",
+                    detail={"pack": entry.name, "path": str(pack_dir)},
+                )
+            )
             continue
         if actual != entry.git_commit_sha:
-            errors.append(f"{entry.name} git HEAD {actual} does not match lockfile git_commit_sha {entry.git_commit_sha}")
+            errors.append(
+                DiagnosticFinding(
+                    "nodepack_lockfile_git_head_mismatch",
+                    f"{entry.name} git HEAD {actual} does not match lockfile git_commit_sha {entry.git_commit_sha}",
+                    "error",
+                    detail={"pack": entry.name, "actual": actual, "expected": entry.git_commit_sha},
+                )
+            )
         for rel_path, expected_hash in entry.source_sha256.items():
             source_path = pack_dir / rel_path
             if not source_path.is_file():
-                errors.append(f"{entry.name} source {rel_path} is missing; expected sha256 {expected_hash}")
+                errors.append(
+                    DiagnosticFinding(
+                        "nodepack_lockfile_missing_source",
+                        f"{entry.name} source {rel_path} is missing; expected sha256 {expected_hash}",
+                        "error",
+                        detail={"pack": entry.name, "path": rel_path, "expected_sha256": expected_hash},
+                    )
+                )
                 continue
             actual_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
             if actual_hash != expected_hash:
                 errors.append(
-                    f"{entry.name} source {rel_path} sha256 {actual_hash} does not match lockfile {expected_hash}"
+                    DiagnosticFinding(
+                        "nodepack_lockfile_source_hash_mismatch",
+                        f"{entry.name} source {rel_path} sha256 {actual_hash} does not match lockfile {expected_hash}",
+                        "error",
+                        detail={
+                            "pack": entry.name,
+                            "path": rel_path,
+                            "actual_sha256": actual_hash,
+                            "expected_sha256": expected_hash,
+                        },
+                    )
                 )
     return warnings, errors
 
@@ -246,19 +283,6 @@ def _doctor_nodepack_dir(name: str) -> Path | None:
         if candidate.is_dir():
             return candidate
     return None
-
-
-def _git_head(pack_dir: Path) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(pack_dir), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return result.stdout.strip() or None
 
 
 def _lint_untyped_raw_refs(path: Path) -> list[str]:
@@ -352,88 +376,18 @@ def _contains_out_call(node: ast.AST) -> bool:
 
 
 def _doctor_warnings(workflow: VibeWorkflow) -> list[str]:
-    warnings: list[str] = []
-    warnings.extend(_embedded_configuration_warnings())
-    warnings.extend(_video_audio_warnings(workflow))
-    warnings.extend(_video_frame_cap_warnings(workflow))
-    warnings.extend(_ltx_audio_vae_loader_warnings(workflow))
-    return warnings
+    return finding_messages(_doctor_warning_findings(workflow))
 
 
-def _missing_model_warnings(workflow: VibeWorkflow, path: str) -> list[str]:
-    import vibecomfy.fetch as fetch_assets
-
-    warnings: list[str] = []
-    for entry in _model_asset_entries(workflow, path):
-        if fetch_assets.is_present(entry):
-            continue
-        warnings.append(
-            f"missing model {entry['name']}: expected {fetch_assets.local_path(entry)} — fetch from {entry['url']}"
-        )
-    return warnings
-
-
-def _model_asset_entries(workflow: VibeWorkflow, workflow_ref: str) -> list[dict]:
-    entries = workflow.metadata.get("model_assets", [])
-    if entries:
-        return [entry for entry in entries if isinstance(entry, dict)]
-    path = _json_path_for_reference(workflow_ref)
-    if path is None:
-        return []
-    return extract_from_raw_workflow(load_workflow_json(path))
-
-
-def _json_path_for_reference(workflow_ref: str) -> str | None:
-    path = Path(workflow_ref)
-    if path.suffix.lower() == ".json" and path.is_file():
-        return str(path)
-    try:
-        resolved = Path(resolve_workflow_path(workflow_ref))
-    except FileNotFoundError:
-        return None
-    if resolved.suffix.lower() == ".json" and resolved.is_file():
-        return str(resolved)
-    return None
-
-
-def _embedded_configuration_warnings() -> list[str]:
-    raw = os.environ.get("VIBECOMFY_COMFY_CONFIGURATION")
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return [f"VIBECOMFY_COMFY_CONFIGURATION is not valid JSON: {exc}"]
-    if not isinstance(parsed, dict):
-        return ["VIBECOMFY_COMFY_CONFIGURATION must be a JSON object."]
-    try:
-        from vibecomfy.runtime.run import _embedded_configuration
-        from vibecomfy.workflow import WorkflowSource
-
-        probe = VibeWorkflow(id="doctor", source=WorkflowSource(id="doctor"))
-        config = _embedded_configuration(probe)
-    except Exception as exc:
-        return [f"embedded configuration could not be constructed: {type(exc).__name__}: {exc}"]
-    if config is not None and not hasattr(config, "cwd"):
-        return ["embedded configuration is not a Comfy Configuration object; embedded runtime will fail before queueing."]
-    return []
-
-
-def _video_audio_warnings(workflow: VibeWorkflow) -> list[str]:
-    warnings: list[str] = []
-    edges_by_target = {(edge.to_node, edge.to_input): edge for edge in workflow.edges}
-    for node_id, node in sorted(workflow.nodes.items()):
-        if node.class_type != "CreateVideo":
-            continue
-        audio_edge = edges_by_target.get((node_id, "audio"))
-        if audio_edge is None and _literal_input(node.inputs, "audio") is None:
-            continue
-        source = _audio_source(workflow, audio_edge, node.inputs.get("audio"))
-        warnings.append(
-            "CreateVideo node "
-            f"{node_id} has optional audio input connected"
-            f"{f' from {source}' if source else ''}; for smoke tests, remove this edge if SaveVideo fails with AAC NaN/Inf."
-        )
+def _doctor_warning_findings(workflow: VibeWorkflow) -> list[DiagnosticFinding]:
+    warnings: list[DiagnosticFinding] = []
+    warnings.extend(_embedded_configuration_findings())
+    warnings.extend(_video_audio_findings(workflow))
+    warnings.extend(
+        DiagnosticFinding("video_frame_cap", warning, "warning")
+        for warning in _video_frame_cap_warnings(workflow)
+    )
+    warnings.extend(_ltx_audio_vae_loader_findings(workflow))
     return warnings
 
 
@@ -464,21 +418,141 @@ def _video_frame_cap_warnings(workflow: VibeWorkflow) -> list[str]:
     return warnings
 
 
-def _ltx_audio_vae_loader_warnings(workflow: VibeWorkflow) -> list[str]:
-    warnings: list[str] = []
+def _ltx_audio_vae_loader_findings(workflow: VibeWorkflow) -> list[DiagnosticFinding]:
+    findings: list[DiagnosticFinding] = []
     for node_id, node in sorted(workflow.nodes.items()):
         if node.class_type != "VAELoaderKJ":
             continue
         vae_name = node.inputs.get("vae_name") or node.inputs.get("widget_0")
         if not isinstance(vae_name, str):
             continue
-        normalized = vae_name.lower().replace("\\", "/")
+        normalized = vae_name.lower()
         if "ltx" not in normalized or "audio" not in normalized:
             continue
+        findings.append(
+            DiagnosticFinding(
+                "ltx_audio_vae_wrong_loader",
+                "VAELoaderKJ node "
+                f"{node_id} loads {vae_name!r}; current KJNodes may misclassify LTX audio VAE files. "
+                "Use LTXVAudioVAELoader with the file staged under checkpoints.",
+                "warning",
+                node_id=str(node_id),
+                class_type=node.class_type,
+                detail={"vae_name": vae_name},
+            )
+        )
+    return findings
+
+
+def _missing_model_warnings(workflow: VibeWorkflow, path: str) -> list[str]:
+    return finding_messages(_missing_model_findings(workflow, path))
+
+
+def _missing_model_findings(workflow: VibeWorkflow, path: str) -> list[DiagnosticFinding]:
+    import vibecomfy.fetch as fetch_assets
+
+    if "VIBECOMFY_MODELS_ROOT" not in os.environ:
+        return []
+
+    warnings: list[DiagnosticFinding] = []
+    for entry in _model_asset_entries(workflow, path):
+        if fetch_assets.is_present(entry):
+            continue
         warnings.append(
-            "VAELoaderKJ node "
-            f"{node_id} loads {vae_name!r}; current KJNodes may misclassify LTX audio VAE files. "
-            "Use LTXVAudioVAELoader with the file staged under checkpoints."
+            DiagnosticFinding(
+                "missing_model",
+                f"missing model {entry['name']}: expected {fetch_assets.local_path(entry)} — fetch from {entry['url']}",
+                "error",
+                detail={
+                    "name": entry.get("name"),
+                    "url": entry.get("url"),
+                    "path": str(fetch_assets.local_path(entry)),
+                },
+            )
+        )
+    return warnings
+
+
+def _model_asset_entries(workflow: VibeWorkflow, workflow_ref: str) -> list[dict]:
+    return model_entries_for_workflow(workflow, workflow_ref)
+
+
+def _embedded_configuration_warnings() -> list[str]:
+    return finding_messages(_embedded_configuration_findings())
+
+
+def _embedded_configuration_findings() -> list[DiagnosticFinding]:
+    raw = os.environ.get("VIBECOMFY_COMFY_CONFIGURATION")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return [
+            DiagnosticFinding(
+                "embedded_configuration_invalid_json",
+                f"VIBECOMFY_COMFY_CONFIGURATION is not valid JSON: {exc}",
+                "warning",
+            )
+        ]
+    if not isinstance(parsed, dict):
+        return [
+            DiagnosticFinding(
+                "embedded_configuration_not_object",
+                "VIBECOMFY_COMFY_CONFIGURATION must be a JSON object.",
+                "warning",
+            )
+        ]
+    try:
+        from vibecomfy.runtime.run import _embedded_configuration
+        from vibecomfy.workflow import WorkflowSource
+
+        probe = VibeWorkflow(id="doctor", source=WorkflowSource(id="doctor"))
+        config = _embedded_configuration(probe)
+    except Exception as exc:
+        return [
+            DiagnosticFinding(
+                "embedded_configuration_build_failed",
+                f"embedded configuration could not be constructed: {type(exc).__name__}: {exc}",
+                "warning",
+            )
+        ]
+    if config is not None and not hasattr(config, "cwd"):
+        return [
+            DiagnosticFinding(
+                "embedded_configuration_invalid_type",
+                "embedded configuration is not a Comfy Configuration object; embedded runtime will fail before queueing.",
+                "warning",
+            )
+        ]
+    return []
+
+
+def _video_audio_warnings(workflow: VibeWorkflow) -> list[str]:
+    return finding_messages(_video_audio_findings(workflow))
+
+
+def _video_audio_findings(workflow: VibeWorkflow) -> list[DiagnosticFinding]:
+    warnings: list[DiagnosticFinding] = []
+    edges_by_target = {(edge.to_node, edge.to_input): edge for edge in workflow.edges}
+    for node_id, node in sorted(workflow.nodes.items()):
+        if node.class_type != "CreateVideo":
+            continue
+        audio_edge = edges_by_target.get((node_id, "audio"))
+        if audio_edge is None and _literal_input(node.inputs, "audio") is None:
+            continue
+        source = _audio_source(workflow, audio_edge, node.inputs.get("audio"))
+        warnings.append(
+            DiagnosticFinding(
+                "optional_video_audio",
+                "CreateVideo node "
+                f"{node_id} has optional audio input connected"
+                f"{f' from {source}' if source else ''}; for smoke tests, remove this edge if SaveVideo fails with AAC NaN/Inf.",
+                "warning",
+                node_id=str(node_id),
+                class_type=node.class_type,
+                detail={"source": source} if source else None,
+            )
         )
     return warnings
 

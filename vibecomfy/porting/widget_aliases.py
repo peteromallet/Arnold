@@ -22,7 +22,6 @@ COMPILE_WIDGET_ALIAS_CLASS_TYPES: frozenset[str] = frozenset(
         "CreateCFGScheduleFloatList",
         "WanVideoAnimateEmbeds",
         "CLIPVisionLoader",
-        "CLIPTextEncode",
         "WanVideoClipVisionEncode",
         "ImageResizeKJv2",
         "INTConstant",

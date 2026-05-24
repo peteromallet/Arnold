@@ -300,6 +300,94 @@ def test_range_enum_skipped_when_value_is_api_link() -> None:
     assert report.issues == []
 
 
+@pytest.mark.parametrize(
+    ("input_type", "accepted", "rejected"),
+    [
+        ("INT", [1, "1"], [True, 1.2, "1.2", "abc"]),
+        ("FLOAT", [1, 1.2, "1", "1.2"], [True, "abc"]),
+        ("BOOLEAN", [True, False, "true", "FALSE"], [0, 1, "yes"]),
+        ("STRING", ["text"], [1, 1.2, True]),
+    ],
+)
+def test_primitive_literal_type_validation_coercion_policy(
+    input_type: str,
+    accepted: list[object],
+    rejected: list[object],
+) -> None:
+    provider = FakeSchemaProvider({"TypedNode": _schema("TypedNode", {"value": InputSpec(input_type)})})
+
+    for value in accepted:
+        report = _workflow(VibeNode("1", "TypedNode", inputs={"value": value})).validate(schema_provider=provider)
+        assert report.ok, (input_type, value, [issue.code for issue in report.issues])
+
+    for value in rejected:
+        report = _workflow(VibeNode("1", "TypedNode", inputs={"value": value})).validate(schema_provider=provider)
+        assert not report.ok, (input_type, value)
+        assert [issue.code for issue in report.issues] == ["value_type_mismatch"]
+        issue = report.issues[0]
+        assert issue.detail["node_id"] == "1"
+        assert issue.detail["class_type"] == "TypedNode"
+        assert issue.detail["input"] == "value"
+        assert issue.detail["expected_type"] == input_type
+
+
+def test_primitive_type_validation_skips_strict_api_links_only() -> None:
+    provider = FakeSchemaProvider({"TypedNode": _schema("TypedNode", {"value": InputSpec("INT")})})
+
+    strict_link = _workflow(VibeNode("1", "TypedNode", inputs={"value": ["3", 0]})).validate(schema_provider=provider)
+    malformed_link = _workflow(VibeNode("1", "TypedNode", inputs={"value": [3, "0"]})).validate(
+        schema_provider=provider
+    )
+
+    assert strict_link.ok
+    assert strict_link.issues == []
+    assert not malformed_link.ok
+    assert [issue.code for issue in malformed_link.issues] == ["value_type_mismatch"]
+
+
+def test_dynamic_input_exceptions_are_narrow_class_and_input_predicates() -> None:
+    provider = FakeSchemaProvider(
+        {
+            "SimpleCalculator": _schema("SimpleCalculator", {"operation": InputSpec("STRING")}),
+            "LTXVAddGuide": _schema("LTXVAddGuide", {"latents": InputSpec("LATENT")}),
+        }
+    )
+    calculator = _workflow(
+        VibeNode("1", "SimpleCalculator", inputs={"operation": "add", "input_1": 1, "not_dynamic": 2})
+    ).validate(schema_provider=provider)
+    ltx = _workflow(VibeNode("2", "LTXVAddGuide", inputs={"latents": ["1", 0], "guide_1": ["3", 0], "extra": 1})).validate(
+        schema_provider=provider
+    )
+
+    assert [issue.detail["input"] for issue in calculator.issues if issue.code == "unknown_input"] == ["not_dynamic"]
+    assert [issue.detail["input"] for issue in ltx.issues if issue.code == "unknown_input"] == ["extra"]
+
+
+def test_legacy_validation_modules_are_not_restored_or_used_by_first_party_code() -> None:
+    assert not Path("vibecomfy/schema/call_validation.py").exists()
+    assert not Path("vibecomfy/porting/validate_call.py").exists()
+
+    legacy_markers = (
+        "schema.call_validation",
+        "porting.validate_call",
+        "NodeCallValidation",
+        "CallValidation",
+    )
+    first_party_sources = [
+        path
+        for path in Path("vibecomfy").rglob("*.py")
+        if path.as_posix() not in {"vibecomfy/schema/call_validation.py", "vibecomfy/porting/validate_call.py"}
+    ]
+    offenders = {
+        str(path): marker
+        for path in first_party_sources
+        for marker in legacy_markers
+        if marker in path.read_text(encoding="utf-8")
+    }
+
+    assert offenders == {}
+
+
 @pytest.mark.parametrize("snapshot", sorted(Path("tests/snapshots").glob("*.api.json")))
 def test_snapshot_api_workflows_validate_against_permissive_local_schema(snapshot: Path, tmp_path: Path) -> None:
     api = json.loads(snapshot.read_text(encoding="utf-8"))

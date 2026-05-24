@@ -53,4 +53,3 @@ Acceptance criteria for an implementation epic:
 8. Document the workflow authoring/onboarding checklist around this contract for new workflows, forked workflows, and workflows converted from upstream JSON.
 
 This is cross-repo: VibeComfy should own the contract schema and doctor/reconcile behavior; Reigh worker/live-test should consume it; Astrid should consume output/evidence contracts for result validation.
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from vibecomfy.commands.doctor import _cmd_doctor, _video_frame_cap_warnings
@@ -43,6 +44,31 @@ def build():
     return path
 
 
+def _write_raw_json_workflow(path: Path) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": 1,
+                        "type": "VAELoader",
+                        "properties": {
+                            "models": [
+                                {
+                                    "name": MODEL_ENTRY["name"],
+                                    "url": MODEL_ENTRY["url"],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_doctor_reports_missing_model_with_url_and_expected_path(
     tmp_path: Path,
     monkeypatch,
@@ -58,6 +84,27 @@ def test_doctor_reports_missing_model_with_url_and_expected_path(
 
     captured = capsys.readouterr()
     expected_path = models_root / MODEL_ENTRY["subdir"] / MODEL_ENTRY["name"]
+    assert "Missing models:" in captured.out
+    assert f"missing model {MODEL_ENTRY['name']}" in captured.out
+    assert str(expected_path) in captured.out
+    assert MODEL_ENTRY["url"] in captured.out
+
+
+def test_doctor_reports_missing_model_from_raw_json_workflow(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    workflow = _write_raw_json_workflow(tmp_path / "workflow.json")
+    models_root = tmp_path / "models"
+    monkeypatch.setenv("VIBECOMFY_MODELS_ROOT", str(models_root))
+    monkeypatch.setattr("vibecomfy.commands.doctor.get_schema_provider", lambda _mode: None)
+    monkeypatch.setattr("vibecomfy.commands.doctor._read_doctor_lockfile", lambda: [])
+
+    assert _cmd_doctor(argparse.Namespace(path=str(workflow))) == 1
+
+    captured = capsys.readouterr()
+    expected_path = models_root / "vae" / MODEL_ENTRY["name"]
     assert "Missing models:" in captured.out
     assert f"missing model {MODEL_ENTRY['name']}" in captured.out
     assert str(expected_path) in captured.out

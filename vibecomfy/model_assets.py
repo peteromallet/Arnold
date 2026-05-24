@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from vibecomfy._graph_utils import node_id_sort_key
+
 
 HF_SPLIT_FILES_DIRS = {
     "text_encoders",
@@ -335,15 +337,8 @@ def _sorted_nodes(nodes: Any) -> list[Mapping[str, Any]]:
         return []
     return sorted(
         [node for node in values if isinstance(node, Mapping)],
-        key=lambda node: _node_sort_key(node.get("id")),
+        key=lambda node: node_id_sort_key(node.get("id"), allow_compound=False),
     )
-
-
-def _node_sort_key(node_id: Any) -> tuple[int, str]:
-    try:
-        return (int(node_id), str(node_id))
-    except (TypeError, ValueError):
-        return (10**12, str(node_id))
 
 
 def _node_class_type(node: Mapping[str, Any]) -> str:

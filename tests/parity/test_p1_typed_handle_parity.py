@@ -14,9 +14,24 @@ ROOT = Path(__file__).resolve().parents[2]
 
 ANCHORS = (
     (
+        "audio/ace_step_1_5_t2a_song",
+        "ready_templates.audio.ace_step_1_5_t2a_song",
+        "tests/parity/fixtures/ace_step_1_5_t2a_song_typed.py",
+    ),
+    (
+        "edit/flux2_klein_4b_image_edit_distilled",
+        "ready_templates.edit.flux2_klein_4b_image_edit_distilled",
+        "tests/parity/fixtures/flux2_klein_4b_image_edit_distilled_typed.py",
+    ),
+    (
         "image/flux2_klein_4b_t2i",
         "ready_templates.image.flux2_klein_4b_t2i",
         "tests/parity/fixtures/flux2_klein_4b_t2i_typed.py",
+    ),
+    (
+        "image/flux2_klein_9b_gguf_t2i",
+        "ready_templates.image.flux2_klein_9b_gguf_t2i",
+        "tests/parity/fixtures/flux2_klein_9b_gguf_t2i_typed.py",
     ),
     (
         "image/z_image",
@@ -24,12 +39,32 @@ ANCHORS = (
         "tests/parity/fixtures/z_image_typed.py",
     ),
     (
-        "audio/ace_step_1_5_t2a_song",
-        "ready_templates.audio.ace_step_1_5_t2a_song",
-        "tests/parity/fixtures/ace_step_1_5_t2a_song_typed.py",
+        "edit/qwen_image_edit",
+        "ready_templates.edit.qwen_image_edit",
+        "tests/parity/fixtures/qwen_image_edit_typed.py",
+    ),
+    (
+        "video/ltx2_3_i2v",
+        "ready_templates.video.ltx2_3_i2v",
+        "tests/parity/fixtures/ltx2_3_i2v_typed.py",
+    ),
+    (
+        "video/ltx2_3_t2v",
+        "ready_templates.video.ltx2_3_t2v",
+        "tests/parity/fixtures/ltx2_3_t2v_typed.py",
+    ),
+    (
+        "video/wan_i2v",
+        "ready_templates.video.wan_i2v",
+        "tests/parity/fixtures/wan_i2v_typed.py",
+    ),
+    (
+        "video/wan_t2v",
+        "ready_templates.video.wan_t2v",
+        "tests/parity/fixtures/wan_t2v_typed.py",
     ),
 )
-"""Parity anchors cover one native Flux builder, one tracked image API template, and one audio template."""
+"""Parity anchors cover snapshot stems plus the preserved audio anchor."""
 
 
 @pytest.mark.parametrize(("template_id", "ready_module", "typed_module"), ANCHORS)

@@ -140,4 +140,3 @@ class PortReport:
         payload = asdict(self)
         payload["ok"] = self.ok
         return payload
-

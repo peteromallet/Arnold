@@ -1,5 +1,9 @@
 # ComfyScript Spike
 
+Status: Historical spike. Current authoring guidance lives in
+[`../authoring.md`](../authoring.md), and the current public import/export
+surface is recorded in [`../../artifacts/m6-public-api.md`](../../artifacts/m6-public-api.md).
+
 Decision: `learn` for milestone one.
 
 ComfyScript is useful evidence and may become an adapter later, but it is not the core VibeComfy abstraction for the first milestone.

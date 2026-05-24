@@ -74,6 +74,9 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
+            value = payload_inputs.get(name)
+            if getattr(schema, "source_provider", None) == "widget_schema" and _is_api_link(value):
+                continue
             if (
                 not _issue_suppressed(class_type, "unknown_input")
                 and not _is_dynamic_payload_input(class_type, name, payload_inputs)
@@ -141,6 +144,27 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
                             },
                         )
                     )
+            expected_type = _primitive_expected_type(getattr(spec, "type", None))
+            if expected_type and not _issue_suppressed(class_type, "value_type_mismatch"):
+                if not _matches_primitive_type(value, expected_type):
+                    issues.append(
+                        ValidationIssue(
+                            "value_type_mismatch",
+                            (
+                                f"Node {node_id} ({class_type}) input {name} value {_truncate(value)} "
+                                f"does not match declared type {expected_type}."
+                            ),
+                            severity="error",
+                            detail={
+                                "node_id": str(node_id),
+                                "class_type": class_type,
+                                "input": name,
+                                "value": _truncate(value),
+                                "expected_type": expected_type,
+                                "actual_type": type(value).__name__,
+                            },
+                        )
+                    )
 
     for to_node_id, node in api_dict.items():
         if not isinstance(node, dict):
@@ -157,6 +181,8 @@ def validate_api_against_schema(api_dict: dict[str, Any], provider: SchemaProvid
             if from_schema is None:
                 continue
             outputs = getattr(from_schema, "outputs", None) or []
+            if not outputs:
+                continue
             try:
                 output_index = int(from_output)
             except (TypeError, ValueError):
@@ -293,6 +319,10 @@ def _is_dynamic_payload_input(class_type: str, input_name: str, inputs: dict[str
 
     if class_type == "LTXVImgToVideoInplaceKJ":
         return _LTX_IMAGE_SLOT_RE.match(input_name) is not None
+    if class_type == "SimpleCalculator" and _has_numbered_prefix(input_name, "input_"):
+        return True
+    if class_type == "LTXVAddGuide" and _has_numbered_prefix(input_name, "guide_"):
+        return True
     if class_type == "SimpleCalculatorKJ":
         return input_name in _simple_calculator_variables(inputs or {})
     return False
@@ -305,7 +335,7 @@ def _validate_dynamic_payload_inputs(
     inputs: dict[str, Any],
 ) -> list[ValidationIssue]:
     if class_type != "LTXVImgToVideoInplaceKJ":
-        if class_type == "SimpleCalculatorKJ":
+        if class_type in {"SimpleCalculator", "SimpleCalculatorKJ"}:
             return _validate_simple_calculator_variables(node_id=node_id, class_type=class_type, inputs=inputs)
         return []
     raw_count = inputs.get("num_images")
@@ -344,6 +374,11 @@ def _simple_calculator_variables(inputs: dict[str, Any]) -> set[str]:
     if not isinstance(raw, str):
         return set()
     return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _has_numbered_prefix(value: str, prefix: str) -> bool:
+    suffix = value.removeprefix(prefix)
+    return suffix != value and suffix.isdigit()
 
 
 def _validate_simple_calculator_variables(
@@ -400,6 +435,70 @@ def _types_compatible(output_type: str, input_type: str) -> bool:
         return True
     if output_type in {"*", "ANY"} or input_type in {"*", "ANY"}:
         return True
+    return False
+
+
+def _primitive_expected_type(value: Any) -> str | None:
+    normalized = _normalize_type(value)
+    if normalized in {"INT", "INTEGER"}:
+        return "INT"
+    if normalized in {"FLOAT", "DOUBLE"}:
+        return "FLOAT"
+    if normalized in {"BOOL", "BOOLEAN"}:
+        return "BOOLEAN"
+    if normalized in {"STR", "STRING"}:
+        return "STRING"
+    return None
+
+
+def _matches_primitive_type(value: Any, expected_type: str) -> bool:
+    if expected_type == "INT":
+        return _is_int_literal(value)
+    if expected_type == "FLOAT":
+        return _is_float_literal(value)
+    if expected_type == "BOOLEAN":
+        return _is_boolean_literal(value)
+    if expected_type == "STRING":
+        return isinstance(value, str)
+    return True
+
+
+def _is_int_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        try:
+            int(text, 10)
+        except ValueError:
+            return False
+        return True
+    return False
+
+
+def _is_float_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value)
+        except ValueError:
+            return False
+        return True
+    return False
+
+
+def _is_boolean_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "false"}
     return False
 
 

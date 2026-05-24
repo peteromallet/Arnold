@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from vibecomfy.analysis import graph
 from vibecomfy.cli_loader import load_workflow_any
+from vibecomfy.commands._output import emit, jsonable
 from vibecomfy.schema import get_schema_provider
 from vibecomfy.workflow import VibeWorkflow
 
@@ -98,24 +98,11 @@ def _node_ids(values: list[str] | None) -> list[str]:
 
 
 def _emit(data: Any, output_format: str, *, text) -> int:
-    clean = _jsonable(data)
-    if output_format == "json":
-        print(json.dumps(clean, indent=2, sort_keys=True))
-    elif output_format == "tsv":
+    clean = jsonable(data)
+    if output_format == "tsv":
         print(_to_tsv(clean))
-    else:
-        print(text(clean))
-    return 0
-
-
-def _jsonable(value: Any) -> Any:
-    if is_dataclass(value):
-        return _jsonable(asdict(value))
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_jsonable(item) for item in value]
-    return value
+        return 0
+    return emit(clean, json=output_format == "json", text_renderer=text)
 
 
 def _to_tsv(data: Any) -> str:
@@ -214,13 +201,13 @@ def _node_row(node) -> dict[str, Any]:
 def _workflow_row(workflow: VibeWorkflow) -> dict[str, Any]:
     return {
         "id": workflow.id,
-        "source": _jsonable(workflow.source),
-        "nodes": {node_id: _jsonable(node) for node_id, node in workflow.nodes.items()},
-        "edges": [_jsonable(edge) for edge in workflow.edges],
-        "inputs": {name: _jsonable(input_ref) for name, input_ref in workflow.inputs.items()},
-        "outputs": [_jsonable(output) for output in workflow.outputs],
-        "requirements": _jsonable(workflow.requirements),
-        "metadata": _jsonable(workflow.metadata),
+        "source": jsonable(workflow.source),
+        "nodes": {node_id: jsonable(node) for node_id, node in workflow.nodes.items()},
+        "edges": [jsonable(edge) for edge in workflow.edges],
+        "inputs": {name: jsonable(input_ref) for name, input_ref in workflow.inputs.items()},
+        "outputs": [jsonable(output) for output in workflow.outputs],
+        "requirements": jsonable(workflow.requirements),
+        "metadata": jsonable(workflow.metadata),
     }
 
 

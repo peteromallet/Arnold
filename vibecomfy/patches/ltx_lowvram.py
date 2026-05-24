@@ -5,6 +5,11 @@ from vibecomfy.patches.types import Patch
 from vibecomfy.workflow import VibeWorkflow
 
 
+FP8_CHECKPOINT = "ltx-2.3-22b-dev-fp8.safetensors"
+SOURCE_CHECKPOINT = "ltx-2.3-22b-dev.safetensors"
+AUDIO_LOADER_ID = "4010"
+CHECKPOINT_LOADER_ID = "3940"
+
 COMFY_CONFIGURATION = {
     "reserve_vram": 12,
     "cache_none": True,
@@ -13,12 +18,17 @@ COMFY_CONFIGURATION = {
 
 
 def applies_to(workflow: VibeWorkflow) -> bool:
-    has_ltx = any(node.class_type.startswith("LTX") or "LTX" in node.class_type for node in workflow.nodes.values())
-    already_lowvram = any(node.class_type in {"LowVRAMAudioVAELoader", "LowVRAMCheckpointLoader"} for node in workflow.nodes.values())
-    return has_ltx and (workflow.metadata.get("comfy_configuration") != COMFY_CONFIGURATION or not already_lowvram)
+    return _is_supported_rewrite_target(workflow)
 
 
 def apply(workflow: VibeWorkflow) -> VibeWorkflow:
+    if not _is_supported_target(workflow):
+        raise ValueError(
+            "ltx_lowvram only supports LTX 2.3 workflows with node 3940 as a "
+            "CheckpointLoaderSimple/LowVRAMCheckpointLoader and node 4010 as "
+            "an LTXVAudioVAELoader/LowVRAMAudioVAELoader."
+        )
+
     image_to_video = workflow.metadata.get("capability") == "image_to_video"
     if "3159" in workflow.nodes:
         image_to_video = True
@@ -32,15 +42,15 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
     _update_node(workflow, "2004", widgets={"widget_0": "egyptian_queen.png" if image_to_video else "example.png"})
     _update_node(workflow, "4981", widgets={"widget_1": 384})
 
-    if "4010" in workflow.nodes:
-        node = workflow.nodes["4010"]
+    if AUDIO_LOADER_ID in workflow.nodes:
+        node = workflow.nodes[AUDIO_LOADER_ID]
         node.class_type = "LowVRAMAudioVAELoader"
-        node.inputs = {"ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors"}
+        node.inputs = {"ckpt_name": FP8_CHECKPOINT}
         node.widgets = {}
-    if "3940" in workflow.nodes:
-        node = workflow.nodes["3940"]
+    if CHECKPOINT_LOADER_ID in workflow.nodes:
+        node = workflow.nodes[CHECKPOINT_LOADER_ID]
         node.class_type = "LowVRAMCheckpointLoader"
-        node.inputs = {"ckpt_name": "ltx-2.3-22b-dev-fp8.safetensors", "dependencies": ["4960", 0]}
+        node.inputs = {"ckpt_name": FP8_CHECKPOINT, "dependencies": ["4960", 0]}
         node.widgets = {}
 
     workflow.metadata["smoke_resolution"] = "384x256x9_frames"
@@ -55,6 +65,60 @@ def apply(workflow: VibeWorkflow) -> VibeWorkflow:
 
 def rationale(workflow: VibeWorkflow) -> str:
     return "LTXVideo nodes detected; reduces VRAM by using low-VRAM loaders and 384x256x9 smoke settings."
+
+
+def _is_supported_target(workflow: VibeWorkflow) -> bool:
+    return _is_supported_rewrite_target(workflow) or _is_supported_applied_target(workflow)
+
+
+def _is_supported_rewrite_target(workflow: VibeWorkflow) -> bool:
+    audio_loader = workflow.nodes.get(AUDIO_LOADER_ID)
+    checkpoint_loader = workflow.nodes.get(CHECKPOINT_LOADER_ID)
+    if audio_loader is None or checkpoint_loader is None:
+        return False
+
+    return _is_supported_audio_loader(audio_loader) and _is_supported_checkpoint_loader(checkpoint_loader)
+
+
+def _is_supported_applied_target(workflow: VibeWorkflow) -> bool:
+    audio_loader = workflow.nodes.get(AUDIO_LOADER_ID)
+    checkpoint_loader = workflow.nodes.get(CHECKPOINT_LOADER_ID)
+    if audio_loader is None or checkpoint_loader is None:
+        return False
+
+    return _is_lowvram_audio_loader(audio_loader) and _is_lowvram_checkpoint_loader(checkpoint_loader)
+
+
+def _is_supported_audio_loader(node) -> bool:
+    if node.class_type != "LTXVAudioVAELoader":
+        return False
+    return _is_ltx_2_3_checkpoint(_node_checkpoint_name(node))
+
+
+def _is_supported_checkpoint_loader(node) -> bool:
+    if node.class_type != "CheckpointLoaderSimple":
+        return False
+    return _is_ltx_2_3_checkpoint(_node_checkpoint_name(node))
+
+
+def _is_lowvram_audio_loader(node) -> bool:
+    if node.class_type != "LowVRAMAudioVAELoader":
+        return False
+    return _is_ltx_2_3_checkpoint(_node_checkpoint_name(node))
+
+
+def _is_lowvram_checkpoint_loader(node) -> bool:
+    if node.class_type != "LowVRAMCheckpointLoader":
+        return False
+    return _is_ltx_2_3_checkpoint(_node_checkpoint_name(node))
+
+
+def _node_checkpoint_name(node) -> object:
+    return node.inputs.get("ckpt_name") or node.inputs.get("ckpt_name.string") or node.widgets.get("widget_0")
+
+
+def _is_ltx_2_3_checkpoint(value: object) -> bool:
+    return isinstance(value, str) and value in {SOURCE_CHECKPOINT, FP8_CHECKPOINT}
 
 
 def _update_node(

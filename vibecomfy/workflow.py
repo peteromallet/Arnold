@@ -442,7 +442,7 @@ class _NodeBuilder:
                 return Handle(node_id=self.node.id, output_slot=output_names.index(slot), name=str(slot))
             raise NotImplementedError(
                 f"Named output {slot!r} is not registered for {self.node.class_type} node {self.node.id}; "
-                "register output_names metadata or pass an integer slot."
+                "MP-6 schema integration must register output_names metadata, or pass an integer slot."
             ) from exc
         return Handle(node_id=self.node.id, output_slot=output_slot)
 

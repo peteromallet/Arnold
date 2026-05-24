@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from vibecomfy._graph_utils import is_api_link
 from vibecomfy.metadata import (
     OUTPUT_NODE_NAMES,
     _infer_requirements,
@@ -123,7 +124,13 @@ def convert_to_vibe_format(
         inputs: dict[str, Any] = {}
         widgets: dict[str, Any] = {}
         for key, value in raw_inputs.items():
-            if _is_link(value):
+            if is_api_link(
+                value,
+                allow_tuple=False,
+                require_string_node_id=False,
+                require_numeric_node_id=True,
+                require_int_slot=False,
+            ):
                 continue
             if key.startswith("widget_"):
                 widgets[key] = value
@@ -160,15 +167,17 @@ def convert_to_vibe_format(
         if not isinstance(node, dict):
             continue
         for name, value in dict(node.get("inputs", {})).items():
-            if _is_link(value):
+            if is_api_link(
+                value,
+                allow_tuple=False,
+                require_string_node_id=False,
+                require_numeric_node_id=True,
+                require_int_slot=False,
+            ):
                 workflow.edges.append(VibeEdge(str(value[0]), str(value[1]), str(node_id), name))
 
     workflow.requirements = _infer_requirements(workflow)
     return workflow
-
-
-def _is_link(value: Any) -> bool:
-    return isinstance(value, list) and len(value) == 2 and str(value[0]).isdigit()
 
 
 def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:

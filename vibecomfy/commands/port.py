@@ -24,6 +24,7 @@ from vibecomfy.porting.strict_ready import (
     apply_strict_ready_exceptions,
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 from vibecomfy.porting.workbench import analyze_source, load_port_source
 from vibecomfy.schema import ConversionSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import latest_object_info_cache_path
@@ -499,6 +500,7 @@ def _build_conversion_provider(args: argparse.Namespace) -> ConversionSchemaProv
         object_info_cache = str(latest) if latest is not None else None
     return ConversionSchemaProvider(
         object_info_cache_path=object_info_cache,
+        widget_schema=WIDGET_SCHEMA,
         enable_runtime=runtime_enabled,
         runtime_server_url=server_url,
     )
