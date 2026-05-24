@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import Any
 
 import vibecomfy.fetch as fetch_assets
-from vibecomfy.commands._workflow_path import resolve_workflow_path
-from vibecomfy.ingest.loader import load_workflow_json
-from vibecomfy.model_assets import extract_from_raw_workflow
+from vibecomfy.commands._model_entries import model_entries_for_workflow
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import get_schema_provider
 
@@ -15,7 +11,7 @@ from vibecomfy.schema import get_schema_provider
 def _cmd_fetch(args: argparse.Namespace) -> int:
     schema_provider = get_schema_provider("auto")
     workflow = load_workflow_reference(args.workflow, schema_provider=schema_provider, allow_scratchpad=True)
-    entries = _model_entries_for_workflow(workflow, args.workflow)
+    entries = model_entries_for_workflow(workflow, args.workflow)
     if args.dry_run:
         for entry in entries:
             path = fetch_assets.local_path(entry)
@@ -30,29 +26,6 @@ def _cmd_fetch(args: argparse.Namespace) -> int:
         print(exc)
         return 1
     return 0
-
-
-def _model_entries_for_workflow(workflow: Any, workflow_ref: str) -> list[dict]:
-    entries = workflow.metadata.get("model_assets", [])
-    if entries:
-        return [entry for entry in entries if isinstance(entry, dict)]
-    path = _json_path_for_reference(workflow_ref)
-    if path is None:
-        return []
-    return extract_from_raw_workflow(load_workflow_json(path))
-
-
-def _json_path_for_reference(workflow_ref: str) -> str | None:
-    path = Path(workflow_ref)
-    if path.suffix.lower() == ".json" and path.is_file():
-        return str(path)
-    try:
-        resolved = Path(resolve_workflow_path(workflow_ref))
-    except FileNotFoundError:
-        return None
-    if resolved.suffix.lower() == ".json" and resolved.is_file():
-        return str(resolved)
-    return None
 
 
 def register(subparsers) -> None:

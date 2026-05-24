@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sync local agent skill files from the canonical AGENTS.md."""
+"""Sync local agent skill files from the canonical CLAUDE.md."""
 
 from __future__ import annotations
 
@@ -9,14 +9,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "AGENTS.md"
+SOURCE = ROOT / "CLAUDE.md"
+BOOTSTRAP = ROOT / "AGENTS.md"
 COPY_TARGETS = ()
 LOCAL_COPY_TARGETS = (
     ROOT / ".claude" / "skills" / "vibecomfy" / "SKILL.md",
 )
-SYMLINK_TARGETS = {
-    ROOT / "CLAUDE.md": "AGENTS.md",
-}
+SYMLINK_TARGETS = {}
 METADATA = ROOT / "agents" / "openai.yaml"
 EXPECTED_METADATA = """interface:
   display_name: "VibeComfy"
@@ -33,11 +32,22 @@ def _relative(path: Path) -> str:
 
 def _read_source() -> str:
     if not SOURCE.exists():
-        raise SystemExit("AGENTS.md is missing")
+        raise SystemExit("CLAUDE.md is missing")
     content = SOURCE.read_text(encoding="utf-8")
     if not content.startswith("---\n") or "name: vibecomfy" not in content:
-        raise SystemExit("AGENTS.md must be the canonical VibeComfy skill with frontmatter")
+        raise SystemExit("CLAUDE.md must be the canonical VibeComfy skill with frontmatter")
     return content
+
+
+def _check_bootstrap() -> str | None:
+    if not BOOTSTRAP.exists():
+        return "AGENTS.md is missing"
+    content = BOOTSTRAP.read_text(encoding="utf-8")
+    if "canonical long-form agent instructions" not in content or "CLAUDE.md" not in content:
+        return "AGENTS.md should be a short bootstrap pointing to CLAUDE.md"
+    if "name: vibecomfy" in content:
+        return "AGENTS.md should not duplicate the canonical VibeComfy skill frontmatter"
+    return None
 
 
 def _check_copy(path: Path, expected: str) -> str | None:
@@ -61,6 +71,8 @@ def _check_symlink(path: Path, expected_target: str) -> str | None:
 def check() -> int:
     source = _read_source()
     errors = []
+    if error := _check_bootstrap():
+        errors.append(error)
     errors.extend(error for target in COPY_TARGETS if (error := _check_copy(target, source)))
     errors.extend(error for target, link in SYMLINK_TARGETS.items() if (error := _check_symlink(target, link)))
     metadata_error = _check_copy(METADATA, EXPECTED_METADATA)

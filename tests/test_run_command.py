@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import types
+from pathlib import Path
 
 import pytest
 
@@ -31,6 +32,12 @@ def _make_args(**overrides) -> argparse.Namespace:
     )
     base.update(overrides)
     return argparse.Namespace(**base)
+
+
+def _write_scratchpad(tmp_path: Path, body: str) -> Path:
+    scratchpad = tmp_path / "scratchpad.py"
+    scratchpad.write_text(body, encoding="utf-8")
+    return scratchpad
 
 
 def _no_inputs_workflow(workflow_id: str = "wan-wrapper") -> VibeWorkflow:
@@ -158,3 +165,66 @@ def test_cmd_run_applies_prompt_and_steps_for_image_workflow(
     assert workflow.nodes["1"].inputs["text"] == "a red cube"
     assert workflow.nodes["2"].inputs["steps"] == 8
     assert workflow.nodes["2"].inputs["seed"] == 42
+
+
+def test_cmd_run_reports_scratchpad_syntax_error_as_run_failed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = _write_scratchpad(
+        tmp_path,
+        """
+def build()
+    return None
+""",
+    )
+
+    rc = _cmd_run(_make_args(path=str(scratchpad)))
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert captured.err.startswith("run failed:")
+    assert "SyntaxError" in captured.err or "invalid syntax" in captured.err
+
+
+def test_cmd_run_reports_scratchpad_non_workflow_return_as_run_failed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = _write_scratchpad(
+        tmp_path,
+        """
+def build():
+    return {"not": "a workflow"}
+""",
+    )
+
+    rc = _cmd_run(_make_args(path=str(scratchpad)))
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert captured.err.startswith("run failed:")
+    assert "build()" in captured.err
+    assert "VibeWorkflow" in captured.err
+
+
+def test_cmd_run_does_not_swallow_internal_scratchpad_typeerror(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scratchpad = _write_scratchpad(
+        tmp_path,
+        """
+def build():
+    raise TypeError("user code exploded")
+""",
+    )
+
+    with pytest.raises(TypeError, match="user code exploded"):
+        _cmd_run(_make_args(path=str(scratchpad)))
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

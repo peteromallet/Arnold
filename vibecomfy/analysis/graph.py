@@ -3,8 +3,9 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from vibecomfy._graph_utils import is_api_link
 from vibecomfy.schema import SchemaProvider, schema_for
-from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow
+from vibecomfy.workflow import VibeNode, VibeOutput, VibeWorkflow
 
 
 MAX_PATH_DEPTH = 32
@@ -182,7 +183,17 @@ def _topological_subset(workflow: VibeWorkflow, selected: set[str]) -> list[str]
 
 def _node_values(node: VibeNode) -> dict[str, Any]:
     merged = {**node.inputs, **node.widgets}
-    return {key: deepcopy(value) for key, value in merged.items() if not _is_link(value)}
+    return {
+        key: deepcopy(value)
+        for key, value in merged.items()
+        if not is_api_link(
+            value,
+            allow_tuple=False,
+            require_string_node_id=False,
+            require_numeric_node_id=True,
+            require_int_slot=False,
+        )
+    }
 
 
 def _node_signature(node: VibeNode) -> dict[str, Any]:
@@ -294,7 +305,3 @@ def _detect_media_type(workflow: VibeWorkflow) -> str:
 def _looks_like_source(node: VibeNode) -> bool:
     name = node.class_type.lower()
     return any(part in name for part in SOURCE_NAME_PARTS)
-
-
-def _is_link(value: Any) -> bool:
-    return isinstance(value, list) and len(value) == 2 and str(value[0]).isdigit()

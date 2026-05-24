@@ -7,21 +7,21 @@ import time
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.errors import WorkflowQueueError
 from vibecomfy.workflow import VibeWorkflow
 
+from . import config as _config_module
 from .client import ComfyClient
+from .config import SessionConfig
+from .execution import queue_server_prompt
+from .metadata import _run_metadata
+from .prompt import _build_schema_provider, _prepare_prompt_async
 from .server import comfy_server
-from .session import (
-    EmbeddedSession,
-    RunResult,
-    SessionConfig,
-    _build_schema_provider,
-    _embedded_configuration,
-    _prepare_prompt_async,
-    _run_metadata,
-)
+from .session import EmbeddedSession, RunResult
 
 logger = logging.getLogger(__name__)
+
+_embedded_configuration = _config_module._embedded_configuration
 
 
 async def run(
@@ -54,15 +54,18 @@ async def run(
             on_unavailable=on_unavailable,
         )
         try:
-            queued = await ComfyClient(active_url).queue_prompt(api_dict)
-        except Exception as exc:
-            raise RuntimeError(f"Workflow queue failed: {exc}") from exc
+            execution = await queue_server_prompt(api_dict, client=ComfyClient(active_url))
+        except asyncio.TimeoutError as exc:
+            raise WorkflowQueueError(
+                f"Workflow queue failed: {exc}",
+                next_action="Check server health, timeout settings, and the ComfyUI log for the managed run.",
+            ) from exc
     metadata = _run_metadata(
         run_id=run_id,
         workflow=workflow,
         api_dict=api_dict,
-        queued=queued,
-        outputs=[],
+        queued=execution.queued,
+        outputs=execution.outputs,
         runtime="server",
         config=managed_config,
     )
@@ -70,8 +73,8 @@ async def run(
     metadata_path.write_text(json.dumps(metadata, indent=2, default=str), encoding="utf-8")
     return RunResult(
         run_id=run_id,
-        prompt_id=queued.get("prompt_id") if isinstance(queued, dict) else None,
-        outputs=[],
+        prompt_id=execution.prompt_id,
+        outputs=execution.outputs,
         metadata_path=str(metadata_path),
         log_path=str(log_path),
     )

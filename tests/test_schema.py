@@ -5,20 +5,25 @@ import json
 
 import pytest
 
+import vibecomfy.schema.provider as provider_module
 from vibecomfy.ingest.normalize import normalize_to_api
 from vibecomfy.schema import (
     InputSpec,
     LocalSchemaProvider,
     NodeSchema,
+    ObjectInfoFileSchemaProvider,
     OutputSpec,
     RuntimeSchemaProvider,
     SchemaIndexError,
     get_schema_provider,
     schema_for,
     schema_registry_empty,
+    schema_provider_from_object_info_file,
     schemas_for,
 )
 from vibecomfy.schema.cache import load_object_info_cache
+from vibecomfy.schema.provider import ObjectInfoFileSchemaProvider as ProviderObjectInfoFileSchemaProvider
+from vibecomfy.schema.provider import RuntimeSchemaProvider as ProviderRuntimeSchemaProvider
 from vibecomfy.workflow import ValidationIssue, VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -242,6 +247,40 @@ def test_malformed_object_info_cache_is_ignored(tmp_path) -> None:
     assert load_object_info_cache(cache) is None
 
 
+def test_object_info_file_schema_provider_reads_arbitrary_file(tmp_path) -> None:
+    object_info = tmp_path / "object_info.fixture.json"
+    object_info.write_text(
+        json.dumps(
+            {
+                "FixtureNode": {
+                    "category": "fixture-pack",
+                    "input": {
+                        "required": {"steps": ["INT", {"default": 4, "min": 1, "max": 8}]},
+                        "optional": {"mode": [["fast", "slow"], {"default": "fast"}]},
+                    },
+                    "output": ["IMAGE"],
+                    "output_name": ["image"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = ObjectInfoFileSchemaProvider(object_info)
+    schema = provider.get_schema("FixtureNode")
+
+    assert isinstance(provider, ProviderObjectInfoFileSchemaProvider)
+    assert schema is not None
+    assert schema.pack == "fixture-pack"
+    assert schema.inputs["steps"].required is True
+    assert schema.inputs["steps"].type == "INT"
+    assert schema.inputs["steps"].default == 4
+    assert schema.inputs["steps"].min == 1
+    assert schema.inputs["steps"].max == 8
+    assert schema.inputs["mode"].type == "CHOICE"
+    assert schema.outputs == [OutputSpec(type="IMAGE", name="image")]
+
+
 def test_runtime_schema_provider_reads_cached_object_info(tmp_path) -> None:
     provider = RuntimeSchemaProvider(server_url="http://runtime.test", cache_dir=tmp_path)
     provider.cache_path.write_text(
@@ -267,6 +306,26 @@ def test_runtime_schema_provider_reads_cached_object_info(tmp_path) -> None:
     assert schema.outputs == [OutputSpec(type="LATENT", name="latent")]
 
 
+def test_object_info_file_provider_uses_runtime_object_info_parsing(tmp_path) -> None:
+    object_info = {
+        "SharedNode": {
+            "pack": "shared-pack",
+            "input": {"required": {"image": ["IMAGE", {"default": None}]}},
+            "output": ["LATENT"],
+            "output_name": ["latent"],
+        }
+    }
+    object_info_path = tmp_path / "object_info.fixture.json"
+    object_info_path.write_text(json.dumps(object_info), encoding="utf-8")
+    runtime_provider = RuntimeSchemaProvider(server_url="http://runtime.test", cache_dir=tmp_path)
+    runtime_provider.cache_path.write_text(json.dumps(object_info), encoding="utf-8")
+
+    file_schema = schema_provider_from_object_info_file(object_info_path).get_schema("SharedNode")
+    runtime_schema = runtime_provider.get_schema("SharedNode")
+
+    assert file_schema == runtime_schema
+
+
 def test_runtime_schema_provider_fetches_and_writes_object_info_cache(tmp_path, monkeypatch) -> None:
     class FakeServer:
         async def __aenter__(self):
@@ -286,6 +345,7 @@ def test_runtime_schema_provider_fetches_and_writes_object_info_cache(tmp_path, 
     monkeypatch.setattr("vibecomfy.schema.provider.comfy_server", lambda **kwargs: FakeServer())
     monkeypatch.setattr("vibecomfy.schema.provider.ComfyClient", FakeClient)
     provider = RuntimeSchemaProvider(server_url="http://runtime.test", cache_dir=tmp_path)
+    assert isinstance(provider, ProviderRuntimeSchemaProvider)
 
     data = asyncio.run(provider.object_info_async())
 
@@ -307,3 +367,41 @@ def test_get_schema_provider_auto_selection(tmp_path, monkeypatch) -> None:
 
     (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
     assert isinstance(get_schema_provider("auto"), LocalSchemaProvider)
+
+
+def test_get_schema_provider_precedence_is_explicit_and_opt_in(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("vibecomfy.schema.provider.shutil.which", lambda _: "/usr/local/bin/comfyui")
+    (tmp_path / "node_index.json").write_text("[]", encoding="utf-8")
+    object_info = tmp_path / "object_info.fixture.json"
+    object_info.write_text(json.dumps({"FixtureNode": {"input": {"required": {"text": "STRING"}}}}), encoding="utf-8")
+
+    selected = get_schema_provider("auto", object_info_path=object_info)
+    explicit_selected = get_schema_provider("object_info", object_info_path=object_info)
+    object_info_file_selected = get_schema_provider("object_info_file", object_info_cache_path=object_info)
+    helper_selected = schema_provider_from_object_info_file(object_info)
+    assert isinstance(selected, ObjectInfoFileSchemaProvider)
+    assert isinstance(explicit_selected, ObjectInfoFileSchemaProvider)
+    assert isinstance(object_info_file_selected, ObjectInfoFileSchemaProvider)
+    assert isinstance(helper_selected, ObjectInfoFileSchemaProvider)
+    assert selected.get_schema("FixtureNode") is not None
+
+    assert isinstance(get_schema_provider("runtime"), RuntimeSchemaProvider)
+    assert isinstance(get_schema_provider("local"), LocalSchemaProvider)
+    assert isinstance(get_schema_provider("auto", server_url="http://runtime.test"), RuntimeSchemaProvider)
+
+    # Local indexes win over discovered ComfyUI when object-info file selection is not explicit.
+    assert isinstance(get_schema_provider("auto"), LocalSchemaProvider)
+    (tmp_path / "node_index.json").unlink()
+    assert isinstance(get_schema_provider("auto"), RuntimeSchemaProvider)
+    monkeypatch.setattr("vibecomfy.schema.provider.shutil.which", lambda _: None)
+    assert isinstance(get_schema_provider("auto"), LocalSchemaProvider)
+    assert not isinstance(get_schema_provider("auto"), ObjectInfoFileSchemaProvider)
+    assert not hasattr(provider_module, "ConversionSchemaProvider")
+
+
+def test_get_schema_provider_object_info_preference_requires_path() -> None:
+    with pytest.raises(ValueError, match="object_info_path"):
+        get_schema_provider("object_info")
+    with pytest.raises(ValueError, match="object_info_path"):
+        get_schema_provider("object_info_file")

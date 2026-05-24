@@ -12,12 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from vibecomfy.runtime.client import ComfyClient
-from vibecomfy.runtime.session import (
-    ServerSession,
-    SessionConfig,
-    _cleanup_session_files,
-    find_active_session,
-)
+from vibecomfy.runtime.config import SessionConfig
+from vibecomfy.runtime.discovery import _cleanup_session_files, find_active_session
+from vibecomfy.runtime.session import ServerSession
 
 
 def _session_dir(id_: str) -> Path:

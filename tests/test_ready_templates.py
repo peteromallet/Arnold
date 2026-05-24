@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from vibecomfy._graph_utils import is_api_link
 from vibecomfy.ingest.normalize import convert_to_vibe_format
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.resolution import resolution
@@ -192,7 +193,13 @@ def _widget_value_counter(api: dict) -> Counter[tuple[str, str, str]]:
         if class_type == "MarkdownNote":
             continue
         for key, value in node.get("inputs", {}).items():
-            if _is_link(value):
+            if is_api_link(
+                value,
+                allow_tuple=False,
+                require_string_node_id=False,
+                require_numeric_node_id=True,
+                require_int_slot=False,
+            ):
                 continue
             values[(class_type, key, repr(value))] += 1
     return values
@@ -205,7 +212,13 @@ def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
         if class_type == "MarkdownNote":
             continue
         for key, value in node.get("inputs", {}).items():
-            if not _is_link(value):
+            if not is_api_link(
+                value,
+                allow_tuple=False,
+                require_string_node_id=False,
+                require_numeric_node_id=True,
+                require_int_slot=False,
+            ):
                 continue
             source = api.get(str(value[0]), {})
             source_class = source.get("class_type")
@@ -213,7 +226,3 @@ def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
                 continue
             topology[(class_type, key, source_class, int(value[1]))] += 1
     return topology
-
-
-def _is_link(value: object) -> bool:
-    return isinstance(value, list) and len(value) == 2 and str(value[0]).isdigit()

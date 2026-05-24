@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from vibecomfy.schema.provider import SchemaProvider, schema_for, schema_registry_empty
+from vibecomfy._graph_utils import is_api_link
+from vibecomfy.schema.registry import schema_for, schema_registry_empty
+from vibecomfy.schema.types import SchemaProvider
 from vibecomfy.workflow import ValidationIssue, VibeWorkflow
 
 
@@ -52,7 +54,7 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                 )
 
         for name in sorted(provided_inputs - declared_inputs):
-            if not _issue_suppressed(node.class_type, "unknown_input"):
+            if not _unknown_input_allowed(node.class_type, name):
                 issues.append(
                     ValidationIssue(
                         "unknown_input",
@@ -63,7 +65,7 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
 
         for name in sorted(provided_inputs & declared_inputs):
             value = node.inputs[name] if name in node.inputs else node.widgets[name]
-            if _is_api_link(value):
+            if _is_validation_api_link(value):
                 continue
             spec = raw_schema_inputs[name]
             choices = getattr(spec, "choices", None) or []
@@ -107,6 +109,27 @@ def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) ->
                                 "value": _truncate(value),
                                 "min": min_value,
                                 "max": max_value,
+                            },
+                        )
+                    )
+            expected_type = _primitive_expected_type(getattr(spec, "type", None))
+            if expected_type and not _issue_suppressed(node.class_type, "value_type_mismatch"):
+                if not _matches_primitive_type(value, expected_type):
+                    issues.append(
+                        ValidationIssue(
+                            "value_type_mismatch",
+                            (
+                                f"Node {node_id} ({node.class_type}) input {name} value {_truncate(value)} "
+                                f"does not match declared type {expected_type}."
+                            ),
+                            severity="error",
+                            detail={
+                                "node_id": node_id,
+                                "class_type": node.class_type,
+                                "input": name,
+                                "value": _truncate(value),
+                                "expected_type": expected_type,
+                                "actual_type": type(value).__name__,
                             },
                         )
                     )
@@ -219,13 +242,78 @@ def _types_compatible(output_type: str, input_type: str) -> bool:
     return False
 
 
-def _is_api_link(value: Any) -> bool:
-    return (
-        isinstance(value, (list, tuple))
-        and len(value) == 2
-        and isinstance(value[0], str)
-        and isinstance(value[1], int)
+def _is_validation_api_link(value: Any) -> bool:
+    return is_api_link(
+        value,
+        allow_tuple=True,
+        require_string_node_id=True,
+        require_numeric_node_id=False,
+        require_int_slot=True,
     )
+
+
+def _primitive_expected_type(value: Any) -> str | None:
+    normalized = _normalize_type(value)
+    if normalized in {"INT", "INTEGER"}:
+        return "INT"
+    if normalized in {"FLOAT", "DOUBLE"}:
+        return "FLOAT"
+    if normalized in {"BOOL", "BOOLEAN"}:
+        return "BOOLEAN"
+    if normalized in {"STR", "STRING"}:
+        return "STRING"
+    return None
+
+
+def _matches_primitive_type(value: Any, expected_type: str) -> bool:
+    if expected_type == "INT":
+        return _is_int_literal(value)
+    if expected_type == "FLOAT":
+        return _is_float_literal(value)
+    if expected_type == "BOOLEAN":
+        return _is_boolean_literal(value)
+    if expected_type == "STRING":
+        return isinstance(value, str)
+    return True
+
+
+def _is_int_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        try:
+            int(text, 10)
+        except ValueError:
+            return False
+        return True
+    return False
+
+
+def _is_float_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value)
+        except ValueError:
+            return False
+        return True
+    return False
+
+
+def _is_boolean_literal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "false"}
+    return False
 
 
 def _truncate(value: Any, n: int = 120) -> str:
@@ -239,6 +327,23 @@ def _issue_suppressed(class_type: str, code: str) -> bool:
     if class_type not in SCHEMA_VALIDATION_SKIP_CLASSES:
         return False
     return code == "unknown_input" or code.startswith("value_")
+
+
+def _unknown_input_allowed(class_type: str, input_name: str) -> bool:
+    if _issue_suppressed(class_type, "unknown_input"):
+        return True
+    # T5 fixture: SimpleCalculator accepts open-ended numbered operand sockets.
+    if class_type == "SimpleCalculator" and _has_numbered_prefix(input_name, "input_"):
+        return True
+    # T5 fixture / observed LTX guide nodes: guide_N inputs are dynamic slots.
+    if class_type == "LTXVAddGuide" and _has_numbered_prefix(input_name, "guide_"):
+        return True
+    return False
+
+
+def _has_numbered_prefix(value: str, prefix: str) -> bool:
+    suffix = value.removeprefix(prefix)
+    return suffix != value and suffix.isdigit()
 
 
 def _schema_accepts_dict(spec: Any) -> bool:

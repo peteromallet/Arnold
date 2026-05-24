@@ -1,5 +1,10 @@
 # Old VibeComfy Port Rationale
 
+Status: Historical rationale. Current user-facing guidance lives in
+[`../../README.md`](../../README.md) and [`../authoring.md`](../authoring.md);
+current public API names are recorded in
+[`../../artifacts/m6-public-api.md`](../../artifacts/m6-public-api.md).
+
 The old `peteromallet/VibeComfy` project was useful because it helped agents inspect, search, edit, and submit existing ComfyUI workflow JSON. The new VibeComfy has a different center: workflows are normalized into `VibeWorkflow`, edited through Python scratchpads, compiled to Comfy API JSON, and run through managed or embedded runtime paths.
 
 Because of that, old features should be ported as capabilities on top of the new model, not copied in as a parallel raw-JSON tool.

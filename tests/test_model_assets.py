@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from vibecomfy.ingest.loader import load_workflow_json
 from vibecomfy.model_assets import entries_from_scratchpad_path, extract_from_raw_workflow
+
+FLUX2_PRE_POLICY_WORKFLOW = Path("workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json")
 
 
 def test_extract_from_raw_workflow_normalises_model_metadata() -> None:
@@ -157,8 +161,13 @@ def test_real_wan_t2v_extracts_three_assets() -> None:
     assert all("?download=true" not in entry["url"] for entry in entries)
 
 
+@pytest.mark.xfail(
+    not FLUX2_PRE_POLICY_WORKFLOW.exists(),
+    raises=FileNotFoundError,
+    reason="M1 safety gate: pre-policy Flux2 corpus workflow is absent in this checkout.",
+)
 def test_real_flux2_subgraph_extracts_pre_policy_assets() -> None:
-    entries = extract_from_raw_workflow(load_workflow_json("workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json"))
+    entries = extract_from_raw_workflow(load_workflow_json(FLUX2_PRE_POLICY_WORKFLOW))
 
     assert [(entry["name"], entry["subdir"]) for entry in entries] == [
         ("flux-2-klein-base-9b-fp8.safetensors", "diffusion_models"),

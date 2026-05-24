@@ -12,10 +12,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import logging
-import os
 import re
 import sys
 import warnings
@@ -117,7 +115,7 @@ def _load_override(path: Path) -> dict | None:
     return None
 
 
-def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
+def _convert_template(path: Path, *, emit_existing: bool = False) -> tuple[Row, str | None, dict | None]:
     """Process one template. Returns (row, emitted_text or None, original_compiled_api)."""
     template_id = _template_id_for_path(path)
     row = Row(template_id=template_id)
@@ -127,7 +125,7 @@ def _convert_template(path: Path) -> tuple[Row, str | None, dict | None]:
     if shape_note:
         row.note = shape_note
 
-    if shape in ("manual", "converted"):
+    if shape in ("manual", "converted") and not emit_existing:
         row.parse = "skip"
         row.build = "skip"
         row.validate = "skip"
@@ -319,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[Row] = []
     converted = 0
     for path in paths:
-        row, emitted, _ = _convert_template(path)
+        row, emitted, _ = _convert_template(path, emit_existing=bool(args.dry_run and args.template))
         rows.append(row)
         if emitted is None:
             continue
@@ -339,7 +337,12 @@ def main(argv: list[str] | None = None) -> int:
 
     _print_grid(rows)
 
-    total = sum(1 for r in rows if r.shape in ("legacy", "authored"))
+    total = sum(
+        1
+        for r in rows
+        if r.shape in ("legacy", "authored")
+        or (args.dry_run and args.template and r.shape in ("manual", "converted"))
+    )
     print()
     print(f"Converted {converted}/{total} (validate ok + roundtrip pass for LEGACY)")
     failures = [r for r in rows if r.validate == "fail" or r.roundtrip == "fail" or r.parse == "fail" or r.build == "fail"]

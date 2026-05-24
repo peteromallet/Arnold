@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
-from dataclasses import asdict
 from pathlib import Path
 import subprocess
 import sys
 
+from vibecomfy._git_utils import git_head
 from vibecomfy.commands._output import emit
 from vibecomfy.commands.index_files import IndexReadError, print_index_error, read_index_json
 from vibecomfy.registry import load_workflow_reference
@@ -39,8 +38,7 @@ def _cmd_nodes_spec(args: argparse.Namespace) -> int:
     if schema is None:
         print(f"node schema not found for {args.class_type!r}; run `vibecomfy sources sync` or start a runtime with /object_info")
         return 1
-    print(json.dumps(asdict(schema), indent=2, sort_keys=True))
-    return 0
+    return emit(schema, json=True, text_renderer=lambda _schema: None)
 
 
 def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
@@ -56,26 +54,9 @@ def _cmd_nodes_install_plan(args: argparse.Namespace) -> int:
 
 
 def _print_install_plan(path: str, missing_classes, packs, unresolved, *, json_output: bool) -> int:
+    payload = _install_plan_payload(path, missing_classes, packs, unresolved)
     if json_output:
-        print(
-            json.dumps(
-                {
-                    "path": path,
-                    "packs": [
-                        {
-                            "name": pack.name,
-                            "repo": pack.repo,
-                            "pip_packages": list(pack.pip_packages),
-                            "classes": sorted(missing_classes & pack.classes),
-                        }
-                        for pack in packs
-                    ],
-                    "unresolved_class_types": unresolved,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        emit(payload, json=True, text_renderer=lambda _payload: None)
         return 1 if unresolved else 0
     if not missing_classes:
         print("No missing custom node classes detected from local node_index.json.")
@@ -93,6 +74,22 @@ def _print_install_plan(path: str, missing_classes, packs, unresolved, *, json_o
             print(f"- {class_type}")
         return 1
     return 0
+
+
+def _install_plan_payload(path: str, missing_classes, packs, unresolved) -> dict:
+    return {
+        "path": path,
+        "packs": [
+            {
+                "name": pack.name,
+                "repo": pack.repo,
+                "pip_packages": list(pack.pip_packages),
+                "classes": sorted(missing_classes & pack.classes),
+            }
+            for pack in packs
+        ],
+        "unresolved_class_types": unresolved,
+    }
 
 
 def _cmd_nodes_install(args: argparse.Namespace) -> int:
@@ -151,7 +148,7 @@ def _cmd_nodes_lock(args: argparse.Namespace) -> int:
         pack_dir = _installed_nodepack_dir(entry.name)
         git_commit_sha = entry.git_commit_sha
         if entry.semantic_label and pack_dir is not None:
-            git_commit_sha = _git_head(pack_dir) or git_commit_sha
+            git_commit_sha = git_head(pack_dir, runner=subprocess.run) or git_commit_sha
         source_sha256 = dict(entry.source_sha256)
         if getattr(args, "with_source_sha256", False) and pack_dir is not None:
             source_sha256 = _source_sha256(pack_dir)
@@ -187,19 +184,6 @@ def _installed_nodepack_dir(name: str) -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
-def _git_head(pack_dir: Path) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(pack_dir), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return result.stdout.strip() or None
-
-
 def _source_sha256(pack_dir: Path) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for source in sorted(pack_dir.rglob("*.py")):
@@ -219,6 +203,7 @@ def register(subparsers) -> None:
     nodes_list.set_defaults(func=_cmd_nodes_list)
     nodes_spec = nodes_sub.add_parser("spec")
     nodes_spec.add_argument("class_type")
+    nodes_spec.add_argument("--json", action="store_true", help="Compatibility flag; node specs are JSON by default.")
     nodes_spec.set_defaults(func=_cmd_nodes_spec)
     nodes_install = nodes_sub.add_parser("install-plan")
     nodes_install.add_argument("path")

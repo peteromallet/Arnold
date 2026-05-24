@@ -151,3 +151,41 @@ def test_analyze_info_cli_smoke_returns_output(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
     assert "nodes: 2" in result.stdout
+
+
+def test_analyze_trace_cli_json_and_tsv_normalize_rows(tmp_path: Path) -> None:
+    fixture = tmp_path / "workflow.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "hello"}},
+                "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    json_result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "analyze", "trace", str(fixture), "--node-id", "2", "--format", "json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    tsv_result = subprocess.run(
+        [sys.executable, "-m", "vibecomfy.cli", "analyze", "trace", str(fixture), "--node-id", "2", "--format", "tsv"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json_result.returncode == 0, json_result.stderr
+    assert json.loads(json_result.stdout) == [
+        {"class_type": "CLIPTextEncode", "id": "1", "pack": None},
+        {"class_type": "SaveImage", "id": "2", "pack": None},
+    ]
+    assert tsv_result.returncode == 0, tsv_result.stderr
+    assert tsv_result.stdout.splitlines() == [
+        "class_type\tid\tpack",
+        "CLIPTextEncode\t1\t",
+        "SaveImage\t2\t",
+    ]

@@ -3,17 +3,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import json
 import sys
 import types
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from vibecomfy.commands.run import _cmd_run
+from vibecomfy.runtime.execution import QueuedExecution
 from vibecomfy.runtime.session import SessionConfig
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
+
+
+def _runtime_errors():
+    return importlib.import_module("vibecomfy.errors")
 
 
 def _workflow() -> VibeWorkflow:
@@ -22,24 +30,60 @@ def _workflow() -> VibeWorkflow:
     return workflow
 
 
-def test_run_starts_server_before_building(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    entered_server = False
-
+def _server_context(url: str):
     @asynccontextmanager
-    async def fail_if_entered(*args, **kwargs):
-        nonlocal entered_server
-        entered_server = True
-        yield "http://127.0.0.1:8188"
+    async def server(*args, **kwargs):
+        yield url
+
+    return server
+
+
+def _tracking_server(state: dict[str, bool], url: str):
+    @asynccontextmanager
+    async def server(*args, **kwargs):
+        state["entered"] = True
+        yield url
+
+    return server
+
+
+def _capturing_server(captured_configs: list[Any], url: str | None):
+    @asynccontextmanager
+    async def server(*, server_url=None, log_path=None, config=None):
+        captured_configs.append(config)
+        yield server_url if url is None else url
+
+    return server
+
+
+def test_run_starts_server_before_building(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    server_state = {"entered": False}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(runtime_run_module, "comfy_server", fail_if_entered)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _tracking_server(server_state, "http://127.0.0.1:8188"))
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     with pytest.raises(ValueError, match="Workflow build failed: Unknown compile backend"):
         asyncio.run(runtime_run_module.run(_workflow(), backend="missing"))
 
-    assert entered_server is True
+    assert server_state["entered"] is True
     assert (tmp_path / "out").exists()
+
+
+def test_run_build_failure_raises_typed_build_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    errors = _runtime_errors()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _server_context("http://127.0.0.1:8188"))
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+
+    with pytest.raises(errors.WorkflowBuildError) as exc_info:
+        asyncio.run(runtime_run_module.run(_workflow(), backend="missing"))
+
+    assert isinstance(exc_info.value, ValueError)
+    assert exc_info.value.next_action
 
 
 def test_run_embedded_starts_before_building(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,31 +108,37 @@ def test_run_embedded_starts_before_building(tmp_path, monkeypatch: pytest.Monke
 
 
 def test_run_validates_before_queueing(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    entered_server = False
-
-    @asynccontextmanager
-    async def fail_if_entered(*args, **kwargs):
-        nonlocal entered_server
-        entered_server = True
-        yield "http://127.0.0.1:8188"
+    server_state = {"entered": False}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(runtime_run_module, "comfy_server", fail_if_entered)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _tracking_server(server_state, "http://127.0.0.1:8188"))
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     with pytest.raises(ValueError, match=r"Workflow validation failed:\n  - \[empty_workflow\]"):
         asyncio.run(runtime_run_module.run(VibeWorkflow("empty", WorkflowSource("empty"))))
 
-    assert entered_server is True
+    assert server_state["entered"] is True
     assert (tmp_path / "out").exists()
+
+
+def test_run_validation_failure_raises_typed_validation_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    errors = _runtime_errors()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _server_context("http://127.0.0.1:8188"))
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+
+    with pytest.raises(errors.WorkflowValidationError) as exc_info:
+        asyncio.run(runtime_run_module.run(VibeWorkflow("empty", WorkflowSource("empty"))))
+
+    assert isinstance(exc_info.value, ValueError)
+    assert exc_info.value.next_action
 
 
 def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     queued_prompts: list[dict] = []
-
-    @asynccontextmanager
-    async def fake_server(*args, **kwargs):
-        yield "http://runtime.test"
 
     class FailingClient:
         def __init__(self, server_url: str) -> None:
@@ -99,7 +149,7 @@ def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -
             raise RuntimeError("runtime rejected prompt")
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _server_context("http://runtime.test"))
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FailingClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
@@ -109,6 +159,26 @@ def test_run_surfaces_queue_failure(monkeypatch: pytest.MonkeyPatch, tmp_path) -
     assert queued_prompts == [
         {"1": {"class_type": "SaveImage", "inputs": {"filename_prefix": "test"}}}
     ]
+
+
+def test_run_queue_timeout_wraps_as_typed_queue_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    errors = _runtime_errors()
+
+    async def timeout_queue_server_prompt(api_dict, *, server_url=None, client=None):
+        raise asyncio.TimeoutError("queue wait timed out")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _server_context("http://runtime.test"))
+    monkeypatch.setattr(runtime_run_module, "queue_server_prompt", timeout_queue_server_prompt)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+
+    with pytest.raises(errors.WorkflowQueueError) as exc_info:
+        asyncio.run(runtime_run_module.run(_workflow(), server_url="http://runtime.test"))
+
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
+    assert exc_info.value.next_action
 
 
 def test_run_managed_server_uses_workflow_session_config(
@@ -122,26 +192,23 @@ def test_run_managed_server_uses_workflow_session_config(
         "port": 8205,
     }
 
-    @asynccontextmanager
-    async def fake_server(*, server_url=None, log_path=None, config=None):
-        captured_configs.append(config)
-        yield "http://managed.test"
-
     class FakeClient:
         def __init__(self, server_url: str) -> None:
             self.server_url = server_url
 
         async def queue_prompt(self, prompt: dict) -> dict:
-            return {"prompt_id": "prompt-managed"}
+            return {"prompt_id": "prompt-managed", "outputs": {"1": {"filename": "ignored.png"}}}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _capturing_server(captured_configs, "http://managed.test"))
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
     result = asyncio.run(runtime_run_module.run(workflow, server_url=None))
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
 
     assert result.prompt_id == "prompt-managed"
+    assert result.outputs == []
     assert len(captured_configs) == 1
     config = captured_configs[0]
     assert config.memory_profile == 5
@@ -150,6 +217,11 @@ def test_run_managed_server_uses_workflow_session_config(
     assert config.cache_policy == "lru:1"
     assert config.reserve_vram_gb == 4.0
     assert config.disable_smart_memory is True
+    assert metadata["runtime"] == "server"
+    assert metadata["queued"] == {"prompt_id": "prompt-managed", "outputs": {"1": {"filename": "ignored.png"}}}
+    assert metadata["outputs"] == []
+    assert metadata["memory_profile"] == 5
+    assert metadata["memory_profile_label"] == "Minimum"
 
 
 def test_run_external_server_does_not_apply_workflow_session_config(
@@ -159,11 +231,6 @@ def test_run_external_server_does_not_apply_workflow_session_config(
     workflow = _workflow()
     workflow.metadata["comfy_configuration"] = {"memory_profile": 5}
 
-    @asynccontextmanager
-    async def fake_server(*, server_url=None, log_path=None, config=None):
-        captured_configs.append(config)
-        yield server_url
-
     class FakeClient:
         def __init__(self, server_url: str) -> None:
             self.server_url = server_url
@@ -172,7 +239,7 @@ def test_run_external_server_does_not_apply_workflow_session_config(
             return {"prompt_id": "prompt-external"}
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _capturing_server(captured_configs, None))
     monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
     monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
 
@@ -180,6 +247,43 @@ def test_run_external_server_does_not_apply_workflow_session_config(
 
     assert result.prompt_id == "prompt-external"
     assert captured_configs == [None]
+
+
+def test_run_delegates_queue_and_keeps_raw_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    queued_calls: list[tuple[dict[str, Any], str | None]] = []
+
+    class FakeClient:
+        def __init__(self, server_url: str) -> None:
+            self.server_url = server_url
+
+    async def fake_queue_server_prompt(api_dict, *, server_url=None, client=None):
+        queued_calls.append((api_dict, getattr(client, "server_url", server_url)))
+        return QueuedExecution(
+            queued={"prompt_id": "prompt-helper", "outputs": {"1": {"filename": "ignored.png"}}},
+            prompt_id="prompt-helper",
+            outputs=[],
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", _server_context("http://active-runtime.test"))
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+    monkeypatch.setattr(runtime_run_module, "ComfyClient", FakeClient)
+    monkeypatch.setattr(runtime_run_module, "queue_server_prompt", fake_queue_server_prompt)
+
+    result = asyncio.run(runtime_run_module.run(_workflow(), server_url="http://configured.test"))
+
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+    assert queued_calls == [
+        (
+            {"1": {"class_type": "SaveImage", "inputs": {"filename_prefix": "test"}}},
+            "http://active-runtime.test",
+        )
+    ]
+    assert result.prompt_id == "prompt-helper"
+    assert result.outputs == []
+    assert metadata["runtime"] == "server"
+    assert metadata["queued"] == {"prompt_id": "prompt-helper", "outputs": {"1": {"filename": "ignored.png"}}}
+    assert metadata["outputs"] == []
 
 
 def test_embedded_configuration_uses_hiddenswitch_configuration_object(monkeypatch: pytest.MonkeyPatch) -> None:

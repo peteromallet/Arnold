@@ -9,31 +9,12 @@ renumbering and ordering, otherwise `(False, [diff_strings])`.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
 
-
-# UI-only node classes the converter strips at IR build. Match the
-# stripped set in `tools/format_as_python.py`.
-UI_ONLY = frozenset(
-    {
-        "Note",
-        "MarkdownNote",
-    }
-)
-
-
-def _is_link(value: Any) -> bool:
-    if not (isinstance(value, list) and len(value) == 2):
-        return False
-    nid, slot = value
-    if not isinstance(slot, int):
-        return False
-    nid_s = str(nid)
-    return all(p.isdigit() for p in nid_s.split(":"))
+from vibecomfy._graph_utils import UI_ONLY_CLASS_TYPES, is_api_link
 
 
 def _is_ui_only(class_type: str) -> bool:
-    return class_type in UI_ONLY
+    return class_type in UI_ONLY_CLASS_TYPES
 
 
 def _canonical_key(class_type: str, key: str) -> str | None:
@@ -75,7 +56,15 @@ def _widget_value_counter(api: dict) -> Counter[tuple[str, str, str]]:
         if _is_ui_only(class_type):
             continue
         for key, value in node.get("inputs", {}).items():
-            if _is_link(value):
+            # Tool-mode equivalence only treats string source ids as topology links.
+            if is_api_link(
+                value,
+                allow_tuple=False,
+                require_string_node_id=True,
+                require_numeric_node_id=True,
+                allow_compound_node_id=True,
+                require_int_slot=True,
+            ):
                 continue
             canonical = _canonical_key(class_type, key)
             if canonical is None:
@@ -91,7 +80,14 @@ def _topology_counter(api: dict) -> Counter[tuple[str, str, str, int]]:
         if _is_ui_only(class_type):
             continue
         for key, value in node.get("inputs", {}).items():
-            if not _is_link(value):
+            if not is_api_link(
+                value,
+                allow_tuple=False,
+                require_string_node_id=True,
+                require_numeric_node_id=True,
+                allow_compound_node_id=True,
+                require_int_slot=True,
+            ):
                 continue
             source = api.get(str(value[0]), {})
             source_class = source.get("class_type")

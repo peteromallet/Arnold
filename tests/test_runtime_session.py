@@ -23,6 +23,7 @@ from vibecomfy.runtime.session import (
     SessionConfig,
     _comfy_server_argv,
     _embedded_configuration_for_session,
+    _prepare_prompt,
     _prepare_prompt_async,
     _run_metadata,
     _warm_schema_provider,
@@ -30,9 +31,14 @@ from vibecomfy.runtime.session import (
     model_fingerprint,
 )
 import vibecomfy.runtime.client as client_module
+from vibecomfy.runtime.execution import QueuedExecution
 from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 runtime_run_module = importlib.import_module("vibecomfy.runtime.run")
+
+
+def _runtime_errors():
+    return importlib.import_module("vibecomfy.errors")
 
 
 class FakeConfiguration(dict):
@@ -101,6 +107,109 @@ def _workflow(ckpt: str = "model-a.safetensors", *, seed: int = 1) -> VibeWorkfl
     return workflow
 
 
+def test_workflow_build_and_validation_errors_keep_valueerror_compatibility() -> None:
+    errors = _runtime_errors()
+
+    assert issubclass(errors.WorkflowBuildError, errors.VibeComfyError)
+    assert issubclass(errors.WorkflowBuildError, ValueError)
+    assert issubclass(errors.WorkflowValidationError, errors.VibeComfyError)
+    assert issubclass(errors.WorkflowValidationError, ValueError)
+
+
+def test_prepare_prompt_preserves_vibecomfy_error_next_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    errors = _runtime_errors()
+    workflow = _workflow()
+    original = errors.VibeComfyError("custom build failure", next_action="keep this remediation")
+
+    def fail_compile(*, backend: str) -> dict[str, Any]:
+        raise original
+
+    monkeypatch.setattr(workflow, "compile", fail_compile)
+
+    with pytest.raises(errors.VibeComfyError) as exc_info:
+        _prepare_prompt(workflow, backend="api")
+
+    assert exc_info.value.next_action == "keep this remediation"
+
+
+def test_prepare_prompt_async_preserves_vibecomfy_error_next_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    errors = _runtime_errors()
+    workflow = _workflow()
+    original = errors.VibeComfyError("custom async build failure", next_action="keep async remediation")
+
+    def fail_compile(*, backend: str) -> dict[str, Any]:
+        raise original
+
+    monkeypatch.setattr(workflow, "compile", fail_compile)
+
+    async def run_prepare() -> None:
+        await _prepare_prompt_async(
+            workflow,
+            backend="api",
+            schema_provider=None,
+            on_unavailable=lambda msg: (_ for _ in ()).throw(AssertionError(msg)),
+        )
+
+    with pytest.raises(errors.VibeComfyError) as exc_info:
+        asyncio.run(run_prepare())
+
+    assert exc_info.value.next_action == "keep async remediation"
+
+
+def test_prepare_prompt_raises_typed_validation_error() -> None:
+    errors = _runtime_errors()
+
+    with pytest.raises(errors.WorkflowValidationError) as exc_info:
+        _prepare_prompt(VibeWorkflow("empty", WorkflowSource("empty")), backend="api")
+
+    assert isinstance(exc_info.value, ValueError)
+
+
+def test_prepare_prompt_raises_typed_build_error() -> None:
+    errors = _runtime_errors()
+
+    with pytest.raises(errors.WorkflowBuildError) as exc_info:
+        _prepare_prompt(_workflow(), backend="missing")
+
+    assert isinstance(exc_info.value, ValueError)
+
+
+def test_prepare_prompt_async_raises_typed_validation_error() -> None:
+    errors = _runtime_errors()
+
+    async def run_prepare() -> None:
+        await _prepare_prompt_async(
+            VibeWorkflow("empty", WorkflowSource("empty")),
+            backend="api",
+            schema_provider=None,
+            on_unavailable=lambda msg: (_ for _ in ()).throw(AssertionError(msg)),
+        )
+
+    with pytest.raises(errors.WorkflowValidationError) as exc_info:
+        asyncio.run(run_prepare())
+
+    assert isinstance(exc_info.value, ValueError)
+
+
+def test_prepare_prompt_async_raises_typed_build_error() -> None:
+    errors = _runtime_errors()
+
+    async def run_prepare() -> None:
+        await _prepare_prompt_async(
+            _workflow(),
+            backend="missing",
+            schema_provider=None,
+            on_unavailable=lambda msg: (_ for _ in ()).throw(AssertionError(msg)),
+        )
+
+    with pytest.raises(errors.WorkflowBuildError) as exc_info:
+        asyncio.run(run_prepare())
+
+    assert isinstance(exc_info.value, ValueError)
+
+
 class WarmProvider:
     def __init__(self) -> None:
         self.cache_path = Path("unused-cache.json")
@@ -145,6 +254,26 @@ def test_async_warmup_populates_cache_then_validates() -> None:
     assert provider.object_info_calls == 1
     assert provider._object_info == {"ready": True}
     assert api["1"]["inputs"]["ckpt_name"] == "model-a.safetensors"
+
+
+def test_prepare_prompt_async_reports_canonical_validation_issue_codes() -> None:
+    provider = WarmProvider()
+
+    async def run_prepare() -> None:
+        await _prepare_prompt_async(
+            _workflow(seed=True),
+            backend="api",
+            schema_provider=provider,
+            on_unavailable=lambda msg: (_ for _ in ()).throw(AssertionError(msg)),
+        )
+
+    with pytest.raises(ValueError) as exc_info:
+        asyncio.run(run_prepare())
+
+    message = str(exc_info.value)
+    assert "Workflow validation failed:" in message
+    assert "[value_type_mismatch]" in message
+    assert "node_id=2 class_type=KSampler input=seed" in message
 
 
 def test_session_caches_schema_provider_across_runs(
@@ -862,6 +991,125 @@ def test_server_session_two_runs_share_one_subprocess(
     assert [post[0] for post in FakeAsyncClient.posts].count("http://127.0.0.1:8200/prompt") == 2
 
 
+def test_embedded_session_delegates_queue_after_lifecycle_setup(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    events: list[str] = []
+
+    async def fake_prepare(workflow, *, backend, schema_provider, on_unavailable, cache_only=False):
+        assert cache_only is True
+        events.append("prepare")
+        return workflow.compile(backend=backend)
+
+    async def fake_maybe_flush(_session, _fp):
+        events.append("flush")
+
+    async def fake_start_watchdog(*, server_url, client_id, api_dict):
+        events.append("watchdog-start")
+        return object()
+
+    async def fake_finalize_watchdog(_watchdog, *, run_dir, reason):
+        events.append(f"watchdog-finalize:{reason}")
+
+    async def fake_queue_embedded_prompt(queue, api_dict):
+        events.append("queue")
+        return QueuedExecution(
+            queued={"prompt_id": "prompt-embedded", "outputs": {"1": {"filename": "out.png"}}},
+            prompt_id="prompt-embedded",
+            outputs=["out.png"],
+        )
+
+    monkeypatch.setattr(session_module, "_prepare_prompt_async", fake_prepare)
+    monkeypatch.setattr(session_module, "_maybe_flush_for_policy", fake_maybe_flush)
+    monkeypatch.setattr(session_module, "_start_watchdog", fake_start_watchdog)
+    monkeypatch.setattr(session_module, "_finalize_watchdog", fake_finalize_watchdog)
+    monkeypatch.setattr(session_module, "_build_schema_provider", lambda _url: object())
+    monkeypatch.setattr(session_module, "queue_embedded_prompt", fake_queue_embedded_prompt)
+
+    async def run_once() -> RunResult:
+        session = EmbeddedSession(SessionConfig.from_dict({"memory_profile": 3}))
+        try:
+            return await session.run(_workflow())
+        finally:
+            await session.stop()
+
+    result = asyncio.run(run_once())
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+
+    assert events == ["prepare", "flush", "watchdog-start", "queue", "watchdog-finalize:completed"]
+    assert result.prompt_id == "prompt-embedded"
+    assert result.outputs == ["out.png"]
+    assert metadata["runtime"] == "embedded"
+    assert metadata["queued"] == {"prompt_id": "prompt-embedded", "outputs": {"1": {"filename": "out.png"}}}
+    assert metadata["outputs"] == ["out.png"]
+    assert metadata["memory_profile"] == 3
+    assert metadata["memory_profile_label"] == "Low VRAM"
+
+
+def test_server_session_delegates_queue_without_collecting_outputs(
+    fake_server,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    events: list[str] = []
+    queued_urls: list[str | None] = []
+
+    async def fake_prepare(workflow, *, backend, schema_provider, on_unavailable, cache_only=False):
+        assert cache_only is False
+        events.append("prepare")
+        return workflow.compile(backend=backend)
+
+    async def fake_maybe_flush(_session, _fp):
+        events.append("flush")
+
+    async def fake_start_watchdog(*, server_url, client_id, api_dict):
+        events.append("watchdog-start")
+        return object()
+
+    async def fake_finalize_watchdog(_watchdog, *, run_dir, reason):
+        events.append(f"watchdog-finalize:{reason}")
+
+    async def fake_queue_server_prompt(api_dict, *, server_url=None, client=None):
+        events.append("queue")
+        queued_urls.append(getattr(client, "server_url", server_url))
+        return QueuedExecution(
+            queued={"prompt_id": "prompt-server", "outputs": {"1": {"filename": "ignored.png"}}},
+            prompt_id="prompt-server",
+            outputs=[],
+        )
+
+    monkeypatch.setattr(session_module, "_prepare_prompt_async", fake_prepare)
+    monkeypatch.setattr(session_module, "_maybe_flush_for_policy", fake_maybe_flush)
+    monkeypatch.setattr(session_module, "_start_watchdog", fake_start_watchdog)
+    monkeypatch.setattr(session_module, "_finalize_watchdog", fake_finalize_watchdog)
+    monkeypatch.setattr(session_module, "_build_schema_provider", lambda _url: object())
+    monkeypatch.setattr(session_module, "queue_server_prompt", fake_queue_server_prompt)
+
+    async def run_once() -> RunResult:
+        session = ServerSession(SessionConfig.from_dict({"port": 8200, "memory_profile": 3}))
+        try:
+            return await session.run(_workflow())
+        finally:
+            await session.stop()
+
+    result = asyncio.run(run_once())
+    metadata = json.loads(Path(result.metadata_path).read_text(encoding="utf-8"))
+
+    assert events == ["prepare", "flush", "watchdog-start", "queue", "watchdog-finalize:completed"]
+    assert queued_urls == ["http://127.0.0.1:8200"]
+    assert result.prompt_id == "prompt-server"
+    assert result.outputs == []
+    assert metadata["runtime"] == "server"
+    assert metadata["queued"] == {"prompt_id": "prompt-server", "outputs": {"1": {"filename": "ignored.png"}}}
+    assert metadata["outputs"] == []
+    assert metadata["memory_profile"] == 3
+    assert metadata["memory_profile_label"] == "Low VRAM"
+
+
 def test_server_session_flush_posts_api_free_payload(fake_server) -> None:
     async def run_flush() -> None:
         session = ServerSession(SessionConfig(port=8200))
@@ -972,6 +1220,36 @@ def test_embedded_stop_refuses_inflight_when_not_waiting(
     asyncio.run(run_case())
 
 
+def test_embedded_stop_inflight_raises_typed_lifecycle_error(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _runtime_errors()
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        with pytest.raises(errors.SessionLifecycleError) as exc_info:
+            await session.stop(wait_for_inflight=False)
+        assert exc_info.value.next_action
+        release.set()
+        await task
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
 def test_embedded_stop_waits_for_inflight_run(
     fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1061,6 +1339,36 @@ def test_embedded_concurrent_run_is_rejected(
     asyncio.run(run_case())
 
 
+def test_embedded_concurrent_run_raises_typed_busy_error(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _runtime_errors()
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        with pytest.raises(errors.SessionBusyError) as exc_info:
+            await session.run(_workflow(seed=2))
+        assert exc_info.value.next_action
+        release.set()
+        await task
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
 def test_embedded_reload_reopens_fresh_context_and_resets_cached_state(
     fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1110,6 +1418,60 @@ def test_embedded_reload_refuses_inflight_run(
         release.set()
         await task
         await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_reload_inflight_raises_typed_lifecycle_error(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _runtime_errors()
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def run_case() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def blocking_queue(self, api_dict):
+            started.set()
+            await release.wait()
+            return {"prompt_id": "prompt-blocked", "outputs": []}
+
+        monkeypatch.setattr(fake_comfy, "queue_prompt_api", blocking_queue)
+        session = EmbeddedSession()
+        task = asyncio.create_task(session.run(_workflow()))
+        await started.wait()
+        with pytest.raises(errors.SessionLifecycleError) as exc_info:
+            await session.reload_for_nodepack_change(reason="test")
+        assert exc_info.value.next_action
+        release.set()
+        await task
+        await session.stop()
+
+    asyncio.run(run_case())
+
+
+def test_embedded_queue_timeout_keeps_asyncio_timeout_semantics(
+    fake_comfy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors = _runtime_errors()
+    monkeypatch.chdir(tmp_path)
+    _patch_fast_runtime_run(monkeypatch)
+
+    async def timeout_queue(self, api_dict):
+        raise asyncio.TimeoutError("queue wait timed out")
+
+    monkeypatch.setattr(fake_comfy, "queue_prompt_api", timeout_queue)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        try:
+            with pytest.raises(asyncio.TimeoutError) as exc_info:
+                await session.run(_workflow())
+            assert not isinstance(exc_info.value, errors.WorkflowQueueError)
+        finally:
+            await session.stop()
 
     asyncio.run(run_case())
 
@@ -1213,6 +1575,27 @@ def test_embedded_run_ensure_packs_raises_when_node_index_missing(
     asyncio.run(run_case())
 
 
+def test_embedded_run_ensure_packs_raises_typed_install_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    errors = _runtime_errors()
+    monkeypatch.chdir(tmp_path)
+
+    def missing_index(_workflow):
+        raise FileNotFoundError("node_index.json not found at node_index.json; run `vibecomfy sources sync`")
+
+    monkeypatch.setattr(node_packs_install, "missing_packs_for_workflow", missing_index)
+
+    async def run_case() -> None:
+        session = EmbeddedSession()
+        with pytest.raises(errors.NodePackInstallError) as exc_info:
+            await session.run(_workflow(), ensure_packs=True)
+        assert exc_info.value.next_action
+
+    asyncio.run(run_case())
+
+
 def test_server_reload_calls_stop_then_start() -> None:
     async def run_case() -> None:
         session = ServerSession()
@@ -1248,3 +1631,54 @@ def test_server_reload_refuses_inflight_and_has_no_external_mode_api() -> None:
     asyncio.run(run_case())
     assert not hasattr(ServerSession, "attach")
     assert not hasattr(session_module, "ExternalServerRestartRequired")
+
+
+def test_server_reload_inflight_raises_typed_lifecycle_error() -> None:
+    errors = _runtime_errors()
+
+    async def run_case() -> None:
+        session = ServerSession()
+        task = asyncio.create_task(asyncio.sleep(3600))
+        session._inflight_run = task
+        try:
+            with pytest.raises(errors.SessionLifecycleError) as exc_info:
+                await session.reload_for_nodepack_change(reason="test")
+            assert exc_info.value.next_action
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(run_case())
+
+
+def test_spawn_comfy_server_startup_timeout_raises_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    errors = _runtime_errors()
+    process = FakeProcess()
+
+    class NeverReadyAsyncClient(FakeAsyncClient):
+        async def get(self, url: str) -> FakeResponse:
+            self.gets.append(url)
+            return FakeResponse(503, {"ready": False})
+
+    async def fake_create_subprocess_exec(*argv, **kwargs):
+        return process
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(session_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(session_module.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", NeverReadyAsyncClient)
+
+    async def run_case() -> None:
+        with pytest.raises(errors.RuntimeStartupError) as exc_info:
+            await session_module._spawn_comfy_server(SessionConfig(port=8200), log_path=tmp_path / "comfy.log")
+        assert exc_info.value.next_action
+        assert isinstance(exc_info.value.__cause__, TimeoutError)
+
+    asyncio.run(run_case())
+    assert process.killed is True

@@ -6,7 +6,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from .session import SessionConfig
+from .config import SessionConfig
+from .server_process import _spawn_comfy_server
 
 
 @asynccontextmanager
@@ -22,8 +23,6 @@ async def comfy_server(
     log_handle = None
     process: asyncio.subprocess.Process | None = None
     try:
-        from .session import _spawn_comfy_server
-
         process, managed_url, log_handle = await _spawn_comfy_server(
             config or SessionConfig(port=8188), log_path=log_path
         )
