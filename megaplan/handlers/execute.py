@@ -116,12 +116,31 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             )
         am = worker_module.resolve_agent_mode("execute", args)
         agent, mode, refreshed, model = _agent_mode_parts(am)
+        # Pull the resolved (default-applied) model + effort directly off the
+        # AgentMode so they survive downstream. ``_agent_mode_parts`` returns the
+        # *unresolved* ``model`` for backward compatibility, but the codex CLI
+        # needs the resolved one (e.g. "gpt-5.5") to avoid hanging on a default
+        # endpoint, and the session-key SHA must match what ``run_codex_step``
+        # uses (which is keyed by resolved_model). See diagnostic
+        # /tmp/codex_wedge_diagnostic.md.
+        from megaplan.types import AgentMode as _AgentMode  # local import to avoid cycle at module load
+        if isinstance(am, _AgentMode):
+            effort = am.effort
+            resolved_model = am.resolved_model if am.resolved_model is not None else model
+        else:
+            effort = None
+            resolved_model = model
         # Force fresh session after review kickback or blocked retry to avoid
         # prior-context bias (poisoned environment beliefs, stale task state).
         if not refreshed and (_is_rework_reexecution(state) or _is_blocked_retry(state)):
             refreshed = True
         if agent == "codex" and refreshed:
-            state["sessions"].pop(worker_module.session_key_for("execute", "codex", model=model), None)
+            # Key the session pop by the *resolved* model so it actually matches
+            # the key ``run_codex_step`` writes (which uses resolved_model).
+            state["sessions"].pop(
+                worker_module.session_key_for("execute", "codex", model=resolved_model),
+                None,
+            )
         # Detect tier_models.execute from profile expansion.  If present,
         # pass the tier map down to the dispatchers so they can route
         # per-batch by task complexity.  apply_profile_expansion already
@@ -151,6 +170,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         mode=mode,
                         refreshed=refreshed,
                         model=model,
+                        effort=effort,
+                        resolved_model=resolved_model,
                         tier_map=tier_map,
                     )
                 else:
@@ -164,6 +185,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         mode=mode,
                         refreshed=refreshed,
                         model=model,
+                        effort=effort,
+                        resolved_model=resolved_model,
                         tier_map=tier_map,
                     )
         except CliError:
