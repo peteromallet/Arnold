@@ -101,13 +101,27 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
             - `docs`: writes documentation files (executor must produce `files_changed`).
             If unsure, default to `code`.
-          - `complexity`: integer 1–5 complexity score. Use the rubric:
-            - 1 = trivial single-file mechanical change
-            - 2 = simple change with tests to update
-            - 3 = multi-file change with non-trivial logic
-            - 4 = cross-cutting change with architecture implications
-            - 5 = fundamental system change with high regression risk
-            Missing or uncertain scores MUST default to 5, never 3.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = cross-cutting change touching several modules or a shared interface/contract,
+                  with architecture implications or non-local effects that need judgement.
+            - 5 = fundamental system change with high regression risk: concurrency, schema or
+                  state-machine changes, security-sensitive paths, or anything where a subtle
+                  error would pass tests but be wrong.
+            Score on the HARDEST aspect of the task, not the average. When genuinely torn
+            between two tiers, choose the HIGHER one and say why in the justification.
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
         - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
         - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
           - `id`: short stable ID like `SC1`

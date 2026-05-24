@@ -31,6 +31,7 @@ import json
 import logging
 logger = logging.getLogger(__name__)
 import os
+import queue as _queue
 import random
 import re
 import sys
@@ -112,6 +113,54 @@ def _build_httpx_timeout() -> "httpx.Timeout":
     """
     read = _stream_read_timeout_seconds()
     return httpx.Timeout(connect=30.0, read=read, write=30.0, pool=30.0)
+
+
+# Content-token inactivity bound for streaming SSE responses. This is a HIGHER
+# layer than the httpx read timeout above. Some providers (e.g. DeepSeek) keep
+# the SSE socket alive with ~1/sec keepalive comment frames while the model is
+# stalled producing ZERO content. Those keepalive bytes reset httpx's per-read
+# timeout, so the lower-layer read timeout NEVER trips — the `for chunk in
+# stream:` loop keeps iterating (~1/sec) but no content/reasoning delta ever
+# arrives. We detect that here with a wall-clock check inside the loop: if no
+# chunk has carried a non-empty content OR reasoning_content delta for longer
+# than this bound, we abort and raise a retryable APITimeoutError. Resets on
+# every real content/reasoning delta, so slow-but-progressing (including pure
+# reasoning) generations are NOT falsely aborted.
+DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS = 60.0
+
+
+def _stream_content_stall_timeout_seconds() -> float:
+    """Content/reasoning-delta inactivity bound (seconds) for streaming reads.
+
+    Configurable via HERMES_STREAM_CONTENT_STALL_TIMEOUT. Catches the
+    keepalive-frame stall the httpx read timeout cannot see (bytes keep
+    arriving, but no content/reasoning delta does).
+    """
+    try:
+        value = float(os.getenv(
+            "HERMES_STREAM_CONTENT_STALL_TIMEOUT",
+            DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_STREAM_CONTENT_STALL_TIMEOUT_SECONDS
+    return max(value, 1.0)
+
+
+# Sentinels for the streaming producer/consumer queue (see _call_chat_completions).
+# A daemon producer thread runs the blocking `for chunk in stream:` and pushes
+# chunks onto a bounded-wait queue; the consumer (main streaming thread) dequeues
+# with a timeout so a keepalive-only stall — where the OpenAI SDK's SSE decoder
+# swallows `: ...` comment lines and BLOCKS inside __next__ without yielding —
+# is detected and converted into a retryable APITimeoutError.
+_STREAM_QUEUE_SENTINEL = object()
+
+
+class _StreamProducerError:
+    """Wraps an exception raised inside the producer thread for the consumer."""
+    __slots__ = ("exc",)
+
+    def __init__(self, exc: BaseException):
+        self.exc = exc
 
 # Agent internals extracted to agent/ package for modularity
 from agent.prompt_builder import (
@@ -3895,9 +3944,84 @@ class AIAgent:
             reasoning_parts: list = []
             usage_obj = None
 
-            for chunk in stream:
+            # Content/reasoning-delta inactivity bound. A keepalive-only stall
+            # makes the OpenAI SDK's SSE decoder block INSIDE __next__ (it skips
+            # `: ...` comment lines without yielding a chunk), so the in-loop
+            # wall-clock watchdog that a prior fix used here never executes and
+            # the httpx read-timeout never trips (keepalive bytes keep arriving).
+            #
+            # Fix: a daemon producer thread runs the blocking `for chunk in
+            # stream:` and feeds a queue; the consumer below dequeues with
+            # `get(timeout=...)`. Real content AND reasoning_content chunks both
+            # arrive as actual `data:` lines and so reset the get() timeout;
+            # only a true keepalive-only stall (no real chunk for the timeout
+            # window) trips it, at which point we raise a retryable
+            # APITimeoutError. Keepalive comments never reach the queue, exactly
+            # as desired. The abandoned producer (if its read stays blocked) is a
+            # daemon thread and leaks until the connection tears down — acceptable
+            # because stalls are rare and execute workers are short-lived.
+            content_stall_timeout = _stream_content_stall_timeout_seconds()
+            # Initialized before the loop so the zero-content-from-start case is
+            # covered; reset on every real content/reasoning delta below.
+            last_content_token_time = time.monotonic()
+
+            chunk_queue: "_queue.Queue" = _queue.Queue(maxsize=256)
+
+            def _produce_chunks():
+                try:
+                    for produced_chunk in stream:
+                        chunk_queue.put(produced_chunk)
+                    chunk_queue.put(_STREAM_QUEUE_SENTINEL)
+                except BaseException as produce_exc:  # noqa: BLE001
+                    chunk_queue.put(_StreamProducerError(produce_exc))
+
+            producer_thread = threading.Thread(
+                target=_produce_chunks,
+                name="stream-chunk-producer",
+                daemon=True,
+            )
+            producer_thread.start()
+
+            def _abort_stalled_stream():
+                """Raise a retryable timeout and best-effort release the stream."""
+                import openai as _openai_mod
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+                raise _openai_mod.APITimeoutError(
+                    request=getattr(self, "_last_stream_request", None)
+                    or httpx.Request("POST", self.base_url or "http://stream"),
+                )
+
+            while True:
                 if self._interrupt_requested:
                     break
+
+                try:
+                    item = chunk_queue.get(timeout=content_stall_timeout)
+                except _queue.Empty:
+                    # No real chunk (content OR reasoning) for the whole stall
+                    # window — the producer is blocked inside __next__ on a
+                    # keepalive-only stream. Abort with a retryable error.
+                    _abort_stalled_stream()
+
+                if item is _STREAM_QUEUE_SENTINEL:
+                    break
+                if isinstance(item, _StreamProducerError):
+                    raise item.exc
+
+                chunk = item
+
+                # In-loop content-inactivity watchdog. DeepSeek (and similar)
+                # emit keepalive chunks with empty `choices` ~1/s; those ARE
+                # yielded to this loop (so the queue-empty timeout above never
+                # trips), but they carry no content/reasoning delta. If no real
+                # delta has arrived for the whole stall window, the stream is
+                # wedged — abort with a retryable timeout so the call is retried
+                # on a fresh connection. Runs every keepalive iteration (~1/s).
+                if time.monotonic() - last_content_token_time > content_stall_timeout:
+                    _abort_stalled_stream()
 
                 if not chunk.choices:
                     if hasattr(chunk, "model") and chunk.model:
@@ -3914,11 +4038,15 @@ class AIAgent:
                 # Accumulate reasoning content
                 reasoning_text = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                 if reasoning_text:
+                    # Active reasoning counts as progress — a model in a long
+                    # "thinking" phase before any content must NOT be aborted.
+                    last_content_token_time = time.monotonic()
                     reasoning_parts.append(reasoning_text)
                     self._fire_reasoning_delta(reasoning_text)
 
                 # Accumulate text content — fire callback only when no tool calls
                 if delta and delta.content:
+                    last_content_token_time = time.monotonic()
                     content_parts.append(delta.content)
                     if not tool_calls_acc:
                         _fire_first_delta()
@@ -4042,7 +4170,16 @@ class AIAgent:
                 else:
                     result["response"] = _call_chat_completions()
             except Exception as e:
-                if deltas_were_sent["yes"]:
+                import openai as _openai_mod
+                if isinstance(e, _openai_mod.APITimeoutError):
+                    # Read-timeout or content-stall watchdog fired. This is NOT
+                    # a "streaming unsupported" error, so do not fall back to a
+                    # non-streaming repeat of the same stalling request. Let it
+                    # propagate to the retry loop, which classifies
+                    # APITimeoutError as a retryable streaming timeout and
+                    # reissues on a fresh client with a scaled deadline.
+                    result["error"] = e
+                elif deltas_were_sent["yes"]:
                     # Streaming failed AFTER some tokens were already delivered
                     # to consumers. Don't fall back — that would cause
                     # double-delivery (partial streamed + full non-streamed).

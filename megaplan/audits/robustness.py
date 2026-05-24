@@ -118,6 +118,23 @@ CRITIQUE_CHECKS: Final[tuple[CritiqueCheckSpec, ...]] = (
         "default_severity": "likely-significant",
         "tier": "extended",
     },
+    {
+        "id": "prerequisite_ordering",
+        "question": "Do tasks that depend on a precondition gracefully handle that precondition only partially holding?",
+        "guidance": (
+            "Walk the task graph. For each task that depends on a precondition produced by an earlier "
+            "task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only "
+            "partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a "
+            "graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a "
+            "diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. "
+            "'zero callers remain', 'all migrated')? That's a brief contradiction the planner will "
+            "transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs "
+            "and recommend conditionalizing the dependent task, or specifying explicit deferral behavior."
+        ),
+        "category": "correctness",
+        "default_severity": "likely-significant",
+        "tier": "core",
+    },
 )
 
 
