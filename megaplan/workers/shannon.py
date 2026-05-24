@@ -1035,6 +1035,30 @@ def run_shannon_step(
         # downstream CLI can resume the tmux pane / retry the session.
         if error.code in ("worker_timeout", "worker_stall"):
             error.extra["session_id"] = session_id
+            # Invalidate the persisted shannon session-id on a stall/timeout.
+            # The worker subprocess has just been killed (group SIGTERM/KILL in
+            # run_command) but a setsid-on-its-own grandchild — or one that
+            # escaped the kill window — may still be holding this session_id
+            # via the persistent ``--resume <sid>`` lease in the Claude CLI /
+            # tmux pane. If we leave the id in state, the NEXT megaplan
+            # executor cycle will read state.json and pass ``--resume <sid>``
+            # again, racing the orphan for the same session. Drop the persisted
+            # id here so the next attempt spawns with a fresh ``--session-id``.
+            try:
+                sessions = state.get("sessions")
+                if isinstance(sessions, dict):
+                    entry = sessions.get(session_key)
+                    if isinstance(entry, dict) and entry.get("id") == session_id:
+                        sessions.pop(session_key, None)
+                        print(
+                            f"[megaplan] Cleared persisted shannon session "
+                            f"{session_key}={session_id} after {error.code}; "
+                            "next attempt will start a fresh session.",
+                            flush=True,
+                        )
+            except Exception:
+                # Best-effort cleanup; never let it mask the original CliError.
+                pass
         raise
 
     raw = result.stdout or result.stderr

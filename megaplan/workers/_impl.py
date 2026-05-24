@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -116,6 +117,8 @@ class CommandResult:
 # — only real output does — so a genuinely-stalled-but-alive process is caught,
 # while a healthy long-but-active call (which keeps emitting tokens) never trips.
 DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 240.0
+DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 80_000_000
+CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
 
 def _worker_stream_idle_timeout_seconds() -> float:
@@ -138,6 +141,37 @@ def _worker_stream_idle_timeout_seconds() -> float:
         value = DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS
     # Never allow a sub-30s idle bound that could abort a healthy slow tool turn.
     return max(value, 30.0)
+
+
+def _codex_executor_session_headroom_tokens() -> int:
+    raw = os.getenv(CODEX_EXECUTOR_SESSION_HEADROOM_ENV)
+    if raw is None:
+        return DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS
+    return max(value, 0)
+
+
+def _codex_total_tokens_from_session(session: dict[str, Any]) -> int | None:
+    usage = session.get("last_total_tokens")
+    if not isinstance(usage, dict):
+        return None
+    total = usage.get("total_tokens")
+    if total is None:
+        total = sum(
+            int(usage.get(key, 0) or 0)
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "reasoning_output_tokens",
+            )
+        )
+    try:
+        return int(total)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -272,6 +306,50 @@ def warn_if_work_dir_differs_from_project_dir(state: PlanState) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+def _kill_process_group(process: subprocess.Popen[bytes]) -> None:
+    """SIGTERM the subprocess's whole process group, escalate to SIGKILL after grace.
+
+    Worker subprocesses are launched with ``start_new_session=True`` so the
+    immediate child is the leader of its own process group (pgid == pid). The
+    stall/timeout watchdog must signal the whole group so shannon/bun/claude
+    grandchildren are reaped too. A bare ``process.kill()`` would only reap the
+    immediate shannon node wrapper and leave the bun runtime and tmux-attached
+    claude CLI as orphans (reparented to PID 1) holding the persistent
+    ``--resume <session-id>`` lease.
+    """
+
+    if process.poll() is not None:
+        return
+    try:
+        pgid = os.getpgid(process.pid)
+    except (ProcessLookupError, OSError):
+        # Already gone or platform without getpgid; fall back to plain kill.
+        try:
+            process.kill()
+            process.wait(timeout=1)
+        except (ProcessLookupError, OSError, subprocess.TimeoutExpired):
+            pass
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        # Group has had SIGKILL delivered; caller proceeds.
+        pass
+
+
 def run_command(
     command: list[str],
     *,
@@ -333,6 +411,15 @@ def run_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
+            # POSIX session isolation: make this subprocess the leader of a new
+            # process group (pgid == pid). The watchdog below kills the whole
+            # group, which is the only way to reach shannon/bun/claude
+            # grandchildren whose stdio is wired to a tmux pane rather than to
+            # this parent's pipes. Without start_new_session, process.kill()
+            # only reaps the immediate shannon node wrapper; the bun runtime
+            # and the tmux-attached claude CLI survive as orphans and keep
+            # holding the persistent --resume <session-id> lease.
+            start_new_session=True,
         )
         stdout_parts: list[bytes] = []
         stderr_parts: list[bytes] = []
@@ -420,8 +507,8 @@ def run_command(
                         # Still running: check the idle-output bound. Only real
                         # stdout/stderr resets last_output; the heartbeat does not.
                         if time.monotonic() - last_output[0] > idle_timeout:
-                            process.kill()
-                            returncode = process.wait()
+                            _kill_process_group(process)
+                            returncode = process.poll() if process.poll() is not None else -1
                             heartbeat_stop.set()
                             for thread in threads:
                                 thread.join(timeout=1)
@@ -438,8 +525,8 @@ def run_command(
                             )
                         continue
             except subprocess.TimeoutExpired as exc:
-                process.kill()
-                returncode = process.wait()
+                _kill_process_group(process)
+                returncode = process.poll() if process.poll() is not None else -1
                 heartbeat_stop.set()
                 for thread in threads:
                     thread.join(timeout=1)
@@ -452,8 +539,8 @@ def run_command(
             try:
                 returncode = process.wait(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
-                process.kill()
-                returncode = process.wait()
+                _kill_process_group(process)
+                returncode = process.poll() if process.poll() is not None else -1
                 heartbeat_stop.set()
                 for thread in threads:
                     thread.join(timeout=1)
@@ -2024,6 +2111,27 @@ def run_codex_step(
     schema_file = schemas_root(root) / codex_schema_name
     session_key = session_key_for(step, "codex", model=model)
     session = state["sessions"].get(session_key, {})
+    if fresh and persistent and step == "execute" and session.get("id"):
+        print(
+            f"[megaplan] Fresh codex execute requested; invalidating prior "
+            f"{session_key} session {session['id']}",
+            flush=True,
+        )
+        state["sessions"].pop(session_key, None)
+        session = {}
+    if persistent and step == "execute" and session.get("id") and not fresh:
+        threshold = _codex_executor_session_headroom_tokens()
+        total_tokens = _codex_total_tokens_from_session(session)
+        if total_tokens is not None and total_tokens >= threshold:
+            print(
+                f"[megaplan] Codex executor session {session['id']} has "
+                f"{total_tokens:,} total tokens, exceeding headroom threshold "
+                f"{threshold:,}; starting execute with a fresh session",
+                flush=True,
+            )
+            state["sessions"].pop(session_key, None)
+            session = {}
+            fresh = True
     out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
     out_handle.close()
     output_path = Path(out_handle.name)
