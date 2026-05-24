@@ -25,6 +25,7 @@ from megaplan.loop.prompts import build_loop_prompt
 from megaplan.loop.types import IterationResult, LoopSpec, LoopState, Observation
 from megaplan.profiles import apply_profile_expansion
 from megaplan.workers import WorkerResult, resolve_agent_mode, run_step_with_worker, update_session_state
+from megaplan.workers._impl import _kill_process_group
 _DEFAULT_ALLOWED_CHANGES = ["."]
 _COMMAND_OUTPUT_LIMIT = 12000
 _DEFAULT_TIME_BUDGET_SECONDS = 300
@@ -180,12 +181,13 @@ def _reader_thread(
 
 
 def _terminate_process(process: subprocess.Popen[str]) -> None:
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+    # The monitored command is spawned via ``shell=True`` and is its own
+    # process-group leader (see ``_run_monitored_command`` below). A bare
+    # ``process.terminate()`` / ``process.kill()`` only signals the shell;
+    # any user command the shell exec'd would be reparented to PID 1 and
+    # survive every observation-action / timeout / cleanup path. Signal
+    # the whole process group instead (SIGTERM -> 3s grace -> SIGKILL).
+    _kill_process_group(process)  # type: ignore[arg-type]
 
 
 def _metric_values_for_output(spec: LoopSpec, output: str) -> list[float]:
@@ -255,6 +257,12 @@ def _run_monitored_command(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=1,
+        # Make the shell its own process-group leader so the timeout /
+        # observation-action / cleanup paths can SIGTERM the whole tree via
+        # ``_kill_process_group``. Without this, any command the shell exec'd
+        # would be reparented to PID 1 and orphan-leak (see d1f3a725 for the
+        # same fix in auto.py / workers/_impl.py).
+        start_new_session=True,
     )
     if process.stdout is None or process.stderr is None:
         raise RuntimeError("Failed to capture process output for monitored command")
