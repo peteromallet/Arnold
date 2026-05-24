@@ -23,6 +23,7 @@ import platform
 import subprocess
 
 _IS_WINDOWS = platform.system() == "Windows"
+from megaplan.runtime.process import kill_group, spawn
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -224,7 +225,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             if self._reply_prefix is not None:
                 bridge_env["WHATSAPP_REPLY_PREFIX"] = self._reply_prefix
 
-            self._bridge_process = subprocess.Popen(
+            self._bridge_process = spawn(
                 [
                     "node",
                     str(bridge_path),
@@ -345,24 +346,11 @@ class WhatsAppAdapter(BasePlatformAdapter):
         """Stop the WhatsApp bridge and clean up any orphaned processes."""
         if self._bridge_process:
             try:
-                # Kill the entire process group so child node processes die too
-                import signal
-                try:
-                    if _IS_WINDOWS:
-                        self._bridge_process.terminate()
-                    else:
-                        os.killpg(os.getpgid(self._bridge_process.pid), signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    self._bridge_process.terminate()
-                await asyncio.sleep(1)
-                if self._bridge_process.poll() is None:
-                    try:
-                        if _IS_WINDOWS:
-                            self._bridge_process.kill()
-                        else:
-                            os.killpg(os.getpgid(self._bridge_process.pid), signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError):
-                        self._bridge_process.kill()
+                # kill_group replaces the old inline killpg block (SD4).
+                # It is a sync call and blocks the event loop for ~1s —
+                # accepted as negligible because disconnect() is only called
+                # during shutdown, not in the hot message-processing path.
+                kill_group(self._bridge_process, grace_s=1.0)
             except Exception as e:
                 print(f"[{self.name}] Error stopping bridge: {e}")
         else:

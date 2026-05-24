@@ -57,6 +57,8 @@ import re
 import signal
 import subprocess
 import shutil
+
+from megaplan.runtime.process import kill_group, spawn
 import sys
 import tempfile
 import threading
@@ -821,7 +823,10 @@ def _run_browser_command(
         stdout_fd = os.open(stdout_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         stderr_fd = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            proc = subprocess.Popen(
+            # spawn() adds start_new_session=True (session-isolated), a
+            # deliberate behaviour change (SD5) — the browser CLI becomes a
+            # session leader so kill_group can reap any orphan grandchildren.
+            proc = spawn(
                 cmd_parts,
                 stdout=stdout_fd,
                 stderr=stderr_fd,
@@ -835,8 +840,10 @@ def _run_browser_command(
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            # kill_group replaces the old proc.kill() with process-group
+            # reaping (SD5).  This is safe because spawn() above makes the
+            # child a session leader.
+            kill_group(proc)
             logger.warning("browser '%s' timed out after %ds (task=%s, socket_dir=%s)",
                            command, timeout, task_id, task_socket_dir)
             return {"success": False, "error": f"Command timed out after {timeout} seconds"}
@@ -1692,6 +1699,12 @@ def cleanup_browser(task_id: Optional[str] = None) -> None:
                 if os.path.isfile(pid_file):
                     try:
                         daemon_pid = int(Path(pid_file).read_text().strip())
+                        # GUARD-LEDGER: browser_tool.py ~1702 — bare-PID kill
+                        # (SD3).  daemon_pid is a raw int from a pidfile with
+                        # no Popen handle, so kill_group() is infeasible here
+                        # (it requires proc.pid + proc.poll()).  This site is
+                        # intentionally left as-is, analogous to the already-
+                        # ledgered process_registry.py:569 PTY path.
                         os.kill(daemon_pid, signal.SIGTERM)
                         logger.debug("Killed daemon pid %s for %s", daemon_pid, session_name)
                     except (ProcessLookupError, ValueError, PermissionError, OSError):

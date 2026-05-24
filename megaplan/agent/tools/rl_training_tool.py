@@ -41,6 +41,7 @@ import logging
 from datetime import datetime
 import yaml
 from dataclasses import dataclass, field
+from megaplan.runtime.process import kill_group, spawn, spawn_async
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -333,7 +334,10 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         # on run_state so _stop_training_run() can close it when done.
         api_log_file = open(api_log, "w")  # closed by _stop_training_run
         run_state.api_log_file = api_log_file
-        run_state.api_process = subprocess.Popen(
+        # spawn() adds start_new_session=True (SD5 — session isolation).
+        # This site previously had no session/pgroup isolation; the change
+        # is deliberate so kill_group can reap the whole tree.
+        run_state.api_process = spawn(
             ["run-api"],
             stdout=api_log_file,
             stderr=subprocess.STDOUT,
@@ -356,7 +360,7 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         
         trainer_log_file = open(trainer_log, "w")  # closed by _stop_training_run
         run_state.trainer_log_file = trainer_log_file
-        run_state.trainer_process = subprocess.Popen(
+        run_state.trainer_process = spawn(
             [sys.executable, "launch_training.py", "--config", str(config_path)],
             stdout=trainer_log_file,
             stderr=subprocess.STDOUT,
@@ -397,7 +401,7 @@ async def _spawn_training_run(run_state: RunState, config_path: Path):
         
         env_log_file = open(env_log, "w")  # closed by _stop_training_run
         run_state.env_log_file = env_log_file
-        run_state.env_process = subprocess.Popen(
+        run_state.env_process = spawn(
             [sys.executable, str(env_info.file_path), "serve", "--config", str(config_path)],
             stdout=env_log_file,
             stderr=subprocess.STDOUT,
@@ -462,29 +466,20 @@ async def _monitor_training_run(run_state: RunState):
 def _stop_training_run(run_state: RunState):
     """Stop all processes for a training run."""
     # Stop in reverse order: env -> trainer -> api
+    # kill_group() replaces the old terminate()/wait(10)/kill() pattern with
+    # process-group reaping (SD5).  Each spawn() above made the child a session
+    # leader, so kill_group safely reaps the whole tree.
     if run_state.env_process and run_state.env_process.poll() is None:
         logger.info("[%s] Stopping environment process...", run_state.run_id)
-        run_state.env_process.terminate()
-        try:
-            run_state.env_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            run_state.env_process.kill()
+        kill_group(run_state.env_process)
     
     if run_state.trainer_process and run_state.trainer_process.poll() is None:
         logger.info("[%s] Stopping trainer process...", run_state.run_id)
-        run_state.trainer_process.terminate()
-        try:
-            run_state.trainer_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            run_state.trainer_process.kill()
+        kill_group(run_state.trainer_process)
     
     if run_state.api_process and run_state.api_process.poll() is None:
         logger.info("[%s] Stopping API server...", run_state.run_id)
-        run_state.api_process.terminate()
-        try:
-            run_state.api_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            run_state.api_process.kill()
+        kill_group(run_state.api_process)
     
     if run_state.status == "running":
         run_state.status = "stopped"
@@ -1165,8 +1160,10 @@ async def rl_test_inference(
         }
         
         try:
-            # Run the process command with real-time output streaming
-            process = await asyncio.create_subprocess_exec(
+            # Run the process command with real-time output streaming.
+            # spawn_async() adds start_new_session=True (SD5 — session
+            # isolation for group reaping).
+            process = await spawn_async(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -1200,7 +1197,7 @@ async def rl_test_inference(
                     timeout=600,  # 10 minute timeout per model
                 )
             except asyncio.TimeoutError:
-                process.kill()
+                kill_group(process)
                 raise
             
             await process.wait()

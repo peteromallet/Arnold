@@ -11,6 +11,7 @@ import time
 
 _IS_WINDOWS = platform.system() == "Windows"
 
+from megaplan.runtime.process import kill_group, spawn
 from tools.environments.base import BaseEnvironment
 from tools.environments.persistent_shell import PersistentShellMixin
 from tools.interrupt import is_interrupted
@@ -330,7 +331,10 @@ class LocalEnvironment(PersistentShellMixin, BaseEnvironment):
     def _spawn_shell_process(self) -> subprocess.Popen:
         user_shell = _find_bash()
         run_env = _make_run_env(self.env)
-        return subprocess.Popen(
+        # spawn() adds start_new_session=True (session-isolated) and strips
+        # the redundant preexec_fn=os.setsid when start_new_session is set
+        # (SD1), avoiding the double-setsid EPERM error.
+        return spawn(
             [user_shell, "-l"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -390,7 +394,7 @@ class LocalEnvironment(PersistentShellMixin, BaseEnvironment):
         )
         run_env = _make_run_env(self.env)
 
-        proc = subprocess.Popen(
+        proc = spawn(
             [user_shell, "-lic", fenced_cmd],
             text=True,
             cwd=work_dir,
@@ -432,31 +436,16 @@ class LocalEnvironment(PersistentShellMixin, BaseEnvironment):
 
         while proc.poll() is None:
             if is_interrupted():
-                try:
-                    if _IS_WINDOWS:
-                        proc.terminate()
-                    else:
-                        pgid = os.getpgid(proc.pid)
-                        os.killpg(pgid, signal.SIGTERM)
-                        try:
-                            proc.wait(timeout=1.0)
-                        except subprocess.TimeoutExpired:
-                            os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
+                # SD2 interrupt path: SIGTERM → 1s grace → SIGKILL escalation
+                kill_group(proc, grace_s=1.0, escalate=True)
                 reader.join(timeout=2)
                 return {
                     "output": "".join(_output_chunks) + "\n[Command interrupted — user sent a new message]",
                     "returncode": 130,
                 }
             if time.monotonic() > deadline:
-                try:
-                    if _IS_WINDOWS:
-                        proc.terminate()
-                    else:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
+                # SD2 timeout path: SIGTERM-only, no SIGKILL escalation
+                kill_group(proc, escalate=False)
                 reader.join(timeout=2)
                 return self._timeout_result(effective_timeout)
             time.sleep(0.2)

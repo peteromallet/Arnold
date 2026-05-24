@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 from collections import deque
+from megaplan.runtime.process import kill_group, spawn
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -175,14 +176,13 @@ class CopilotACPClient:
         self.is_closed = True
         if proc is None:
             return
+        # kill_group replaces the old terminate()/wait(2)/kill() pattern
+        # with process-group reaping (SD5).  Safe because spawn() made the
+        # child a session leader.
         try:
-            proc.terminate()
-            proc.wait(timeout=2)
+            kill_group(proc)
         except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            pass
 
     def _create_chat_completion(
         self,
@@ -220,7 +220,10 @@ class CopilotACPClient:
 
     def _run_prompt(self, prompt_text: str, *, timeout_seconds: float) -> tuple[str, str]:
         try:
-            proc = subprocess.Popen(
+            # spawn() adds start_new_session=True (SD5 — session isolation).
+            # Previously this Popen had no session/pgroup isolation; the
+            # change is deliberate so kill_group can reap the whole tree.
+            proc = spawn(
                 [self._acp_command] + self._acp_args,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -236,7 +239,7 @@ class CopilotACPClient:
             ) from exc
 
         if proc.stdin is None or proc.stdout is None:
-            proc.kill()
+            kill_group(proc)
             raise RuntimeError("Copilot ACP process did not expose stdin/stdout pipes.")
 
         self.is_closed = False

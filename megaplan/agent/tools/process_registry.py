@@ -42,6 +42,7 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
+from megaplan.runtime.process import kill_group, spawn
 from tools.environments.local import _find_shell, _sanitize_subprocess_env
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -203,7 +204,10 @@ class ProcessRegistry:
         # stdout is a pipe, hiding output from process(action="poll")).
         bg_env = _sanitize_subprocess_env(os.environ, env_vars)
         bg_env["PYTHONUNBUFFERED"] = "1"
-        proc = subprocess.Popen(
+        # spawn() adds start_new_session=True (session isolation) and strips
+        # the redundant preexec_fn=os.setsid when start_new_session is set
+        # (SD1), avoiding the double-setsid EPERM error.
+        proc = spawn(
             [user_shell, "-lic", command],
             text=True,
             cwd=session.cwd,
@@ -561,21 +565,22 @@ class ProcessRegistry:
         # Kill via PTY, Popen (local), or env execute (non-local)
         try:
             if session._pty:
-                # PTY process -- terminate via ptyprocess
+                # PTY process -- terminate via ptyprocess.
+                # GUARD-LEDGER: process_registry.py ~569 — remote/PTY
+                # os.kill path.  No local Popen handle exists here; the
+                # fallback os.kill(session.pid, SIGTERM) targets a remote
+                # or PTY process, not a local Popen group, so kill_group()
+                # is infeasible.  This site is intentionally left as-is.
                 try:
                     session._pty.terminate(force=True)
                 except Exception:
                     if session.pid:
                         os.kill(session.pid, signal.SIGTERM)
             elif session.process:
-                # Local process -- kill the process group
-                try:
-                    if _IS_WINDOWS:
-                        session.process.terminate()
-                    else:
-                        os.killpg(os.getpgid(session.process.pid), signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    session.process.kill()
+                # Local process — kill_group replaces the old os.killpg
+                # + process.kill() fallback with centralised process-group
+                # reaping.
+                kill_group(session.process)
             elif session.env_ref and session.pid:
                 # Non-local -- kill inside sandbox
                 session.env_ref.execute(f"kill {session.pid} 2>/dev/null", timeout=5)

@@ -25,7 +25,7 @@ from megaplan.loop.prompts import build_loop_prompt
 from megaplan.loop.types import IterationResult, LoopSpec, LoopState, Observation
 from megaplan.profiles import apply_profile_expansion
 from megaplan.workers import WorkerResult, resolve_agent_mode, run_step_with_worker, update_session_state
-from megaplan.workers._impl import _kill_process_group
+from megaplan.runtime.process import kill_group as _kill_process_group
 _DEFAULT_ALLOWED_CHANGES = ["."]
 _COMMAND_OUTPUT_LIMIT = 12000
 _DEFAULT_TIME_BUDGET_SECONDS = 300
@@ -106,10 +106,8 @@ def _run_user_command(command: str, *, cwd: Path, timeout: int) -> dict[str, Any
     shell = shutil.which("zsh") or "/bin/sh"
     try:
         result = subprocess.run(
-            command,
+            [shell, "-c", command],
             cwd=str(cwd),
-            shell=True,
-            executable=shell,
             text=True,
             capture_output=True,
             timeout=timeout,

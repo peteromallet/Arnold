@@ -152,6 +152,14 @@ def _patch_swerex_modal():
             return await self.deployment.runtime.execute(
                 RexCommand(
                     command=command,
+                    # shell=True is REQUIRED here: `command` is a caller-supplied
+                    # string that may contain pipes, redirects, env-var expansion,
+                    # &&/|| chaining, or glob patterns. swerex's Command type
+                    # accepts list[str] form (preferred when shell=False), but
+                    # de-shelling would break arbitrary shell syntax the caller
+                    # legitimately relies on. Orphan risk is managed internally
+                    # by swerex's Modal sandbox — it is not our process tree.
+                    # (Guard-ledger entry: patches.py:155 — swerex RexCommand shell)
                     shell=True,
                     check=False,
                     cwd=cwd or self.config.cwd,

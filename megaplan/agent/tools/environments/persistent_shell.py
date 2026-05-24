@@ -8,6 +8,7 @@ import time
 import uuid
 from abc import abstractmethod
 
+from megaplan.runtime.process import kill_group
 from tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
@@ -113,11 +114,12 @@ class PersistentShellMixin:
             self._shell_proc.stdin.close()
         except Exception:
             pass
-        try:
-            self._shell_proc.terminate()
-            self._shell_proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            self._shell_proc.kill()
+        # kill_group replaces the old terminate()/wait(3)/kill() block with
+        # process-group reaping.  This is a deliberate per-process→group-kill
+        # semantics change, safe because the shell spawn is session-isolated
+        # (SD5 — spawn() sets start_new_session=True, making the child its
+        # own session/pgroup leader, so kill_group reaps all descendants).
+        kill_group(self._shell_proc)
 
         self._shell_alive = False
         self._shell_proc = None
