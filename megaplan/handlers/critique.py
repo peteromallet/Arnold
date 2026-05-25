@@ -204,7 +204,18 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             resolved = _pkg.resolve_agent_mode("critique", args)
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
         if adaptive_path and critic_model_override:
-            model = critic_model_override
+            # The evaluator emits a bare roster token (e.g. "deepseek-v4-pro").
+            # Resolve it to a full agent spec so the critic dispatches to the
+            # right vendor/provider instead of (a) running under whatever agent
+            # the `critique` slot happened to resolve to, or (b) falling through
+            # to OpenRouter for an unprefixed DeepSeek name. DeepSeek critics
+            # route to DeepSeek's direct API.
+            from megaplan.audits.critique_evaluator import roster_dispatch_spec
+            from megaplan.types import parse_agent_spec
+
+            _override_parsed = parse_agent_spec(roster_dispatch_spec(critic_model_override))
+            agent_type = _override_parsed.agent
+            model = _override_parsed.model
             resolved = (agent_type, mode, refreshed, model)
         # Compute revise_context for adaptive path iterations >= 2
         _revise_ctx = ""
