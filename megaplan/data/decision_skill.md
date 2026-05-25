@@ -213,6 +213,17 @@ Two narrower levers orthogonal to the three dials. Both off by default.
 
 **Steering prep with `--prep-direction`.** When prep runs (either via `--with-prep` or because robustness is `thorough`/`extreme`), you can hand it explicit guidance about *what* to explore: `megaplan init … --prep-direction "focus on the worker shutdown path; ignore CLI plumbing"`. It's shown to the prep worker as a distinct "User direction for prep" section — steering, not a replacement for the task. Use it when prep would otherwise wander (broad codebase, multiple plausible entry points) or when you want it to skip the obvious file and trace a specific call chain. You can also set or replace it after init with `megaplan prep --direction "…"` before the phase runs, and chain milestones accept `prep_direction:` per milestone. Has no effect if prep is skipped.
 
+**Prep model split (3-step prep — `prep_models`).** Prep is a three-step pipeline: **triage** (read task + walk code, route to the areas worth investigating), **fan-out** (≤10 parallel DeepSeek subagents, one per area), **distill** (weigh/connect findings into the prep output). Each step can take its own model via the `[profiles.X.prep_models]` sub-table; inherited or omitted stages resolve stage-by-stage with canonical read-only fallbacks, not blind reuse of the legacy flat `prep` entry. The flat `prep` route is still recorded in the resolver trace for auditability, and only a resolved Codex flat prep route may steer triage/distill to the dedicated Codex read-only runner. Triage decides N (0 areas = skip); the robustness level caps N. **Recommended default:**
+
+```toml
+[profiles.X.prep_models]
+triage  = "hermes:deepseek:deepseek-v4-pro"   # load-bearing router, read-only
+fanout  = "hermes:deepseek:deepseek-v4-flash" # cheap, parallel, high-volume
+distill = "hermes:deepseek:deepseek-v4-pro"   # connects across areas, read-only
+```
+
+Rationale: triage is the highest-leverage step (a bad route starves everything downstream), so it uses DeepSeek Pro by default; fan-out is the cost lever (flash × up to 10 ≪ pro × 10); distill must reconcile across areas. Explicit `claude:` and `shannon:` prep model entries are rejected until real read-only runners exist. Under `--vendor codex`, a resolved Codex flat prep route switches triage/distill to the Codex read-only runner; fan-out stays on the cheap Hermes/DeepSeek workers. Design + status: `briefs/prep-fanout-research-dossier.md`.
+
 ### Feedback (`--with-feedback`)
 
 > **"Do you want a per-stage ratings template waiting on disk when the run finishes?"**

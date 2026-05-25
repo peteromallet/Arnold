@@ -140,8 +140,10 @@ from .registries import (
 
 # -- hermes_fanout.py: shared parallel fan-out primitives --------------------
 from .hermes_fanout import (
+    GenericScatterResult,
     ScatterResult,
     _merge_unique,
+    scatter_gather,
     scatter_gather_checks,
     with_429_openrouter_fallback,
 )
@@ -301,8 +303,10 @@ __all__ = [
     "STATE_REVIEWED",
     "STATE_DONE",
     # hermes_fanout
+    "GenericScatterResult",
     "ScatterResult",
     "_merge_unique",
+    "scatter_gather",
     "scatter_gather_checks",
     "with_429_openrouter_fallback",
 ]

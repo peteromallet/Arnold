@@ -518,6 +518,12 @@ class TestExternalError:
             status_code=429,
             retry_after_s=30.0,
             request_id="req_123",
+            provider_error_code="429",
+            error_layer="provider_response",
+            stall_timeout_s=60.0,
+            elapsed_s=61.5,
+            content_chunk_count=3,
+            reasoning_chunk_count=7,
         )
 
         restored = ExternalError.from_dict(error.to_dict())
@@ -550,6 +556,34 @@ class TestExternalError:
 
     def test_from_exception_does_not_match_incidental_rate_substrings(self) -> None:
         assert ExternalError.from_exception(ValueError("failed to generate artifact")) is None
+
+    def test_from_exception_preserves_structured_stream_stall_metadata(self) -> None:
+        exc = RuntimeError("Request timed out.")
+        exc.extra = {
+            "external_error": {
+                "provider": "unknown",
+                "error_kind": "stream_content_stall",
+                "message": "Streaming response stalled without content or reasoning progress.",
+                "provider_error_code": "timeout",
+                "error_layer": "stream_content_stall",
+                "stall_timeout_s": 60.0,
+                "elapsed_s": 454.0,
+                "content_chunk_count": 182,
+                "reasoning_chunk_count": 0,
+            }
+        }
+
+        error = ExternalError.from_exception(exc, provider="deepseek")
+
+        assert error is not None
+        assert error.provider == "deepseek"
+        assert error.error_kind == "stream_content_stall"
+        assert error.provider_error_code == "timeout"
+        assert error.error_layer == "stream_content_stall"
+        assert error.stall_timeout_s == 60.0
+        assert error.elapsed_s == 454.0
+        assert error.content_chunk_count == 182
+        assert error.reasoning_chunk_count == 0
 
     def test_phase_result_round_trip_with_external_error(self) -> None:
         error = ExternalError(

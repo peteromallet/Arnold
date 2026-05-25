@@ -165,6 +165,9 @@ def _env_truthy(name: str) -> bool | None:
 
 
 def _shannon_readiness_probe_enabled(session_agent: str) -> bool:
+    raw = os.getenv("MEGAPLAN_SHANNON_READINESS_PROBE", "").strip().lower()
+    if raw == "always":
+        return True
     configured = _env_truthy("MEGAPLAN_SHANNON_READINESS_PROBE")
     if configured is not None:
         return configured
@@ -173,6 +176,10 @@ def _shannon_readiness_probe_enabled(session_agent: str) -> bool:
     # Cloud workers set trusted-container mode. Keep local Shannon runs as a
     # single turn unless explicitly opted in, because the probe adds latency.
     return _env_truthy("MEGAPLAN_TRUSTED_CONTAINER") is True
+
+
+def _shannon_readiness_probe_forced() -> bool:
+    return os.getenv("MEGAPLAN_SHANNON_READINESS_PROBE", "").strip().lower() == "always"
 
 
 def _shannon_readiness_timeout_seconds() -> int:
@@ -1021,7 +1028,7 @@ def run_shannon_step(
     if (
         new_session
         and _shannon_readiness_probe_enabled(session_agent)
-        and _shannon_should_send_handshake()
+        and (_shannon_readiness_probe_forced() or _shannon_should_send_handshake())
     ):
         readiness_prompt = _shannon_random_handshake_prompt()
         readiness_command = [

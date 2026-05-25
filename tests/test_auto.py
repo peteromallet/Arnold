@@ -2174,3 +2174,236 @@ def test_drive_surfaces_external_error_distinctly(tmp_path: Path) -> None:
         event.get("msg", "").startswith("phase 'execute' external_error [deepseek]")
         for event in outcome.events
     )
+
+
+def test_drive_auto_retries_stream_stall_once_for_non_execute_phase(tmp_path: Path) -> None:
+    from megaplan.orchestration.phase_result import ExternalError
+    from tests.conftest import make_fake_phase_result
+
+    plan = "critique-stream-stall-recovers"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [_phase_status(plan, state="planned", next_step="critique"), _done_status(plan)]
+    run_calls: list[list[str]] = []
+
+    stream_stall = ExternalError(
+        provider="deepseek",
+        error_kind="stream_content_stall",
+        message="Streaming response stalled without content or reasoning progress.",
+        provider_error_code="timeout",
+        error_layer="stream_content_stall",
+        stall_timeout_s=60.0,
+        elapsed_s=454.0,
+        content_chunk_count=182,
+        reasoning_chunk_count=0,
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        if len(run_calls) == 1:
+            make_fake_phase_result(
+                plan_dir,
+                phase="critique",
+                invocation_id="critique-attempt-1",
+                exit_kind="external_error",
+                external_error=stream_stall,
+            )
+            return 1, "", "Request timed out."
+        make_fake_phase_result(
+            plan_dir,
+            phase="critique",
+            invocation_id="critique-attempt-2",
+            exit_kind="success",
+        )
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=fake_run,
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _message: None,
+        )
+
+    assert outcome.status == "done"
+    assert outcome.external_retries_used == 1
+    assert len(run_calls) == 2
+    assert run_calls[0] == ["critique", "--plan", plan]
+    assert run_calls[1] == ["critique", "--plan", plan, "--fresh"]
+    assert any(event.get("provider_error_code") == "timeout" for event in outcome.events)
+
+
+def test_drive_blocks_after_retryable_external_error_fails_twice(tmp_path: Path) -> None:
+    from megaplan.orchestration.phase_result import ExternalError
+    from tests.conftest import make_fake_phase_result
+
+    plan = "critique-stream-stall-twice"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [
+        _phase_status(plan, state="planned", next_step="critique"),
+        _terminal_status(plan, "blocked"),
+    ]
+    run_calls: list[list[str]] = []
+    stream_stall = ExternalError(
+        provider="deepseek",
+        error_kind="stream_content_stall",
+        message="Request timed out.",
+        provider_error_code="timeout",
+        error_layer="stream_content_stall",
+        content_chunk_count=182,
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        make_fake_phase_result(
+            plan_dir,
+            phase="critique",
+            invocation_id=f"critique-attempt-{len(run_calls)}",
+            exit_kind="external_error",
+            external_error=stream_stall,
+        )
+        return 1, "", "Request timed out."
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=fake_run,
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _message: None,
+        )
+
+    assert outcome.status == "blocked"
+    assert outcome.external_retries_used == 1
+    assert len(run_calls) == 2
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    latest_failure = state_data["latest_failure"]
+    assert latest_failure["kind"] == "external_error"
+    assert state_data["resume_cursor"]["phase"] == "critique"
+    assert latest_failure["metadata"]["error_layer"] == "stream_content_stall"
+    assert latest_failure["metadata"]["content_chunk_count"] == 182
+    assert latest_failure["metadata"]["external_retries_used"] == 1
+    assert latest_failure["metadata"]["suggested_recovery_commands"] == [
+        f"python -m megaplan resume --plan {plan}"
+    ]
+
+
+def test_drive_does_not_auto_retry_permanent_external_errors(tmp_path: Path) -> None:
+    from megaplan.orchestration.phase_result import ExternalError
+    from tests.conftest import make_fake_phase_result
+
+    plan = "critique-auth-failure"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [
+        _phase_status(plan, state="planned", next_step="critique"),
+        _terminal_status(plan, "blocked"),
+    ]
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        make_fake_phase_result(
+            plan_dir,
+            phase="critique",
+            exit_kind="external_error",
+            external_error=ExternalError(
+                provider="deepseek",
+                error_kind="auth",
+                message="401 invalid api key",
+                status_code=401,
+            ),
+        )
+        return 1, "", "401 invalid api key"
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=fake_run,
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _message: None,
+        )
+
+    assert outcome.status == "blocked"
+    assert outcome.external_retries_used == 0
+    assert run_calls == [["critique", "--plan", plan]]
+
+
+def test_drive_does_not_auto_retry_execute_external_stream_stall(tmp_path: Path) -> None:
+    from megaplan.orchestration.phase_result import ExternalError
+    from tests.conftest import make_fake_phase_result
+
+    plan = "execute-stream-stall"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    statuses = [_execute_status(plan), _terminal_status(plan, "blocked")]
+    run_calls: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        make_fake_phase_result(
+            plan_dir,
+            phase="execute",
+            exit_kind="external_error",
+            external_error=ExternalError(
+                provider="deepseek",
+                error_kind="stream_content_stall",
+                message="Request timed out.",
+                provider_error_code="timeout",
+                error_layer="stream_content_stall",
+            ),
+        )
+        return 1, "", "Request timed out."
+
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=fake_run,
+    ):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=5,
+            poll_sleep=0,
+            writer=lambda _message: None,
+        )
+
+    assert outcome.status == "blocked"
+    assert outcome.external_retries_used == 0
+    assert run_calls == [
+        [
+            "execute",
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+            "--plan",
+            plan,
+        ]
+    ]
