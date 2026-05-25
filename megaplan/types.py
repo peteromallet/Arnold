@@ -624,6 +624,11 @@ DEFAULTS = {
     "orchestration.mode": "subagent",
     "execution.adaptive_critique": False,
     "execution.critic_model": "",
+    # When True AND adaptive_critique resolves True, the critique handler will
+    # raise AdaptiveCritiqueDegradedError instead of silently downgrading to
+    # static lenses. Default False for backward compatibility. Recommended for
+    # production / CI / important runs. See docs/critique.md.
+    "execution.strict_adaptive_critique": False,
 }
 
 # Valid pin values for execution.critic_model. Mirrors CRITIC_MODEL_ROSTER in
@@ -642,6 +647,7 @@ CRITIC_MODEL_CHOICES = (
 _SETTABLE_BOOL = {
     "execution.auto_approve",
     "execution.adaptive_critique",
+    "execution.strict_adaptive_critique",
     "execution.strict_notes",
 }
 
@@ -680,6 +686,37 @@ class CliError(Exception):
         self.valid_next = valid_next or []
         self.extra = extra or {}
         self.exit_code = exit_code
+
+
+class AdaptiveCritiqueMisconfiguredError(RuntimeError):
+    """Raised at ``init`` when adaptive_critique is requested but the runtime
+    wiring (step schema, schema dict entry, prompt template) is incomplete.
+
+    Fails fast so no execute-time cost is paid before the operator sees the
+    misconfiguration. The layered defense added in PR #52 (May 2026) checks
+    these probes at init so the silent KeyError fallback that hid the
+    original adaptive-critique bug for every ``partnered`` / ``premium`` /
+    ``apex`` run cannot recur.
+    """
+
+    def __init__(self, message: str, *, missing: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.missing = list(missing or [])
+
+
+class AdaptiveCritiqueDegradedError(RuntimeError):
+    """Raised by the critique handler when adaptive critique would silently
+    fall back to static lenses AND ``execution.strict_adaptive_critique`` is
+    True.
+
+    The default (non-strict) behaviour is to log a loud stderr warning and
+    proceed with static lenses. Strict mode is the recommended setting for
+    production / CI / important runs — see docs/critique.md.
+    """
+
+    def __init__(self, message: str, *, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 # Re-export runtime exceptions for convenience (SD3).
