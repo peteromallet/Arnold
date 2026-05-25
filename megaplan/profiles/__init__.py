@@ -34,6 +34,7 @@ PROFILE_METADATA_KEYS = frozenset({
     "tier_models",
     "prep_models",
     "max_tasks_per_batch",
+    "adaptive_critique",
 })
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
@@ -179,6 +180,15 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
                     f"expected an integer for 'max_tasks_per_batch', got {type(value).__name__}",
                 )
             validated["max_tasks_per_batch"] = value
+        elif key == "adaptive_critique":
+            if not isinstance(value, bool):
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"expected a boolean for 'adaptive_critique', got {type(value).__name__}",
+                )
+            validated["adaptive_critique"] = value
         # Future metadata keys go here.
     return validated
 

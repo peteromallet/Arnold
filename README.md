@@ -24,16 +24,28 @@ Every phase runs on a different model. In the default **`partnered`** profile:
 | Cheap (DeepSeek) | Premium (Claude or Codex) |
 |---|---|
 | `prep` — repository research | `plan` / `revise` — design the plan |
-| `gate` — mechanical pass/fail | `critique` — independent review |
-| `execute` — easy tasks (tiers 1–3) | `finalize` — **adjudicates** task difficulty 1–5 |
-| | `execute` — hard tasks (tiers 4–5 → Sonnet/Opus) |
-| | `review` |
+| `gate` — mechanical pass/fail | `finalize` — **adjudicates** task difficulty 1–5 |
+| `critique` — independent review *(directed by the premium critique-evaluator)* | `execute` — hard tasks (tiers 4–5 → Sonnet/Opus) |
+| `execute` — easy tasks (tiers 1–3) | `review` |
 
-`finalize` is the **adjudicator**: it scores each task's complexity 1–5, and that score routes execution — trivial tasks to DeepSeek-flash, ordinary tasks to DeepSeek-pro, and only cross-cutting (4) or fundamental (5) tasks up to Sonnet/Opus. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`.
+`finalize` is the **adjudicator**: it scores each task's complexity 1–5, and that score routes execution — trivial tasks to DeepSeek-flash, ordinary tasks to DeepSeek-pro, and only cross-cutting (4) or fundamental (5) tasks up to Sonnet/Opus. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`. Open models perform critique reliably **when directed by a premium model**: in `partnered`, a premium critique-evaluator picks the lenses and rejects weak findings while a cheap DeepSeek critic runs them — premium-grade critique judgment without a premium critic on every lens.
 
 See **[docs/megaplan-decision.md](docs/megaplan-decision.md)** for choosing a profile, robustness level, and thinking tier for the work in front of you.
 
 ## Quick start
+
+Hand this to your coding agent:
+
+```
+Please install and set up megaplan for this project:
+
+pip install 'megaplan-harness[agent]'
+megaplan setup
+
+The default `partnered` profile pairs a premium model (Claude or Codex) with cheap DeepSeek. Ask me for whichever I have — an Anthropic/Claude or OpenAI/Codex login — plus a DeepSeek API key (or Fireworks key), and wire them up. Once set up, ask me what I need megaplan for.
+```
+
+Or do it yourself:
 
 ```
 pip install 'megaplan-harness[agent]'

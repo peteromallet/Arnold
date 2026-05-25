@@ -15,6 +15,7 @@ from megaplan._core import (
     ensure_runtime_layout,
     find_command,
     get_effective,
+    setting_is_explicit,
     make_history_entry,
     now_utc,
     is_prose_mode,
@@ -122,9 +123,26 @@ def _build_state_config(
         auto_approve_value = get_effective("execution", "auto_approve")
     auto_approve = bool(auto_approve_value)
 
+    # Precedence: explicit --adaptive-critique CLI flag > explicit user-config
+    # setting > profile-level `adaptive_critique` field > global default (False).
+    # The profile field is consulted ONLY when the user has pinned nothing,
+    # so premium-bearing profiles (partnered/premium/apex) default it on while
+    # open-only profiles — which omit the field — stay off and never force a
+    # premium evaluator key into a key-free setup.
     adaptive_critique_value = getattr(args, "adaptive_critique", None)
     if adaptive_critique_value is None:
-        adaptive_critique_value = get_effective("execution", "adaptive_critique")
+        if setting_is_explicit("execution", "adaptive_critique"):
+            adaptive_critique_value = get_effective("execution", "adaptive_critique")
+        else:
+            profile_name = getattr(args, "profile", None)
+            profile_default: Any = None
+            if profile_name:
+                profile_meta = load_profile_metadata(project_dir=project_dir).get(profile_name, {})
+                profile_default = profile_meta.get("adaptive_critique")
+            if isinstance(profile_default, bool):
+                adaptive_critique_value = profile_default
+            else:
+                adaptive_critique_value = get_effective("execution", "adaptive_critique")
     adaptive_critique = bool(adaptive_critique_value)
 
     strict_notes_arg = getattr(args, "strict_notes", None)

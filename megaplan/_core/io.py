@@ -763,6 +763,19 @@ def get_effective(section: str, key: str) -> Any:
     return DEFAULTS[default_key]
 
 
+def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> bool:
+    """Return True iff ``section.key`` is explicitly present in the user config.
+
+    Distinguishes a user-set value (even if it equals the default) from the
+    fallback to ``DEFAULTS``. Used so a profile-level default (e.g.
+    ``adaptive_critique``) can win over the global default *only* when the
+    user has not pinned the value themselves.
+    """
+    config = load_config(home)
+    section_config = config.get(section)
+    return isinstance(section_config, dict) and key in section_config
+
+
 def is_shannon_available(*, shutil_ref: Any = None) -> bool:
     """Return True if shannon, tmux, and claude are all on PATH."""
     if shutil_ref is None:
