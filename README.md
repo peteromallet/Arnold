@@ -6,11 +6,11 @@ A planning and execution harness that breaks building software into structured, 
 
 Two ideas, and they reinforce each other.
 
-**1. Structure makes LLMs robust.** LLMs are highly intelligent but not systematically reliable — left to one shot they skip steps, miss concerns, and rubber-stamp their own work. Megaplan breaks the whole process into explicit stages — `prep`, `plan`, `critique`, `gate`, `revise`, `finalize`, `execute`, `review` — each with its own tools and skills pointing the model in the right direction, and with **independent** critique and gating rather than a model grading itself. That structure is what turns raw intelligence into something that can perform a real task end-to-end with a high degree of robustness.
+**1. Structure makes LLMs robust.** Modern LLMs are highly intelligent but systematically unreliable. Left to their own devices they skip steps, miss concerns, rubber-stamp their own work, and research sloppily. Megaplan breaks the whole process into explicit stages — `prep`, `plan`, `critique`, `gate`, `revise`, `finalize`, `execute`, `review` — each scoped and equipped so the model does one thing well, and each checked by a *separate* pass instead of the model grading itself. That structure is what turns raw intelligence into something that can deliver a real-world sprint end-to-end, reliably.
 
 **2. Use the cheapest capable model per component.** Premium closed models (Claude, GPT/Codex) are overkill for the vast majority of software tasks; open models that are **~40× cheaper** — primarily **DeepSeek v4-pro** — do most of the work just as reliably. The goal is to use the cheapest model that can *reliably* perform a given task, and to spend premium budget only where it actually changes the outcome.
 
-The two connect: the same decomposition that makes the process robust is what lets you price it. Once the work is broken into stages and tasks, each component routes to the cheapest model that can handle it — cheap models do the grunt work (research, focused critique, easy execution) while premium models do just two things: **adjudicate** which model should handle each piece, and tackle the genuinely **hard** parts the cheap models can't.
+The two connect: the same decomposition that makes the process robust is what lets you price it. Once work is broken into stages and tasks, each routes to the cheapest model that can handle it — premium models reserved for two jobs: **adjudicating** which model handles each piece, and the genuinely **hard** parts.
 
 ## How it works
 
@@ -18,7 +18,7 @@ The two connect: the same decomposition that makes the process robust is what le
 prep → plan → critique → gate → [revise → critique → gate]* → finalize → execute → review
 ```
 
-Every phase runs on a different model. In the default **`partnered`** profile:
+Each phase can run on a different model. For example, here's how the default **`partnered`** profile splits the work:
 
 | Cheap (DeepSeek) | Premium (Claude or Codex) |
 |---|---|
@@ -27,9 +27,11 @@ Every phase runs on a different model. In the default **`partnered`** profile:
 | `critique` — independent review *(directed by the premium critique-evaluator)* | `execute` — hard tasks (tiers 4–5 → Sonnet/Opus) |
 | `execute` — easy tasks (tiers 1–3) | `review` |
 
-`finalize` is the **adjudicator**: it scores each task's complexity 1–5, and that score routes execution — trivial tasks to DeepSeek-flash, ordinary tasks to DeepSeek-pro, and only cross-cutting (4) or fundamental (5) tasks up to Sonnet/Opus. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`. Open models perform critique reliably **when directed by a premium model**: in `partnered`, a premium critique-evaluator picks the lenses and rejects weak findings while a cheap DeepSeek critic runs them — premium-grade critique judgment without a premium critic on every lens.
+`finalize` is the **adjudicator**: it scores each task's complexity 1–5, and that score routes execution — trivial tasks to DeepSeek-flash, ordinary tasks to DeepSeek-pro, and only cross-cutting (4) or fundamental (5) tasks up to Sonnet/Opus. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`. Open models critique reliably **when a premium model directs them**: a premium critique-evaluator picks the lenses and rejects weak findings while a cheap DeepSeek critic runs them.
 
-See **[docs/megaplan-decision.md](docs/megaplan-decision.md)** for choosing a profile, robustness level, and thinking tier for the work in front of you.
+That split isn't fixed. The harder the work, the more it justifies premium models on more phases; the simpler it is, the more aggressively it can run on open models. The named profiles are five rungs of exactly this trade-off — `solo` (all-open, for mechanical work) → `directed` → `partnered` (the default) → `premium` → `apex` (all-premium) — and you can define custom profiles to combine models any way you like.
+
+**[docs/megaplan-decision.md](docs/megaplan-decision.md)** is a skill document for you and your agents — hand it the task and it picks the profile, robustness level, and thinking tier to match.
 
 ## Quick start
 
@@ -51,7 +53,7 @@ pip install 'megaplan-harness[agent]'
 megaplan setup
 ```
 
-`megaplan setup` detects your installed agents and walks you through credentials. The default `partnered` profile pairs **one premium model** with **cheap DeepSeek**, so you need two things:
+`megaplan setup` detects your installed agents and walks you through credentials. You need two things:
 
 - **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`).
 - **DeepSeek access** for the cheap phases — a **`DEEPSEEK_API_KEY`** (the default route) or a **Fireworks** key (`FIREWORKS_API_KEY`, via `--deepseek-provider fireworks`).
@@ -64,8 +66,9 @@ megaplan init --project-dir . "Fix the authentication bug in login.py"
 
 In subagent mode (the default for Claude Code and Codex) the agent drives the phases and returns at breakpoints. To run them by hand: `megaplan plan|critique|gate|finalize|execute --plan <name>`.
 
-## Everything else
+## Some other features
 
+- **Epics** — chain many sprints into one long-running effort. Megaplan runs them in sequence with carried context, so it can deliver the equivalent of months of work reliably instead of one sprint at a time.
 - **Different models per phase** — pick a named profile (`megaplan init --profile <name>`) or override one phase (`--phase-model execute=claude`). Inspect with `megaplan config profiles list`; define your own in `.megaplan/profiles.toml`. Built-ins span all-Claude, all-Codex, all-DeepSeek, and all-open (Kimi/GLM via OpenRouter).
 - **Cloud runs** — `megaplan cloud` runs a plan (or a whole chain) on a remote Railway box with a persistent workspace volume, so it outlives your terminal. Ask your agent to `megaplan cloud bootstrap <idea>`. See [docs/cloud.md](docs/cloud.md).
 - **Bake-offs** — `megaplan bakeoff` runs the same idea through multiple profiles concurrently (one git worktree each), compares the results, and merges only the human-picked winner — the way to find the cheapest model mix that still passes review.
