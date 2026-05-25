@@ -78,7 +78,7 @@ Five tiers, named for the **social configuration of minds** working on the probl
 |---|---|---|---|
 | 1 | **`solo`** | One non-premium model working alone across every phase. Discovery, docs, schema migrations, ports of self-contained code, utility scripts, config changes, mechanical refactors, CRUD over existing schemas, test fixtures — anything where patterns are stable and overlapping concerns are few. This is already the floor; if it feels like too much, `bare` robustness is the answer, not a lower tier. | ~$0.50-2 |
 | 2 | **`directed`** | A premium model writes the plan; DeepSeek executes it. Complex schema migrations where step ordering matters, multi-step refactors needing careful sequencing, features whose architecture demands deliberation but whose code follows patterns, greenfield implementations with non-trivial design but well-shaped pieces. Drop down to `solo` when the plan is obvious — DeepSeek can plan mechanical work just fine. | ~$1-3 |
-| 3 | **`partnered`** | Premium and DeepSeek working together — premium handles every reasoning phase (plan, critique, revise, review), DeepSeek handles mechanical phases. New CLI commands with cross-cutting concerns, inbox/routing rewrites, adapters with non-trivial edge cases, export/import surfaces with format edge cases, novel features in known architecture, refactors with real cross-system implications. Drop down to `directed` when patterns are stable and variables are few — `partnered` is for genuinely novel or cross-cutting work. | ~$5-15 |
+| 3 | **`partnered`** | Premium and DeepSeek working together — premium handles plan, revise, and review; critique now runs on cheap DeepSeek *directed by the premium critique-evaluator* (adaptive critique on by default), and DeepSeek handles the mechanical phases. New CLI commands with cross-cutting concerns, inbox/routing rewrites, adapters with non-trivial edge cases, export/import surfaces with format edge cases, novel features in known architecture, refactors with real cross-system implications. Drop down to `directed` when patterns are stable and variables are few — `partnered` is for genuinely novel or cross-cutting work. | ~$5-15 |
 | 4 | **`premium`** | Premium mind everywhere — DeepSeek exits; single-vendor premium end-to-end. Schema definitions, wire formats, security-critical code paths, public API contracts, migration logic against production data, kernel-invariant changes. Drop down to `partnered` when the execution is mechanical once mapped out — decision-difficulty alone doesn't justify tier 4. | ~$30-70 |
 | 5 | **`apex`** | Both Claude and Codex contributing — the only tier where the two premium models stop being interchangeable. Concurrency primitives that cascade, schemas all later sprints build on, wire formats / claim semantics, multi-system migration decisions, huge architectural choices. Drop down to `premium` unless (a) high-stakes — regression = production incident — or (b) the sprint is making a huge architectural decision, and the execution has enough detail to warrant premium implementing it. | ~$30-50 |
 
@@ -90,7 +90,7 @@ Tiers 4 and 5 are the only tiers where a premium model executes the code, not ju
 |---|---|---|---|---|---|
 | **plan**     | DeepSeek | claude   | claude   | claude | claude |
 | **prep**     | DeepSeek | DeepSeek | DeepSeek | claude | claude |
-| **critique** | DeepSeek | DeepSeek | claude   | claude | codex  |
+| **critique** | DeepSeek | DeepSeek | DeepSeek | claude | codex  |
 | **revise**   | DeepSeek | DeepSeek | claude   | claude | claude |
 | **gate**     | DeepSeek | DeepSeek | DeepSeek | claude | claude |
 | **finalize** | DeepSeek | DeepSeek | DeepSeek | claude | claude |
@@ -103,6 +103,14 @@ Legend:
 - **claude** = Claude Opus 4.7. **codex** = Codex GPT-5.5.
 
 Each tier upgrades one block of phases to premium; once upgraded, a phase stays upgraded. Tier 5 doesn't add coverage — it splits premium across two vendors.
+
+### Adaptive critique — premium direction, cheap execution
+
+For the premium-bearing profiles (**`partnered`**, **`premium`**, **`apex`**) adaptive critique is **on by default**. Instead of running every critique lens on the profile's critique model, a premium **critique-evaluator** reads the finished plan and *adjudicates* the critique: it decides which of the lenses fire (justifying every skip), routes each surviving lens to the **cheapest critic in the roster that can do it justice**, and escalates to a premium critic only for the lenses that genuinely demand deeper judgment. In `partnered` the critique slot itself is cheap DeepSeek — the cheap slot is precisely what *triggers* the premium evaluator to take the wheel, rather than something it fights.
+
+This is the concrete embodiment of megaplan's model philosophy — *cheapest capable model per task; premium reserved for adjudication and the genuinely hard work* — applied to the critique phase: the expensive premium judgment goes into **deciding and directing**, while the bulk of the lens-by-lens grinding runs cheap.
+
+Adaptive critique is **off for the open-only profiles** (`solo`, `directed`): there is no premium model in those tiers to direct with, and forcing one in would push a premium key into an otherwise key-free setup. Force it on for any profile with `--adaptive-critique`; pin `[execution].adaptive_critique` in config to override the per-profile default in either direction.
 
 ### Vendor: Claude and Codex are mostly interchangeable at tiers 2-4
 
@@ -249,6 +257,8 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 The model that critiques the plan also reviews the executed work — same mind pre-execution and post-execution. Wiring them to the same non-author model gives you one coherent second mind across both checkpoints and keeps the author's blindspots out of the sense-check loop.
 
 `--critic` bundles the two phases in one flag and preserves the invariant. Bare `--phase-model` does not — if you override critique with `--phase-model`, override review the same way, or use `--critic` instead.
+
+**Exception — `partnered`:** here critique runs on cheap DeepSeek under the premium *critique-evaluator's* direction (adaptive critique is on by default), while review stays premium. The premium **director** — not a strict same-model invariant — is what keeps the critique phase honest: the evaluator picks the lenses the cheap critic runs and rejects weak findings, so you get premium-grade critique judgment without paying for a premium critic model on every lens.
 
 ### Worktree isolation — `--in-worktree`
 

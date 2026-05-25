@@ -134,14 +134,16 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         {"depth": "high"},
         {"plan": "claude:high", "loop_plan": "claude:high", "critique": DEEPSEEK_DIRECT},
     ),
-    # --- partnered (tier 3) — full reasoning loop premium ---
+    # --- partnered (tier 3) — premium author/reviewer, cheap critique under
+    # premium critique-evaluator direction ---
     (
         "partnered-default",
         "partnered",
         {},
         {
             "plan": "claude:low",
-            "critique": "claude:low",
+            # critique now runs cheap (DeepSeek) directed by the premium evaluator.
+            "critique": DEEPSEEK_DIRECT,
             "revise": "claude:low",
             "review": "claude:low",
             "prep": DEEPSEEK_DIRECT,
@@ -168,7 +170,8 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         {},
         {
             "plan": "claude:low",
-            "critique": "claude:low",
+            # critique now runs cheap (DeepSeek) directed by the premium evaluator.
+            "critique": DEEPSEEK_DIRECT,
             "revise": "claude:low",
             "review": "claude:low",
             # finalize is now claude:low (premium finalize).
@@ -186,7 +189,8 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         {
             "plan": "claude:high",
             "revise": "claude:high",
-            "critique": "claude:low",
+            # critique is cheap DeepSeek; --depth never rewrites it.
+            "critique": DEEPSEEK_DIRECT,
             "prep": DEEPSEEK_DIRECT,
         },
     ),

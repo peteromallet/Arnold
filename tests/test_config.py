@@ -381,3 +381,111 @@ def test_config_accepts_shannon_as_agent() -> None:
     """Config agent overrides accept 'shannon'."""
     from megaplan.types import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
+
+
+def _init_adaptive(
+    *,
+    isolated_config_dir: Path,
+    tmp_path: Path,
+    profile: str | None,
+    cli_flag: bool | None,
+    config_value: bool | None,
+) -> bool:
+    """Run handle_init with the given inputs and return the seeded
+    config['adaptive_critique']."""
+    isolated_config_dir.mkdir(parents=True, exist_ok=True)
+    cfg: dict = {"execution": {}}
+    if config_value is not None:
+        cfg["execution"]["adaptive_critique"] = config_value
+    (isolated_config_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir(exist_ok=True)
+    project_dir.mkdir(exist_ok=True)
+    response = megaplan.handle_init(
+        root,
+        Namespace(
+            project_dir=str(project_dir),
+            name="adaptive-init",
+            auto_approve=None,
+            robustness=None,
+            hermes=None,
+            phase_model=[],
+            idea="idea",
+            profile=profile,
+            adaptive_critique=cli_flag,
+        ),
+    )
+    state = json.loads(
+        (root / ".megaplan" / "plans" / response["plan"] / "state.json").read_text(encoding="utf-8")
+    )
+    return state["config"]["adaptive_critique"]
+
+
+def test_adaptive_critique_on_by_default_for_partnered(
+    isolated_config_dir: Path, tmp_path: Path
+) -> None:
+    """Premium-bearing profile: profile-level adaptive_critique=true wins when
+    nothing is pinned (no CLI flag, no explicit config)."""
+    assert _init_adaptive(
+        isolated_config_dir=isolated_config_dir,
+        tmp_path=tmp_path,
+        profile="partnered",
+        cli_flag=None,
+        config_value=None,
+    ) is True
+
+
+def test_adaptive_critique_off_by_default_for_open_only_profile(
+    isolated_config_dir: Path, tmp_path: Path
+) -> None:
+    """Open-only profile (no premium slot, no adaptive_critique field) must NOT
+    get adaptive critique on by default — it would force a premium evaluator
+    key into a deliberately key-free setup."""
+    assert _init_adaptive(
+        isolated_config_dir=isolated_config_dir,
+        tmp_path=tmp_path,
+        profile="all-open",
+        cli_flag=None,
+        config_value=None,
+    ) is False
+
+
+def test_adaptive_critique_off_by_default_for_solo(
+    isolated_config_dir: Path, tmp_path: Path
+) -> None:
+    assert _init_adaptive(
+        isolated_config_dir=isolated_config_dir,
+        tmp_path=tmp_path,
+        profile="solo",
+        cli_flag=None,
+        config_value=None,
+    ) is False
+
+
+def test_adaptive_critique_explicit_config_beats_profile_default(
+    isolated_config_dir: Path, tmp_path: Path
+) -> None:
+    """User pinning adaptive_critique=false in config overrides the partnered
+    profile's true default."""
+    assert _init_adaptive(
+        isolated_config_dir=isolated_config_dir,
+        tmp_path=tmp_path,
+        profile="partnered",
+        cli_flag=None,
+        config_value=False,
+    ) is False
+
+
+def test_adaptive_critique_cli_flag_forces_on_for_open_profile(
+    isolated_config_dir: Path, tmp_path: Path
+) -> None:
+    """Explicit --adaptive-critique still force-enables, even on an open-only
+    profile (the user opted in deliberately)."""
+    assert _init_adaptive(
+        isolated_config_dir=isolated_config_dir,
+        tmp_path=tmp_path,
+        profile="all-open",
+        cli_flag=True,
+        config_value=None,
+    ) is True

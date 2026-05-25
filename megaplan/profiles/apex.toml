@@ -32,6 +32,9 @@
 [profiles.apex]
 vendor_locked         = true
 default = "partnered"
+# Adaptive critique on by default: premium-bearing profile, so the
+# critique-evaluator can direct the critic with a premium evaluator.
+adaptive_critique = true
 plan                  = "claude"
 prep                  = "claude"
 critique              = "codex"
