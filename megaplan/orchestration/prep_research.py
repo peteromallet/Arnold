@@ -128,12 +128,38 @@ def research_sentinel(area: dict[str, Any], status: str, error: str) -> dict[str
 
 
 def _string_list(value: Any, *, field: str) -> list[str]:
+    """Coerce a prep-research field into a list of non-empty strings.
+
+    Models routinely return non-list shapes for fields like `files` and
+    `code_refs` — a single path as a bare string, a dict mapping path→snippet,
+    a comma-separated string. The schema wants list[str], but rejecting any
+    non-list outright wastes the whole research area (the failure mode that
+    bit area-1 helper-shape-enumeration on phase-3-5-block-a-extension-20260525-2048).
+    Coerce where possible:
+      * None / "" → []
+      * list → keep items, str() each, drop empties
+      * dict → take string keys (typically file paths in {path: snippet} maps)
+      * str → split on comma/newline if it looks like a list; otherwise wrap
+      * anything else → str() and wrap (better to keep noisy evidence than reject)
+    """
     if value is None:
         return []
-    if not isinstance(value, list):
-        raise CliError("worker_parse_error", f"Prep research field {field!r} must be a list")
+    if isinstance(value, list):
+        items: list[Any] = value
+    elif isinstance(value, dict):
+        items = [k for k in value.keys() if isinstance(k, str)]
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        if "\n" in stripped or "," in stripped:
+            items = [part.strip() for part in stripped.replace("\n", ",").split(",")]
+        else:
+            items = [stripped]
+    else:
+        items = [str(value)]
     result: list[str] = []
-    for item in value:
+    for item in items:
         text = str(item).strip()
         if text:
             result.append(text)
