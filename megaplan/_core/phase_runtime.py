@@ -91,6 +91,13 @@ PHASE_RUNTIME_POLICY: dict[str, PhaseRuntimePolicy] = {
         escalation_threshold_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
         timeout_cap_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
     ),
+    "critique_evaluator": PhaseRuntimePolicy(
+        expected_min_seconds=30,
+        expected_max_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+        recommended_next_check_seconds=60,
+        escalation_threshold_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+        timeout_cap_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
+    ),
     "revise": PhaseRuntimePolicy(
         expected_min_seconds=60,
         expected_max_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
