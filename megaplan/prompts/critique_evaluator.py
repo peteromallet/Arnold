@@ -173,6 +173,59 @@ def _format_lens_catalog() -> str:
     return "\n".join(lines)
 
 
+def _render_prep_section(
+    prep_dossier_text: str | None, prep_metrics: dict | None
+) -> str:
+    """Render the "Prep that preceded this plan" section.
+
+    Surfaces the prep dossier plus the decision-relevant coverage signals from
+    ``prep_metrics.json`` (counts, gaps, contradictions) so the evaluator can
+    fire lenses with knowledge of where prep was thorough vs. where it left
+    holes. Returns ``""`` when no prep artifacts are available.
+    """
+    if not prep_dossier_text and not prep_metrics:
+        return ""
+    lines = [
+        "## Prep that preceded this plan",
+        "",
+        "This plan was produced after a multi-step prep phase (triage -> research",
+        "fan-out -> distill). Use the prep record below when deciding which lenses",
+        "to fire: areas prep researched thoroughly may need less scrutiny, while",
+        "areas prep flagged as gaps, contradictions, or timed-out research warrant",
+        "extra attention from the critics.",
+        "",
+    ]
+    if prep_metrics:
+        coverage_bits = [
+            f"{key}={prep_metrics[key]}"
+            for key in (
+                "area_count",
+                "fanout_count",
+                "completed_count",
+                "partial_count",
+                "timed_out_count",
+                "error_count",
+            )
+            if key in prep_metrics
+        ]
+        if coverage_bits:
+            lines.append("**Prep coverage:** " + ", ".join(coverage_bits))
+            lines.append("")
+        gap_notes = prep_metrics.get("gap_notes") or []
+        if gap_notes:
+            lines.append("**Gaps prep could not close:**")
+            lines += [f"- {note}" for note in gap_notes]
+            lines.append("")
+        contradiction_notes = prep_metrics.get("contradiction_notes") or []
+        if contradiction_notes:
+            lines.append("**Contradictions surfaced in research:**")
+            lines += [f"- {note}" for note in contradiction_notes]
+            lines.append("")
+    if prep_dossier_text:
+        lines += ["**Prep dossier:**", "", prep_dossier_text.strip(), ""]
+    return "\n".join(lines) + "\n\n"
+
+
 def _critique_evaluator_prompt(
     state: PlanState,
     plan_dir: Path,
@@ -182,12 +235,18 @@ def _critique_evaluator_prompt(
     gate_signals: dict | None = None,
     revise_resolutions: list[dict[str, Any]] | None = None,
     plan_diff: str | None = None,
+    prep_dossier_text: str | None = None,
+    prep_metrics: dict | None = None,
 ) -> str:
     """Assemble the critique evaluator prompt.
 
     Renders the finished plan + task graph, the intent/issue-hints/notes
     block, the 9-lens catalog, the ranked critic model roster, and the
     fire-by-default / justify-to-skip contract.
+
+    When prep_dossier_text / prep_metrics are supplied, a "Prep that preceded
+    this plan" section is rendered so the evaluator selects lenses with the
+    prep research record in view (gaps and contradictions warrant scrutiny).
 
     When iteration >= 2 and flag_lifecycle / iteration_pressure / gate_signals
     are supplied, a differential context section is prepended that guides
@@ -207,6 +266,8 @@ def _critique_evaluator_prompt(
 
     # Collect all known check ids for the contract
     all_check_ids = [check["id"] for check in CRITIQUE_CHECKS]
+
+    prep_section = _render_prep_section(prep_dossier_text, prep_metrics)
 
     iteration = state.get("iteration", 1)
     differential_section = ""
@@ -304,7 +365,7 @@ def _critique_evaluator_prompt(
 
         {intent_block}
 
-        {differential_section}{verify_section}## Critic Model Roster (rank 1 = strongest)
+        {prep_section}{differential_section}{verify_section}## Critic Model Roster (rank 1 = strongest)
 
         {roster_table}
 
