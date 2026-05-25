@@ -1,17 +1,16 @@
 # Megaplan
 
-A planning and execution harness that runs each phase of building software on the **cheapest model that can do it well** — pairing premium closed models with far cheaper open ones.
+A planning and execution harness that breaks building software into structured, independently-checked phases — making intelligent-but-unreliable LLMs systematically robust, and letting each phase run on the cheapest model that can do it well.
 
-## Philosophy — cheapest capable model per task
+## Philosophy
 
-Premium closed models (Claude, GPT/Codex) are overkill for the vast majority of software tasks. Open models that are **~40× cheaper** — primarily **DeepSeek v4-pro** — do most of the work just as reliably. Megaplan's goal is to make it as easy as possible to use the cheapest capable model for each task, and to spend premium-model budget only where it actually changes the outcome.
+Two ideas, and they reinforce each other.
 
-So rather than one model doing everything, megaplan splits each run by difficulty:
+**1. Structure makes LLMs robust.** LLMs are highly intelligent but not systematically reliable — left to one shot they skip steps, miss concerns, and rubber-stamp their own work. Megaplan breaks the whole process into explicit stages — `prep`, `plan`, `critique`, `gate`, `revise`, `finalize`, `execute`, `review` — each with its own tools and skills pointing the model in the right direction, and with **independent** critique and gating rather than a model grading itself. That structure is what turns raw intelligence into something that can perform a real task end-to-end with a high degree of robustness.
 
-- **Cheap open models do the grunt work** — repository research (`prep`), focused critique, gating, and executing the easy, well-scoped tasks. These are mechanical, and the cheap models do them reliably.
-- **Premium closed models do two things only**: (1) **adjudicate** — decide which model should handle each task — and (2) **the hard tasks** the cheap models genuinely can't.
+**2. Use the cheapest capable model per component.** Premium closed models (Claude, GPT/Codex) are overkill for the vast majority of software tasks; open models that are **~40× cheaper** — primarily **DeepSeek v4-pro** — do most of the work just as reliably. The goal is to use the cheapest model that can *reliably* perform a given task, and to spend premium budget only where it actually changes the outcome.
 
-The result: most tokens flow through a model 40× cheaper, with premium spend reserved for judgment and difficulty.
+The two connect: the same decomposition that makes the process robust is what lets you price it. Once the work is broken into stages and tasks, each component routes to the cheapest model that can handle it — cheap models do the grunt work (research, focused critique, easy execution) while premium models do just two things: **adjudicate** which model should handle each piece, and tackle the genuinely **hard** parts the cheap models can't.
 
 ## How it works
 
