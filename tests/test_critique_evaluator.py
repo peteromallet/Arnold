@@ -387,6 +387,49 @@ def test_differential_section_present_only_on_iteration_n(
     assert "race condition" in differential
 
 
+def test_prep_section_present_when_prep_artifacts_supplied(
+    plan_fixture: PlanFixture,
+) -> None:
+    """The evaluator prompt surfaces the prep dossier + coverage signals when
+    prep artifacts are passed, and omits the section when they are not."""
+    from megaplan._core import load_plan
+    from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
+
+    # Blind — no prep context passed.
+    blind = _critique_evaluator_prompt(state, plan_fixture.plan_dir, root=plan_fixture.root)
+    assert "Prep that preceded this plan" not in blind
+
+    # With prep dossier + metrics, the section renders and decision-relevant
+    # coverage signals (counts, gaps, contradictions) surface.
+    prep_metrics = {
+        "area_count": 4,
+        "fanout_count": 3,
+        "completed_count": 2,
+        "partial_count": 0,
+        "timed_out_count": 1,
+        "error_count": 0,
+        "gap_notes": ["auth token refresh path never researched"],
+        "contradiction_notes": ["two sources disagree on retry semantics"],
+    }
+    prep_dossier = "## Prep dossier\n\nTriaged 4 areas; fanned out 3 research units."
+    with_prep = _critique_evaluator_prompt(
+        state,
+        plan_fixture.plan_dir,
+        root=plan_fixture.root,
+        prep_dossier_text=prep_dossier,
+        prep_metrics=prep_metrics,
+    )
+    assert "Prep that preceded this plan" in with_prep
+    assert "timed_out_count=1" in with_prep
+    assert "auth token refresh path never researched" in with_prep
+    assert "two sources disagree on retry semantics" in with_prep
+    assert "fanned out 3 research units" in with_prep
+    assert with_prep != blind
+
+
 # ---------------------------------------------------------------------------
 # ROBUSTNESS_LEVELS purity
 # ---------------------------------------------------------------------------
