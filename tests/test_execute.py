@@ -1113,6 +1113,7 @@ def test_execute_succeeds_with_user_approval(plan_fixture: PlanFixture) -> None:
 def test_execute_succeeds_in_auto_approve_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "root"
     project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
     root.mkdir()
     project_dir.mkdir()
     (project_dir / ".git").mkdir()
@@ -1122,6 +1123,20 @@ def test_execute_succeeds_in_auto_approve_mode(tmp_path: Path, monkeypatch: pyte
         "which",
         lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
     )
+
+    # Isolate the user-config dir so a global ``adaptive_critique = true`` in
+    # ~/.config/megaplan/config.json doesn't leak into the test and drive the
+    # critique handler down the adaptive-evaluator path (which the mock worker
+    # doesn't implement). Mirrors _make_plan_fixture_with_robustness.
+    import megaplan._core.io as _io_module
+
+    def _config_dir(home: Path | None = None) -> Path:
+        del home
+        return config_path
+
+    monkeypatch.setattr(_io_module, "config_dir", _config_dir)
+    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
+
     make_args = make_args_factory(project_dir)
     megaplan.handle_init(root, make_args(auto_approve=True))
     megaplan.handle_plan(root, make_args(plan="test-plan"))

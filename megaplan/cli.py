@@ -3216,6 +3216,17 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--adaptive-critique", action="store_true", default=None)
     init_parser.add_argument(
+        "--strict-adaptive-critique",
+        action="store_true",
+        default=None,
+        help=(
+            "Raise AdaptiveCritiqueDegradedError instead of silently falling back "
+            "to static lenses when the adaptive critique evaluator fails. "
+            "Recommended for production / CI / important runs. "
+            "Has no effect when --adaptive-critique is off."
+        ),
+    )
+    init_parser.add_argument(
         "--critic-model",
         default=None,
         choices=[c for c in CRITIC_MODEL_CHOICES if c],
@@ -4172,11 +4183,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = subparsers.add_parser(
         "doctor",
-        help="Diagnostic: plan-level or repo-level health checks",
+        help="Diagnostic: plan-level, repo-level, or adaptive-critique health checks",
     )
     doctor_group = doctor_parser.add_mutually_exclusive_group(required=True)
     doctor_group.add_argument("--plan", default=None, help="Plan name to check")
     doctor_group.add_argument("--repo", action="store_true", default=False, help="Check the repo")
+    doctor_group.add_argument(
+        "--adaptive-critique",
+        action="store_true",
+        default=False,
+        help=(
+            "Probe every load-bearing piece of the adaptive critique path "
+            "(step schema, schema dict entry, prompt template, required-keys "
+            "table). Exits non-zero if any probe fails."
+        ),
+    )
 
     record_tag_parser = subparsers.add_parser(
         "record-tag",
