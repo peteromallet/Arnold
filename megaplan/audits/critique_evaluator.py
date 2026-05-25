@@ -153,6 +153,51 @@ def roster_rank(model: str) -> int:
     return entry.rank
 
 
+def roster_dispatch_spec(model: str) -> str:
+    """Map a bare roster model name to a fully-resolved agent spec string.
+
+    The roster stores *ranking tokens* (``deepseek-v4-pro``), not dispatchable
+    specs. Splicing such a token onto an inherited agent (as the critique
+    handler used to do) produces incoherent routes — a Claude/Codex worker
+    handed a DeepSeek model name — and even in the hermes case a bare
+    ``deepseek-v4-pro`` carries no provider, so dispatch falls through to
+    OpenRouter instead of DeepSeek's direct API. This returns the complete
+    ``<agent>[:<provider>]:<model>`` spec so a farmed-out critic routes to the
+    right vendor. DeepSeek critics go to DeepSeek's **direct** API.
+
+    Raises:
+        ValueError: *model* is not a known roster entry.
+    """
+    from megaplan.profiles import (
+        DIRECT_DEEPSEEK_V4_FLASH_SPEC,
+        DIRECT_DEEPSEEK_V4_PRO_SPEC,
+    )
+    from megaplan.types import KNOWN_AGENTS, parse_agent_spec
+
+    mapping = {
+        "claude-opus-4-7": "claude:claude-opus-4-7",
+        "gpt-5.5": "codex:gpt-5.5",
+        "claude-sonnet-4-6": "claude:claude-sonnet-4-6",
+        "deepseek-v4-pro": DIRECT_DEEPSEEK_V4_PRO_SPEC,
+        "deepseek-v4-flash": DIRECT_DEEPSEEK_V4_FLASH_SPEC,
+    }
+    if model in mapping:
+        return mapping[model]
+
+    # The evaluator may also emit an already-dispatchable spec — a bare agent
+    # name ("claude"/"codex"), a premium spec ("claude:claude-sonnet-4-6"), or
+    # a hermes provider spec. Pass those through untouched; only the bare
+    # roster tokens above (which are not valid agent specs on their own) need
+    # rewriting.
+    if parse_agent_spec(model).agent in KNOWN_AGENTS:
+        return model
+
+    raise ValueError(
+        f"No dispatch spec for critic model {model!r}. Known roster keys: "
+        f"{sorted(mapping.keys())}; or a spec for one of {KNOWN_AGENTS}."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Verdict schema
 # ---------------------------------------------------------------------------

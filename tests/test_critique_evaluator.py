@@ -25,6 +25,7 @@ import megaplan.handlers
 import megaplan.handlers.critique as critique_mod
 from megaplan.audits.critique_evaluator import (
     CRITIC_MODEL_ROSTER,
+    roster_dispatch_spec,
     roster_rank,
     validate_evaluator_verdict,
 )
@@ -109,6 +110,43 @@ def test_roster_rank_normalizes_legitimate_profile_strings(spec: str, expected_r
 def test_roster_rank_raises_on_unknown(spec: str) -> None:
     with pytest.raises(ValueError):
         roster_rank(spec)
+
+
+# ---------------------------------------------------------------------------
+# roster_dispatch_spec — bare roster token -> full, vendor-correct agent spec
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_spec_routes_deepseek_critics_to_direct_api() -> None:
+    """A farmed-out DeepSeek critic must hit DeepSeek's direct API, not fall
+    through to OpenRouter via a provider-less bare model name."""
+    assert roster_dispatch_spec("deepseek-v4-pro") == "hermes:deepseek:deepseek-v4-pro"
+    assert roster_dispatch_spec("deepseek-v4-flash") == "hermes:deepseek:deepseek-v4-flash"
+
+
+def test_dispatch_spec_premium_roster_tokens_carry_their_agent() -> None:
+    from megaplan.types import parse_agent_spec
+
+    assert parse_agent_spec(roster_dispatch_spec("claude-opus-4-7")).agent == "claude"
+    assert parse_agent_spec(roster_dispatch_spec("gpt-5.5")).agent == "codex"
+    assert parse_agent_spec(roster_dispatch_spec("claude-sonnet-4-6")).agent == "claude"
+
+
+def test_dispatch_spec_passes_through_valid_agent_specs() -> None:
+    # Bare agent names and explicit specs are already dispatchable.
+    assert roster_dispatch_spec("claude") == "claude"
+    assert roster_dispatch_spec("hermes:deepseek:deepseek-v4-flash") == "hermes:deepseek:deepseek-v4-flash"
+
+
+def test_dispatch_spec_rejects_unknown_token() -> None:
+    with pytest.raises(ValueError):
+        roster_dispatch_spec("totally-unknown")
+
+
+def test_every_roster_model_has_a_rank_stable_dispatch_spec() -> None:
+    # Each roster token must resolve to a spec that ranks back to the same entry.
+    for entry in CRITIC_MODEL_ROSTER:
+        assert roster_rank(roster_dispatch_spec(entry.model)) == entry.rank
 
 
 def test_claude_and_codex_co_ranked_top() -> None:
