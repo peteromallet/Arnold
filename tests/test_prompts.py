@@ -37,7 +37,10 @@ from megaplan.prompts import (
     _execute_doc_batch_prompt,
     _execute_doc_prompt,
     _plan_prompt,
+    _prep_distill_prompt,
     _prep_prompt,
+    _prep_research_prompt,
+    _prep_triage_prompt,
     _render_prep_block,
     create_claude_prompt,
     create_codex_prompt,
@@ -505,6 +508,7 @@ def test_render_prep_block_formats_existing_brief(tmp_path: Path) -> None:
     atomic_write_json(
         plan_dir / "prep.json",
         {
+            "skip": False,
             "task_summary": "Add the prep phase before planning.",
             "key_evidence": [
                 {"point": "Task requires a prep phase", "source": "idea", "relevance": "high"},
@@ -538,10 +542,87 @@ def test_render_prep_block_formats_existing_brief(tmp_path: Path) -> None:
     assert "Do not break standard robustness routing." in block
     assert "Render the brief before the raw task context in downstream prompts." in block
     assert instruction == (
-        "The engineering brief above was produced by analyzing the codebase. "
-        "Use it as a strong starting point, but the suggested approach is a hypothesis — "
-        "verify it's the best fix, not just a valid one."
+        "The engineering brief above is evidence gathered from the codebase. "
+        "Treat it as the default working context, challenge its conclusions when the code disagrees, "
+        "and only do targeted repository lookups when a concrete gap remains."
     )
+
+
+def test_render_prep_block_omits_skipped_compatible_prep(tmp_path: Path) -> None:
+    plan_dir, _ = _scaffold(tmp_path)
+    atomic_write_json(
+        plan_dir / "prep.json",
+        {
+            "skip": True,
+            "task_summary": "",
+            "key_evidence": [],
+            "relevant_code": [],
+            "test_expectations": [],
+            "constraints": [],
+            "suggested_approach": "",
+        },
+    )
+
+    assert _render_prep_block(plan_dir) == ("", "")
+
+
+def test_prep_triage_prompt_routes_research_without_final_findings(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _prep_triage_prompt(state, plan_dir, root=tmp_path)
+
+    assert "prep_triage.json" in prompt
+    assert "Route only; do not produce the final prep brief yet." in prompt
+    assert "Returning `areas: []` is the explicit skip path" in prompt
+    assert "Do not emit final findings" in prompt
+
+
+def test_prep_research_prompt_is_area_scoped(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _prep_research_prompt(
+        state,
+        plan_dir,
+        area={
+            "id": "callers",
+            "area": "Caller coverage",
+            "brief": "Find every call site that depends on the changed contract.",
+            "suggested_files": ["megaplan/workers.py"],
+        },
+        root=tmp_path,
+    )
+
+    assert "Investigate one prep research area" in prompt
+    assert '"id": "callers"' in prompt
+    assert "`status`: one of `complete`, `partial`, `timed_out`, `error`, `not_needed`." in prompt
+    assert "Stay inside this area; do not try to solve the entire task." in prompt
+
+
+def test_prep_distill_prompt_preserves_compatible_prep_contract(tmp_path: Path) -> None:
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _prep_distill_prompt(
+        state,
+        plan_dir,
+        triage={"triage_framing": "Need targeted investigation", "areas": []},
+        findings=[
+            {
+                "area": "callers",
+                "brief": "Trace call sites",
+                "status": "partial",
+                "findings": ["One caller still uses the old shape."],
+                "files": ["megaplan/workers.py"],
+                "code_refs": ["megaplan.workers.handle_prep"],
+                "confidence": "medium",
+                "error": "",
+            }
+        ],
+        root=tmp_path,
+    )
+
+    assert "prep_dossier.md" in prompt
+    assert "prep_metrics.json" in prompt
+    assert "Do not add new required fields to the compatible `prep.json` payload." in prompt
+    assert "Resolve overlaps across areas into one coherent prep view" in prompt
+    assert "bounded read-only cross-reference" in prompt
+    assert "keep any further repository lookup tightly targeted to that gap." in prompt
 
 
 def test_light_plan_prompt_uses_normal_plan_prompt(tmp_path: Path) -> None:

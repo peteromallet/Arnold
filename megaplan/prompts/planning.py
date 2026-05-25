@@ -153,6 +153,39 @@ PLAN_TEMPLATE = textwrap.dedent(
 ).strip()
 
 
+def _prep_context_sections(state: PlanState, plan_dir: Path) -> tuple[Path, Path, str, str]:
+    project_dir = Path(state["config"]["project_dir"])
+    prep_path = plan_dir / "prep.json"
+
+    direction_raw = state.get("config", {}).get("prep_direction")
+    direction = direction_raw.strip() if isinstance(direction_raw, str) else ""
+    if direction:
+        direction_block = textwrap.dedent(
+            f"""
+            User direction for prep (treat as steering for what to explore — not a substitute for the task):
+            {direction}
+            """
+        ).strip()
+    else:
+        direction_block = ""
+
+    extra_sections: list[str] = []
+    clarification = state.get("clarification", {}) or {}
+    intent_summary = clarification.get("intent_summary")
+    if isinstance(intent_summary, str) and intent_summary.strip():
+        extra_sections.append(f"User intent summary:\n{intent_summary.strip()}")
+    notes = state.get("meta", {}).get("notes", []) or []
+    note_lines = [
+        f"- {n['note']}"
+        for n in notes
+        if isinstance(n, dict) and isinstance(n.get("note"), str) and n["note"].strip()
+    ]
+    if note_lines:
+        extra_sections.append("User notes and answers:\n" + "\n".join(note_lines))
+    notes_block = "\n\n".join(extra_sections)
+    return project_dir, prep_path, direction_block, notes_block
+
+
 def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
@@ -286,35 +319,9 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
 
 def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
     del root
-    project_dir = Path(state["config"]["project_dir"])
-    output_path = plan_dir / "prep.json"
-
-    direction_raw = state.get("config", {}).get("prep_direction")
-    direction = direction_raw.strip() if isinstance(direction_raw, str) else ""
-    if direction:
-        direction_block = textwrap.dedent(
-            f"""
-            User direction for prep (treat as steering for what to explore — not a substitute for the task):
-            {direction}
-            """
-        ).strip()
-    else:
-        direction_block = ""
-
-    extra_sections: list[str] = []
-    clarification = state.get("clarification", {}) or {}
-    intent_summary = clarification.get("intent_summary")
-    if isinstance(intent_summary, str) and intent_summary.strip():
-        extra_sections.append(f"User intent summary:\n{intent_summary.strip()}")
-    notes = state.get("meta", {}).get("notes", []) or []
-    note_lines = [
-        f"- {n['note']}"
-        for n in notes
-        if isinstance(n, dict) and isinstance(n.get("note"), str) and n["note"].strip()
-    ]
-    if note_lines:
-        extra_sections.append("User notes and answers:\n" + "\n".join(note_lines))
-    notes_block = "\n\n".join(extra_sections)
+    project_dir, output_path, direction_block, notes_block = _prep_context_sections(
+        state, plan_dir
+    )
 
     return textwrap.dedent(
         f"""
@@ -368,5 +375,157 @@ def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         - constraints: What must not break.
         - suggested_approach: A concrete approach grounded in what you found.
 
+        """
+    ).strip()
+
+
+def _prep_triage_prompt(
+    state: PlanState, plan_dir: Path, root: Path | None = None
+) -> str:
+    del root
+    project_dir, _prep_path, direction_block, notes_block = _prep_context_sections(
+        state, plan_dir
+    )
+    output_path = plan_dir / "prep_triage.json"
+    return textwrap.dedent(
+        f"""
+        Triage the prep task below into a bounded research plan. Route only; do not produce the final prep brief yet.
+
+        Task:
+        {state["idea"]}
+
+        Project: {project_dir}
+        Output file: {output_path}
+
+        {direction_block}
+
+        {notes_block}
+
+        Goals:
+        - Decide whether prep can skip research entirely.
+        - When research is needed, break it into a small number of concrete investigation areas.
+        - Keep the output operational: downstream fan-out should be able to investigate each area independently.
+
+        Output contract:
+        - `triage_framing`: short framing of the task and the likely root questions.
+        - `areas`: ordered list of research areas, each with `id`, `area`, `brief`, and `suggested_files`.
+        - Returning `areas: []` is the explicit skip path and means downstream prep should write a compatible `prep.json` with `skip: true`.
+
+        Rules:
+        - Cap the list to the smallest set of areas that would materially reduce uncertainty.
+        - Do not emit final findings, final constraints, or a final suggested approach here.
+        - Prefer relation-oriented areas such as caller coverage, root cause trace, contract compatibility, and validation impact.
+        - If the existing prep evidence is already sufficient, return zero areas instead of inventing research.
+
+        Return JSON only.
+        """
+    ).strip()
+
+
+def _prep_research_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    area: dict[str, object],
+    output_path: Path | None = None,
+    root: Path | None = None,
+) -> str:
+    del root
+    project_dir, _prep_path, direction_block, notes_block = _prep_context_sections(
+        state, plan_dir
+    )
+    target_path = output_path or (plan_dir / f"{area.get('id', 'area')}.research.json")
+    return textwrap.dedent(
+        f"""
+        Investigate one prep research area and return only the findings for that area.
+
+        Task:
+        {state["idea"]}
+
+        Project: {project_dir}
+        Research area:
+        {json_dump(area).strip()}
+        Output file: {target_path}
+
+        {direction_block}
+
+        {notes_block}
+
+        Output contract:
+        - `area`: stable area identifier or label.
+        - `brief`: one-sentence reminder of the research question.
+        - `status`: one of `complete`, `partial`, `timed_out`, `error`, `not_needed`.
+        - `findings`: concrete evidence bullets for this area only.
+        - `files`: file paths that materially informed the findings.
+        - `code_refs`: exact functions, classes, or call sites that matter.
+        - `confidence`: `high`, `medium`, or `low`.
+        - `error`: optional short explanation when status is not `complete`.
+
+        Rules:
+        - Stay inside this area; do not try to solve the entire task.
+        - Prefer direct repository evidence over speculation.
+        - Call out contradictions or missing evidence explicitly instead of smoothing them over.
+        - If the area produces no useful evidence, return `status: "not_needed"` with a short explanation.
+
+        Return JSON only.
+        """
+    ).strip()
+
+
+def _prep_distill_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    triage: dict[str, object],
+    findings: list[dict[str, object]],
+    output_path: Path | None = None,
+    dossier_path: Path | None = None,
+    metrics_path: Path | None = None,
+    root: Path | None = None,
+) -> str:
+    del root
+    project_dir, prep_path, direction_block, notes_block = _prep_context_sections(
+        state, plan_dir
+    )
+    target_path = output_path or prep_path
+    dossier_target = dossier_path or (plan_dir / "prep_dossier.md")
+    metrics_target = metrics_path or (plan_dir / "prep_metrics.json")
+    return textwrap.dedent(
+        f"""
+        Distill the triage framing and per-area research findings into the final prep brief.
+
+        Task:
+        {state["idea"]}
+
+        Project: {project_dir}
+        Compatible prep output: {target_path}
+        Dossier sidecar: {dossier_target}
+        Metrics sidecar: {metrics_target}
+
+        {direction_block}
+
+        {notes_block}
+
+        Triage framing:
+        {json_dump(triage).strip()}
+
+        Area findings:
+        {json_dump(findings).strip()}
+
+        Produce:
+        - A `prep.json` payload that keeps the public compatibility contract unchanged:
+          `skip`, `task_summary`, `key_evidence`, `relevant_code`, `test_expectations`, `constraints`, `suggested_approach`.
+        - Distilled evidence only. Treat the area findings as evidence to adjudicate, not as text to copy blindly.
+        - Resolve overlaps across areas into one coherent prep view instead of duplicating them.
+        - Clear contradiction or gap notes when the findings disagree, time out, error, or leave concrete uncertainty.
+
+        Rules:
+        - Do not add new required fields to the compatible `prep.json` payload.
+        - Keep richer per-area detail in the dossier/metrics sidecars, not in the compatible payload.
+        - You may do a small, bounded read-only cross-reference against the repository only when it helps close a concrete contradiction or gap raised by these findings.
+        - If the evidence is still incomplete, make the gap explicit and keep any further repository lookup tightly targeted to that gap.
+        - The final suggested approach is still a hypothesis; ground it in the strongest evidence you have.
+
+        Return JSON only for the compatible `prep.json` payload.
         """
     ).strip()

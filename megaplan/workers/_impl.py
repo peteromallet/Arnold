@@ -68,6 +68,9 @@ _CODEX_TEMPLATE_WRITE_STEPS = {"critique", "review"}
 STEP_SCHEMA_FILENAMES: dict[str, str] = {
     "plan": "plan.json",
     "prep": "prep.json",
+    "prep-triage": "prep_triage.json",
+    "prep-research": "research.json",
+    "prep-distill": "prep.json",
     "revise": "revise.json",
     "critique": "critique.json",
     "feedback": "feedback.json",
@@ -1572,6 +1575,7 @@ def _default_mock_plan_payload(state: PlanState, plan_dir: Path) -> dict[str, An
 def _default_mock_prep_payload(state: PlanState, plan_dir: Path) -> dict[str, Any]:
     del plan_dir
     return {
+        "skip": False,
         "task_summary": str(state.get("idea", "")).strip() or "Prepare a concise engineering brief for the requested task.",
         "key_evidence": [],
         "relevant_code": [],
@@ -1579,6 +1583,19 @@ def _default_mock_prep_payload(state: PlanState, plan_dir: Path) -> dict[str, An
         "constraints": [],
         "suggested_approach": "Inspect the code paths named in the task, read nearby tests first when they exist, then carry the distilled brief into planning.",
     }
+
+
+def _default_mock_prep_triage_payload(state: PlanState, plan_dir: Path) -> dict[str, Any]:
+    del state, plan_dir
+    return {
+        "triage_framing": "Mock prep triage found no uncertainty that requires fan-out.",
+        "areas": [],
+    }
+
+
+def _default_mock_prep_research_payload(state: PlanState, plan_dir: Path) -> dict[str, Any]:
+    del state, plan_dir
+    return {"findings": []}
 
 
 def _loop_goal(state: dict[str, Any]) -> str:
@@ -1917,6 +1934,9 @@ _MockPayloadBuilder = Callable[[dict[str, Any], Path], dict[str, Any]]
 _MOCK_DEFAULTS: dict[str, _MockPayloadBuilder] = {
     "plan": _default_mock_plan_payload,
     "prep": _default_mock_prep_payload,
+    "prep-triage": _default_mock_prep_triage_payload,
+    "prep-research": _default_mock_prep_research_payload,
+    "prep-distill": _default_mock_prep_payload,
     "loop_plan": _default_mock_loop_plan_payload,
     "critique": _default_mock_critique_payload,
     "revise": _default_mock_revise_payload,
@@ -1944,7 +1964,7 @@ def _build_mock_payload(step: str, state: dict[str, Any], plan_dir: Path, **over
 # only fires for the two execute-shaped steps; everything else gets an
 # empty trace. Update both sets to add a new step.
 _MOCK_SUPPORTED_STEPS: tuple[str, ...] = (
-    "plan", "prep", "loop_plan",
+    "plan", "prep", "prep-triage", "prep-research", "prep-distill", "loop_plan",
     "critique", "revise", "gate", "finalize",
     "execute", "loop_execute", "review",
 )
@@ -2563,6 +2583,90 @@ def run_codex_step(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
+    )
+
+
+def run_codex_prep_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    prompt_override: str | None = None,
+    prompt_kwargs: dict[str, Any] | None = None,
+    effort: str | None = None,
+    model: str | None = None,
+) -> WorkerResult:
+    """Run prep triage/distill through Codex without granting write access.
+
+    This path is intentionally separate from ``run_codex_step``: prep research
+    is evidence gathering, so it must not inherit execute-oriented bypass
+    flags, ``--add-dir`` grants, or writable root configuration.
+    """
+    if step not in {"prep-triage", "prep-distill"}:
+        raise CliError("unsupported_step", f"Codex prep runner does not support '{step}'")
+    if effort is not None and effort not in _VALID_CODEX_EFFORTS:
+        raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
+    if os.getenv(MOCK_ENV_VAR) == "1":
+        return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
+
+    out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+    out_handle.close()
+    output_path = Path(out_handle.name)
+    schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
+    prompt = prompt_override if prompt_override is not None else create_codex_prompt(
+        step,
+        state,
+        plan_dir,
+        root=root,
+        **(prompt_kwargs or {}),
+    )
+    timeout_seconds = _codex_timeout_for_step("prep")
+    command = [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "-c",
+        "sandbox_mode='read-only'",
+        "-o",
+        str(output_path),
+    ]
+    if model is not None:
+        command.extend(["-c", f"model='{model}'"])
+    if effort is not None:
+        command.extend(["-c", f"model_reasoning_effort={effort}"])
+    command.extend(["--output-schema", str(schema_file), "-"])
+
+    result = run_command(
+        command,
+        cwd=Path(state["config"].get("project_dir", Path.cwd())),
+        stdin_text=prompt,
+        env=_codex_child_env(turn_id=f'prep_worker_{state["name"]}'),
+        timeout=timeout_seconds,
+        activity_callback=_activity_callback_for_state(state, plan_dir),
+    )
+    raw = result.stdout + result.stderr
+    if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
+        error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
+        raise CliError(error_code, error_message, extra={"raw_output": raw})
+    payload = _recover_codex_payload(
+        step,
+        plan_dir=plan_dir,
+        output_path=output_path,
+        raw=raw,
+    )
+    if payload is None:
+        raise CliError("parse_error", f"Output file {output_path.name} was not valid JSON and no fallback found", extra={"raw_output": raw})
+    raw_session_id = extract_session_id(raw)
+    return WorkerResult(
+        payload=payload,
+        raw_output=raw,
+        duration_ms=result.duration_ms,
+        cost_usd=0.0,
+        session_id=raw_session_id,
+        rendered_prompt=prompt,
+        model_actual=model,
     )
 
 

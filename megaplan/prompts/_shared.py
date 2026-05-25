@@ -306,5 +306,9 @@ def _render_prep_block(plan_dir: Path) -> tuple[str, str]:
         {suggested_approach}
         """
     ).strip()
-    prep_instruction = "The engineering brief above was produced by analyzing the codebase. Use it as a strong starting point, but the suggested approach is a hypothesis — verify it's the best fix, not just a valid one."
+    prep_instruction = (
+        "The engineering brief above is evidence gathered from the codebase. "
+        "Treat it as the default working context, challenge its conclusions when the code disagrees, "
+        "and only do targeted repository lookups when a concrete gap remains."
+    )
     return prep_block, prep_instruction

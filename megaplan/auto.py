@@ -69,6 +69,34 @@ DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS = 1800
 DEFAULT_STATUS_TIMEOUT_SECONDS = 60
 DEFAULT_MAX_CONTEXT_RETRIES = 2
 CONTEXT_EXHAUSTION_FRAGMENT = "ran out of room in the model's context"
+DEFAULT_MAX_EXTERNAL_RETRIES = 1
+EXTERNAL_RETRYABLE_PHASES = frozenset(
+    {"plan", "prep", "critique", "revise", "gate", "finalize", "review"}
+)
+EXTERNAL_PERMANENT_ERROR_KINDS = frozenset(
+    {
+        "auth",
+        "balance",
+        "quota",
+        "billing",
+        "config",
+        "bad_request",
+        "invalid_request",
+        "unsupported_model",
+        "context_exhausted",
+        "context_length",
+        "rate_limit",
+    }
+)
+EXTERNAL_RETRYABLE_LAYERS = frozenset(
+    {
+        "stream_content_stall",
+        "stream_first_content_timeout",
+        "stream_read_timeout",
+        "transport_timeout",
+        "worker_stream_stall",
+    }
+)
 # When execute exits 0 but state.json's latest execute entry is `result=blocked`,
 # the executor reported success-with-evidence-gaps (e.g. done tasks missing
 # files_changed/commands_run). Retrying the same execute is structurally pointless
@@ -109,6 +137,8 @@ class DriverOutcome:
     cost_cap_usd: float | None = None
     context_retries_used: int = 0
     max_context_retries: int | None = None
+    external_retries_used: int = 0
+    max_external_retries: int | None = None
     blocked_retries_used: int = 0
     max_blocked_retries: int | None = None
     blocking_reasons: list[str] = field(default_factory=list)
@@ -127,6 +157,8 @@ class DriverOutcome:
                 "cost_cap_usd": self.cost_cap_usd,
                 "context_retries_used": self.context_retries_used,
                 "max_context_retries": self.max_context_retries,
+                "external_retries_used": self.external_retries_used,
+                "max_external_retries": self.max_external_retries,
                 "blocked_retries_used": self.blocked_retries_used,
                 "max_blocked_retries": self.max_blocked_retries,
                 "blocking_reasons": self.blocking_reasons,
@@ -155,7 +187,46 @@ def _non_negative_float(value: str) -> float:
     return parsed
 
 
+def _is_retryable_external_error(phase: str, external_error: object | None) -> bool:
+    """Return True for the narrow provider-failure class auto may retry.
 
+    The policy deliberately targets stream stalls and timeout-shaped transport
+    failures on non-execute phases. Auth, billing/quota, bad request, unsupported
+    model, context-size, and rate-limit responses stay blocked/resumable because
+    repeating them immediately is either unsafe or structurally pointless.
+    """
+    if phase not in EXTERNAL_RETRYABLE_PHASES:
+        return False
+    if external_error is None:
+        return False
+
+    error_kind = str(getattr(external_error, "error_kind", "") or "").lower()
+    status_code = getattr(external_error, "status_code", None)
+    retry_after_s = getattr(external_error, "retry_after_s", None)
+    provider_error_code = str(
+        getattr(external_error, "provider_error_code", "") or ""
+    ).lower()
+    error_layer = str(getattr(external_error, "error_layer", "") or "").lower()
+    message = str(getattr(external_error, "message", "") or "").lower()
+
+    if error_kind in EXTERNAL_PERMANENT_ERROR_KINDS:
+        return False
+    if retry_after_s is not None:
+        return False
+    if isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 408:
+        return False
+
+    if error_layer in EXTERNAL_RETRYABLE_LAYERS:
+        return True
+    if error_kind in {"stream_content_stall", "stalled_stream"}:
+        return True
+    if (
+        error_kind == "network"
+        and (provider_error_code == "timeout" or "timeout" in message or "timed out" in message)
+        and (status_code is None or status_code in {408, 500, 502, 503, 504})
+    ):
+        return True
+    return False
 
 
 def _run_megaplan(
@@ -835,6 +906,7 @@ def drive(
     max_review_rework_cycles: int = DEFAULT_MAX_REVIEW_REWORK_CYCLES,
     max_cost_usd: float | None = None,
     max_context_retries: int = DEFAULT_MAX_CONTEXT_RETRIES,
+    max_external_retries: int = DEFAULT_MAX_EXTERNAL_RETRIES,
     max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
     max_add_note_attempts: int = DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
     on_escalate: str = "force-proceed",
@@ -860,6 +932,8 @@ def drive(
     stall_count = 0
     last_phase: str | None = None
     context_retry_count = 0
+    external_retry_count = 0
+    external_retry_counts_by_phase: dict[str, int] = {}
     blocked_retry_count = 0
     # Consecutive `override add-note` dispatches that failed (non-zero exit).
     # Reset on any successful add-note OR when the next_step changes — only a
@@ -982,6 +1056,8 @@ def drive(
             cost_cap_usd=max_cost_usd,
             context_retries_used=context_retry_count,
             max_context_retries=max_context_retries,
+            external_retries_used=external_retry_count,
+            max_external_retries=max_external_retries,
             blocked_retries_used=blocked_retry_count,
             max_blocked_retries=max_blocked_retries,
             blocking_reasons=list(blocking_reasons or []),
@@ -1522,6 +1598,65 @@ def drive(
                     cmd = [*cmd, "--fresh"]
                 code, out, err, result = _run_phase(cmd, next_step)
 
+        # Targeted external retry loop: transient stream stalls and timeout-shaped
+        # network failures can clear on a fresh phase invocation, but only for
+        # non-execute phases. Execute may have already mutated the worktree or
+        # run user-approved commands, so external execute failures remain
+        # blocked/resumable instead of being replayed blindly.
+        while (
+            max_external_retries > 0
+            and result is not None
+            and getattr(result, "exit_kind", None) == ExitKind.external_error.value
+        ):
+            external_error = getattr(result, "external_error", None)
+            phase_retry_count = external_retry_counts_by_phase.get(next_step, 0)
+            if (
+                phase_retry_count >= max_external_retries
+                or not _is_retryable_external_error(next_step, external_error)
+            ):
+                break
+            provider = getattr(external_error, "provider", "unknown")
+            error_kind = getattr(external_error, "error_kind", "unknown")
+            error_layer = getattr(external_error, "error_layer", None)
+            provider_error_code = getattr(external_error, "provider_error_code", None)
+            phase_retry_count += 1
+            external_retry_counts_by_phase[next_step] = phase_retry_count
+            external_retry_count += 1
+            if "--fresh" not in cmd:
+                cmd = [*cmd, "--fresh"]
+            log(
+                f"phase '{next_step}' retryable external_error [{provider}] "
+                f"{error_kind} - retrying fresh "
+                f"({phase_retry_count}/{max_external_retries})",
+                phase=next_step,
+                provider=provider,
+                error_kind=error_kind,
+                error_layer=error_layer,
+                provider_error_code=provider_error_code,
+                external_retries_used=external_retry_count,
+                max_external_retries=max_external_retries,
+            )
+            if plan_dir is not None:
+                try:
+                    emit_event(
+                        EventKind.PHASE_RETRY,
+                        plan_dir=plan_dir,
+                        phase=next_step,
+                        payload={
+                            "phase": next_step,
+                            "provider": provider,
+                            "error_kind": error_kind,
+                            "error_layer": error_layer,
+                            "provider_error_code": provider_error_code,
+                            "retry": phase_retry_count,
+                            "max_retries": max_external_retries,
+                            "fresh": True,
+                        },
+                    )
+                except Exception:
+                    pass
+            code, out, err, result = _run_phase(cmd, next_step)
+
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
         if result is not None and getattr(result, "exit_kind", None) == ExitKind.timeout.value:
             log(f"phase '{next_step}' timed out — stall detection will enforce the cap")
@@ -1543,6 +1678,12 @@ def drive(
             message = getattr(external_error, "message", "")
             status_code = getattr(external_error, "status_code", None)
             retry_after_s = getattr(external_error, "retry_after_s", None)
+            provider_error_code = getattr(external_error, "provider_error_code", None)
+            error_layer = getattr(external_error, "error_layer", None)
+            stall_timeout_s = getattr(external_error, "stall_timeout_s", None)
+            elapsed_s = getattr(external_error, "elapsed_s", None)
+            content_chunk_count = getattr(external_error, "content_chunk_count", None)
+            reasoning_chunk_count = getattr(external_error, "reasoning_chunk_count", None)
             code_hint = f" HTTP {status_code}" if status_code is not None else ""
             retry_hint = (
                 f" retry_after={retry_after_s}s"
@@ -1587,6 +1728,14 @@ def drive(
                     "error_kind": error_kind,
                     "status_code": status_code,
                     "retry_after_s": retry_after_s,
+                    "provider_error_code": provider_error_code,
+                    "error_layer": error_layer,
+                    "stall_timeout_s": stall_timeout_s,
+                    "elapsed_s": elapsed_s,
+                    "content_chunk_count": content_chunk_count,
+                    "reasoning_chunk_count": reasoning_chunk_count,
+                    "external_retries_used": external_retry_counts_by_phase.get(next_step, 0),
+                    "max_external_retries": max_external_retries,
                     "exit_code": code,
                     "iteration": iteration,
                     "resume_command": resume_command,
@@ -1912,6 +2061,16 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--max-external-retries",
+        type=_non_negative_int,
+        default=DEFAULT_MAX_EXTERNAL_RETRIES,
+        help=(
+            f"Fresh non-execute phase retries to allow after retryable external "
+            f"stream stalls or timeout-shaped network errors (default "
+            f"{DEFAULT_MAX_EXTERNAL_RETRIES}; 0 disables)."
+        ),
+    )
+    auto_parser.add_argument(
         "--max-blocked-retries",
         type=_non_negative_int,
         default=DEFAULT_MAX_BLOCKED_RETRIES,
@@ -2025,6 +2184,11 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         max_review_rework_cycles=args.max_review_rework_cycles,
         max_cost_usd=args.max_cost_usd,
         max_context_retries=args.max_context_retries,
+        max_external_retries=getattr(
+            args,
+            "max_external_retries",
+            DEFAULT_MAX_EXTERNAL_RETRIES,
+        ),
         max_blocked_retries=args.max_blocked_retries,
         max_add_note_attempts=args.max_add_note_attempts,
         on_escalate=args.on_escalate,

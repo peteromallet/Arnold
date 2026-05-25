@@ -32,6 +32,7 @@ PROFILE_METADATA_KEYS = frozenset({
     "default",
     "extends",
     "tier_models",
+    "prep_models",
     "max_tasks_per_batch",
 })
 
@@ -42,6 +43,13 @@ DEFAULT_DEEPSEEK_PROVIDER = "direct"
 KIMI_SPEC = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
 FIREWORKS_DEEPSEEK_V4_PRO_SPEC = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 DIRECT_DEEPSEEK_V4_PRO_SPEC = "hermes:deepseek:deepseek-v4-pro"
+DIRECT_DEEPSEEK_V4_FLASH_SPEC = "hermes:deepseek:deepseek-v4-flash"
+PREP_MODEL_STAGES = ("triage", "fanout", "distill")
+CANONICAL_PREP_MODELS: dict[str, str] = {
+    "triage": DIRECT_DEEPSEEK_V4_PRO_SPEC,
+    "fanout": DIRECT_DEEPSEEK_V4_FLASH_SPEC,
+    "distill": DIRECT_DEEPSEEK_V4_PRO_SPEC,
+}
 _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 
 # Author-side phases that ``--depth`` rewrites. Critic phases (critique,
@@ -158,6 +166,10 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
             validated_tiers = _validate_tier_models(path, profile_name, tier_data)
             if validated_tiers:
                 validated["tier_models"] = validated_tiers
+        elif key == "prep_models":
+            prep_models = _validate_prep_models(path, profile_name, value)
+            if prep_models:
+                validated["prep_models"] = prep_models
         elif key == "max_tasks_per_batch":
             if not isinstance(value, int):
                 _raise_invalid_profile(
@@ -168,6 +180,63 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
                 )
             validated["max_tasks_per_batch"] = value
         # Future metadata keys go here.
+    return validated
+
+
+def _validate_prep_models(path: Any, profile_name: str, value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        _raise_invalid_profile(
+            path,
+            profile_name,
+            "prep_models",
+            f"expected a TOML table for prep_models, got {type(value).__name__}",
+        )
+    validated: dict[str, str] = {}
+    for stage, raw_spec in value.items():
+        if stage not in PREP_MODEL_STAGES:
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"prep_models.{stage}",
+                f"unknown prep stage '{stage}'. Valid stages: {', '.join(PREP_MODEL_STAGES)}",
+            )
+        if not isinstance(raw_spec, str) or not raw_spec.strip():
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"prep_models.{stage}",
+                f"expected a non-empty string agent spec, got {type(raw_spec).__name__}",
+            )
+        parsed = parse_agent_spec(raw_spec)
+        if parsed.agent not in KNOWN_AGENTS:
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"prep_models.{stage}",
+                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
+            )
+        if parsed.agent in {"claude", "shannon"}:
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"prep_models.{stage}",
+                f"explicit {parsed.agent!r} prep models are not allowed until a read-only runner exists",
+            )
+        if stage == "fanout" and parsed.agent != "hermes":
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"prep_models.{stage}",
+                "prep fanout currently supports only the process-isolated read-only Hermes runner",
+            )
+        if stage in {"triage", "distill"} and parsed.agent not in {"codex", "hermes"}:
+            _raise_invalid_profile(
+                path,
+                profile_name,
+                f"prep_models.{stage}",
+                "prep triage/distill currently support only read-only Codex or Hermes runners",
+            )
+        validated[str(stage)] = raw_spec.strip()
     return validated
 
 
@@ -789,6 +858,117 @@ def _resolve_tier_models_with_inheritance(
     return merged
 
 
+def _resolve_prep_models_with_inheritance(
+    profile_name: str,
+    *,
+    system_profiles: dict[str, dict[str, str]],
+    system_metadata: dict[str, dict[str, Any]],
+    pipeline_local_profiles: dict[str, dict[str, str]],
+    pipeline_local_metadata: dict[str, dict[str, Any]],
+    _visited: set[str] | None = None,
+) -> dict[str, str]:
+    """Walk ``extends`` and merge ``prep_models`` metadata.
+
+    Parent prep stage declarations are applied first; child declarations
+    override individual stages.  Missing stages are deliberately left missing
+    so the canonical fallback resolver can record which slots used defaults.
+    """
+    if _visited is None:
+        _visited = set()
+
+    if profile_name in _visited:
+        raise CliError(
+            "invalid_profile",
+            f"Cycle detected in profile inheritance: "
+            f"{' -> '.join(sorted(_visited))} -> {profile_name}",
+        )
+    _visited.add(profile_name)
+
+    metadata: dict[str, Any] | None = None
+    if profile_name in pipeline_local_metadata:
+        metadata = pipeline_local_metadata.get(profile_name, {})
+    elif profile_name in system_metadata:
+        metadata = system_metadata.get(profile_name, {})
+
+    if metadata is None:
+        raise CliError("unknown_profile", f"Unknown profile '{profile_name}'")
+
+    extends_ref = metadata.get("extends") if metadata else None
+    parent_models: dict[str, str] = {}
+    if extends_ref and isinstance(extends_ref, str):
+        if extends_ref.startswith("system:"):
+            parent_name = extends_ref[len("system:"):]
+        elif extends_ref.startswith("@"):
+            rest = extends_ref[1:]
+            if ":" in rest:
+                _pl_name, parent_name = rest.split(":", 1)
+            else:
+                parent_name = rest
+        else:
+            parent_name = None
+        if parent_name:
+            try:
+                parent_models = _resolve_prep_models_with_inheritance(
+                    parent_name,
+                    system_profiles=system_profiles,
+                    system_metadata=system_metadata,
+                    pipeline_local_profiles=pipeline_local_profiles,
+                    pipeline_local_metadata=pipeline_local_metadata,
+                    _visited=_visited,
+                )
+            except CliError:
+                parent_models = {}
+
+    own_models = metadata.get("prep_models", {}) if metadata else {}
+    if not isinstance(own_models, dict):
+        own_models = {}
+
+    merged = dict(parent_models)
+    for stage, spec in own_models.items():
+        if stage in PREP_MODEL_STAGES and isinstance(spec, str):
+            merged[stage] = spec
+    return merged
+
+
+def _prep_flat_spec_from_profile(resolved: dict[str, str]) -> str | None:
+    spec = resolved.get("prep")
+    return spec if isinstance(spec, str) and spec else None
+
+
+def resolve_prep_models(
+    *,
+    flat_prep_spec: str | None,
+    prep_models: dict[str, str] | None,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    """Resolve stage-aware prep models and an auditable trace.
+
+    Legacy flat ``prep`` remains visible in the trace but no longer drives the
+    research fan-out defaults.  This prevents a write-capable flat ``prep``
+    route from being reused for evidence-gathering stages.
+    """
+    explicit = dict(prep_models or {})
+    resolved: dict[str, str] = {}
+    canonical_fallback_used: dict[str, bool] = {}
+    flat_agent = parse_agent_spec(flat_prep_spec).agent if flat_prep_spec else None
+    for stage in PREP_MODEL_STAGES:
+        if stage in explicit:
+            resolved[stage] = explicit[stage]
+            canonical_fallback_used[stage] = False
+        elif flat_agent == "codex" and stage in {"triage", "distill"}:
+            resolved[stage] = flat_prep_spec or "codex"
+            canonical_fallback_used[stage] = False
+        else:
+            resolved[stage] = CANONICAL_PREP_MODELS[stage]
+            canonical_fallback_used[stage] = True
+    trace = {
+        "flat_prep_input": flat_prep_spec,
+        "explicit_prep_models": explicit,
+        "resolved_stage_models": dict(resolved),
+        "canonical_fallback_used": canonical_fallback_used,
+    }
+    return resolved, trace
+
+
 # ---------------------------------------------------------------------------
 # 4-layer profile resolution for YAML pipelines
 # ---------------------------------------------------------------------------
@@ -1339,6 +1519,17 @@ def apply_profile_expansion(
         if not tier_models:
             tier_models = None
 
+        try:
+            inherited_prep_models = _resolve_prep_models_with_inheritance(
+                profile_name,
+                system_profiles=profiles,
+                system_metadata=metadata,
+                pipeline_local_profiles={},
+                pipeline_local_metadata={},
+            )
+        except CliError:
+            inherited_prep_models = {}
+
         # Resolve vendor + critic + depth with CLI > state > config-default precedence.
         cli_vendor = getattr(args, "vendor", None)
         cli_critic = getattr(args, "critic", None)
@@ -1410,12 +1601,19 @@ def apply_profile_expansion(
 
         _validate_named_profile_invariants(profile_name, resolved, tier_models=tier_models)
 
+        prep_models, prep_trace = resolve_prep_models(
+            flat_prep_spec=_prep_flat_spec_from_profile(resolved),
+            prep_models=inherited_prep_models,
+        )
+
         # Attach post-rewrite tier map to args for downstream dispatch.
         # If CLI explicitly overrides the execute phase, strip
         # tier_models.execute so tier routing is disabled (CLI wins).
         if tier_models and "execute" in cli_steps:
             tier_models.pop("execute", None)
         args.tier_models = tier_models
+        args.prep_models = prep_models
+        args.prep_model_resolver_trace = prep_trace
 
         for pm in profile_to_phase_models(resolved):
             if "=" not in pm:
@@ -1427,6 +1625,14 @@ def apply_profile_expansion(
             phase_models.append(pm)
             profile_steps.add(step)
         args.profile = profile_name
+    elif state is not None:
+        config = state.get("config") or {}
+        state_prep_models = config.get("prep_models")
+        if isinstance(state_prep_models, dict):
+            args.prep_models = dict(state_prep_models)
+        state_prep_trace = config.get("prep_model_resolver_trace")
+        if isinstance(state_prep_trace, dict):
+            args.prep_model_resolver_trace = dict(state_prep_trace)
 
     # Merge persisted --phase-model overrides from plan state. Effective
     # precedence is: live CLI args > persisted CLI > profile. Persisted
@@ -1466,6 +1672,8 @@ __all__ = [
     "VALID_CRITIC_CHOICES",
     "VALID_DEEPSEEK_PROVIDER_CHOICES",
     "DEFAULT_DEEPSEEK_PROVIDER",
+    "CANONICAL_PREP_MODELS",
+    "PREP_MODEL_STAGES",
     "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
     "PROFILE_METADATA_KEYS",
@@ -1478,6 +1686,7 @@ __all__ = [
     "load_profile_sources",
     "load_profiles",
     "profile_to_phase_models",
+    "resolve_prep_models",
     "resolve_profile",
     "resolve_pipeline_profile",
     "_load_pipeline_local_profiles",
