@@ -1398,7 +1398,6 @@ def test_partnered_profile_default_resolves_with_claude_reasoning(
 
     for phase in (
         "plan",
-        "critique",
         "revise",
         "review",
         "loop_plan",
@@ -1410,7 +1409,8 @@ def test_partnered_profile_default_resolves_with_claude_reasoning(
         )
     # finalize is now claude:low (premium finalize).
     assert resolved["finalize"] == "claude:low"
-    for phase in ("prep", "gate", "execute", "loop_execute"):
+    # critique now runs cheap (DeepSeek) directed by the premium critique-evaluator.
+    for phase in ("prep", "gate", "execute", "loop_execute", "critique"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 
@@ -1456,8 +1456,9 @@ def test_partnered_critic_cross_with_default_claude_flips_critic_to_codex(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default vendor=claude (no --vendor flag) + --critic cross: critique and
-    review should flip to codex while everything else stays claude."""
+    """Default vendor=claude (no --vendor flag) + --critic cross: the premium
+    review slot flips to codex. Critique is now cheap DeepSeek — a non-premium
+    slot the cross leaves untouched — so it stays DeepSeek."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="partnered")
@@ -1465,7 +1466,8 @@ def test_partnered_critic_cross_with_default_claude_flips_critic_to_codex(
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    assert resolved["critique"] == "codex:low"
+    # critique stays cheap DeepSeek (cross only touches premium critic slots).
+    assert resolved["critique"] == DEEPSEEK_DIRECT
     assert resolved["review"] == "codex:low"
     # Author phases stay claude.
     assert resolved["plan"] == "claude:low"
@@ -1484,12 +1486,11 @@ def test_deepseek_provider_direct_rewrites_partnered_mechanical_phases(
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # finalize is now claude:low (premium finalize); remaining mechanical phases stay DeepSeek.
+    # finalize is now claude:low (premium finalize); remaining cheap phases stay DeepSeek.
     assert resolved["finalize"] == "claude:low"
-    for phase in ("prep", "gate", "execute", "loop_execute"):
+    for phase in ("prep", "gate", "execute", "loop_execute", "critique"):
         assert resolved[phase] == DEEPSEEK_DIRECT
     assert resolved["plan"] == "claude:low"
-    assert resolved["critique"] == "claude:low"
     assert resolved["review"] == "claude:low"
 
 
@@ -1697,8 +1698,9 @@ def test_depth_rewrites_author_phases_on_partnered(
             f"--depth high on partnered should rewrite {phase} to claude:high; "
             f"got {resolved[phase]!r}"
         )
-    # critique + review plateau at the existing depth.
-    assert resolved["critique"] == "claude:low"
+    # review (premium critic) plateaus at the existing depth; critique is now
+    # cheap DeepSeek, which depth never touches.
+    assert resolved["critique"] == "hermes:deepseek:deepseek-v4-pro"
     assert resolved["review"] == "claude:low"
     # Mechanical phases (DeepSeek/hermes) — depth doesn't touch them beyond
     # the default provider rewrite.
@@ -2765,12 +2767,13 @@ def test_partnered_byte_identical_across_independent_expansions(
 
     # Verify expected values are present (regression guard)
     resolved = _phase_models_to_map(args_a.phase_model)
-    for phase in ("plan", "critique", "revise", "review", "loop_plan",
+    for phase in ("plan", "revise", "review", "loop_plan",
                    "tiebreaker_researcher", "tiebreaker_challenger"):
         assert resolved[phase] == "claude:low"
     # finalize is now claude:low (premium finalize).
     assert resolved["finalize"] == "claude:low"
-    for phase in ("prep", "gate", "execute", "loop_execute"):
+    # critique now runs cheap (DeepSeek) under premium critique-evaluator direction.
+    for phase in ("prep", "gate", "execute", "loop_execute", "critique"):
         assert resolved[phase] == DEEPSEEK_DIRECT
 
 

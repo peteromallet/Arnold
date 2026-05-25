@@ -1,11 +1,17 @@
-# `partnered` — tier 3. Premium reasoning end-to-end; cheap mechanical
-# phases. The default for *real* engineering work.
+# `partnered` — tier 3. Premium author/reviewer reasoning paired with cheap
+# DeepSeek for mechanical phases and for a premium-directed critique. The
+# default for *real* engineering work.
 #
 # Canonical name for the tier-3 profile.
 #
-# Claude (default vendor) handles every reasoning phase — `plan`, `critique`,
-# `revise`, `review`, `loop_plan`, and tiebreakers. DeepSeek V4 Pro handles
-# the mechanical phases — `prep`, `gate`, `finalize`, `execute`, `loop_execute`.
+# Claude (default vendor) handles the author/reviewer reasoning phases —
+# `plan`, `revise`, `review`, `loop_plan`, and tiebreakers. DeepSeek V4 Pro
+# handles the cheap phases — `prep`, `gate`, `execute`, `loop_execute`, and
+# `critique`. Critique runs on cheap DeepSeek *directed by the premium
+# critique-evaluator*: adaptive critique is on by default here (see the
+# `adaptive_critique` field below), so the premium evaluator picks the lenses
+# the cheap critic runs. `review` stays premium — the premium director, not a
+# same-model invariant, is what keeps the critique phase honest.
 #
 # Use for novel implementation, cross-cutting code, judgment calls, multi-
 # system features — work where the patterns aren't stable and overlapping
@@ -18,9 +24,11 @@
 #   * `--vendor codex` — flips every `claude:low` slot to `codex:low`
 #     uniformly. The whole reasoning loop becomes codex; mechanical phases
 #     stay DeepSeek.
-#   * `--critic cross` — overrides critique+review to the *other* premium
-#     relative to the resolved vendor. With default vendor=claude, that's
-#     codex; with --vendor codex it's claude.
+#   * `--critic cross` — crosses the premium critic slots to the *other*
+#     premium relative to the resolved vendor. Critique is now cheap DeepSeek
+#     (a non-premium slot, left untouched by the cross), so in practice this
+#     flips `review` to codex (default vendor=claude) or to claude
+#     (--vendor codex).
 #   * `--phase-model phase=spec` — always honored. Common pattern:
 #     `--phase-model plan=claude:high` when the brief is long or the
 #     codebase is unfamiliar.
@@ -28,9 +36,14 @@
 # See docs/megaplan-decision.md for the full rubric.
 [profiles.partnered]
 default = "partnered"
+# Adaptive critique on by default: this profile carries a premium model, so
+# the critique-evaluator can force a premium evaluator to direct the cheap
+# critic. Open-only profiles deliberately omit this field (default False) to
+# avoid forcing a premium key into a key-free setup.
+adaptive_critique = true
 plan                  = "claude:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-critique              = "claude:low"
+critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 revise                = "claude:low"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 finalize              = "claude:low"

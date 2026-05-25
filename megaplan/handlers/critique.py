@@ -48,6 +48,21 @@ from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
 from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
 
+def _safe_roster_rank(model: str) -> int:
+    """Roster rank for *model* (1 = strongest), or a large rank if unknown.
+
+    Used to collapse the evaluator's per-lens critic assignments to the
+    strongest (cheapest-capable-of-all) model for the single critique run.
+    Unknown specs sort last so a recognised assignment always wins.
+    """
+    from megaplan.audits.critique_evaluator import roster_rank
+
+    try:
+        return roster_rank(model)
+    except ValueError:
+        return 999
+
+
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
         require_state(state, "critique", {STATE_PLANNED})
@@ -143,9 +158,22 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 validate_evaluator_verdict(eval_worker.payload, evaluator_model=evaluator_model)
                 verdict = eval_worker.payload
                 selections = verdict.get("selections", [])
-                critic_model_override = next(
-                    (s["critic_model"] for s in selections if s.get("critic_model")), None
-                )
+                # The critique phase runs a single model across all selected
+                # lenses, but the evaluator assigns a (cheapest-capable) critic
+                # per lens. Collapse those per-lens assignments to the *strongest*
+                # one — the cheapest single model still capable of every selected
+                # lens. Picking the first (arbitrary) or cheapest assignment would
+                # under-power any lens the evaluator escalated to premium; picking
+                # the strongest honours "cheapest capable" jointly: cheap when the
+                # evaluator routed everything cheap, premium only when it escalated.
+                _assigned_models = [s["critic_model"] for s in selections if s.get("critic_model")]
+                if _assigned_models:
+                    critic_model_override = min(
+                        _assigned_models,
+                        key=lambda m: _safe_roster_rank(m),
+                    )
+                else:
+                    critic_model_override = None
                 selected_ids = {sel["check_id"] for sel in selections}
                 active_checks = [c for c in CRITIQUE_CHECKS if c["id"] in selected_ids]
                 atomic_write_json(plan_dir / "evaluator_verdict.json", verdict)

@@ -430,6 +430,31 @@ def test_prep_section_present_when_prep_artifacts_supplied(
     assert with_prep != blind
 
 
+def test_evaluator_prompt_steers_cheapest_capable_critic(
+    plan_fixture: PlanFixture,
+) -> None:
+    """The evaluator prompt must instruct the premium adjudicator to assign the
+    cheapest capable critic per lens, escalating to premium only when a lens
+    genuinely demands it — the embodiment of the cheapest-capable philosophy."""
+    from megaplan._core import load_plan
+    from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
+
+    prompt = _critique_evaluator_prompt(state, plan_fixture.plan_dir, root=plan_fixture.root)
+
+    # The steer headline and the cost-ordered preference for cheap critics.
+    assert "cheapest capable critic" in prompt.lower()
+    assert "deepseek-v4-pro" in prompt
+    # Escalation to premium must be conditional / justified, not the default.
+    lower = prompt.lower()
+    assert "escalate" in lower
+    assert "only" in lower
+    # The pre-existing rater >= dispatchee ceiling must survive intact.
+    assert "no weaker than" in prompt
+
+
 # ---------------------------------------------------------------------------
 # ROBUSTNESS_LEVELS purity
 # ---------------------------------------------------------------------------

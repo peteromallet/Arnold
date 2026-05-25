@@ -373,6 +373,17 @@ def _critique_evaluator_prompt(
         model you assign.  You cannot dispatch a lens to a model ranked stronger
         than yourself.
 
+        **Assign the cheapest capable critic.** Within that ceiling, route each
+        lens to the *cheapest model in the roster that can do that lens justice*
+        — by default the lowest-cost critic (e.g. `deepseek-v4-pro`, then
+        `deepseek-v4-flash`), which handle routine, mechanical, and
+        well-scoped lenses perfectly well. Escalate to a stronger / premium
+        critic *only* for a lens that genuinely demands deeper judgment
+        (subtle architectural tradeoffs, cross-cutting correctness, ambiguous
+        intent, a recurring/reopened concern) — and when you do, say *why this
+        lens needs the stronger model* in its `why`. Premium critics are for
+        the genuinely hard lenses; do not assign them by reflex.
+
         ## Critique Lens Catalog ({len(CRITIQUE_CHECKS)} lenses)
 
         {lens_catalog}
@@ -389,7 +400,10 @@ def _critique_evaluator_prompt(
         - **At least one lens must be selected** — an all-skip verdict is rejected.
         - **Every selected lens** maps to a `critic_model` that appears in the
           roster above AND whose roster rank is >= your own (i.e., the critic is
-          no stronger than the evaluator).
+          no stronger than the evaluator). Choose the **cheapest** such model
+          that can do the lens justice (see "Assign the cheapest capable critic"
+          above) — escalate to a premium critic only for a lens that truly
+          needs it, and justify the escalation in `why`.
 
         Your output must be a JSON object with these keys:
         - `selections`: list of {{check_id, critic_model, why}} objects
