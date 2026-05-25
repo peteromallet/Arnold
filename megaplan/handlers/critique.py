@@ -9,7 +9,7 @@ from megaplan import handlers as _pkg
 from megaplan.audits.robustness import validate_critique_checks
 from megaplan.forms.provocations import select_active_checks
 from megaplan.forms.directors_notes import update_directors_notes_at_aggregate
-from megaplan.orchestration.evaluation import build_gate_artifact, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
+from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_signals, build_orchestrator_guidance, compute_plan_delta_percent, compute_recurring_critiques
 from megaplan.orchestration.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
@@ -25,17 +25,18 @@ from megaplan.types import (
 from megaplan.workers import WorkerResult, validate_payload
 from megaplan._core import (
     atomic_write_json,
+    adaptive_critique_enabled,
     configured_robustness,
     is_creative_mode,
     latest_plan_meta_path,
     latest_plan_path,
+    load_flag_registry,
     load_plan_locked,
     now_utc,
     read_json,
     record_step_failure,
     require_state,
     clear_active_step,
-    save_flag_registry,
     save_state_merge_meta,
     scope_creep_flags,
     sha256_file,
@@ -61,10 +62,125 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "bare robustness skips critique entirely; the workflow routes plan -> finalize directly. "
                 "Run `megaplan finalize` instead, or use --robustness light if you want a critique pass.",
             )
-        active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
-        expected_ids = [check["id"] for check in active_checks]
-        resolved = _pkg.resolve_agent_mode("critique", args)
+        adaptive_path = adaptive_critique_enabled(state) and not is_creative_mode(state)
+        critic_model_override: str | None = None
+        _verified_flag_ids_set: set[str] = set()
+        _selection_why: dict[str, str] = {}
+        if adaptive_path:
+            from megaplan.audits.critique_evaluator import (
+                CRITIC_MODEL_ROSTER,
+                roster_rank,
+                validate_evaluator_verdict,
+            )
+            from megaplan.audits.robustness import CRITIQUE_CHECKS, checks_for_robustness
+
+            resolved = _pkg.resolve_agent_mode("critique", args)
+            _ce_agent, _ce_mode, _ce_refreshed, _ce_model = _agent_mode_parts(resolved)
+            _rank_input = _ce_model or _ce_agent
+            try:
+                _current_rank = roster_rank(_rank_input)
+            except ValueError:
+                _current_rank = 999
+            if _current_rank > 1:
+                evaluator_model = CRITIC_MODEL_ROSTER[0].model
+                evaluator_resolved: Any = ("claude", _ce_mode, _ce_refreshed, evaluator_model)
+            else:
+                evaluator_model = _rank_input
+                evaluator_resolved = resolved
+            _eval_prompt_kwargs: dict[str, Any] | None = None
+            if iteration >= 2:
+                from megaplan.audits.iteration import compute_iteration_pressure as _compute_iteration_pressure
+                from megaplan.prompts.critique import _plan_version_unified_diff
+
+                _registry = load_flag_registry(plan_dir)
+                _resolved = [
+                    {
+                        "id": f["id"],
+                        "concern": f.get("concern", ""),
+                        "evidence": f.get("evidence", ""),
+                        "resolution": f.get("resolution", {}),
+                    }
+                    for f in _registry.get("flags", [])
+                    if isinstance(f.get("resolution"), dict) and f["resolution"].get("claim")
+                ]
+                _diff = _plan_version_unified_diff(plan_dir, iteration)
+                _eval_prompt_kwargs = {
+                    "flag_lifecycle": _registry,
+                    "iteration_pressure": _compute_iteration_pressure(plan_dir, state),
+                    "gate_signals": build_gate_signals(plan_dir, state, root),
+                    "revise_resolutions": _resolved,
+                    "plan_diff": _diff if _diff else None,
+                }
+            try:
+                eval_worker, _, _, _ = _pkg._run_worker(
+                    "critique_evaluator",
+                    state,
+                    plan_dir,
+                    args,
+                    root=root,
+                    resolved=evaluator_resolved,
+                    prompt_kwargs=_eval_prompt_kwargs,
+                )
+                validate_evaluator_verdict(eval_worker.payload, evaluator_model=evaluator_model)
+                verdict = eval_worker.payload
+                selections = verdict.get("selections", [])
+                critic_model_override = next(
+                    (s["critic_model"] for s in selections if s.get("critic_model")), None
+                )
+                selected_ids = {sel["check_id"] for sel in selections}
+                active_checks = [c for c in CRITIQUE_CHECKS if c["id"] in selected_ids]
+                atomic_write_json(plan_dir / "evaluator_verdict.json", verdict)
+                # Apply flag verifications BEFORE the critic runs so it sees fresh statuses.
+                _fv_list = verdict.get("flag_verifications", [])
+                if _fv_list:
+                    _verified_flag_ids_set = apply_flag_verifications(plan_dir, _fv_list)
+                # Build check_id->why map for per-lens targeting notes in the critic prompt.
+                _selection_why = {sel["check_id"]: sel.get("why", "") for sel in selections}
+            except Exception as exc:
+                fallback_checks = checks_for_robustness(robustness) or checks_for_robustness("standard")
+                active_checks = list(fallback_checks)
+                _append_to_meta(state, "critique_evaluator_warnings", {
+                    "error": str(exc),
+                    "fallback": "static_checks_for_robustness",
+                    "robustness": robustness,
+                })
+                atomic_write_json(plan_dir / "evaluator_verdict.json", {
+                    "evaluator_model": evaluator_model,
+                    "fallback": True,
+                    "fallback_reason": str(exc),
+                    "static_checks_used": [c["id"] for c in active_checks],
+                })
+            expected_ids = [check["id"] for check in active_checks]
+        else:
+            active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
+            expected_ids = [check["id"] for check in active_checks]
+            resolved = _pkg.resolve_agent_mode("critique", args)
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
+        if adaptive_path and critic_model_override:
+            model = critic_model_override
+            resolved = (agent_type, mode, refreshed, model)
+        # Compute revise_context for adaptive path iterations >= 2
+        _revise_ctx = ""
+        if adaptive_path and iteration >= 2:
+            from megaplan.prompts.critique import _plan_version_unified_diff
+            from megaplan.flags import flag_resolution_summary
+
+            _diff = _plan_version_unified_diff(plan_dir, iteration)
+            _registry = load_flag_registry(plan_dir)
+            _resolved_flags = [
+                f for f in _registry.get("flags", [])
+                if isinstance(f.get("resolution"), dict) and f["resolution"].get("claim")
+            ]
+            _parts: list[str] = []
+            if _diff:
+                _parts.append(f"Unified diff between plan versions:\n```diff\n{_diff}\n```")
+            if _resolved_flags:
+                _res_lines = [
+                    f"- {f['id']}: {flag_resolution_summary(f)}"
+                    for f in _resolved_flags
+                ]
+                _parts.append("Per-flag resolution claims:\n" + "\n".join(_res_lines))
+            _revise_ctx = "\n\n".join(_parts)
         if len(active_checks) > 1 and agent_type == "hermes":
             run_id = set_active_step(state, step="critique", agent="hermes", mode="persistent", model=model)
             save_state_merge_meta(plan_dir, state)
@@ -75,6 +191,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 clear_active_step(state, run_id=run_id)
                 save_state_merge_meta(plan_dir, state)
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
+                _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
                 worker, agent, mode, refreshed = _pkg._run_worker(
                     "critique",
                     state,
@@ -82,6 +199,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     args,
                     root=root,
                     resolved=(agent_type, mode, refreshed, model),
+                    prompt_kwargs=_seq_prompt_kwargs,
                 )
             else:
                 clear_active_step(state, run_id=run_id)
@@ -93,6 +211,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 args,
                 root=root,
                 resolved=(agent_type, mode, refreshed, model),
+                prompt_kwargs={"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None,
             )
         invalid_checks = validate_critique_checks(worker.payload, expected_ids=expected_ids)
         if invalid_checks:
@@ -116,7 +235,6 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 
 
         from megaplan.audits.capabilities import get_worker_capabilities
-        from megaplan.audits.verifiability import audit_criteria, validate_requires
 
         plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
         success_criteria = plan_meta.get("success_criteria", [])
@@ -148,7 +266,12 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 voice=voice,
                 fired_provocations=fired,
             )
-        registry = update_flags_after_critique(plan_dir, worker.payload, iteration=iteration)
+        registry = update_flags_after_critique(
+            plan_dir,
+            worker.payload,
+            iteration=iteration,
+            skip_flag_ids=frozenset(_verified_flag_ids_set) if _verified_flag_ids_set else None,
+        )
         significant = len([flag for flag in registry["flags"] if flag.get("severity") == "significant" and flag["status"] in FLAG_BLOCKING_STATUSES])
         _append_to_meta(state, "significant_counts", significant)
         recurring = compute_recurring_critiques(plan_dir, iteration)
@@ -424,4 +547,4 @@ def _validate_tiebreaker(
 
 
 from .gate import _merge_gate_worker_attempt, _next_progress_step, _remaining_significant_flags, _resolve_revise_transition, _write_gate_carry
-from megaplan.flags import update_flags_after_critique, update_flags_after_revise
+from megaplan.flags import apply_flag_verifications, update_flags_after_critique, update_flags_after_revise

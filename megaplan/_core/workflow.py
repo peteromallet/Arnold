@@ -69,6 +69,11 @@ def configured_robustness(state: PlanState) -> str:
     return normalize_robustness(robustness)
 
 
+def adaptive_critique_enabled(state: PlanState) -> bool:
+    """Return whether adaptive critique evaluator routing is enabled."""
+    return bool(state["config"].get("adaptive_critique", False))
+
+
 def robustness_critique_instruction(robustness: str) -> str:
     if robustness == "light":
         return "Be pragmatic. Only flag issues that would cause real failures. Ignore style, minor edge cases, and issues the executor will naturally resolve."

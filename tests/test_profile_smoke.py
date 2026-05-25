@@ -124,8 +124,8 @@ MATRIX: list[tuple[str, str, dict[str, object], dict[str, str]]] = [
         "directed-default-finalize-premium",
         "directed",
         {},
-        # finalize is now claude:low (premium finalize).
-        {"plan": "claude:low", "loop_plan": "claude:low", "finalize": "claude:low",
+        # finalize is now claude:claude-opus-4-7 (premium finalize, raised for rater>=dispatchee).
+        {"plan": "claude:low", "loop_plan": "claude:low", "finalize": "claude:claude-opus-4-7",
          "critique": DEEPSEEK_DIRECT, "review": DEEPSEEK_DIRECT},
     ),
     (
