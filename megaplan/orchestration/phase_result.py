@@ -128,6 +128,12 @@ class ExternalError:
     status_code: int | None = None
     retry_after_s: float | None = None
     request_id: str | None = None
+    provider_error_code: str | None = None
+    error_layer: str | None = None
+    stall_timeout_s: float | None = None
+    elapsed_s: float | None = None
+    content_chunk_count: int | None = None
+    reasoning_chunk_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -141,12 +147,27 @@ class ExternalError:
             payload["retry_after_s"] = self.retry_after_s
         if self.request_id is not None:
             payload["request_id"] = self.request_id
+        if self.provider_error_code is not None:
+            payload["provider_error_code"] = self.provider_error_code
+        if self.error_layer is not None:
+            payload["error_layer"] = self.error_layer
+        if self.stall_timeout_s is not None:
+            payload["stall_timeout_s"] = self.stall_timeout_s
+        if self.elapsed_s is not None:
+            payload["elapsed_s"] = self.elapsed_s
+        if self.content_chunk_count is not None:
+            payload["content_chunk_count"] = self.content_chunk_count
+        if self.reasoning_chunk_count is not None:
+            payload["reasoning_chunk_count"] = self.reasoning_chunk_count
         return payload
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> ExternalError:
+    def from_dict(cls, payload: dict[str, Any], *, provider: str | None = None) -> ExternalError:
+        raw_provider = str(payload.get("provider") or "unknown")
+        if raw_provider == "unknown" and provider:
+            raw_provider = provider
         return cls(
-            provider=str(payload.get("provider") or "unknown"),
+            provider=raw_provider,
             error_kind=str(payload["error_kind"]),
             message=str(payload.get("message", "")),
             status_code=(
@@ -164,6 +185,36 @@ class ExternalError:
                 if payload.get("request_id") is not None
                 else None
             ),
+            provider_error_code=(
+                str(payload["provider_error_code"])
+                if payload.get("provider_error_code") is not None
+                else None
+            ),
+            error_layer=(
+                str(payload["error_layer"])
+                if payload.get("error_layer") is not None
+                else None
+            ),
+            stall_timeout_s=(
+                float(payload["stall_timeout_s"])
+                if payload.get("stall_timeout_s") is not None
+                else None
+            ),
+            elapsed_s=(
+                float(payload["elapsed_s"])
+                if payload.get("elapsed_s") is not None
+                else None
+            ),
+            content_chunk_count=(
+                int(payload["content_chunk_count"])
+                if payload.get("content_chunk_count") is not None
+                else None
+            ),
+            reasoning_chunk_count=(
+                int(payload["reasoning_chunk_count"])
+                if payload.get("reasoning_chunk_count") is not None
+                else None
+            ),
         )
 
     @classmethod
@@ -178,7 +229,7 @@ class ExternalError:
         if isinstance(extra, dict):
             raw = extra.get("_external_error") or extra.get("external_error")
             if isinstance(raw, dict):
-                return cls.from_dict(raw)
+                return cls.from_dict(raw, provider=provider)
 
         exc_name = type(exc).__name__
         message = str(exc)
@@ -198,6 +249,8 @@ class ExternalError:
                 error_kind="stalled_stream",
                 message=message[:500],
                 status_code=status_code,
+                provider_error_code="timeout",
+                error_layer="worker_stream_stall",
             )
         error_kind: str | None = None
         if status_code == 429 or re.search(
@@ -232,6 +285,11 @@ class ExternalError:
         if error_kind is None:
             return None
 
+        timeout_like = bool(
+            re.search(r"\b(timeout|timed out)\b", combined)
+            or exc_name.lower().endswith("timeouterror")
+        )
+
         return cls(
             provider=provider,
             error_kind=error_kind,
@@ -239,6 +297,8 @@ class ExternalError:
             status_code=status_code,
             retry_after_s=_extract_retry_after(combined),
             request_id=_extract_request_id(combined),
+            provider_error_code="timeout" if timeout_like else None,
+            error_layer="transport_timeout" if timeout_like else None,
         )
 
 

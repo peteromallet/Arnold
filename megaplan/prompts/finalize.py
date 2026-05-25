@@ -116,6 +116,15 @@ def _finalize_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
                   error would pass tests but be wrong.
             Score on the HARDEST aspect of the task, not the average. When genuinely torn
             between two tiers, choose the HIGHER one and say why in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: any task that touches concurrency, schema or state-machine changes,
+            security- or auth-sensitive paths, or a public/shared interface contract is
+            NEVER below tier 4, regardless of how few lines it changes — a subtle error
+            in these areas passes tests but is wrong.
           - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
             why this task sits at exactly that tier — cite the concrete files, interfaces, or
             risk that places it there (e.g. "touches the auth middleware contract used by 4

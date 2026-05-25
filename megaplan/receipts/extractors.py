@@ -35,6 +35,13 @@ def _text_from_payload(payload: Any) -> str:
     return json.dumps(payload, sort_keys=True)
 
 
+def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else None
+
+
 @_safe
 def plan_metrics(payload: dict[str, Any] | str, artifact_path: Path | None = None) -> dict[str, Any]:
     del artifact_path
@@ -197,8 +204,111 @@ def review_metrics(payload: dict[str, Any], artifact_path: Path | None = None) -
     }
 
 
+@_safe
+def prep_metrics(
+    payload: dict[str, Any],
+    metrics_payload: dict[str, Any] | None = None,
+    resolver_trace: dict[str, Any] | None = None,
+    artifact_path: Path | None = None,
+) -> dict[str, Any]:
+    del artifact_path
+    if not isinstance(payload, dict):
+        raise TypeError("payload must be a dict")
+    metrics_payload = metrics_payload if isinstance(metrics_payload, dict) else {}
+    resolver_trace = resolver_trace if isinstance(resolver_trace, dict) else {}
+    per_unit = _as_list(metrics_payload.get("per_unit"))
+    files = [
+        str(item).strip()
+        for item in _as_list(metrics_payload.get("files"))
+        if str(item).strip()
+    ]
+    code_refs = [
+        str(item).strip()
+        for item in _as_list(metrics_payload.get("code_refs"))
+        if str(item).strip()
+    ]
+    missed_units = [
+        str(item).strip()
+        for item in _as_list(metrics_payload.get("missed_units"))
+        if str(item).strip()
+    ]
+    status_counts = {
+        "complete": int(metrics_payload.get("completed_count", 0) or 0),
+        "partial": int(metrics_payload.get("partial_count", 0) or 0),
+        "timed_out": int(metrics_payload.get("timed_out_count", 0) or 0),
+        "error": int(metrics_payload.get("error_count", 0) or 0),
+        "not_needed": sum(
+            1
+            for item in per_unit
+            if isinstance(item, dict) and str(item.get("status") or "") == "not_needed"
+        ),
+    }
+    area_count = int(metrics_payload.get("area_count", 0) or 0)
+    fanout_count = int(metrics_payload.get("fanout_count", 0) or 0)
+    return {
+        "skip": bool(payload.get("skip", False)),
+        "task_summary_present": bool(str(payload.get("task_summary") or "").strip()),
+        "key_evidence_count": len(_as_list(payload.get("key_evidence"))),
+        "relevant_code_count": len(_as_list(payload.get("relevant_code"))),
+        "test_expectations_count": len(_as_list(payload.get("test_expectations"))),
+        "constraints_count": len(_as_list(payload.get("constraints"))),
+        "suggested_approach_present": bool(str(payload.get("suggested_approach") or "").strip()),
+        "primary_criterion_present": bool(str(payload.get("primary_criterion") or "").strip()),
+        "area_count": area_count,
+        "fanout_count": fanout_count,
+        "area_cap": fanout_count,
+        "cap_applied": area_count > fanout_count,
+        "status_counts": status_counts,
+        "completed_count": status_counts["complete"],
+        "partial_count": status_counts["partial"],
+        "timed_out_count": status_counts["timed_out"],
+        "error_count": status_counts["error"],
+        "missed_units": missed_units,
+        "missed_units_count": len(missed_units),
+        "total_cost_usd": float(metrics_payload.get("total_cost_usd", 0.0) or 0.0),
+        "prompt_tokens": int(metrics_payload.get("prompt_tokens", 0) or 0),
+        "completion_tokens": int(metrics_payload.get("completion_tokens", 0) or 0),
+        "total_tokens": int(metrics_payload.get("total_tokens", 0) or 0),
+        "elapsed_time_ms": int(metrics_payload.get("elapsed_time_ms", 0) or 0),
+        "files": files,
+        "files_count": len(files),
+        "code_refs": code_refs,
+        "code_refs_count": len(code_refs),
+        "per_unit_count": len(per_unit),
+        "per_unit_statuses": [
+            str(item.get("status") or "")
+            for item in per_unit
+            if isinstance(item, dict) and str(item.get("status") or "")
+        ],
+        "gap_notes_count": len(_as_list(metrics_payload.get("gap_notes"))),
+        "contradiction_notes_count": len(_as_list(metrics_payload.get("contradiction_notes"))),
+        "overlap_groups_count": len(_as_list(metrics_payload.get("overlap_groups"))),
+        "cross_reference_performed": bool(
+            isinstance(metrics_payload.get("cross_reference"), dict)
+            and metrics_payload["cross_reference"].get("performed")
+        ),
+        "cross_reference_missing_files_count": len(
+            _as_list((metrics_payload.get("cross_reference") or {}).get("missing_files"))
+        ),
+        "model_resolution_trace": resolver_trace or metrics_payload.get("model_resolution_trace") or {},
+        "critique_flags_count": int(metrics_payload.get("critique_flags_count", 0) or 0),
+        "revise_cycles_count": int(metrics_payload.get("revise_cycles_count", 0) or 0),
+        "execution_failure_categories": _as_list(metrics_payload.get("execution_failure_categories")),
+        "human_override_count": int(metrics_payload.get("human_override_count", 0) or 0),
+    }
+
+
 def extract_for_phase(phase: str, *payloads: Any, artifact_path: Path | None = None, drift_report: Any = None) -> dict[str, Any]:
-    if phase in {"prep", "revise"}:
+    if phase == "prep":
+        metrics_payload = payloads[1] if len(payloads) > 1 else None
+        resolver_trace = payloads[2] if len(payloads) > 2 else None
+        return prep_metrics(
+            payloads[0] if payloads else {},
+            metrics_payload=metrics_payload,
+            resolver_trace=resolver_trace,
+            artifact_path=artifact_path,
+        )
+    if phase == "revise":
         return {}
     if phase == "plan":
         return plan_metrics(payloads[0] if payloads else {}, artifact_path=artifact_path)
@@ -216,7 +326,25 @@ def extract_for_phase(phase: str, *payloads: Any, artifact_path: Path | None = N
 
 
 def load_and_extract(plan_dir: Path, phase: str, iteration: int, *, drift_report: Any = None) -> dict[str, Any]:
-    if phase in {"prep", "revise"}:
+    if phase == "prep":
+        prep_path = plan_dir / "prep.json"
+        payload = _read_json_if_exists(prep_path) or {}
+        metrics_payload = _read_json_if_exists(plan_dir / "prep_metrics.json") or {}
+        state_payload = _read_json_if_exists(plan_dir / "state.json") or {}
+        resolver_trace = (
+            state_payload.get("config", {}).get("prep_model_resolver_trace")
+            if isinstance(state_payload.get("config"), dict)
+            else None
+        )
+        return extract_for_phase(
+            phase,
+            payload,
+            metrics_payload,
+            resolver_trace,
+            artifact_path=prep_path,
+            drift_report=drift_report,
+        )
+    if phase == "revise":
         return {}
     paths = {
         "plan": plan_dir / f"plan_v{iteration}.md",

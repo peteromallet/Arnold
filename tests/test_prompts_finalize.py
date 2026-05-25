@@ -79,3 +79,10 @@ def test_finalize_instruction_forbids_self_validation(tmp_path: Path) -> None:
 
 def test_finalize_has_no_hermes_file_toolset() -> None:
     assert _toolsets_for_phase("finalize") is None
+
+
+def test_prep_related_hermes_toolsets_stay_read_only() -> None:
+    for phase in ("prep", "prep-triage", "prep-research", "prep-distill"):
+        assert _toolsets_for_phase(phase) == ["file-readonly", "web"]
+
+    assert _toolsets_for_phase("revise") == ["file", "web"]

@@ -10,7 +10,11 @@ import pytest
 
 import megaplan
 import megaplan.profiles as profiles_module
-from megaplan.profiles import apply_profile_expansion, load_profiles
+from megaplan.profiles import (
+    CANONICAL_PREP_MODELS,
+    apply_profile_expansion,
+    load_profiles,
+)
 from megaplan.types import CliError
 from megaplan.workers import resolve_agent_mode
 
@@ -426,6 +430,245 @@ def test_handle_init_persists_deepseek_provider_in_state(
     state = json.loads(state_path.read_text(encoding="utf-8"))
 
     assert state["config"]["deepseek_provider"] == "direct"
+
+
+def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        """
+        [profiles.legacy-prep]
+        prep = "claude"
+        plan = "claude"
+        feedback = "claude:low"
+        """,
+    )
+
+    args = _worker_args(profile="legacy-prep")
+    apply_profile_expansion(args, project_dir)
+
+    assert args.prep_models == CANONICAL_PREP_MODELS
+    trace = args.prep_model_resolver_trace
+    assert trace["flat_prep_input"] == "claude"
+    assert trace["resolved_stage_models"] == CANONICAL_PREP_MODELS
+    assert trace["canonical_fallback_used"] == {
+        "triage": True,
+        "fanout": True,
+        "distill": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("profile_name", "expected_flat", "expected_models", "expected_fallback"),
+    [
+        (
+            "all-claude",
+            "claude",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+        ),
+        (
+            "premium",
+            "claude:low",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+        ),
+        (
+            "all-codex",
+            "codex",
+            {
+                "triage": "codex",
+                "fanout": CANONICAL_PREP_MODELS["fanout"],
+                "distill": "codex",
+            },
+            {"triage": False, "fanout": True, "distill": False},
+        ),
+        (
+            "all-open",
+            "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+        ),
+    ],
+)
+def test_builtin_profiles_smoke_stage_aware_prep_fallbacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+    expected_flat: str,
+    expected_models: dict[str, str],
+    expected_fallback: dict[str, bool],
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    assert args.prep_models == expected_models
+    assert args.prep_model_resolver_trace["flat_prep_input"] == expected_flat
+    assert args.prep_model_resolver_trace["resolved_stage_models"] == expected_models
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == expected_fallback
+
+
+def test_profile_expansion_prefers_explicit_prep_models_subtable_over_flat_prep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        """
+        [profiles.explicit-prep]
+        vendor_locked = true
+        prep = "codex"
+        plan = "claude"
+        feedback = "claude:low"
+
+        [profiles.explicit-prep.prep_models]
+        triage = "hermes:deepseek:deepseek-v4-pro"
+        fanout = "hermes:deepseek:deepseek-v4-flash"
+        distill = "codex:medium"
+        """,
+    )
+
+    args = _worker_args(profile="explicit-prep")
+    apply_profile_expansion(args, project_dir)
+
+    assert args.prep_models == {
+        "triage": "hermes:deepseek:deepseek-v4-pro",
+        "fanout": "hermes:deepseek:deepseek-v4-flash",
+        "distill": "codex:medium",
+    }
+    assert args.prep_model_resolver_trace["flat_prep_input"] == "codex"
+    assert args.prep_model_resolver_trace["explicit_prep_models"] == args.prep_models
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        "triage": False,
+        "fanout": False,
+        "distill": False,
+    }
+
+
+def test_profile_expansion_inherits_prep_models_and_falls_back_omitted_slots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        """
+        [profiles.parent-prep]
+        prep = "claude"
+        plan = "claude"
+        feedback = "claude:low"
+
+        [profiles.parent-prep.prep_models]
+        triage = "codex:gpt-5.4"
+
+        [profiles.child-prep]
+        extends = "system:parent-prep"
+        prep = "hermes:deepseek:deepseek-v4-pro"
+
+        [profiles.child-prep.prep_models]
+        fanout = "hermes:deepseek:deepseek-v4-flash"
+        """,
+    )
+
+    args = _worker_args(profile="child-prep")
+    apply_profile_expansion(args, project_dir)
+
+    assert args.prep_models == {
+        "triage": "codex:gpt-5.4",
+        "fanout": "hermes:deepseek:deepseek-v4-flash",
+        "distill": "hermes:deepseek:deepseek-v4-pro",
+    }
+    assert args.prep_model_resolver_trace["flat_prep_input"] == "hermes:deepseek:deepseek-v4-pro"
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        "triage": False,
+        "fanout": False,
+        "distill": True,
+    }
+
+
+def test_vendor_codex_routes_flat_claude_prep_to_codex_triage_and_distill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="all-claude", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    assert args.prep_models == {
+        "triage": "codex",
+        "fanout": CANONICAL_PREP_MODELS["fanout"],
+        "distill": "codex",
+    }
+    assert args.prep_model_resolver_trace["flat_prep_input"] == "codex"
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        "triage": False,
+        "fanout": True,
+        "distill": False,
+    }
+
+
+@pytest.mark.parametrize("spec", ["claude:low", "shannon:opus"])
+def test_profile_loader_rejects_write_capable_prep_model_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    spec: str,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        f"""
+        [profiles.bad-prep]
+        plan = "claude"
+
+        [profiles.bad-prep.prep_models]
+        triage = "{spec}"
+        """,
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        load_profiles(project_dir=project_dir)
+
+    assert exc_info.value.code == "invalid_profile"
+    assert "prep_models.triage" in exc_info.value.message
+
+
+def test_handle_init_persists_resolved_prep_model_trace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    root.mkdir()
+    project_dir.mkdir()
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    response = megaplan.handle_init(
+        root,
+        _init_args(project_dir, profile="all-codex", vendor="codex", name="prep-model-state"),
+    )
+    state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert state["config"]["prep_models"]["triage"] == "codex"
+    assert state["config"]["prep_model_resolver_trace"]["flat_prep_input"] == "codex"
+    assert state["config"]["prep_model_resolver_trace"]["resolved_stage_models"]["fanout"] == (
+        "hermes:deepseek:deepseek-v4-flash"
+    )
 
 
 def test_handle_config_profiles_list_and_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

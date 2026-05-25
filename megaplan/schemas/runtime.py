@@ -25,6 +25,53 @@ STOP_SIGNAL_SCHEMA: dict[str, Any] = {
     "required": ["requested", "defense"],
 }
 
+PREP_RESEARCH_AREA_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "area": {"type": "string"},
+        "brief": {"type": "string"},
+        "suggested_files": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["id", "area", "brief", "suggested_files"],
+}
+
+PREP_RESEARCH_FINDING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "area": {"type": "string"},
+        "brief": {"type": "string"},
+        "status": {
+            "type": "string",
+            "enum": ["complete", "partial", "timed_out", "error", "not_needed"],
+        },
+        "findings": {"type": "array", "items": {"type": "string"}},
+        "files": {"type": "array", "items": {"type": "string"}},
+        "code_refs": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "error": {"type": "string"},
+    },
+    "required": ["area", "brief", "status", "findings", "files", "code_refs", "confidence"],
+}
+
+TOKEN_USAGE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "cost_usd": {"type": "number"},
+        "prompt_tokens": {"type": "integer"},
+        "completion_tokens": {"type": "integer"},
+        "total_tokens": {"type": "integer"},
+        "elapsed_time_ms": {"type": "integer"},
+    },
+    "required": [
+        "cost_usd",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "elapsed_time_ms",
+    ],
+}
+
 
 SCHEMAS: dict[str, dict[str, Any]] = {
     "plan.json": {
@@ -102,6 +149,122 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "test_expectations",
             "constraints",
             "suggested_approach",
+        ],
+    },
+    "prep_triage.json": {
+        "type": "object",
+        "properties": {
+            "triage_framing": {"type": "string"},
+            "areas": {"type": "array", "items": deepcopy(PREP_RESEARCH_AREA_SCHEMA)},
+        },
+        "required": ["triage_framing", "areas"],
+    },
+    "research.json": {
+        "type": "object",
+        "properties": {
+            "findings": {
+                "type": "array",
+                "items": deepcopy(PREP_RESEARCH_FINDING_SCHEMA),
+            },
+        },
+        "required": ["findings"],
+    },
+    "prep_metrics.json": {
+        "type": "object",
+        "properties": {
+            "area_count": {"type": "integer"},
+            "fanout_count": {"type": "integer"},
+            "completed_count": {"type": "integer"},
+            "partial_count": {"type": "integer"},
+            "timed_out_count": {"type": "integer"},
+            "error_count": {"type": "integer"},
+            "missed_units": {"type": "array", "items": {"type": "string"}},
+            "total_cost_usd": {"type": "number"},
+            "prompt_tokens": {"type": "integer"},
+            "completion_tokens": {"type": "integer"},
+            "total_tokens": {"type": "integer"},
+            "elapsed_time_ms": {"type": "integer"},
+            "files": {"type": "array", "items": {"type": "string"}},
+            "code_refs": {"type": "array", "items": {"type": "string"}},
+            "gap_notes": {"type": "array", "items": {"type": "string"}},
+            "contradiction_notes": {"type": "array", "items": {"type": "string"}},
+            "overlap_groups": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["file", "code_ref"]},
+                        "value": {"type": "string"},
+                        "areas": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["kind", "value", "areas"],
+                },
+            },
+            "cross_reference": {
+                "type": "object",
+                "properties": {
+                    "performed": {"type": "boolean"},
+                    "checked_files": {"type": "array", "items": {"type": "string"}},
+                    "existing_files": {"type": "array", "items": {"type": "string"}},
+                    "missing_files": {"type": "array", "items": {"type": "string"}},
+                    "shared_files": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": [
+                    "performed",
+                    "checked_files",
+                    "existing_files",
+                    "missing_files",
+                    "shared_files",
+                ],
+            },
+            "stage_metrics": {
+                "type": "object",
+                "properties": {
+                    "triage": deepcopy(TOKEN_USAGE_SCHEMA),
+                    "fanout": deepcopy(TOKEN_USAGE_SCHEMA),
+                    "distill": deepcopy(TOKEN_USAGE_SCHEMA),
+                },
+                "required": ["triage", "fanout", "distill"],
+            },
+            "per_unit": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "area": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["complete", "partial", "timed_out", "error", "not_needed"],
+                        },
+                        "elapsed_time_ms": {"type": "integer"},
+                        "files": {"type": "array", "items": {"type": "string"}},
+                        "code_refs": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["area", "status", "elapsed_time_ms", "files", "code_refs"],
+                },
+            },
+        },
+        "required": [
+            "area_count",
+            "fanout_count",
+            "completed_count",
+            "partial_count",
+            "timed_out_count",
+            "error_count",
+            "missed_units",
+            "total_cost_usd",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "elapsed_time_ms",
+            "files",
+            "code_refs",
+            "gap_notes",
+            "contradiction_notes",
+            "overlap_groups",
+            "cross_reference",
+            "stage_metrics",
+            "per_unit",
         ],
     },
     "revise.json": {

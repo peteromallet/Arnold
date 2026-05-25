@@ -47,7 +47,14 @@ def _feedback_prompt(state: PlanState, plan_dir: Path) -> str:
 from .execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
 from .execute_creative import _execute_creative_batch_prompt, _execute_creative_prompt
 from .execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
-from .planning import PLAN_TEMPLATE, _plan_prompt, _prep_prompt
+from .planning import (
+    PLAN_TEMPLATE,
+    _plan_prompt,
+    _prep_distill_prompt,
+    _prep_prompt,
+    _prep_research_prompt,
+    _prep_triage_prompt,
+)
 from .prep_doc import _prep_doc_prompt
 from .prep_joke import _prep_joke_prompt
 from .revise_creative import _revise_creative_prompt
@@ -65,6 +72,8 @@ _PromptBuilder = Callable[..., str]
 _CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "plan": _plan_prompt,
     "prep": _prep_prompt,
+    "prep-triage": _prep_triage_prompt,
+    "prep-distill": _prep_distill_prompt,
     "critique": _critique_prompt,
     "revise": _revise_prompt,
     "gate": _gate_prompt,
@@ -83,6 +92,8 @@ _CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
 _CODEX_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "plan": _plan_prompt,
     "prep": _prep_prompt,
+    "prep-triage": _prep_triage_prompt,
+    "prep-distill": _prep_distill_prompt,
     "critique": _critique_prompt,
     "revise": _revise_prompt,
     "gate": _gate_prompt,
@@ -101,6 +112,8 @@ _CODEX_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
 _HERMES_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "plan": _plan_prompt,
     "prep": _prep_prompt,
+    "prep-triage": _prep_triage_prompt,
+    "prep-distill": _prep_distill_prompt,
     "critique": _critique_prompt,
     "revise": _revise_prompt,
     "gate": _gate_prompt,
@@ -209,7 +222,7 @@ def _resolve_builder(
 
 # Steps that accept a ``root`` keyword (project root). ``review`` doesn't —
 # it threads extra prompt kwargs (e.g. pre_check_flags) instead.
-_ROOT_BEARING_STEPS = {"prep", "critique", "gate", "finalize", "execute"}
+_ROOT_BEARING_STEPS = {"prep", "prep-triage", "critique", "gate", "finalize", "execute"}
 
 # Maps the agent name used by callers to the (builder_dict, display_label)
 # tuple used internally. Adding a new agent means appending one entry.
@@ -308,9 +321,12 @@ __all__ = [
     "_grouped_debt_for_prompt",
     "_plan_prompt",
     "_planning_debt_block",
+    "_prep_distill_prompt",
     "_prep_doc_prompt",
     "_prep_joke_prompt",
     "_prep_prompt",
+    "_prep_research_prompt",
+    "_prep_triage_prompt",
     "_review_doc_prompt",
     "_review_joke_prompt",
     "_write_critique_template",

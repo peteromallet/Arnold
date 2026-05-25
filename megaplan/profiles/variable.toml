@@ -3,7 +3,13 @@
 #
 # Non-execute phases use a partnered-style layout: Claude for reasoning
 # (plan, critique, revise, review, loop_plan, tiebreakers, feedback),
-# DeepSeek V4 Pro for mechanical phases (prep, gate, finalize, loop_execute).
+# DeepSeek V4 Pro for the mechanical phases (prep, gate, loop_execute).
+#
+# finalize is PREMIUM (claude:medium, flips with --vendor) — it adjudicates the
+# 1–5 complexity that drives execute routing, and that table reaches Claude at
+# tiers 4–5, so the scorer must be at least as strong as the model it can
+# dispatch to. A DeepSeek finalize here could mis-score a tier-5 task low and
+# silently route it to a model that fails it.
 #
 # Execute dispatch picks the cheapest safe model per batch using the
 # [tier_models.execute] table below.  The flat ``execute`` entry is the
@@ -32,7 +38,7 @@ prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-
 critique              = "claude:low"
 revise                = "claude:low"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
-finalize              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+finalize              = "claude:medium"
 execute               = "hermes:deepseek:deepseek-v4-flash"
 feedback              = "claude:low"
 loop_plan             = "claude:low"
