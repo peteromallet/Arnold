@@ -145,6 +145,26 @@ def _build_state_config(
                 adaptive_critique_value = get_effective("execution", "adaptive_critique")
     adaptive_critique = bool(adaptive_critique_value)
 
+    # Precedence mirrors adaptive_critique: explicit --critic-model CLI flag >
+    # explicit user-config setting > profile-level `critic_model` field > global
+    # default (""). When set, the adaptive evaluator still picks lenses, but the
+    # farmed-out critic is pinned to this model (no per-lens escalation).
+    critic_model_value = getattr(args, "critic_model", None)
+    if critic_model_value is None:
+        if setting_is_explicit("execution", "critic_model"):
+            critic_model_value = get_effective("execution", "critic_model")
+        else:
+            profile_name = getattr(args, "profile", None)
+            profile_critic: Any = None
+            if profile_name:
+                profile_meta = load_profile_metadata(project_dir=project_dir).get(profile_name, {})
+                profile_critic = profile_meta.get("critic_model")
+            if isinstance(profile_critic, str) and profile_critic:
+                critic_model_value = profile_critic
+            else:
+                critic_model_value = get_effective("execution", "critic_model")
+    critic_model = str(critic_model_value or "").strip()
+
     strict_notes_arg = getattr(args, "strict_notes", None)
     strict_notes_explicit = strict_notes_arg is not None
     if strict_notes_arg is None:
@@ -172,6 +192,7 @@ def _build_state_config(
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
         "adaptive_critique": adaptive_critique,
+        "critic_model": critic_model,
         "robustness": robustness,
         "mode": mode,
         "strict_notes": strict_notes,

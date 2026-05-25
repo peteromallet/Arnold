@@ -623,7 +623,21 @@ DEFAULTS = {
     "orchestration.max_critique_concurrency": 6,
     "orchestration.mode": "subagent",
     "execution.adaptive_critique": False,
+    "execution.critic_model": "",
 }
+
+# Valid pin values for execution.critic_model. Mirrors CRITIC_MODEL_ROSTER in
+# megaplan.audits.critique_evaluator (kept in sync by hand — both are short and
+# stable). "" disables the pin so the adaptive evaluator assigns critics
+# dynamically per lens.
+CRITIC_MODEL_CHOICES = (
+    "",
+    "claude-opus-4-7",
+    "gpt-5.5",
+    "claude-sonnet-4-6",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+)
 
 _SETTABLE_BOOL = {
     "execution.auto_approve",
@@ -633,6 +647,7 @@ _SETTABLE_BOOL = {
 
 _SETTABLE_ENUM = {
     "execution.robustness": ROBUSTNESS_ACCEPTED,
+    "execution.critic_model": CRITIC_MODEL_CHOICES,
 }
 
 _SETTABLE_NUMERIC = {

@@ -640,6 +640,73 @@ def test_handle_critique_adaptive_applies_verifications_and_skips_reraise(
     assert flag.get("verify_rationale") == "diff confirms fix"
 
 
+def test_handle_critique_pin_forces_critic_model_over_evaluator_assignment(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """execution.critic_model pins the farmed-out critic: the Opus evaluator
+    still picks lenses, but its premium per-lens assignment is overridden and
+    the critic dispatches to DeepSeek's direct API."""
+    import json
+
+    import megaplan.handlers as handlers_mod
+    import megaplan.handlers.critique as critique_mod
+    from megaplan.audits.robustness import CRITIQUE_CHECKS
+    from megaplan.workers import WorkerResult
+
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    persisted["config"]["critic_model"] = "deepseek-v4-pro"
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
+
+    all_check_ids = [c["id"] for c in CRITIQUE_CHECKS]
+    selected_cid = all_check_ids[0]
+    # Evaluator escalates this lens to a premium critic — the pin must win.
+    verdict = {
+        "selections": [{"check_id": selected_cid, "critic_model": "claude-opus-4-7", "why": "x"}],
+        "skipped": [{"check_id": cid, "why": "skip"} for cid in all_check_ids if cid != selected_cid],
+        "evaluator_model": "claude-opus-4-7",
+    }
+
+    captured: dict[str, object] = {}
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, resolved=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "claude", "persistent", False,
+            )
+        captured["critic_resolved"] = resolved
+        payload = {
+            "checks": [{"id": selected_cid, "summary": "ok", "findings": []}],
+            "flags": [], "verified_flag_ids": [], "disputed_flag_ids": [],
+        }
+        return (
+            WorkerResult(payload=payload, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="cr"),
+            resolved[0] if resolved else "hermes", "persistent", False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    # Critique slot is premium; without the pin the critic would inherit it.
+    monkeypatch.setattr(
+        handlers_mod,
+        "resolve_agent_mode",
+        lambda step, args: ("claude", "persistent", False, "claude-opus-4-7"),
+    )
+
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    agent, _mode, _refreshed, model = captured["critic_resolved"]
+    assert agent == "hermes", f"pin must route critic to hermes, got {agent!r}"
+    assert model == "deepseek:deepseek-v4-pro", (
+        f"pin must force direct-DeepSeek model, got {model!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # T8(a): regression — non-adaptive path does NOT fire verify/diff/why wiring
 # ---------------------------------------------------------------------------
