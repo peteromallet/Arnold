@@ -98,6 +98,7 @@ _EXECUTE_REQUIREMENTS_TEMPLATE = textwrap.dedent(
     - Structured output remains the authoritative final summary for this step. Disk writes are progress checkpoints for timeout recovery only.
     - Return `task_updates` with one object per completed or skipped task.
     - `task_updates[].status` must be either `done` or `skipped`. Never return `pending` in execute output.
+    - Multi-task batches: treat the batch as a checklist, not one undifferentiated problem. First write out the task list; then complete and evidence the tasks one at a time. Emit a SEPARATE `task_updates` entry per task carrying that task's own concrete evidence (its real `files_changed` and command output) — never summarize across tasks or reuse one task's evidence for another. If you find yourself about to report several tasks `done` without distinct per-task evidence, stop: produce the evidence, or mark the unfinished ones `skipped`/blocked with the reason.
     - If a task is blocked by environment limits, missing devices, or manual-only validation that cannot happen in this session, return `status: "skipped"` and explain the remaining manual follow-up in `executor_notes` and `deviations`.
     - Return `sense_check_acknowledgments` with one object per sense check.
     - Keep `executor_notes` verification-focused: explain why your changes are correct. The diff already shows what changed; notes should cover edge cases caught, expected behaviors confirmed, or design choices made.

@@ -30,6 +30,7 @@ from megaplan._core import (
     save_state_merge_meta,
     set_active_step,
     sha256_file,
+    split_oversized_batches,
     store_raw_worker_output,
 )
 from megaplan.orchestration.evaluation import validate_execution_evidence
@@ -119,6 +120,30 @@ class BatchResult:
     execution_audit: dict[str, Any]
     finalize_hash: str
     attribution_records: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _positive_int_or_default(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _default_max_tasks_per_batch() -> int:
+    return _positive_int_or_default(
+        get_effective("execution", "max_tasks_per_batch"),
+        5,
+    )
+
+
+def _resolve_max_tasks_per_batch(state: PlanState, args: argparse.Namespace) -> int:
+    default = _default_max_tasks_per_batch()
+    cli_value = getattr(args, "max_tasks_per_batch", None)
+    if cli_value is not None:
+        return _positive_int_or_default(cli_value, default)
+    state_value = state.get("config", {}).get("max_tasks_per_batch")
+    return _positive_int_or_default(state_value, default)
 
 
 def build_monitor_hint(plan_dir: Path) -> str:
@@ -778,7 +803,11 @@ def handle_execute_one_batch(
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
-    global_batches = compute_global_batches(finalize_data)
+    max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+    global_batches = split_oversized_batches(
+        compute_global_batches(finalize_data),
+        max_tasks_per_batch,
+    )
     batches_total = len(global_batches)
 
     if batch_number < 1 or batch_number > batches_total:
@@ -1315,12 +1344,33 @@ def handle_execute_auto_loop(
     pending_batches = compute_task_batches(
         pending_tasks, completed_ids=completed_task_ids
     )
-    single_batch_mode = len(pending_batches) <= 1
-    global_batches = compute_global_batches(finalize_data)
+    max_tasks_per_batch = _resolve_max_tasks_per_batch(state, args)
+    split_batches = split_oversized_batches(pending_batches, max_tasks_per_batch)
+    if len(split_batches) != len(pending_batches):
+        for batch_index, batch in enumerate(pending_batches, start=1):
+            if len(batch) <= max_tasks_per_batch:
+                continue
+            chunks = (len(batch) + max_tasks_per_batch - 1) // max_tasks_per_batch
+            log.warning(
+                "oversized batch %d dispatched %d tasks (> ceiling %d); "
+                "splitting into %d chunks of <=%d",
+                batch_index,
+                len(batch),
+                max_tasks_per_batch,
+                chunks,
+                max_tasks_per_batch,
+            )
+    single_batch_mode = (
+        len(split_batches) <= 1 and len(all_task_ids) <= max_tasks_per_batch
+    )
+    global_batches = split_oversized_batches(
+        compute_global_batches(finalize_data),
+        max_tasks_per_batch,
+    )
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
-    batches_to_run = [all_task_ids] if single_batch_mode else pending_batches
+    batches_to_run = [all_task_ids] if single_batch_mode else split_batches
     total_batches = len(batches_to_run) or 1
     active_task_ids = set(
         all_task_ids if single_batch_mode else [task["id"] for task in pending_tasks]
@@ -1377,7 +1427,7 @@ def handle_execute_auto_loop(
             if single_batch_mode
             else _active_sense_check_ids(finalize_data, set(batch_task_ids))
         )
-        batches_total_for_observation = 1 if single_batch_mode else len(global_batches)
+        batches_total_for_observation = total_batches
 
         # Per-batch tier resolution: select the model for the max task
         # complexity in this batch.  Falls back to the caller-provided
