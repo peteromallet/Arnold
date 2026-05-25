@@ -318,10 +318,21 @@ def _provider_requires_streaming(model: str | None, max_tokens: int | None) -> b
 
 
 def _streaming_run_kwargs(model: str | None, max_tokens: int | None, *, plan_dir: Path | None = None) -> dict:
-    """Build the run_conversation kwargs needed to force streaming when required."""
+    """Build the run_conversation kwargs needed to force streaming when required.
+
+    Returns only valid run_conversation kwargs — when streaming is forced,
+    that's `stream_callback`. The callback IS a _StreamTracker; consumers that
+    need the tracker for additional wiring (e.g. reasoning_callback in
+    _run_attempt below) should read it back from the `stream_callback` key,
+    NOT from a side-channel like `_megaplan_stream_tracker`. The previous
+    contract returned both keys pointing at the same tracker, which broke
+    forwarders (orchestration/prep_research.py:689,
+    orchestration/parallel_critique.py:101, workers/hermes.py:_parse_hermes_result)
+    that passed run_kwargs straight into run_conversation — those forwarders
+    saw a kwarg the method doesn't accept and crashed with TypeError.
+    """
     if _provider_requires_streaming(model, max_tokens):
-        tracker = _StreamTracker()
-        return {"stream_callback": tracker, "_megaplan_stream_tracker": tracker}
+        return {"stream_callback": _StreamTracker()}
     return {}
 
 
@@ -506,16 +517,7 @@ def parse_agent_output(
     calls (template / summary fallbacks) so providers that require streaming
     (e.g. Fireworks at high max_tokens) keep streaming on those calls too.
     """
-    # _megaplan_stream_tracker is internal bookkeeping handled at the dispatch
-    # site (see line ~904) and isn't a valid run_conversation kwarg — strip it
-    # before forwarding into agent.run_conversation() below. Without this, the
-    # template / summary fallback paths in this function (lines ~524, ~613)
-    # raise `TypeError: AIAgent.run_conversation() got an unexpected keyword
-    # argument '_megaplan_stream_tracker'` whenever streaming is forced.
-    extra_run_kwargs = {
-        k: v for k, v in (run_kwargs or {}).items()
-        if k != "_megaplan_stream_tracker"
-    }
+    extra_run_kwargs = run_kwargs or {}
     raw_output = result.get("final_response", "") or ""
     messages = result.get("messages", [])
 
@@ -910,8 +912,8 @@ def run_hermes_step(
         # same shape non-streaming returns, so the rest of megaplan is
         # unchanged.
         run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens, plan_dir=plan_dir)
-        tracker = run_kwargs.pop("_megaplan_stream_tracker", None)
-        is_streaming = tracker is not None
+        tracker = run_kwargs.get("stream_callback")
+        is_streaming = isinstance(tracker, _StreamTracker)
 
         # Wire the reasoning_callback to the tracker so reasoning_emitted_so_far
         # advances on every reasoning_content delta. Without this, a reasoning
