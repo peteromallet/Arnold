@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.types import CliError, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
+from megaplan.types import CliError, MOCK_ENV_VAR, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
 from megaplan._core import load_plan_locked, require_state
 
 from .shared import (
@@ -87,25 +88,54 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 raise CliError("invalid_args", "--direction must be non-empty when provided")
             state["config"]["prep_direction"] = new_direction
         with phase_result_guard(plan_dir):
-            worker, agent, mode, refreshed = _pkg._run_worker("prep", state, plan_dir, args, root=root)
             prep_filename = "prep.json"
+            if os.getenv(MOCK_ENV_VAR) == "1":
+                worker, agent, mode, refreshed = _pkg._run_worker("prep", state, plan_dir, args, root=root)
+                artifact_hash = _write_json_artifact(plan_dir, prep_filename, worker.payload)
+                if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
+                    primary_criterion = worker.payload.get("primary_criterion")
+                    if isinstance(primary_criterion, str) and primary_criterion.strip():
+                        state["config"]["primary_criterion"] = primary_criterion.strip()
+                code_refs = len(worker.payload.get("relevant_code", []))
+                test_refs = len(worker.payload.get("test_expectations", []))
+                state["current_state"] = STATE_PREPPED
+                return _finish_step(
+                    plan_dir, state, args,
+                    step="prep",
+                    worker=worker, agent=agent, mode=mode, refreshed=refreshed,
+                    summary=f"Prep complete: captured {code_refs} relevant code reference(s) and {test_refs} test expectation(s).",
+                    artifacts=[prep_filename],
+                    output_file=prep_filename,
+                    artifact_hash=artifact_hash,
+                    response_fields={"iteration": state["iteration"]},
+                )
+            from megaplan.orchestration.prep_research import (
+                run_prep_orchestration,
+            )
+
+            orchestration = run_prep_orchestration(state, plan_dir, root=root)
+            worker = orchestration.worker
             artifact_hash = _write_json_artifact(plan_dir, prep_filename, worker.payload)
             if state["config"].get("mode") == "joke" and not state["config"].get("primary_criterion"):
                 primary_criterion = worker.payload.get("primary_criterion")
                 if isinstance(primary_criterion, str) and primary_criterion.strip():
                     state["config"]["primary_criterion"] = primary_criterion.strip()
-            code_refs = len(worker.payload.get("relevant_code", []))
-            test_refs = len(worker.payload.get("test_expectations", []))
             state["current_state"] = STATE_PREPPED
             return _finish_step(
                 plan_dir, state, args,
                 step="prep",
-                worker=worker, agent=agent, mode=mode, refreshed=refreshed,
-                summary=f"Prep complete: captured {code_refs} relevant code reference(s) and {test_refs} test expectation(s).",
-                artifacts=[prep_filename],
+                worker=worker,
+                agent=orchestration.agent,
+                mode=orchestration.mode,
+                refreshed=orchestration.refreshed,
+                summary=orchestration.summary,
+                artifacts=orchestration.artifacts,
                 output_file=prep_filename,
                 artifact_hash=artifact_hash,
-                response_fields={"iteration": state["iteration"]},
+                response_fields={
+                    "iteration": state["iteration"],
+                    "prep_metrics_hash": orchestration.prep_metrics_hash,
+                },
             )
 
 def _build_verifiability_flags(

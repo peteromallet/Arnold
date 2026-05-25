@@ -341,6 +341,12 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
     tier_models = getattr(args, "tier_models", None)
     if tier_models:
         state["config"]["tier_models"] = tier_models
+    prep_models = getattr(args, "prep_models", None)
+    if prep_models:
+        state["config"]["prep_models"] = prep_models
+    prep_model_resolver_trace = getattr(args, "prep_model_resolver_trace", None)
+    if prep_model_resolver_trace:
+        state["config"]["prep_model_resolver_trace"] = prep_model_resolver_trace
     if getattr(args, "with_prep", False):
         state["config"]["with_prep"] = True
     if getattr(args, "with_feedback", False):

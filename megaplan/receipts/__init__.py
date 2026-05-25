@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan.receipts.canonical import CANONICALIZATION_VERSION, hash_prompts
-from megaplan.receipts.extractors import extract_for_phase
+from megaplan.receipts.extractors import extract_for_phase, load_and_extract
 from megaplan.receipts.schema import Receipt, upstream_artifact_hashes
 
 
@@ -62,6 +62,8 @@ def build_receipt(
     metrics_override = getattr(worker, "receipt_metrics", None)
     if isinstance(metrics_override, dict):
         metrics = metrics_override
+    elif phase == "prep":
+        metrics = load_and_extract(plan_dir, phase, int(state.get("iteration", 0)), drift_report=drift)
     else:
         metrics = extract_for_phase(phase, getattr(worker, "payload", {}), drift_report=drift)
     profile_name = state.get("meta", {}).get("profile_name") or getattr(args, "profile", None)

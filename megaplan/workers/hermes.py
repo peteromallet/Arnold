@@ -377,13 +377,25 @@ def _toolsets_for_phase(phase: str) -> list[str] | None:
     """Return toolsets for a given megaplan phase.
 
     Execute phase gets full terminal + file + web access.
-    Plan, critique, and revise get file + web (verify APIs against docs).
+    Planning and critique phases get file + web (verify APIs against docs).
+    Prep orchestration stays read-only even when it needs file/web research.
     Gate and review get file only (judgment, not investigation).
     Finalize is a pure compiler and uses structured JSON response format without tools.
     """
+    prep_readonly_phases = {
+        "prep",
+        "prep-triage",
+        "prep-research",
+        "prep-distill",
+        "prep_triage",
+        "prep_research",
+        "prep_distill",
+    }
     if phase == "execute":
         return ["terminal", "file", "web"]
-    if phase in ("plan", "prep", "critique", "revise"):
+    if phase in prep_readonly_phases:
+        return ["file-readonly", "web"]
+    if phase in ("plan", "critique", "revise"):
         return ["file", "web"]
     if phase == "finalize":
         return None

@@ -285,6 +285,8 @@ def _snapshot_cli_provenance(state: PlanState) -> dict[str, Any]:
             "mode",
             "robustness",
             "tier_models",
+            "prep_models",
+            "prep_model_resolver_trace",
         )
         if k in config
     }

@@ -450,6 +450,63 @@ def test_prep_schema_exists_and_has_expected_structure() -> None:
     assert relevant_code_schema["properties"]["functions"]["items"]["type"] == "string"
     assert set(test_expectation_schema["required"]) == {"test_id", "what_it_checks", "status"}
     assert test_expectation_schema["properties"]["status"]["enum"] == ["fail_to_pass", "pass_to_pass"]
+    assert "findings" not in schema["properties"]
+    assert "areas" not in schema["properties"]
+    assert "missed_units" not in schema["properties"]
+
+
+def test_research_prep_sidecar_schemas_add_internal_detail_without_changing_prep() -> None:
+    triage_schema = strict_schema(SCHEMAS["prep_triage.json"])
+    assert set(triage_schema["required"]) == {"triage_framing", "areas"}
+    area_schema = triage_schema["properties"]["areas"]["items"]
+    assert set(area_schema["required"]) == {"id", "area", "brief", "suggested_files"}
+
+    research_schema = strict_schema(SCHEMAS["research.json"])
+    finding_schema = research_schema["properties"]["findings"]["items"]
+    assert set(finding_schema["required"]) == {
+        "area",
+        "brief",
+        "status",
+        "findings",
+        "files",
+        "code_refs",
+        "confidence",
+        "error",
+    }
+    assert finding_schema["properties"]["status"]["enum"] == [
+        "complete",
+        "partial",
+        "timed_out",
+        "error",
+        "not_needed",
+    ]
+
+    metrics_schema = strict_schema(SCHEMAS["prep_metrics.json"])
+    assert "missed_units" in metrics_schema["properties"]
+    assert "total_tokens" in metrics_schema["required"]
+    assert "elapsed_time_ms" in metrics_schema["required"]
+    assert "files" in metrics_schema["required"]
+    assert "code_refs" in metrics_schema["required"]
+    assert "gap_notes" in metrics_schema["required"]
+    assert "contradiction_notes" in metrics_schema["required"]
+    assert "overlap_groups" in metrics_schema["required"]
+    assert "cross_reference" in metrics_schema["required"]
+    assert "stage_metrics" in metrics_schema["required"]
+    assert "per_unit" in metrics_schema["required"]
+    cross_reference_schema = metrics_schema["properties"]["cross_reference"]
+    assert set(cross_reference_schema["required"]) == {
+        "performed",
+        "checked_files",
+        "existing_files",
+        "missing_files",
+        "shared_files",
+    }
+    overlap_schema = metrics_schema["properties"]["overlap_groups"]["items"]
+    assert set(overlap_schema["required"]) == {"kind", "value", "areas"}
+    stage_metrics_schema = metrics_schema["properties"]["stage_metrics"]
+    assert set(stage_metrics_schema["required"]) == {"triage", "fanout", "distill"}
+    per_unit_schema = metrics_schema["properties"]["per_unit"]["items"]
+    assert set(per_unit_schema["required"]) == {"area", "status", "elapsed_time_ms", "files", "code_refs"}
 
 
 def test_gate_schema_includes_settled_decisions_structure() -> None:

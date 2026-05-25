@@ -23,11 +23,13 @@ from megaplan.workers import (
     _external_worker_env,
     _extract_claude_usage,
     _merge_partial_output,
+    CommandResult,
     WorkerResult,
     extract_session_id,
     parse_claude_envelope,
     parse_json_file,
     _recover_codex_payload,
+    run_codex_prep_step,
     resolve_agent_mode,
     session_key_for,
     update_session_state,
@@ -3585,6 +3587,41 @@ def test_codex_execute_headroom_guard_forces_fresh_before_resume(
     assert commands[0][:3] == ["codex", "exec", "--skip-git-repo-check"]
     assert "resume" not in commands[0]
     assert "old-execute-session" not in commands[0]
+
+
+def test_run_codex_prep_step_uses_readonly_command_without_write_grants(tmp_path: Path) -> None:
+    from megaplan._core import ensure_runtime_layout
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"triage_framing": "No fanout needed.", "areas": []}
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        commands.append(command)
+        output_idx = command.index("-o") + 1
+        Path(command[output_idx]).write_text(json.dumps(payload), encoding="utf-8")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout="", stderr="", duration_ms=12)
+
+    with patch("megaplan.workers._impl.run_command", side_effect=fake_run_command):
+        result = run_codex_prep_step(
+            "prep-triage",
+            state,
+            plan_dir,
+            root=tmp_path,
+            prompt_override="triage prompt",
+            model="gpt-5.5",
+        )
+
+    command = commands[0]
+    assert result.payload == payload
+    assert "--ephemeral" in command
+    assert "sandbox_mode='read-only'" in command
+    assert "--add-dir" not in command
+    assert "-C" not in command
+    assert "--full-auto" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert not any("writable_roots" in part for part in command)
 
 
 def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run(
