@@ -1356,12 +1356,12 @@ def test_directed_profile_default_resolves_with_claude_plan_only(
     apply_profile_expansion(args, None)
     resolved = _phase_models_to_map(args.phase_model)
 
-    # Claude on plan + loop_plan + tiebreakers + finalize (finalize is now premium).
+    # Claude on plan + loop_plan + tiebreakers + finalize (finalize raised to opus-4-7 for rater>=dispatchee).
     assert resolved["plan"] == "claude:low"
     assert resolved["loop_plan"] == "claude:low"
     assert resolved["tiebreaker_researcher"] == "claude:low"
     assert resolved["tiebreaker_challenger"] == "claude:low"
-    assert resolved["finalize"] == "claude:low"
+    assert resolved["finalize"] == "claude:claude-opus-4-7"
     # DeepSeek on the remaining mechanical block + critique + review.
     for phase in ("prep", "critique", "revise", "gate", "execute", "loop_execute", "review"):
         assert resolved[phase] == DEEPSEEK_DIRECT
@@ -1373,7 +1373,7 @@ def test_directed_profile_flips_to_codex_under_vendor_codex(
 ) -> None:
     """--vendor codex on directed maps the tier_models.execute Claude pins to
     their Codex model pins (sonnet→codex:gpt-5.4, opus→codex:gpt-5.5) instead of
-    raising; the premium finalize also flips to codex."""
+    raising; the premium finalize (now claude-opus-4-7) flips to codex:gpt-5.5."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="directed")
@@ -1383,7 +1383,7 @@ def test_directed_profile_flips_to_codex_under_vendor_codex(
     assert tiers[4] == "codex:gpt-5.4"
     assert tiers[5] == "codex:gpt-5.5"
     resolved = _phase_models_to_map(args.phase_model)
-    assert resolved["finalize"] == "codex:low"
+    assert resolved["finalize"] == "codex:gpt-5.5"
 
 
 def test_partnered_profile_default_resolves_with_claude_reasoning(

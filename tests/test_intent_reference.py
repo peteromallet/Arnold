@@ -93,7 +93,7 @@ def test_verbose_intent_stays_scoped_to_plan_and_prep() -> None:
         if "intent_and_notes_block(state)" in source:
             callers.append(path.name)
 
-    assert callers == ["planning.py"]
+    assert callers == ["critique_evaluator.py", "planning.py"]
 
 
 def test_prep_block_stays_scoped_to_plan_and_main_execute() -> None:

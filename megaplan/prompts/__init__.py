@@ -64,6 +64,7 @@ from .review import (
     _settled_decisions_instruction,
     _write_review_template,
 )
+from .critique_evaluator import _critique_evaluator_prompt
 from .review_doc import _review_doc_prompt
 from .review_joke import _review_joke_prompt
 
@@ -75,6 +76,7 @@ _CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "prep-triage": _prep_triage_prompt,
     "prep-distill": _prep_distill_prompt,
     "critique": _critique_prompt,
+    "critique_evaluator": _critique_evaluator_prompt,
     "revise": _revise_prompt,
     "gate": _gate_prompt,
     "finalize": _finalize_prompt,
@@ -95,6 +97,7 @@ _CODEX_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "prep-triage": _prep_triage_prompt,
     "prep-distill": _prep_distill_prompt,
     "critique": _critique_prompt,
+    "critique_evaluator": _critique_evaluator_prompt,
     "revise": _revise_prompt,
     "gate": _gate_prompt,
     "finalize": _finalize_prompt,
@@ -115,6 +118,7 @@ _HERMES_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "prep-triage": _prep_triage_prompt,
     "prep-distill": _prep_distill_prompt,
     "critique": _critique_prompt,
+    "critique_evaluator": _critique_evaluator_prompt,
     "revise": _revise_prompt,
     "gate": _gate_prompt,
     "finalize": _finalize_prompt,
@@ -222,7 +226,7 @@ def _resolve_builder(
 
 # Steps that accept a ``root`` keyword (project root). ``review`` doesn't —
 # it threads extra prompt kwargs (e.g. pre_check_flags) instead.
-_ROOT_BEARING_STEPS = {"prep", "prep-triage", "critique", "gate", "finalize", "execute"}
+_ROOT_BEARING_STEPS = {"prep", "prep-triage", "critique", "critique_evaluator", "gate", "finalize", "execute"}
 
 # Maps the agent name used by callers to the (builder_dict, display_label)
 # tuple used internally. Adding a new agent means appending one entry.
@@ -268,6 +272,8 @@ def create_prompt(
     if step == "review":
         return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
     if step in _ROOT_BEARING_STEPS:
+        if step in ("critique", "critique_evaluator") and prompt_kwargs:
+            return _prepend_harness_guard(builder(state, plan_dir, root=root, **prompt_kwargs))
         return _prepend_harness_guard(builder(state, plan_dir, root=root))
     return _prepend_harness_guard(builder(state, plan_dir))
 

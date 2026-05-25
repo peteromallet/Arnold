@@ -16,6 +16,7 @@ from megaplan._core import (
     read_json,
     unresolved_significant_flags,
 )
+from megaplan.flags import flag_resolution_summary
 from megaplan.audits.iteration import compute_iteration_pressure, render_pressure_table
 from megaplan.types import FlagRegistry, PlanState
 
@@ -43,6 +44,7 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
             "id": flag["id"],
             "concern": flag["concern"],
             "evidence": flag.get("evidence", ""),
+            "revise_summary": flag_resolution_summary(flag),
             "category": flag["category"],
             "severity": flag.get("severity", "unknown"),
             "status": flag["status"],
@@ -174,6 +176,7 @@ def _flag_summary(registry: FlagRegistry) -> list[dict[str, object]]:
             "id": f["id"],
             "concern": f["concern"],
             "evidence": f.get("evidence", ""),
+            "revise_summary": flag_resolution_summary(f),
             "status": f["status"],
             "severity": f.get("severity", "unknown"),
         }
