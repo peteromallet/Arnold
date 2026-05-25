@@ -648,3 +648,36 @@ def test_flag_verifications_optional_field_absent_accepted() -> None:
     # No flag_verifications key at all.
     assert "flag_verifications" not in verdict
     validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+
+
+# ---------------------------------------------------------------------------
+# Wiring regression: STEP_SCHEMA_FILENAMES must register critique_evaluator
+# ---------------------------------------------------------------------------
+
+
+def test_critique_evaluator_step_registered_in_schema_filenames() -> None:
+    """Regression: silent KeyError('critique_evaluator') in shannon/codex worker.
+
+    Until this entry existed, the adaptive critique path called
+    ``_run_worker("critique_evaluator", ...)`` which dispatched to
+    ``run_step_with_worker`` which then tried
+    ``STEP_SCHEMA_FILENAMES["critique_evaluator"]`` and KeyError'd. The
+    handler caught the KeyError, wrote a ``fallback: true`` evaluator_verdict
+    and downgraded to the static robustness lens list — silently, for every
+    iteration of every plan run under ``partnered`` (and any other profile
+    with ``adaptive_critique = true``).
+    """
+    from megaplan.schemas import SCHEMAS
+    from megaplan.workers._impl import STEP_SCHEMA_FILENAMES, _STEP_REQUIRED_KEYS
+
+    assert "critique_evaluator" in STEP_SCHEMA_FILENAMES, (
+        "critique_evaluator step must have a schema filename or the adaptive "
+        "critique path silently falls back to static lens selection"
+    )
+    schema_filename = STEP_SCHEMA_FILENAMES["critique_evaluator"]
+    assert schema_filename in SCHEMAS, (
+        f"{schema_filename!r} must be a known SCHEMAS entry"
+    )
+    # The required keys must match the validator in audits/critique_evaluator.py
+    required = set(_STEP_REQUIRED_KEYS["critique_evaluator"])
+    assert {"selections", "skipped", "evaluator_model"}.issubset(required)

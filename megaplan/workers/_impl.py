@@ -73,6 +73,7 @@ STEP_SCHEMA_FILENAMES: dict[str, str] = {
     "prep-distill": "prep.json",
     "revise": "revise.json",
     "critique": "critique.json",
+    "critique_evaluator": "critique_evaluator.json",
     "feedback": "feedback.json",
     "gate": "gate.json",
     "finalize": "finalize.json",
