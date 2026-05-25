@@ -416,6 +416,7 @@ def _prep_triage_prompt(
         - Do not emit final findings, final constraints, or a final suggested approach here.
         - Prefer relation-oriented areas such as caller coverage, root cause trace, contract compatibility, and validation impact.
         - If the existing prep evidence is already sufficient, return zero areas instead of inventing research.
+        - **Production-of-artifact also counts as a research area, even when the question is well-defined.** If the task or user direction explicitly asks prep to *produce* an enumeration, inventory, categorized list, audit report, or similar deliverable artifact that the planner needs as input — treat each requested artifact as its own area, even if there's no uncertainty about what to enumerate or how. "Well-specified" is not the same as "already-done": producing the artifact IS the research. The skip path (`areas: []`) is for cases where the planner can proceed without that artifact, not for cases where it was asked for and the question happens to be clear. When in doubt between "skip because clear" and "include because requested" — include.
 
         Return JSON only.
         """
