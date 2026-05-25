@@ -506,7 +506,16 @@ def parse_agent_output(
     calls (template / summary fallbacks) so providers that require streaming
     (e.g. Fireworks at high max_tokens) keep streaming on those calls too.
     """
-    extra_run_kwargs = run_kwargs or {}
+    # _megaplan_stream_tracker is internal bookkeeping handled at the dispatch
+    # site (see line ~904) and isn't a valid run_conversation kwarg — strip it
+    # before forwarding into agent.run_conversation() below. Without this, the
+    # template / summary fallback paths in this function (lines ~524, ~613)
+    # raise `TypeError: AIAgent.run_conversation() got an unexpected keyword
+    # argument '_megaplan_stream_tracker'` whenever streaming is forced.
+    extra_run_kwargs = {
+        k: v for k, v in (run_kwargs or {}).items()
+        if k != "_megaplan_stream_tracker"
+    }
     raw_output = result.get("final_response", "") or ""
     messages = result.get("messages", [])
 
