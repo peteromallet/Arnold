@@ -74,6 +74,16 @@ def adaptive_critique_enabled(state: PlanState) -> bool:
     return bool(state["config"].get("adaptive_critique", False))
 
 
+def pinned_critic_model(state: PlanState) -> str:
+    """Return the model the farmed-out critic is pinned to, or "" if unpinned.
+
+    When set, the adaptive evaluator still selects lenses, but every critic
+    dispatch is forced to this model instead of the evaluator's per-lens
+    assignment (which can escalate to premium models).
+    """
+    return str(state["config"].get("critic_model", "") or "").strip()
+
+
 def robustness_critique_instruction(robustness: str) -> str:
     if robustness == "light":
         return "Be pragmatic. Only flag issues that would cause real failures. Ignore style, minor edge cases, and issues the executor will naturally resolve."

@@ -33,6 +33,7 @@ from megaplan._core import (
     load_flag_registry,
     load_plan_locked,
     now_utc,
+    pinned_critic_model,
     read_json,
     record_step_failure,
     require_state,
@@ -202,6 +203,15 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
             expected_ids = [check["id"] for check in active_checks]
             resolved = _pkg.resolve_agent_mode("critique", args)
+        # Operator pin: when execution.critic_model is set, the Opus evaluator
+        # still selects lenses, but every farmed-out critic is forced to the
+        # pinned model instead of the evaluator's (possibly escalated) per-lens
+        # assignment. Overrides both the verdict's collapsed pick and the
+        # static-fallback path. "" leaves the dynamic assignment untouched.
+        if adaptive_path:
+            _pin = pinned_critic_model(state)
+            if _pin:
+                critic_model_override = _pin
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
         if adaptive_path and critic_model_override:
             # The evaluator emits a bare roster token (e.g. "deepseek-v4-pro").

@@ -35,6 +35,7 @@ PROFILE_METADATA_KEYS = frozenset({
     "prep_models",
     "max_tasks_per_batch",
     "adaptive_critique",
+    "critic_model",
 })
 
 VALID_CRITIC_CHOICES = ("kimi", "cross")
@@ -189,6 +190,18 @@ def _validate_metadata(path: Any, profile_name: str, metadata: dict[str, Any]) -
                     f"expected a boolean for 'adaptive_critique', got {type(value).__name__}",
                 )
             validated["adaptive_critique"] = value
+        elif key == "critic_model":
+            from megaplan.types import CRITIC_MODEL_CHOICES
+
+            if not isinstance(value, str) or value not in CRITIC_MODEL_CHOICES:
+                _raise_invalid_profile(
+                    path,
+                    profile_name,
+                    key,
+                    f"'critic_model' must be one of "
+                    f"{[c for c in CRITIC_MODEL_CHOICES if c]}; got {value!r}",
+                )
+            validated["critic_model"] = value
         # Future metadata keys go here.
     return validated
 

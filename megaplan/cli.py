@@ -27,6 +27,7 @@ from megaplan.types import (
     _SETTABLE_BOOL,
     _SETTABLE_ENUM,
     _SETTABLE_NUMERIC,
+    CRITIC_MODEL_CHOICES,
 )
 from megaplan._core import (
     active_plan_dirs,
@@ -3214,6 +3215,13 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
     init_parser.add_argument("--adaptive-critique", action="store_true", default=None)
+    init_parser.add_argument(
+        "--critic-model",
+        default=None,
+        choices=[c for c in CRITIC_MODEL_CHOICES if c],
+        help="Pin every farmed-out adaptive-critique critic to this model "
+        "(the Opus evaluator still selects lenses; no per-lens escalation).",
+    )
     init_parser.add_argument(
         "--strict-notes",
         action="store_true",
