@@ -557,9 +557,13 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
     finalize), so by the time we get here those tasks already carry a deliberate,
     argued score.  This pass only backfills the tasks finalize injects *after*
     validation — the verification task and the user-action gate tasks — which the
-    model never scored.  Missing/out-of-range scores are coerced to 5 (fail-safe:
-    expensive model), and a synthetic justification is stamped so the written
-    artifact still satisfies the required schema field.
+    model never scored.  These are read-and-check tasks (verify a file exists,
+    confirm a user-action completed), not deep implementation work — so missing/
+    out-of-range scores are coerced to 4 (Sonnet) rather than the absolute-conservative
+    5 (Opus): still a premium tier capable of any verification logic, but ~5–10×
+    cheaper than defaulting to Opus for what is structurally not Opus work.
+    A synthetic justification is stamped so the written artifact still satisfies
+    the required schema field.
     """
     tasks = payload.get("tasks")
     if not isinstance(tasks, list):
@@ -569,11 +573,11 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
             continue
         complexity = task.get("complexity")
         if not isinstance(complexity, int) or isinstance(complexity, bool) or complexity < 1 or complexity > 5:
-            task["complexity"] = 5
+            task["complexity"] = 4
             task.setdefault(
                 "complexity_justification",
-                "Auto-injected by finalize after adjudication; defaulted to the conservative "
-                "tier because the model never scored this task.",
+                "Auto-injected by finalize after adjudication; defaulted to tier 4 (Sonnet) "
+                "because the model never scored this task — verification/gate tasks are read-and-check work.",
             )
         justification = task.get("complexity_justification")
         if not isinstance(justification, str) or not justification.strip():

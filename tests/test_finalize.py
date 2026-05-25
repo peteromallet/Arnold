@@ -330,8 +330,12 @@ def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
     assert "Verdict: Confirmed." in reviewed_md
 
 
-def test_finalize_normalize_complexity_missing_defaults_to_5(plan_fixture: PlanFixture) -> None:
-    """Worker response missing complexity writes 5 in finalize artifacts."""
+def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanFixture) -> None:
+    """Worker response missing complexity writes 4 (Sonnet) in finalize artifacts.
+
+    Auto-injected verification/gate tasks are read-and-check work, not deep
+    implementation — Sonnet is capable enough and ~5–10× cheaper than Opus.
+    """
     from megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
@@ -353,11 +357,11 @@ def test_finalize_normalize_complexity_missing_defaults_to_5(plan_fixture: PlanF
         "meta_commentary": "ok",
     }
     _normalize_task_complexity(payload)
-    assert payload["tasks"][0]["complexity"] == 5
+    assert payload["tasks"][0]["complexity"] == 4
 
 
 def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: PlanFixture) -> None:
-    """Non-integer and out-of-range complexity values are normalized to 5."""
+    """Non-integer and out-of-range complexity values are normalized to 4 (Sonnet)."""
     from megaplan.handlers.finalize import _normalize_task_complexity
 
     payload = {
@@ -373,10 +377,10 @@ def test_finalize_normalize_complexity_invalid_values_normalized(plan_fixture: P
         "meta_commentary": "ok",
     }
     _normalize_task_complexity(payload)
-    assert payload["tasks"][0]["complexity"] == 5  # "high" → 5
-    assert payload["tasks"][1]["complexity"] == 5  # 0 → 5
-    assert payload["tasks"][2]["complexity"] == 5  # 6 → 5
-    assert payload["tasks"][3]["complexity"] == 5  # None → 5
+    assert payload["tasks"][0]["complexity"] == 4  # "high" → 4
+    assert payload["tasks"][1]["complexity"] == 4  # 0 → 4
+    assert payload["tasks"][2]["complexity"] == 4  # 6 → 4
+    assert payload["tasks"][3]["complexity"] == 4  # None → 4
     assert payload["tasks"][4]["complexity"] == 3  # valid pass-through
 
 
@@ -439,16 +443,17 @@ def test_finalize_artifacts_include_complexity_after_normalization(plan_fixture:
     finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
     snapshot_data = read_json(plan_fixture.plan_dir / "finalize_snapshot.json")
 
-    # Both finalize.json and snapshot should have complexity=5 on the original task
+    # Both finalize.json and snapshot should have complexity=4 (Sonnet default) on the
+    # original task (model did not score it; safety net defaults to 4 not 5)
     original_tasks = [t for t in finalize_data["tasks"] if t["id"] == "T1"]
     assert len(original_tasks) == 1
-    assert original_tasks[0]["complexity"] == 5
+    assert original_tasks[0]["complexity"] == 4
 
     original_snapshot = [t for t in snapshot_data["tasks"] if t["id"] == "T1"]
     assert len(original_snapshot) == 1
-    assert original_snapshot[0]["complexity"] == 5
+    assert original_snapshot[0]["complexity"] == 4
 
-    # Auto-injected tasks (verification, user-action gate) should also have complexity=5
+    # Auto-injected tasks (verification, user-action gate) should also have a valid complexity
     for task in finalize_data["tasks"]:
         assert isinstance(task.get("complexity"), int)
         assert 1 <= task["complexity"] <= 5
