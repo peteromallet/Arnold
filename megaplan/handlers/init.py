@@ -122,6 +122,11 @@ def _build_state_config(
         auto_approve_value = get_effective("execution", "auto_approve")
     auto_approve = bool(auto_approve_value)
 
+    adaptive_critique_value = getattr(args, "adaptive_critique", None)
+    if adaptive_critique_value is None:
+        adaptive_critique_value = get_effective("execution", "adaptive_critique")
+    adaptive_critique = bool(adaptive_critique_value)
+
     strict_notes_arg = getattr(args, "strict_notes", None)
     strict_notes_explicit = strict_notes_arg is not None
     if strict_notes_arg is None:
@@ -148,6 +153,7 @@ def _build_state_config(
     config: dict[str, Any] = {
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
+        "adaptive_critique": adaptive_critique,
         "robustness": robustness,
         "mode": mode,
         "strict_notes": strict_notes,

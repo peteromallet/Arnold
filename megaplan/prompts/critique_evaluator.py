@@ -1,0 +1,346 @@
+"""Critique evaluator prompt — selects which critic model and lenses to fire.
+
+The evaluator reads the finished plan, the task graph, and the 9-lens
+catalog, then decides which lenses each available critic model should
+apply.  Every lens fires by default; a skip requires a concrete reason.
+"""
+
+from __future__ import annotations
+
+import textwrap
+from pathlib import Path
+from typing import Any
+
+from megaplan._core import (
+    intent_and_notes_block,
+    intent_brief_reference,
+    json_dump,
+    latest_plan_meta_path,
+    latest_plan_path,
+    read_json,
+)
+from megaplan.audits.robustness import CRITIQUE_CHECKS
+from megaplan.audits.critique_evaluator import CRITIC_MODEL_ROSTER
+from megaplan.types import PlanState
+
+
+def _render_differential_section(
+    flag_lifecycle: dict,
+    iteration_pressure: list,
+    gate_signals: dict,
+    iteration: int,
+) -> str:
+    """Render the revise-loop differential context block for iteration N >= 2."""
+    from megaplan.audits.iteration import render_pressure_table
+
+    flags = flag_lifecycle.get("flags", [])
+    verified = [f for f in flags if f.get("status") == "verified"]
+    signals = gate_signals.get("signals", {})
+    unresolved = signals.get("unresolved_flags", [])
+    recurring = signals.get("recurring_critiques", [])
+    trajectory = signals.get("loop_summary", "")
+    plan_delta = signals.get("plan_delta_from_previous")
+    delta_str = f"{plan_delta:.1f}%" if plan_delta is not None else "n/a"
+
+    reopened_entries = [e for e in iteration_pressure if e.get("addressed_then_reopened_count", 0) > 0]
+    recurring_group_entries = [e for e in iteration_pressure if e.get("iterations_open", 0) >= 2 and e.get("addressed_then_reopened_count", 0) == 0]
+
+    lines: list[str] = [
+        f"## Revise-Loop Differential Context (Iteration {iteration})",
+        "",
+        "This is a revise iteration. Use the signals below to assign lenses",
+        "differentially. Do NOT produce a per-section plan diff — use only",
+        f"flag-centric signals. Scalar plan delta from previous: **{delta_str}**.",
+        "",
+    ]
+
+    if verified:
+        lines.append("### Verified Flags — Do Not Re-Litigate")
+        lines.append("")
+        lines.append("These flags are already `verified`. Skip lenses whose **sole**")
+        lines.append("purpose would be to re-examine a concern already resolved here.")
+        lines.append("")
+        for f in verified:
+            lines.append(f"- `{f['id']}`: {f.get('concern', '')}")
+        lines.append("")
+
+    if reopened_entries:
+        lines.append("### Addressed-Then-Reopened Flags — Escalate")
+        lines.append("")
+        lines.append("These concerns were marked addressed but reopened. Assign a critic")
+        lines.append("at a **stronger** roster rank (lower rank number) for any lens that")
+        lines.append("touches these concerns.")
+        lines.append("")
+        for e in reopened_entries:
+            concern = e.get("representative_concern", "")[:80]
+            count = e.get("addressed_then_reopened_count", 0)
+            lines.append(
+                f"- Group `{e['fuzzy_group_id']}` (reopened {count}x): "
+                f"{concern} [flags: {', '.join(e.get('member_flag_ids', []))}]"
+            )
+        lines.append("")
+
+    if recurring_group_entries:
+        lines.append("### Recurring Flag Groups — Escalate")
+        lines.append("")
+        lines.append("These concerns have appeared across multiple iterations without being")
+        lines.append("addressed. Escalate critic rank for lenses touching these concerns.")
+        lines.append("")
+        for e in recurring_group_entries:
+            concern = e.get("representative_concern", "")[:80]
+            lines.append(
+                f"- Group `{e['fuzzy_group_id']}` ({e.get('iterations_open', 0)} iters): "
+                f"{concern} [flags: {', '.join(e.get('member_flag_ids', []))}]"
+            )
+        lines.append("")
+
+    pressure_table = render_pressure_table(iteration_pressure)
+    if pressure_table:
+        lines.append("### Iteration Pressure Summary")
+        lines.append("")
+        lines.append("```")
+        lines.append(pressure_table)
+        lines.append("```")
+        lines.append("")
+
+    if unresolved:
+        lines.append("### Unresolved Significant Flags (from prior gate)")
+        lines.append("")
+        for f in unresolved:
+            lines.append(
+                f"- `{f['id']}` [{f.get('category', '')} / {f.get('severity', '')}]: "
+                f"{f.get('concern', '')}"
+            )
+        lines.append("")
+
+    if recurring:
+        lines.append("### Recurring Critiques (from prior gate)")
+        lines.append("")
+        for r in recurring[:5]:
+            lines.append(f"- {r}")
+        lines.append("")
+
+    if trajectory:
+        lines.append("### Loop Trajectory")
+        lines.append("")
+        lines.append(trajectory)
+        lines.append("")
+
+    lines += [
+        "### Differential Assignment Rules",
+        "",
+        "1. **Escalate for recurring/reopened**: For any lens touching a concern",
+        "   resembling an addressed-then-reopened or recurring flag group above,",
+        "   assign a critic at a **stronger** rank (lower rank number).",
+        "2. **Verify just-addressed flags**: Fire lenses that can confirm whether",
+        "   flags from the prior critique were genuinely resolved in this revision.",
+        "3. **Skip verified flags**: Lenses whose sole purpose is to re-examine an",
+        "   already-`verified` flag should be skipped (cite the flag id in `why`).",
+        "4. **Flag-centric only**: No per-section plan diff. Reason only from the",
+        "   flag lifecycle and pressure signals above.",
+        "5. **Keep distinct from gate**: This differential assignment is NOT the",
+        "   gate's loop/no-loop decision. Assign lenses based on what needs fresh",
+        "   scrutiny, independent of whether the loop will continue.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _format_roster() -> str:
+    """Render the critic model roster as a sorted markdown table."""
+    lines = [
+        "| Rank | Model | Cost hint |",
+        "|------|-------|-----------|",
+    ]
+    for entry in CRITIC_MODEL_ROSTER:
+        lines.append(f"| {entry.rank} | {entry.model} | {entry.cost_hint} |")
+    return "\n".join(lines)
+
+
+def _format_lens_catalog() -> str:
+    """Render the 9-lens CRITIQUE_CHECKS as a structured catalog."""
+    lines = []
+    for check in CRITIQUE_CHECKS:
+        lines.append(
+            f"### Lens: `{check['id']}` (tier: {check['tier']}, "
+            f"category: {check['category']})"
+        )
+        lines.append(f"**Question:** {check['question']}")
+        guidance = check.get("guidance", "")
+        if guidance:
+            lines.append(f"**Guidance:** {guidance}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _critique_evaluator_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    flag_lifecycle: dict | None = None,
+    iteration_pressure: list | None = None,
+    gate_signals: dict | None = None,
+    revise_resolutions: list[dict[str, Any]] | None = None,
+    plan_diff: str | None = None,
+) -> str:
+    """Assemble the critique evaluator prompt.
+
+    Renders the finished plan + task graph, the intent/issue-hints/notes
+    block, the 9-lens catalog, the ranked critic model roster, and the
+    fire-by-default / justify-to-skip contract.
+
+    When iteration >= 2 and flag_lifecycle / iteration_pressure / gate_signals
+    are supplied, a differential context section is prepended that guides
+    escalation for recurring flags and verification of just-addressed ones.
+
+    When iteration >= 2 and revise_resolutions / plan_diff are supplied, a
+    verify block is rendered that asks the evaluator to adjudicate each
+    resolution claim against the plan diff.
+    """
+    project_dir = Path(state["config"]["project_dir"])
+    latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
+    latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
+    intent_block = intent_and_notes_block(state)
+
+    roster_table = _format_roster()
+    lens_catalog = _format_lens_catalog()
+
+    # Collect all known check ids for the contract
+    all_check_ids = [check["id"] for check in CRITIQUE_CHECKS]
+
+    iteration = state.get("iteration", 1)
+    differential_section = ""
+    if (
+        iteration >= 2
+        and flag_lifecycle is not None
+        and iteration_pressure is not None
+        and gate_signals is not None
+    ):
+        differential_section = _render_differential_section(
+            flag_lifecycle, iteration_pressure, gate_signals, iteration
+        ) + "\n\n"
+
+    # ── Verify block (iteration >= 2 with resolutions + diff) ──────────
+    verify_section = ""
+    if iteration >= 2 and revise_resolutions and plan_diff:
+        verify_lines: list[str] = [
+            "## Flag Resolution Verification",
+            "",
+            "The plan was revised in this iteration.  Below are every flag that",
+            "carried a resolution (addressed or rejected) from the reviser.",
+            "Compare each resolution claim against the unified plan diff and",
+            "emit a `flag_verifications` entry.",
+            "",
+        ]
+        for res in revise_resolutions:
+            fid = res.get("id", "?")
+            concern = res.get("concern", "")
+            evidence = res.get("evidence", "")
+            resolution = res.get("resolution", {})
+            kind = resolution.get("kind", "?") if isinstance(resolution, dict) else "?"
+            claim = resolution.get("claim", "") if isinstance(resolution, dict) else ""
+            where = resolution.get("where", "") if isinstance(resolution, dict) else ""
+            verify_lines.append(f"### Flag `{fid}` (revise action: {kind})")
+            verify_lines.append(f"- **Original concern:** {concern}")
+            verify_lines.append(f"- **Original evidence:** {evidence}")
+            verify_lines.append(f"- **Revise claim:** {claim}")
+            verify_lines.append(f"- **Revise where:** {where}")
+            verify_lines.append("")
+            if kind == "rejected":
+                verify_lines.append(
+                    "**Rejected flag rule:** This flag was rejected by the author "
+                    "as invalid or out of scope.  Only re-raise it if you have "
+                    "**NEW evidence the author missed**.  If the rejection stands, "
+                    "the outcome must be `accepted_tradeoff`."
+                )
+                verify_lines.append("")
+        verify_lines += [
+            "### Unified plan diff",
+            "",
+            "```diff",
+            plan_diff,
+            "```",
+            "",
+            "### Verification instructions",
+            "",
+            "For **each flag listed above**, pick the single most relevant lens",
+            f"(from {', '.join('`' + cid + '`' for cid in all_check_ids)}) and emit",
+            "one `flag_verifications` entry:",
+            "",
+            "- **`verified`** — the diff supports the resolution claim (the change",
+            "  described in the claim is visible in the diff).",
+            "- **`open`** — cosmetic or no-op change, or the diff does not support",
+            "  the claim.  The concern remains unresolved.",
+            "- **`accepted_tradeoff`** — the flag was soundly rejected AND the",
+            "  rejection stands (no new evidence).  Also use this for any flag",
+            "  where the revision intentionally chose not to address a real",
+            "  concern and the reasoning is defensible.",
+            "",
+            "Each entry needs: `flag_id`, `lens` (one of the lens ids above),",
+            "`outcome` (verified / open / accepted_tradeoff), and `rationale`",
+            "(cite specific lines from the diff or plan text).",
+            "",
+            "The `flag_verifications` field is OPTIONAL — only include it when",
+            "this verify block is present.  Omit it on iteration 1.",
+            "",
+        ]
+        verify_section = "\n".join(verify_lines) + "\n\n"
+
+    return textwrap.dedent(
+        f"""\
+        You are the Critique Evaluator. Your job is to decide which critic models
+        will apply which critique lenses for this plan.
+
+        Project directory:
+        {project_dir}
+
+        {intent_brief_reference(state)}
+
+        Finished plan:
+        {latest_plan}
+
+        Task graph (plan metadata):
+        {json_dump(latest_meta).strip()}
+
+        {intent_block}
+
+        {differential_section}{verify_section}## Critic Model Roster (rank 1 = strongest)
+
+        {roster_table}
+
+        The **evaluator model** (you) must be ranked **no weaker than** any critic
+        model you assign.  You cannot dispatch a lens to a model ranked stronger
+        than yourself.
+
+        ## Critique Lens Catalog ({len(CRITIQUE_CHECKS)} lenses)
+
+        {lens_catalog}
+
+        ## Assignment Contract
+
+        - **Fire by default**: every lens ({', '.join('`' + cid + '`' for cid in all_check_ids)})
+          fires unless you explicitly justify skipping it.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all {len(all_check_ids)} lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected lens** maps to a `critic_model` that appears in the
+          roster above AND whose roster rank is >= your own (i.e., the critic is
+          no stronger than the evaluator).
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of {{check_id, critic_model, why}} objects
+        - `skipped`: list of {{check_id, why}} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications` (OPTIONAL — only when the Flag Resolution
+          Verification section above is present): list of
+          {{flag_id, lens, outcome, rationale}} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"
+
+        Remember: the default is to fire every lens.  Skipping requires a
+        justification.  When you skip, explain *why this specific lens is
+        unnecessary for this specific plan* — do not write generic cop-outs.
+        """
+    ).strip()

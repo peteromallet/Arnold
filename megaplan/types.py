@@ -179,6 +179,8 @@ class FlagRecord(_FlagRecordRequired, total=False):
     verified_in: str
     addressed_in: str
     settled_by_tiebreaker: str
+    resolution: dict[str, Any]
+    verify_rationale: str
 
 
 class FlagRegistry(TypedDict):
@@ -620,10 +622,12 @@ DEFAULTS = {
     "execution.max_tasks_per_batch": 5,
     "orchestration.max_critique_concurrency": 6,
     "orchestration.mode": "subagent",
+    "execution.adaptive_critique": False,
 }
 
 _SETTABLE_BOOL = {
     "execution.auto_approve",
+    "execution.adaptive_critique",
     "execution.strict_notes",
 }
 

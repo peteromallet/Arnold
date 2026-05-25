@@ -114,19 +114,25 @@ def _apply_flag_updates(
     plan_dir: Path,
     iteration: int,
     artifact_prefix: str,
+    skip_flag_ids: frozenset[str] | None = None,
 ) -> FlagRegistry:
     registry = load_flag_registry(plan_dir)
     flags = registry.setdefault("flags", [])
     by_id: dict[str, FlagRecord] = {flag["id"]: flag for flag in flags}
     next_number = next_flag_number(flags)
+    _skip = skip_flag_ids or frozenset()
 
     for verified_id in payload.get("verified_flag_ids", []):
+        if verified_id in _skip:
+            continue
         if verified_id in by_id:
             by_id[verified_id]["status"] = "verified"
             by_id[verified_id]["verified"] = True
             by_id[verified_id]["verified_in"] = f"{artifact_prefix}_v{iteration}.json"
 
     for disputed_id in payload.get("disputed_flag_ids", []):
+        if disputed_id in _skip:
+            continue
         if disputed_id in by_id:
             by_id[disputed_id]["status"] = "disputed"
 
@@ -136,6 +142,8 @@ def _apply_flag_updates(
             proposed_id = make_flag_id(next_number)
             next_number += 1
         normalized = normalize_flag_record(raw_flag, proposed_id)
+        if normalized["id"] in _skip:
+            continue
         if normalized["id"] in by_id:
             existing = by_id[normalized["id"]]
             existing.update(normalized)
@@ -158,7 +166,55 @@ def _apply_flag_updates(
     return registry
 
 
-def update_flags_after_critique(plan_dir: Path, critique: dict[str, Any], *, iteration: int) -> FlagRegistry:
+def apply_flag_verifications(
+    plan_dir: Path,
+    verifications: list[dict[str, Any]],
+) -> set[str]:
+    """Apply evaluator flag_verifications before the critic runs.
+
+    Sets flag status/verified fields per outcome and writes verify_rationale.
+    For 'open': resets verified=False and clears verified_in so build_gate_signals
+    and review consumers don't see stale verified state.
+
+    Returns the set of flag_ids adjudicated (caller passes this to
+    update_flags_after_critique as skip_flag_ids so the critic cannot override
+    the evaluator's verdict).
+    """
+    if not verifications:
+        return set()
+    registry = load_flag_registry(plan_dir)
+    by_id: dict[str, Any] = {flag["id"]: flag for flag in registry.get("flags", [])}
+    adjudicated: set[str] = set()
+    for fv in verifications:
+        fid = fv.get("flag_id", "")
+        outcome = fv.get("outcome", "")
+        rationale = fv.get("rationale", "")
+        if not fid or fid not in by_id:
+            continue
+        flag = by_id[fid]
+        flag["verify_rationale"] = rationale
+        if outcome == "verified":
+            flag["status"] = "verified"
+            flag["verified"] = True
+            flag["verified_in"] = "evaluator_verdict.json"
+        elif outcome == "open":
+            flag["status"] = "open"
+            flag["verified"] = False
+            flag.pop("verified_in", None)
+        elif outcome == "accepted_tradeoff":
+            flag["status"] = "accepted_tradeoff"
+        adjudicated.add(fid)
+    save_flag_registry(plan_dir, registry)
+    return adjudicated
+
+
+def update_flags_after_critique(
+    plan_dir: Path,
+    critique: dict[str, Any],
+    *,
+    iteration: int,
+    skip_flag_ids: frozenset[str] | None = None,
+) -> FlagRegistry:
     from megaplan.audits.robustness import build_check_category_map, get_check_by_id
 
     critique.setdefault("flags", []).extend(
@@ -169,7 +225,13 @@ def update_flags_after_critique(plan_dir: Path, critique: dict[str, Any], *, ite
             id_prefix="CRITIQUE",
         )
     )
-    return _apply_flag_updates(critique, plan_dir=plan_dir, iteration=iteration, artifact_prefix="critique")
+    return _apply_flag_updates(
+        critique,
+        plan_dir=plan_dir,
+        iteration=iteration,
+        artifact_prefix="critique",
+        skip_flag_ids=skip_flag_ids,
+    )
 
 
 def update_flags_after_review(plan_dir: Path, review_payload: dict[str, Any], *, iteration: int) -> FlagRegistry:
@@ -195,6 +257,8 @@ def update_flags_after_revise(
     summary: str,
 ) -> FlagRegistry:
     addressed_ids: set[str] = set()
+    # Collect per-item resolution info for both addressed and rejected items.
+    item_resolutions: dict[str, dict[str, Any]] = {}
     for item in flags_addressed:
         if isinstance(item, str) and item:
             addressed_ids.add(item)
@@ -203,17 +267,48 @@ def update_flags_after_revise(
             continue
         flag_id = item.get("id")
         resolution = item.get("resolution", "addressed")
-        if isinstance(flag_id, str) and flag_id and resolution != "rejected":
+        if not isinstance(flag_id, str) or not flag_id:
+            continue
+        reason = item.get("reason", "")
+        where = item.get("where", "")
+        if resolution == "rejected":
+            item_resolutions[flag_id] = {
+                "kind": "rejected",
+                "claim": reason,
+                "where": where if isinstance(where, str) else "",
+            }
+        else:
             addressed_ids.add(flag_id)
+            item_resolutions[flag_id] = {
+                "kind": "fixed",
+                "claim": reason,
+                "where": where if isinstance(where, str) else "",
+            }
 
     registry = load_flag_registry(plan_dir)
     for flag in registry["flags"]:
-        if flag["id"] in addressed_ids:
+        fid = flag["id"]
+        if fid in addressed_ids:
             flag["status"] = "addressed"
             flag["addressed_in"] = plan_file
-            flag["evidence"] = summary
+        # Write resolution for any matched flag (addressed or rejected).
+        # Rejected items do NOT get status flipped to addressed.
+        if fid in item_resolutions:
+            flag["resolution"] = item_resolutions[fid]
     save_flag_registry(plan_dir, registry)
     return registry
+
+
+def flag_resolution_summary(flag: dict[str, Any]) -> str:
+    """Return the revise resolution claim when present, else fall back to evidence.
+
+    Consumers that show 'what the revise did' after the evidence-overwrite bug
+    was fixed should call this instead of reading flag["evidence"] directly.
+    """
+    resolution = flag.get("resolution")
+    if isinstance(resolution, dict) and resolution.get("claim"):
+        return resolution["claim"]
+    return flag.get("evidence", "")
 
 
 def update_flags_after_gate(

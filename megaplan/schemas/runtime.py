@@ -117,6 +117,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                         "id": {"type": "string"},
                         "resolution": {"type": "string", "enum": ["addressed", "rejected"]},
                         "reason": {"type": "string"},
+                        "where": {"type": "string"},
                     },
                     "required": ["id", "resolution", "reason"],
                     "additionalProperties": False,
