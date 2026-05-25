@@ -464,8 +464,12 @@ def compute_plan_delta_percent(previous_text: str | None, current_text: str) -> 
 def compute_recurring_critiques(plan_dir: Path, iteration: int) -> list[str]:
     if iteration < 2:
         return []
-    previous = read_json(current_iteration_artifact(plan_dir, "critique", iteration - 1))
-    current = read_json(current_iteration_artifact(plan_dir, "critique", iteration))
+    previous_path = current_iteration_artifact(plan_dir, "critique", iteration - 1)
+    current_path = current_iteration_artifact(plan_dir, "critique", iteration)
+    if not previous_path.exists() or not current_path.exists():
+        return []
+    previous = read_json(previous_path)
+    current = read_json(current_path)
     previous_concerns = {normalize_text(flag.get("concern", "")) for flag in previous.get("flags", []) if isinstance(flag, dict)}
     current_concerns = {normalize_text(flag.get("concern", "")) for flag in current.get("flags", []) if isinstance(flag, dict)}
     return sorted(previous_concerns.intersection(current_concerns))
