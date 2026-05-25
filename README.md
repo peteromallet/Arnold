@@ -1,241 +1,73 @@
 # Megaplan
 
-A planning and execution harness for structured phases — plan, critique, gate, revise, finalize, execute, and review — with independent critique and gating instead of one-shot attempts.
+A planning and execution harness that runs each phase of building software on the **cheapest model that can do it well** — pairing premium closed models with far cheaper open ones.
 
-## Quick Start
+## Philosophy — cheapest capable model per task
 
-Claude Code / Codex:
+Premium closed models (Claude, GPT/Codex) are overkill for the vast majority of software tasks. Open models that are **~40× cheaper** — primarily **DeepSeek v4-pro** — do most of the work just as reliably. Megaplan's goal is to make it as easy as possible to use the cheapest capable model for each task, and to spend premium-model budget only where it actually changes the outcome.
 
-```
-Please install megaplan and set it up for this project:
+So rather than one model doing everything, megaplan splits each run by difficulty:
 
-pip install megaplan-harness
-megaplan setup
+- **Cheap open models do the grunt work** — repository research (`prep`), focused critique, gating, and executing the easy, well-scoped tasks. These are mechanical, and the cheap models do them reliably.
+- **Premium closed models do two things only**: (1) **adjudicate** — decide which model should handle each task — and (2) **the hard tasks** the cheap models genuinely can't.
 
-Once you're done, ask me what I need megaplan for.
-```
-
-OpenRouter / open models:
-
-```
-Please install megaplan with the open-model backend and set it up:
-
-pip install 'megaplan-harness[agent]'
-
-Then create ~/.hermes/.env with:
-OPENROUTER_API_KEY=<my key>
-
-Then run: megaplan setup
-
-Once you're done, ask me what I need megaplan for.
-```
-
-The `[agent]` extra installs the vendored Hermes backend dependencies.
-
-Get an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys). Any model on OpenRouter works.
+The result: most tokens flow through a model 40× cheaper, with premium spend reserved for judgment and difficulty.
 
 ## How it works
 
 ```
-plan → critique → gate → [revise → critique → gate]* → finalize → execute → review
+prep → plan → critique → gate → [revise → critique → gate]* → finalize → execute → review
 ```
 
-Each phase can use a different model. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`.
+Every phase runs on a different model. In the default **`partnered`** profile:
 
-Run the phases manually with:
+| Cheap (DeepSeek) | Premium (Claude or Codex) |
+|---|---|
+| `prep` — repository research | `plan` / `revise` — design the plan |
+| `gate` — mechanical pass/fail | `critique` — independent review |
+| `execute` — easy tasks (tiers 1–3) | `finalize` — **adjudicates** task difficulty 1–5 |
+| | `execute` — hard tasks (tiers 4–5 → Sonnet/Opus) |
+| | `review` |
+
+`finalize` is the **adjudicator**: it scores each task's complexity 1–5, and that score routes execution — trivial tasks to DeepSeek-flash, ordinary tasks to DeepSeek-pro, and only cross-cutting (4) or fundamental (5) tasks up to Sonnet/Opus. Independent critique and gating prevent rubber-stamping, and the visible `prep` phase makes repository investigation observable instead of hiding it inside `plan`.
+
+See **[docs/megaplan-decision.md](docs/megaplan-decision.md)** for choosing a profile, robustness level, and thinking tier for the work in front of you.
+
+## Quick start
+
+```
+pip install 'megaplan-harness[agent]'
+megaplan setup
+```
+
+`megaplan setup` detects your installed agents and walks you through credentials. The default `partnered` profile pairs **one premium model** with **cheap DeepSeek**, so you need two things:
+
+- **A premium model** — **Claude** (the default; your Claude Code login or `ANTHROPIC_API_KEY`) **or Codex** (your Codex login or `OPENAI_API_KEY`, selected with `--vendor codex`).
+- **DeepSeek access** for the cheap phases — a **`DEEPSEEK_API_KEY`** (the default route) or a **Fireworks** key (`FIREWORKS_API_KEY`, via `--deepseek-provider fireworks`).
+
+Direct-provider keys live in `~/.hermes/.env`. Then point megaplan at an idea:
 
 ```bash
 megaplan init --project-dir . "Fix the authentication bug in login.py"
-megaplan plan --plan <name>
-megaplan critique --plan <name>
-megaplan gate --plan <name>
-megaplan finalize --plan <name>
-megaplan execute --plan <name>
 ```
 
-## Metaplan mode — planning documents instead of code
+In subagent mode (the default for Claude Code and Codex) the agent drives the phases and returns at breakpoints. To run them by hand: `megaplan plan|critique|gate|finalize|execute --plan <name>`.
 
-Metaplan mode produces a single document artifact — design spec, architecture doc, research note, RFC, proposal, post-mortem, migration plan — instead of a code diff. Pick it at `init` with `--mode metaplan` (or `--mode doc`, the original flag name kept as an alias) and `--output <path>`:
+## Everything else
 
-```bash
-megaplan init --project-dir . --mode metaplan --output docs/new-cache-layer.md \
-  "Design a two-tier cache for the ingest pipeline"
-```
+- **Different models per phase** — pick a named profile (`megaplan init --profile <name>`) or override one phase (`--phase-model execute=claude`). Inspect with `megaplan config profiles list`; define your own in `.megaplan/profiles.toml`. Built-ins span all-Claude, all-Codex, all-DeepSeek, and all-open (Kimi/GLM via OpenRouter).
+- **Cloud runs** — `megaplan cloud` runs a plan (or a whole chain) on a remote Railway box with a persistent workspace volume, so it outlives your terminal. Ask your agent to `megaplan cloud bootstrap <idea>`. See [docs/cloud.md](docs/cloud.md).
+- **Bake-offs** — `megaplan bakeoff` runs the same idea through multiple profiles concurrently (one git worktree each), compares the results, and merges only the human-picked winner — the way to find the cheapest model mix that still passes review.
+- **Metaplan mode** — produce a design doc / RFC / spec instead of a code diff: `megaplan init --mode metaplan --output docs/foo.md "..."`.
+- **Robustness levels** — `--robustness light|standard|robust|superrobust` dials critique depth and parallelism, from a single critique pass up to parallel critique + parallel review.
+- **Database mode** — keep state in Supabase Postgres instead of `.megaplan/` for shared state across machines and cloud runs (`pip install 'megaplan-harness[db]'`, then set `MEGAPLAN_ACTOR_ID`).
+- **Observability** — `megaplan status --plan <name>` shows the active step, cost, execute progress, and next-step guidance.
+- **Configuration** — `megaplan config show | set <key> <value> | reset` tunes timeouts, critique concurrency, and per-phase agents.
 
-It respects every other flag (`--robustness`, `--auto-approve`, `--phase-model`, subagent mode, overrides) and uses authoring-focused prep/execute/review prompts plus a section-based execute schema (`sections_written`) instead of per-file changes. A common pattern is to run metaplan mode first, then `--mode code` against an idea that references the resulting document.
-
-Note: `prep` is a visible repository-investigation *phase* inside every run, not a separate mode.
-
-## Using different models per phase
-
-Every phase can run on a different model. Pick a named **profile** or override phases one at a time.
-
-```bash
-megaplan init --profile all-open "your idea"                    # all phases on open-source models
-megaplan init --profile all-open --phase-model execute=claude "your idea"   # override one phase
-```
-
-Built-in profiles:
-
-- **standard** — Claude for planning/revision, Codex for execution and critique (mirrors the default routing)
-- **all-open** — Fireworks-hosted Kimi `kimi-k2p6` for planning/revision, `glm-5.1` for execution and critique (via Hermes)
-- **all-deepseek-pro** — `deepseek-v4-pro` for every phase (defaults to DeepSeek's direct API; add `--deepseek-provider fireworks` for Fireworks)
-- **all-deepseek-pro-direct** — `deepseek-v4-pro` for every phase (via DeepSeek's direct API)
-- **all-deepseek-flash** — native DeepSeek `deepseek-v4-flash` for every phase (via Hermes)
-- **all-fireworks-deepseek** — Fireworks-hosted DeepSeek for every phase (via Hermes)
-
-Define your own in `.megaplan/profiles.toml` (per-project) or `~/.config/megaplan/profiles.toml` (user-wide):
-
-```toml
-[profiles.my-mix]
-plan     = "hermes:fireworks:accounts/fireworks/models/kimi-k2p6"
-execute  = "hermes:glm-5.1"
-review   = "codex"
-```
-
-Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
-
-Mixed profiles that include canonical DeepSeek v4-pro slots default to DeepSeek's direct API through `DEEPSEEK_API_KEY`. Add `--deepseek-provider fireworks` to route those slots through Fireworks instead.
-
-Model strings take the form `<agent>[:<model>]`. Agents are `claude`, `codex`, or `hermes`. After `hermes:`, a slug with a slash (e.g. `meta-llama/llama-3.3-70b`) routes via OpenRouter; a prefixed direct model (`deepseek:deepseek-v4-pro`, `hermes:fireworks:accounts/fireworks/models/kimi-k2p6`) uses that provider directly; a bare name (`glm-5.1`) uses the matching direct provider. Direct-provider keys live in `~/.hermes/.env`:
-
-```bash
-OPENROUTER_API_KEY=...
-ZHIPU_API_KEY=...          # for glm-* direct
-MINIMAX_API_KEY=...        # for MiniMax-* direct
-DEEPSEEK_API_KEY=...       # for deepseek:* direct
-FIREWORKS_API_KEY=...      # for fireworks:* direct
-```
-
-## Robustness levels
-
-- **light** — visible `prep` + one critique/revise pass, no gate or review
-- **standard** — visible `prep` + 4 critique checks (default)
-- **robust** — visible `prep` + 8 critique checks + parallel critique
-- **superrobust** — same as robust + parallel review
-
-## Observability
-
-```bash
-megaplan status --plan <name>
-```
-
-Use `status` to monitor `active_step`, `last_step`, notes, cost, execute progress, and next-step runtime guidance (`watch` remains a backward-compatible alias).
-
-## Cloud runs
-
-`megaplan cloud` deploys a plan to a remote runner backed by a persistent workspace volume. Sprint 2 adds `local` and `ssh` providers plus thin wrapper workflows for `megaplan cloud bootstrap <idea-file>`, `megaplan cloud chain <spec>`, and `megaplan cloud status --chain`. See [docs/cloud.md](docs/cloud.md) for `cloud.yaml` fields, provider notes, file-staging workflows, marker behavior, and log-redaction scope.
-
-```bash
-megaplan cloud init       # scaffold cloud.yaml
-megaplan cloud deploy     # upload secrets and launch the runner
-megaplan cloud bootstrap ideas/tiny.txt
-```
-
-## Bake-off runs
-
-`megaplan bakeoff` runs the same idea through multiple profiles concurrently, one detached git worktree per profile, then archives all evaluation data while merging only the human-selected winner's code changes.
-
-```bash
-megaplan bakeoff run --idea-file ideas/cache.md --profiles standard all-open all-kimi --exp-id cache-bakeoff
-megaplan bakeoff status --exp cache-bakeoff
-megaplan bakeoff tail --exp cache-bakeoff --profile standard
-megaplan bakeoff compare --exp cache-bakeoff
-megaplan bakeoff pick --exp cache-bakeoff --profile standard --rationale "Best review result and smallest diff."
-megaplan bakeoff merge --exp cache-bakeoff
-```
-
-The comparison step is explicit and re-runnable. It writes `.megaplan/bakeoffs/<exp-id>/comparison.json` and `comparison.md`; `pick` records the final human decision; `merge` applies the winner patch to the main tree and copies every profile's audit archive. Use `resume` to relaunch only non-terminal profiles, and `abandon` to remove retained worktrees while keeping the bake-off archive:
-
-```bash
-megaplan bakeoff resume --exp cache-bakeoff
-megaplan bakeoff abandon --exp cache-bakeoff
-```
-
-Judge contract:
-
-- Omit `--judge` -> skip (no paid call).
-- `--judge auto` -> first free of `claude`/`codex`/`gpt-5` with canonical agent+model comparison.
-- `--judge <model>` -> explicit.
-
-## Subagent mode (Claude Code / Codex)
-
-Subagent mode delegates the full workflow to an autonomous agent and returns control only at defined breakpoints. It is the default orchestration mode for Claude Code and Codex; Cursor continues to run inline.
-
-```bash
-megaplan config set orchestration.mode subagent   # default
-megaplan config set orchestration.mode inline      # switch back
-```
-
-## Database mode
-
-By default megaplan keeps state in `.megaplan/` on local disk. Switch to a Supabase Postgres database when you want shared state across machines, cloud runs, or multi-agent setups. Paste this to your agent:
-
-```
-Please set megaplan up in database mode.
-
-0. Install the DB extra (psycopg lives behind it):
-
-     pip install 'megaplan-harness[db]'
-
-1. Connection string. If SUPABASE_DB_URL isn't already exported, ask me which
-   Supabase project to use, then walk me through fetching it:
-     Supabase dashboard → Project Settings → Database → Connection string.
-   Use the **Direct connection** URI (port 5432) — NOT the transaction-mode
-   pooler (port 6543), which drops the session config var that `set_actor`
-   relies on. The password is the one I picked when I created the project;
-   I can reset it from the same page if I've forgotten it. Export it as
-   SUPABASE_DB_URL.
-
-2. Schema. Apply every file in supabase/migrations/*.sql, in filename order,
-   against SUPABASE_DB_URL. Use `supabase db push` if I have the Supabase CLI
-   linked; otherwise loop `psql "$SUPABASE_DB_URL" -f <file>`.
-
-3. Register me as an actor. Pick a short slug for me (e.g. my GitHub handle),
-   then run:
-
-     python -c "import uuid; from megaplan.store.db import DBStore; \
-     DBStore().create_automation_actor(actor_id='<slug>', name='<my name>', \
-     granted_epic_ids='*', actor_kind='human', idempotency_key=str(uuid.uuid4()))"
-
-   Add `export MEGAPLAN_ACTOR_ID=<slug>` to my shell profile. That env var
-   alone is enough to switch megaplan into DB mode — no per-command flag.
-
-4. Optional — blob uploads. To stash large artifacts in Supabase Storage
-   instead of `.megaplan/db-blobs/`, first create a bucket under the
-   dashboard's Storage tab (private is fine), then export:
-     - SUPABASE_URL              → Project Settings → API → Project URL
-     - SUPABASE_SERVICE_ROLE_KEY → Project Settings → API → `service_role` key
-       (sensitive; server-side only — never commit or expose to a browser)
-     - SUPABASE_STORAGE_BUCKET   → the bucket name from the step above
-
-Confirm by running `megaplan init "test idea"` and checking that a row lands
-in the `epics` table.
-```
-
-## Configuration & Defaults
-
-View all settings with `megaplan config show`. Override with `megaplan config set <key> <value>`. Reset with `megaplan config reset`.
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `orchestration.mode` | `subagent` | `inline` or `subagent` (Claude Code and Codex) |
-| `orchestration.max_critique_concurrency` | `5` | Max parallel critique checks (covers all `full`-robustness core checks in one wave) |
-| `execution.worker_timeout_seconds` | `7200` | Worker process timeout (seconds) |
-| `execution.max_execute_no_progress` | `3` | No-progress execute attempts before escalation |
-| `execution.max_review_rework_cycles` | `3` | Review→rework loops before force-proceeding |
-| `agents.<step>` | varies | Agent for each phase (`claude`, `codex`, `hermes`) |
-
-```bash
-megaplan config set execution.worker_timeout_seconds 3600
-megaplan config set agents.critique hermes
-megaplan config reset
-```
-
-## Code Health
+## Code health
 
 <img src="docs/assets/scorecard.png" width="100%">
 
 ## License
 
-[Open Source Native License (OSNL) 0.2](LICENSE). Free for internal use by anyone, including commercial companies. Redistribution inside a product or service is free for entities that open-source their own primary assets; otherwise requires a separate commercial license. See [LICENSE](LICENSE) for the full terms.
+[Open Source Native License (OSNL) 0.2](LICENSE). Free for internal use by anyone, including commercial companies. Redistribution inside a product or service is free for entities that open-source their own primary assets; otherwise requires a separate commercial license. See [LICENSE](LICENSE) for full terms.
