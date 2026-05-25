@@ -88,6 +88,24 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 evaluator_model = _rank_input
                 evaluator_resolved = resolved
             _eval_prompt_kwargs: dict[str, Any] | None = None
+            # Prep context — feed the evaluator the prep research record (dossier +
+            # coverage metrics) so it selects lenses knowing what was investigated
+            # and where prep left gaps. Available from iteration 1 onward.
+            _prep_dossier_path = plan_dir / "prep_dossier.md"
+            _prep_metrics_path = plan_dir / "prep_metrics.json"
+            _prep_dossier_text = (
+                _prep_dossier_path.read_text(encoding="utf-8")
+                if _prep_dossier_path.exists()
+                else None
+            )
+            _prep_metrics = (
+                read_json(_prep_metrics_path) if _prep_metrics_path.exists() else None
+            )
+            if _prep_dossier_text or _prep_metrics:
+                _eval_prompt_kwargs = {
+                    "prep_dossier_text": _prep_dossier_text,
+                    "prep_metrics": _prep_metrics,
+                }
             if iteration >= 2:
                 from megaplan.audits.iteration import compute_iteration_pressure as _compute_iteration_pressure
                 from megaplan.prompts.critique import _plan_version_unified_diff
@@ -105,6 +123,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 ]
                 _diff = _plan_version_unified_diff(plan_dir, iteration)
                 _eval_prompt_kwargs = {
+                    **(_eval_prompt_kwargs or {}),
                     "flag_lifecycle": _registry,
                     "iteration_pressure": _compute_iteration_pressure(plan_dir, state),
                     "gate_signals": build_gate_signals(plan_dir, state, root),
