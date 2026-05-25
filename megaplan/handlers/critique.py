@@ -187,6 +187,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             except Exception as exc:
                 fallback_checks = checks_for_robustness(robustness) or checks_for_robustness("standard")
                 active_checks = list(fallback_checks)
+                fallback_check_ids = [c["id"] for c in active_checks]
                 _append_to_meta(state, "critique_evaluator_warnings", {
                     "error": str(exc),
                     "fallback": "static_checks_for_robustness",
@@ -196,8 +197,28 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     "evaluator_model": evaluator_model,
                     "fallback": True,
                     "fallback_reason": str(exc),
-                    "static_checks_used": [c["id"] for c in active_checks],
+                    "static_checks_used": fallback_check_ids,
                 })
+                # Loudly surface the downgrade. Until this branch printed to
+                # stderr the adaptive critique could silently degrade to a
+                # static lens list for the entire run with no operator-visible
+                # signal (the warning was written only to state.meta, which is
+                # never read interactively). When this fires the premium
+                # evaluator never ran, so every iteration's critique uses the
+                # same hand-curated robustness checks regardless of plan
+                # content. Treat it as a real config/wiring incident, not a
+                # routine fallback.
+                print(
+                    f"[megaplan] WARNING: critique_evaluator failed ({type(exc).__name__}: {exc}); "
+                    f"adaptive critique is silently downgraded to the static "
+                    f"{robustness!r} lens set ({len(fallback_check_ids)} lenses: "
+                    f"{', '.join(fallback_check_ids)}). The premium evaluator did NOT run "
+                    f"and will NOT run on subsequent iterations of this plan. Investigate "
+                    f"the critique_evaluator wiring (profile slot, schema, prompt) before "
+                    f"trusting this plan's critique output.",
+                    file=sys.stderr,
+                    flush=True,
+                )
             expected_ids = [check["id"] for check in active_checks]
         else:
             active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
