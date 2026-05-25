@@ -3213,6 +3213,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init_parser.add_argument("--name")
     init_parser.add_argument("--auto-approve", action="store_true", default=None)
+    init_parser.add_argument("--adaptive-critique", action="store_true", default=None)
     init_parser.add_argument(
         "--strict-notes",
         action="store_true",

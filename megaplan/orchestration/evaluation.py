@@ -664,11 +664,13 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
         previous_text = previous_plan_path.read_text(encoding="utf-8")
     plan_delta = compute_plan_delta_percent(previous_text, latest_plan_text)
     recurring = compute_recurring_critiques(plan_dir, iteration)
+    from megaplan.flags import flag_resolution_summary
+
     resolved_flags = [
         {
             "id": flag["id"],
             "concern": flag["concern"],
-            "resolution": flag.get("evidence", ""),
+            "resolution": flag_resolution_summary(flag),
         }
         for flag in flag_registry["flags"]
         if flag["status"] == "verified"

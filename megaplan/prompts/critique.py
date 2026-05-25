@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,28 @@ def _settled_decisions_block(decisions: list[dict[str, Any]]) -> str:
         "decision you are challenging and why."
     )
     return "\n".join(lines)
+
+
+def _plan_version_unified_diff(plan_dir: Path, iteration: int) -> str:
+    """Return a unified diff between plan_v{N-1}.md and plan_v{N}.md.
+
+    Returns an empty string when iteration < 2 or either file is missing.
+    """
+    if iteration < 2:
+        return ""
+    prev_path = plan_dir / f"plan_v{iteration - 1}.md"
+    curr_path = plan_dir / f"plan_v{iteration}.md"
+    if not prev_path.exists() or not curr_path.exists():
+        return ""
+    prev_lines = prev_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    curr_lines = curr_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        prev_lines,
+        curr_lines,
+        fromfile=f"plan_v{iteration - 1}.md",
+        tofile=f"plan_v{iteration}.md",
+    )
+    return "".join(diff)
 
 
 def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
@@ -93,7 +116,11 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
         - Update the plan to address the significant issues.
         - Keep the plan readable and executable.
-        - Return flags_addressed with the exact flag IDs you addressed.
+        - Return flags_addressed with the exact flag IDs you addressed or rejected. For each flag, include:
+          - `id`: the flag ID
+          - `resolution`: `"addressed"` (you incorporated the fix) or `"rejected"` (the flag is invalid or out of scope)
+          - `reason`: a concise explanation of what was changed or why the flag was rejected
+          - `where`: a pointer to the plan section / files the change or claim points at (e.g., "Phase 2 — Step 3", "README.md §API")
         - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
         - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
         - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}}`.
@@ -198,7 +225,23 @@ def _build_critique_prompt(
     state: PlanState,
     context: dict[str, Any],
     critique_review_block: str,
+    revise_context: str = "",
+    selection_why: dict[str, str] | None = None,
 ) -> str:
+    revise_block = ""
+    if revise_context:
+        revise_block = (
+            "Revise context (what changed since the last plan version):\n"
+            f"{revise_context}\n\n"
+        )
+    why_block = ""
+    if selection_why:
+        why_lines = ["Evaluator targeting notes (why each lens was selected for this iteration):"]
+        for check_id, why in selection_why.items():
+            if why:
+                why_lines.append(f"- {check_id}: {why}")
+        if len(why_lines) > 1:
+            why_block = "\n".join(why_lines) + "\n\n"
     return textwrap.dedent(
         f"""
         You are an independent reviewer. Critique the plan against the actual repository.
@@ -224,7 +267,7 @@ def _build_critique_prompt(
 
         {_settled_decisions_block(context.get("settled_tiebreaker_decisions", []))}
 
-        {critique_review_block}
+        {why_block}{revise_block}{critique_review_block}
 
         Additional guidelines:
         - Robustness level: {context["robustness"]}. {robustness_critique_instruction(context["robustness"])}
@@ -283,9 +326,20 @@ def write_single_check_template(
     return output_path
 
 
-def _critique_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
+def _critique_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    active_checks: list[dict[str, Any]] | None = None,
+    expected_ids: list[str] | None = None,
+    revise_context: str = "",
+    selection_why: dict[str, str] | None = None,
+) -> str:
     context = _critique_context(state, plan_dir, root)
-    active_checks = select_active_checks(state, context["robustness"], plan_dir=plan_dir)
+    if active_checks is None:
+        active_checks = select_active_checks(state, context["robustness"], plan_dir=plan_dir)
+    else:
+        active_checks = tuple(active_checks)
     # Write the template file — this is both the guide and the output
     output_path = _write_critique_template(plan_dir, state, active_checks)
     iteration = state.get("iteration", 1)
@@ -337,7 +391,7 @@ def _critique_prompt(state: PlanState, plan_dir: Path, root: Path | None = None)
             Workflow: read the file → investigate → read file again → add findings → write file back.
         """
         ).strip()
-    return _build_critique_prompt(state, context, critique_review_block)
+    return _build_critique_prompt(state, context, critique_review_block, revise_context=revise_context, selection_why=selection_why)
 
 
 def single_check_critique_prompt(
