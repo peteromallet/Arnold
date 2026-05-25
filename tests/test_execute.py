@@ -955,6 +955,58 @@ def test_auto_attribute_one_batch_handler_persists_per_batch_audit(
     ]
 
 
+def test_one_batch_handler_splits_wide_independent_wave_at_ceiling(
+    plan_fixture: PlanFixture,
+) -> None:
+    # Regression guard: 8 dependency-independent tasks form a single topological
+    # wave, but the runtime ceiling (default 5) must split them into 2 batches at
+    # dispatch. Asserts the split is wired into the dispatch path itself, not just
+    # available as a helper — the gap that previously let the ceiling silently
+    # regress (split_oversized_batches was exported but no longer called).
+    _setup_single_auto_attribute_plan(plan_fixture)
+    finalize_path = plan_fixture.plan_dir / "finalize.json"
+    finalize_data = read_json(finalize_path)
+    finalize_data["tasks"] = [
+        {
+            "id": f"T{i}",
+            "description": f"Independent task {i}.",
+            "depends_on": [],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+        for i in range(1, 9)
+    ]
+    finalize_path.write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    # batch_number is out of range; the error message embeds the dispatch-level
+    # batch count, which must reflect the 5+3 split (2 batches), not the raw
+    # single 8-task wave.
+    with pytest.raises(megaplan.CliError, match=r"Plan has 2 batch\(es\)"):
+        megaplan.execute.core.handle_execute_one_batch(
+            root=plan_fixture.root,
+            plan_dir=plan_fixture.plan_dir,
+            state=state,
+            args=plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                confirm_destructive=True,
+                user_approved=True,
+                batch=99,
+            ),
+            batch_number=99,
+            auto_approve=False,
+            agent="codex",
+            mode="persistent",
+            refreshed=False,
+        )
+
+
 def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv(megaplan.handlers.MOCK_ENV_VAR, raising=False)
     monkeypatch.setattr(megaplan.handlers.shutil, "which", lambda name: "/usr/bin/pytest")
