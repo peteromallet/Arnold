@@ -1,0 +1,48 @@
+# Nightly RunPod smoke job.
+#
+# Schedule: 05:00 UTC (~midnight ET) every day, plus manual `workflow_dispatch`
+# for ops. Provisions one cheap RunPod pod, runs `tests/smoke/test_p1_runpod.py`
+# under the `--runpod` marker, and the per-pytest-invocation budget is capped
+# at $2 via VIBECOMFY_RUNPOD_BUDGET_USD (enforced by tests/smoke/_runpod_helpers.py).
+#
+# Failure notification: this workflow relies on GitHub's default
+# email-on-failure for the workflow run — the recipient is whoever has
+# notifications enabled for Actions on this repository. There is no Slack/PagerDuty
+# integration in this file; if the team adds one, wire it in here.
+#
+# Required repo secrets (configured by a human under
+# Settings -> Secrets and variables -> Actions; see user_action U1):
+#   RUNPOD_API_KEY            RunPod account API key
+#   VIBECOMFY_RUNPOD_STORAGE  Name of the RunPod network volume to mount
+
+name: nightly-runpod
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+      VIBECOMFY_RUNPOD_STORAGE: ${{ secrets.VIBECOMFY_RUNPOD_STORAGE }}
+      VIBECOMFY_RUNPOD_BUDGET_USD: "2"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          uv venv --seed
+          .venv/bin/python -m pip install -e ".[dev,runpod-launch]"
+
+      - name: Run RunPod p1 smoke
+        run: .venv/bin/pytest --runpod tests/smoke/test_p1_runpod.py -q

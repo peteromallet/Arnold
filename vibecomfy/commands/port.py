@@ -25,6 +25,7 @@ from vibecomfy.porting.strict_ready import (
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.ui_emitter import default_output_path, emit_ui_json
 from vibecomfy.porting.workbench import analyze_source, load_port_source
 from vibecomfy.schema import ConversionSchemaProvider, get_schema_provider
 from vibecomfy.schema.cache import latest_object_info_cache_path
@@ -684,11 +685,184 @@ def register(subparsers) -> None:
     repair.add_argument("--write", action="store_true")
     repair.set_defaults(func=_cmd_port_repair)
 
+    export = port_subparsers.add_parser(
+        "export",
+        help="Emit a VibeWorkflow IR back to a ComfyUI litegraph JSON file.",
+        description=(
+            "Render a workflow (ready id, JSON path, or scratchpad) back to the "
+            "litegraph JSON shape the ComfyUI web editor loads.  "
+            "Default output is out/ui_export/<name>.json.  "
+            "Use --json for a machine-readable result envelope."
+        ),
+    )
+    export.add_argument("workflow", help="Workflow ready id, JSON path, or .py scratchpad.")
+    export.add_argument(
+        "--to",
+        choices=["ui"],
+        default="ui",
+        help="Target format.  Only 'ui' (litegraph JSON) is supported in M1 (default: ui).",
+    )
+    export.add_argument("--out", default=None, help="Override the output file path.")
+    export.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Fail if any node has a schema-less class type or a low-confidence schema "
+            "(widget_schema_fallback tier, confidence ≤ 0.3)."
+        ),
+    )
+    export.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a machine-readable JSON result envelope instead of plain text.",
+    )
+    export.add_argument(
+        "--runtime-object-info",
+        action="store_true",
+        help="Opt in to live /object_info schema evidence from a running ComfyUI server.",
+    )
+    export.add_argument(
+        "--object-info-cache",
+        help="Use a captured ComfyUI /object_info JSON file as offline schema evidence.",
+    )
+    export.add_argument(
+        "--no-object-info-cache",
+        action="store_true",
+        help="Do not use cached /object_info schema evidence.",
+    )
+    export.add_argument(
+        "--server-url",
+        help="ComfyUI server URL for live /object_info (requires --runtime-object-info).",
+    )
+    export.set_defaults(func=_cmd_port_export)
+
+
+def _cmd_port_export(args: argparse.Namespace) -> int:
+    """Handle `port export --to ui`.
+
+    Loads the workflow, emits litegraph JSON via emit_ui_json, writes it to the
+    T9 default_output_path (overridable by --out), prints a loud recovery report,
+    and optionally emits the documented --json shape.
+
+    --json shape (stable, documented):
+        {
+          "output_path": str,        # absolute path of the written file
+          "nodes": int,              # number of nodes in the emitted envelope
+          "diagnostics": [           # per-node provenance / recovery events
+            {"node_id": str, "kind": str, "detail": str}
+          ],
+          "schema_provenance": [     # raw provenance dicts from the recovery report
+            {node_id, class_type, provider, confidence, schema_less, ...}
+          ]
+        }
+    """
+    schema_provider = _build_conversion_provider(args)
+    try:
+        loaded = load_port_source(args.workflow, schema_provider=schema_provider)
+    except Exception as exc:
+        msg = f"port export: failed to load workflow '{args.workflow}': {exc}"
+        if args.json:
+            print(json.dumps({"status": "error", "message": msg}, indent=2))
+        else:
+            print(msg, file=sys.stderr)
+        return 1
+
+    wf = loaded.workflow
+    recovery_report: list[dict[str, Any]] = []
+    try:
+        envelope = emit_ui_json(
+            wf,
+            schema_provider=schema_provider,
+            strict=args.strict,
+            recovery_report=recovery_report,
+        )
+    except ValueError as exc:
+        msg = f"port export: strict mode rejected workflow: {exc}"
+        if args.json:
+            print(json.dumps({"status": "error", "message": msg, "schema_provenance": recovery_report}, indent=2))
+        else:
+            print(msg, file=sys.stderr)
+        return 1
+
+    out_path = default_output_path(wf, out=args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+
+    # Build diagnostics list from recovery_report entries.
+    diagnostics: list[dict[str, Any]] = []
+    for entry in recovery_report:
+        node_id = entry.get("node_id", "?")
+        class_type = entry.get("class_type", "?")
+        schema_less = entry.get("schema_less", False)
+        confidence = entry.get("confidence")
+        provider = entry.get("provider", "unknown")
+        defaulted = entry.get("control_after_generate_defaulted", False)
+        skipped = entry.get("skipped")
+
+        if schema_less:
+            diagnostics.append({
+                "node_id": node_id,
+                "kind": "schema_less",
+                "detail": f"{class_type}: no schema available; slots emitted in link-appearance order",
+            })
+        elif confidence is not None and confidence <= 0.3:
+            diagnostics.append({
+                "node_id": node_id,
+                "kind": "low_confidence",
+                "detail": f"{class_type}: low-confidence schema (provider={provider}, confidence={confidence})",
+            })
+        if defaulted:
+            diagnostics.append({
+                "node_id": node_id,
+                "kind": "control_after_generate_defaulted",
+                "detail": f"{class_type}: control_after_generate not retained in metadata; emitted default 'fixed'",
+            })
+        if skipped:
+            diagnostics.append({
+                "node_id": node_id,
+                "kind": "skipped",
+                "detail": f"{class_type}: {skipped}",
+            })
+
+    node_count = len(envelope.get("nodes", []))
+
+    if args.json:
+        payload: dict[str, Any] = {
+            "output_path": str(out_path.resolve()),
+            "nodes": node_count,
+            "diagnostics": diagnostics,
+            "schema_provenance": recovery_report,
+        }
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    # Default text recovery report — loud about unrecoverable content.
+    print(f"port export: wrote {node_count} node(s) → {out_path}")
+    schema_less_nodes = [e for e in recovery_report if e.get("schema_less")]
+    low_conf_nodes = [e for e in recovery_report if not e.get("schema_less") and (e.get("confidence") or 1.0) <= 0.3]
+    defaulted_nodes = [e for e in recovery_report if e.get("control_after_generate_defaulted")]
+    if schema_less_nodes:
+        print(f"WARNING: {len(schema_less_nodes)} schema-less node(s) — slots emitted best-effort:")
+        for e in schema_less_nodes:
+            print(f"  [{e.get('node_id')}] {e.get('class_type')}")
+    if low_conf_nodes:
+        print(f"WARNING: {len(low_conf_nodes)} low-confidence node(s) (widget_schema_fallback):")
+        for e in low_conf_nodes:
+            print(f"  [{e.get('node_id')}] {e.get('class_type')} (confidence={e.get('confidence')})")
+    if defaulted_nodes:
+        print(f"NOTE: {len(defaulted_nodes)} node(s) with control_after_generate defaulted to 'fixed':")
+        for e in defaulted_nodes:
+            print(f"  [{e.get('node_id')}] {e.get('class_type')}")
+    if not schema_less_nodes and not low_conf_nodes and not defaulted_nodes:
+        print("Recovery report: no issues detected.")
+    return 0
+
 
 __all__ = [
     "register",
     "_cmd_port_check",
     "_cmd_port_convert",
+    "_cmd_port_export",
     "_cmd_port_inventory",
     "_cmd_port_repair",
     "_cmd_port_widgets",

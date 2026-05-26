@@ -26,14 +26,19 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    import os
+
     runpod_enabled = config.getoption("--runpod")
     runpod_full_enabled = config.getoption("--runpod-full")
-    if runpod_enabled and runpod_full_enabled:
-        return
+    comfy_enabled = os.environ.get("VIBECOMFY_COMFY_SMOKE") == "1"
     selected: list[pytest.Item] = []
     deselected: list[pytest.Item] = []
     for item in items:
-        if "runpod_full" in item.keywords and not runpod_full_enabled:
+        if "comfy" in item.keywords and not comfy_enabled:
+            deselected.append(item)
+        elif runpod_enabled and runpod_full_enabled:
+            selected.append(item)
+        elif "runpod_full" in item.keywords and not runpod_full_enabled:
             deselected.append(item)
         elif "runpod" in item.keywords and not runpod_enabled:
             deselected.append(item)
