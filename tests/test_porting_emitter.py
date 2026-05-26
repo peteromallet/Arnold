@@ -1227,7 +1227,7 @@ def test_generated_template_not_formatted_missing_section_comments() -> None:
         elif i == 6:
             ct = "CheckpointLoaderSimple"
         else:
-            ct = "PrimitiveInt"
+            ct = "PreviewImage"
         wf.nodes[nid] = VibeNode(nid, ct, inputs={"test": "val"})
 
     diags: list[EmissionDiagnostic] = []

@@ -105,5 +105,95 @@
       }
     ],
     "function": "loadmodel"
+  },
+  "VideoDepthAnythingProcess": {
+    "category": "depth",
+    "description": "Process video frames with Depth Anything V2",
+    "display_name": "Video Depth Anything Process",
+    "input_order": {
+      "required": [
+        "model",
+        "images"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "images"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "DEPTHANYTHING_V2"
+        ],
+        "images": [
+          "IMAGE"
+        ]
+      }
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "depth"
+    ],
+    "output_node": false
+  },
+  "LoadVideoDepthAnythingModel": {
+    "category": "depth",
+    "description": "Load video depth anything model",
+    "display_name": "Load Video Depth Anything Model",
+    "input_order": {
+      "required": [
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "model"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          [
+            "v2-vits",
+            "v2-vitb",
+            "v2-vitl"
+          ]
+        ]
+      }
+    },
+    "output": [
+      "DEPTHANYTHING_V2"
+    ],
+    "output_name": [
+      "model"
+    ],
+    "output_node": false
+  },
+  "VideoDepthAnythingOutput": {
+    "category": "depth",
+    "description": "Output video depth",
+    "display_name": "Video Depth Anything Output",
+    "input_order": {
+      "required": [
+        "images"
+      ]
+    },
+    "input_order_all": [
+      "images"
+    ],
+    "inputs": {
+      "required": {
+        "images": [
+          "IMAGE"
+        ]
+      }
+    },
+    "output": [
+      "IMAGE"
+    ],
+    "output_name": [
+      "depth_image"
+    ],
+    "output_node": false
   }
 }
