@@ -217,6 +217,20 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
         if adaptive_path and critic_model_override:
             model = critic_model_override
+            # The override carries only a model *name*; the agent was derived
+            # from the (cheaper) critique routing and may not match the family
+            # the evaluator escalated to. Re-derive the agent from the model so
+            # a codex/gpt-5.x critic dispatches through codex-exec — NOT the
+            # hermes run_agent path, which resolves a bare gpt-5.5 to OpenRouter
+            # and silently bills the OpenRouter key. Premium claude overrides
+            # likewise route to the claude agent; everything else (deepseek,
+            # glm, …) stays on hermes.
+            from megaplan.runtime.key_pool import _is_codex_model_name
+            _lowered = model.lower()
+            if _is_codex_model_name(_lowered):
+                agent_type = "codex"
+            elif _lowered.startswith(("claude-", "claude/", "anthropic/claude")):
+                agent_type = "claude"
             resolved = (agent_type, mode, refreshed, model)
         # Compute revise_context for adaptive path iterations >= 2
         _revise_ctx = ""
