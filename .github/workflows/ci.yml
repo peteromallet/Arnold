@@ -40,7 +40,9 @@ jobs:
           fetch-depth: 2
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: uv sync --extra dev
