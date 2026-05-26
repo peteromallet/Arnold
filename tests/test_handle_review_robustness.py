@@ -59,6 +59,7 @@ def _make_plan_fixture(
 ) -> PlanFixture:
     root = tmp_path / f"root-{robustness}"
     project_dir = tmp_path / f"project-{robustness}"
+    config_path = tmp_path / f"config-{robustness}"
     root.mkdir()
     project_dir.mkdir()
     (project_dir / ".git").mkdir()
@@ -69,6 +70,19 @@ def _make_plan_fixture(
         "which",
         lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
     )
+
+    # Isolate user config so a global ``adaptive_critique = true`` in
+    # ~/.config/megaplan/config.json doesn't leak into the test and drive
+    # the critique handler down the adaptive-evaluator path that the mock
+    # worker doesn't implement. See docs/critique.md.
+    import megaplan._core.io as _io_module
+
+    def _config_dir(home: Path | None = None) -> Path:
+        del home
+        return config_path
+
+    monkeypatch.setattr(_io_module, "config_dir", _config_dir)
+    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
 
     make_args = _make_args_factory(project_dir)
     response = megaplan.handle_init(root, make_args(name=f"{robustness}-plan", robustness=robustness))
