@@ -10,8 +10,50 @@ from vibecomfy.workflow import ValidationIssue, VibeWorkflow
 
 #: Known-lying custom-node schemas that may suppress only ``unknown_input`` and
 #: ``value_*`` validation issues. Every entry must be cross-referenced from
-#: ``docs/hiddenswitch_incompatibilities.md`` with its contract/root-cause note.
-SCHEMA_VALIDATION_SKIP_CLASSES: dict[str, str] = {}
+#: ``docs/node_pack_reconciliation.md`` with its contract/root-cause note.
+#:
+#: Classes listed here have stub object_info cache entries that only define
+#: category/description but lack full input schemas; they were added to satisfy
+#: ``unknown_class_type`` gating without triggering ``unknown_input`` cascade
+#: errors on every workflow input. When a real runpod snapshot is available for
+#: the pack, remove the stub file and the entry here.
+SCHEMA_VALIDATION_SKIP_CLASSES: dict[str, str] = {
+    # ComfyUI-Florence2 — stub schema; real schema from runpod snapshot pending
+    "DownloadAndLoadFlorence2Model": "stub schema - see docs/node_pack_reconciliation.md",
+    "Florence2Run": "stub schema - see docs/node_pack_reconciliation.md",
+    # ComfyUI-GIMM-VFI — stub schema; real schema from runpod snapshot pending
+    "DownloadAndLoadGIMMVFIModel": "stub schema - see docs/node_pack_reconciliation.md",
+    "GIMMVFI_interpolate": "stub schema - see docs/node_pack_reconciliation.md",
+    # ComfyUI-MelBandRoformer — stub schema; real schema from runpod snapshot pending
+    "MelBandRoFormerModelLoader": "stub schema - see docs/node_pack_reconciliation.md",
+    "MelBandRoFormerSampler": "stub schema - see docs/node_pack_reconciliation.md",
+    # ComfyUI-Custom-Scripts — stub schema; real schema from runpod snapshot pending
+    "ShowText|pysssss": "stub schema - see docs/node_pack_reconciliation.md",
+    "MathExpression|pysssss": "stub schema - see docs/node_pack_reconciliation.md",
+    # comfyui_controlnet_aux — stub schema; real schema from runpod snapshot pending
+    "DWPreprocessor": "stub schema - see docs/node_pack_reconciliation.md",
+    "CannyEdgePreprocessor": "stub schema - see docs/node_pack_reconciliation.md",
+    "DepthAnythingPreprocessor": "stub schema - see docs/node_pack_reconciliation.md",
+    # ComfyUI-DepthAnythingV2 — stub entries added; real schema from runpod snapshot pending
+    "VideoDepthAnythingProcess": "stub schema - see docs/node_pack_reconciliation.md",
+    "LoadVideoDepthAnythingModel": "stub schema - see docs/node_pack_reconciliation.md",
+    "VideoDepthAnythingOutput": "stub schema - see docs/node_pack_reconciliation.md",
+    # ComfyUI-KJNodes — ImageConcatMulti has dynamic image_N inputs (inputcount drives them)
+    # The schema only shows image_1/image_2; image_3+ are created at runtime by the node
+    "ImageConcatMulti": "dynamic inputs (image_N count driven by inputcount widget) - see docs/node_pack_reconciliation.md",
+    # ComfyUI-WanVideoWrapper — WanVideoModelLoader schema snapshot predates vace_model input
+    # vace_model was added in a newer WanVideoWrapper version; snapshot needs refresh
+    "WanVideoModelLoader": "snapshot predates vace_model input - see docs/node_pack_reconciliation.md",
+    # ComfyUI-WanVideoWrapper — VACE model enum only captures one HiddenSwitch-local file
+    # Templates use WanVideo 2.1 1.3B VACE variant not in snapshot enum
+    "WanVideoVACEModelSelect": "model enum reflects HiddenSwitch local files only - see docs/node_pack_reconciliation.md",
+    # ComfyUI-KJNodes — ImagePadKJ pad_mode accepts RGB strings like '255,255,255'
+    # The snapshot enum only lists named modes; RGB string pass-through is valid at runtime
+    "ImagePadKJ": "pad_mode accepts RGB strings not in static enum - see docs/node_pack_reconciliation.md",
+    # ComfyUI-WanVideoWrapper — WanVideoSampler gained a new widget (position 14) in newer
+    # versions not captured in the current widget_schema.py entry (14 items, 0-indexed)
+    "WanVideoSampler": "widget schema incomplete for newer WanVideoWrapper versions - see docs/node_pack_reconciliation.md",
+}
 
 
 def validate_against_schema(workflow: VibeWorkflow, provider: SchemaProvider) -> list[ValidationIssue]:

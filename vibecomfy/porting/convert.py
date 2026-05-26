@@ -9,9 +9,11 @@ from typing import Any, Literal
 
 from vibecomfy.porting.emitter import (
     EmissionDiagnostic,
+    EmissionSeverity,
     emit_ready_template_python,
     emit_scratchpad_python,
 )
+from vibecomfy.porting.helper_resolve import ResolveDiagnostics, resolve_helpers
 from vibecomfy.porting.parity import (
     class_type_counter,
     compile_equivalent,
@@ -155,6 +157,66 @@ def port_convert_workflow(
     raw_workflow: dict[str, Any] | None = None,
 ) -> PortConvertResult:
     emission_diagnostics: list[EmissionDiagnostic] = []
+
+    # ── Resolve helper nodes before emission ────────────────────────────
+    # Normalise the caller-owned dict so the resolver can populate it with
+    # name -> (consumer_node_id, consumer_field) entries for named
+    # single-consumer primitives promoted to public inputs.
+    registered_inputs = dict(registered_inputs or {})
+
+    # Collect broadcast sources *before* the top-level resolver strips
+    # SetNode nodes.  Subgraph helpers (GetNode inside UUID subgraph
+    # definitions) need the original top-level broadcast map to resolve
+    # their sources.  Capturing this snapshot avoids a use-after-delete
+    # race between resolve_helpers (which deletes SetNode) and
+    # resolve_subgraph_helpers (which needs SetNode broadcast data).
+    from vibecomfy.porting.helpers import collect_broadcast_sources as _collect_broadcasts
+    _pre_resolve_broadcasts = _collect_broadcasts(workflow.nodes, workflow.edges)
+
+    # Resolve helper nodes inside UUID subgraph definitions FIRST, using
+    # the pre-resolve broadcast snapshot.  Subgraph helpers reference
+    # top-level SetNode broadcasts; if we resolve top-level helpers first,
+    # SetNode nodes are deleted and the subgraph resolver finds nothing.
+    if raw_workflow is not None:
+        from vibecomfy.porting.subgraph_resolve import resolve_subgraph_helpers
+        resolve_subgraph_helpers(
+            raw_workflow,
+            workflow.nodes,
+            workflow.edges,
+            _pre_resolve_broadcasts,
+        )
+
+    # resolve_helpers mutates workflow.nodes/workflow.edges in place and
+    # populates *registered_inputs*.  This runs *before* the compile('api')
+    # parity capture at line ~203, so both source_api and the emitted
+    # module's build() compile the post-resolution graph.  Parity therefore
+    # validates emission fidelity of the resolved graph, not semantic
+    # preservation against the raw source.  Resolver-vs-source correctness
+    # is guaranteed by the Step 3.6 hard error and the Step 9 runexx oracle.
+    resolve_diagnostics: ResolveDiagnostics = resolve_helpers(workflow, registered_inputs)
+
+    # Surface ResolveDiagnostics into the existing emission_diagnostics
+    # channel (FG-005): convert each HelperDiagnostic into an
+    # EmissionDiagnostic so they flow through the standard
+    # PortConvertValidation.to_json() reporting path.
+    from vibecomfy.porting.helpers import HelperDiagnostic
+
+    for hd in resolve_diagnostics.diagnostics:
+        sev: EmissionSeverity = "warning"
+        if hd.severity == "info":
+            sev = "info"
+        elif hd.severity == "error":
+            sev = "error"
+        emission_diagnostics.append(
+            EmissionDiagnostic(
+                code=f"resolve_{hd.code}",
+                message=hd.message,
+                severity=sev,
+                node_id=hd.node_id,
+                class_type=hd.class_type,
+                detail=hd.detail,
+            )
+        )
 
     if ready_id is None:
         complete_provenance = _conversion_provenance(
@@ -365,7 +427,11 @@ def _run_strict_ready_candidate_validation(
 
     diagnostics = validate_strict_ready_workflow(
         emitted_workflow,
-        StrictReadyContext(ready_id=ready_id, source_path=source_path),
+        StrictReadyContext(
+            ready_id=ready_id,
+            source_path=source_path,
+            is_post_resolution=True,
+        ),
         api_prompt=emitted_api,
         widget_analysis=widget_alias_analysis(emitted_api, schema_provider=schema_provider),
     )

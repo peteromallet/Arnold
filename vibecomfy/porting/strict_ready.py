@@ -21,6 +21,7 @@ STRICT_READY_UNRESOLVED_WIDGETS = "strict_ready_unresolved_widgets"
 STRICT_READY_LOAD_FAILED = "strict_ready_load_failed"
 STRICT_READY_BUILD_FAILED = "strict_ready_build_failed"
 STRICT_READY_COMPILE_FAILED = "strict_ready_compile_failed"
+STRICT_READY_HELPER_IN_EMITTED_OUTPUT = "strict_ready_helper_in_emitted_output"
 OPAQUE_COMPONENT_NODE_CLASS = "opaque_component_node_class"
 HIDDEN_MODEL_FILENAME = "hidden_model_filename"
 
@@ -39,6 +40,7 @@ STRICT_READY_VIOLATION_CODES: frozenset[str] = frozenset(
         STRICT_READY_LOAD_FAILED,
         STRICT_READY_BUILD_FAILED,
         STRICT_READY_COMPILE_FAILED,
+        STRICT_READY_HELPER_IN_EMITTED_OUTPUT,
         OPAQUE_COMPONENT_NODE_CLASS,
         HIDDEN_MODEL_FILENAME,
     }
@@ -58,6 +60,7 @@ class StrictReadyContext:
     mode: str = "strict_ready"
     exceptions_path: Path | None = None
     exceptions: tuple["StrictReadyException", ...] | None = None
+    is_post_resolution: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +168,8 @@ def validate_strict_ready_workflow(
     diagnostics.extend(_schema_backed_widget_diagnostics(widget_analysis or {}))
     if api is not None:
         diagnostics.extend(_hidden_model_filename_diagnostics(api, workflow))
+    if ctx.is_post_resolution:
+        diagnostics.extend(_helper_in_emitted_output_diagnostics(workflow))
     return apply_strict_ready_exceptions(diagnostics, ctx)
 
 
@@ -415,6 +420,39 @@ def _class_widget_aliases(workflow: VibeWorkflow) -> dict[str, list[str | None]]
     return aliases_by_class
 
 
+def _helper_in_emitted_output_diagnostics(workflow: VibeWorkflow) -> list[PortIssue]:
+    """Flag surviving resolvable-helper class types in post-resolution emitted workflows.
+
+    Gated by ``StrictReadyContext.is_post_resolution`` so raw-source port checks
+    (which pass through workbench.py) do not hard-error on helpers that conversion
+    is expected to strip.
+    """
+    from vibecomfy.porting.helpers import RESOLVABLE_HELPER_CLASS_TYPES
+
+    issues: list[PortIssue] = []
+    for node_id, node in sorted(workflow.nodes.items(), key=lambda item: _sort_key(item[0])):
+        if node.class_type not in RESOLVABLE_HELPER_CLASS_TYPES:
+            continue
+        issues.append(
+            PortIssue(
+                code=STRICT_READY_HELPER_IN_EMITTED_OUTPUT,
+                message=(
+                    f"Resolvable helper node {node_id} ({node.class_type}) survived to emission; "
+                    f"the resolver should have stripped it."
+                ),
+                severity="error",
+                node_id=str(node_id),
+                class_type=node.class_type,
+                detail={"target": f"node:{node_id}"},
+                recommendation=(
+                    "Ensure the resolver in port_convert_workflow eliminates all "
+                    "RESOLVABLE_HELPER_CLASS_TYPES nodes before emission."
+                ),
+            )
+        )
+    return issues
+
+
 def _compile_api_prompt(workflow: VibeWorkflow) -> dict[str, Any] | None:
     try:
         return workflow.compile("api")
@@ -449,6 +487,7 @@ __all__ = [
     "STRICT_READY_BROKEN_PUBLIC_INPUT",
     "STRICT_READY_BUILD_FAILED",
     "STRICT_READY_COMPILE_FAILED",
+    "STRICT_READY_HELPER_IN_EMITTED_OUTPUT",
     "STRICT_READY_LOAD_FAILED",
     "STRICT_READY_MISSING_OUTPUT_CONTRACT",
     "STRICT_READY_MISSING_PUBLIC_INPUT",

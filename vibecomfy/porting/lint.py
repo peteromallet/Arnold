@@ -73,6 +73,9 @@ def lint_ready_template(source_text: str, path: str) -> list[LintDiagnostic]:
     # Rule 8: Custom node classes without custom_node_packs provenance (warning)
     diagnostics.extend(_check_missing_custom_node_packs(source_text, path, lines))
 
+    # Rule 9: raw_call for helper/primitive class types (error)
+    diagnostics.extend(_check_helper_raw_call(source_text, path, lines))
+
     return diagnostics
 
 
@@ -362,7 +365,8 @@ def _check_missing_custom_node_packs(
         "CreateVideo", "CheckpointLoaderSimple", "DualCLIPLoader",
         "ImageScaleBy", "KSampler", "KSamplerSelect", "LoadImage",
         "LoraLoaderModelOnly", "ManualSigmas", "ModelSamplingSD3",
-        "PrimitiveBoolean", "PrimitiveFloat", "PrimitiveStringMultiline",
+        "PrimitiveBoolean", "PrimitiveFloat", "PrimitiveInt",
+        "PrimitiveNode", "PrimitiveString", "PrimitiveStringMultiline",
         "RandomNoise", "SamplerCustomAdvanced", "SaveImage", "SaveVideo",
         "UNETLoader", "VAEDecode", "VAEDecodeTiled", "VAELoader",
         "WanImageToVideo", "CFGGuider",
@@ -390,6 +394,58 @@ def _check_missing_custom_node_packs(
                     )
                     break
 
+    return diags
+
+
+# -- Rule 9: helper raw_call detection ---------------------------------------
+
+# Classes that must never appear as the first argument to raw_call() in a
+# ready template.  These are resolver-stripped helpers and primitives whose
+# presence in emitted source indicates a resolver bug or an unconverted template.
+_HELPER_RAW_CALL_CLASSES: frozenset[str] = frozenset(
+    {
+        "GetNode",
+        "SetNode",
+        "Reroute",
+        "PrimitiveNode",
+        "PrimitiveBoolean",
+        "PrimitiveInt",
+        "PrimitiveFloat",
+        "PrimitiveString",
+        "PrimitiveStringMultiline",
+    }
+)
+
+
+def _check_helper_raw_call(
+    source: str, path: str, lines: list[str]
+) -> list[LintDiagnostic]:
+    """Flag raw_call(...) for resolver-stripped helper/primitive class types."""
+    diags: list[LintDiagnostic] = []
+    for match in _RAW_CALL_RE.finditer(source):
+        line_no = source[: match.start()].count("\n") + 1
+        call_text = source[match.start():]
+        args_match = re.search(
+            r"raw_call\s*\(\s*wf\s*,\s*['\"]([^'\"]+)['\"]", call_text
+        )
+        if not args_match:
+            continue
+        class_type = args_match.group(1)
+        if class_type not in _HELPER_RAW_CALL_CLASSES:
+            continue
+        diags.append(
+            LintDiagnostic(
+                severity="error",
+                path=path,
+                line=line_no,
+                code="helper_raw_call",
+                message=(
+                    f"raw_call() for helper/primitive class '{class_type}'; "
+                    f"these should be eliminated by the resolver before emission"
+                ),
+                detail={"class_type": class_type},
+            )
+        )
     return diags
 
 

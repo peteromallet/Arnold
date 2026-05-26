@@ -16,6 +16,28 @@ class CustomNodePack:
 
 
 _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
+    # comfy-core-fallback: Comfy built-in node types that have no object_info schema
+    # but are handled by the emitter as FALLBACK_CLASS_TYPES.  Declaring them here
+    # keeps `unresolved_class_types` quiet so port check does not emit false-positive
+    # `unresolved_runtime_class` errors for these well-known built-in handles.
+    #
+    # Value primitives (PrimitiveBoolean, PrimitiveInt, PrimitiveFloat,
+    # PrimitiveString, PrimitiveStringMultiline) are intentionally NOT declared
+    # here because they are conversion-stripped by the resolver+emitter
+    # double-gate: the resolver folds their literal values into consumer inputs
+    # during port_convert_workflow, and the emitter's _prepare_workflow_for_emit
+    # raises ConversionParityError if any RESOLVABLE_HELPER_CLASS_TYPES survive
+    # to emission.  Declaring them in the fallback pack would mask a resolver bug.
+    CustomNodePack(
+        name="comfy-core-fallback",
+        repo="https://github.com/comfyanonymous/ComfyUI.git",
+        classes=frozenset(
+            {
+                "PrimitiveNode",
+                "Reroute",
+            }
+        ),
+    ),
     CustomNodePack(
         name="ComfyUI-WanVideoWrapper",
         repo="https://github.com/kijai/ComfyUI-WanVideoWrapper.git",
@@ -46,6 +68,24 @@ _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "WanVideoVACEEncode",
                 "WanVideoVACEModelSelect",
                 "WanVideoVACEStartToEndFrame",
+                # Additional classes confirmed from object_info snapshot
+                "WanVideoTeaCache",
+                "WanVideoVRAMManagement",
+                "WanVideoAddS2VEmbeds",
+                "WanVideoClipVisionEncode",
+                "WanVideoContextOptions",
+                "WanVideoImageToVideoMultiTalk",
+                "WanVideoReCamMasterCameraEmbed",
+                "WanVideoReCamMasterDefaultCamera",
+                "WanVideoReCamMasterGenerateOrbitCamera",
+                "ReCamMasterPoseVisualizer",
+                "MultiTalkModelLoader",
+                "MultiTalkWav2VecEmbeds",
+                "MultiTalkSilentEmbeds",
+                "FantasyTalkingWav2VecEmbeds",
+                "Wav2VecModelLoader",
+                "DownloadAndLoadWav2VecModel",
+                "NormalizeAudioLoudness",
             }
         ),
         pip_packages=("onnx", "opencv-python-headless"),
@@ -72,6 +112,25 @@ _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "LTXVScheduler",
                 "LTXVSeparateAVLatent",
                 "LatentUpscaleModelLoader",
+                # Additional classes confirmed from object_info snapshot
+                "GemmaAPITextEncode",
+                "GetVideoComponents",
+                "LTXAddVideoICLoRAGuide",
+                "LTXAddVideoICLoRAGuideAdvanced",
+                "LTXFloatToInt",
+                "LTXICLoRALoaderModelOnly",
+                "LTXVAddGuideAdvanced",
+                "LTXVAddGuideAdvancedAttention",
+                "LTXVAddLatentGuide",
+                "LTXVAddLatents",
+                "LTXVAudioVideoMask",
+                "LTXVGemmaCLIPModelLoader",
+                "LTXVImgToVideoConditionOnly",
+                "LTXVLatentUpsampler",
+                "LTXVPreprocessMasks",
+                "LTXVSetVideoLatentNoiseMasks",
+                "LTXVTiledVAEDecode",
+                "LTXVAddGuideMulti",
             }
         ),
     ),
@@ -94,6 +153,28 @@ _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
                 "ResizeImagesByLongerEdge",
                 "SimpleCalculatorKJ",
                 "VAELoaderKJ",
+                # Additional classes confirmed from object_info snapshot
+                "AddLabel",
+                "ColorMatch",
+                "FloatConstant",
+                "ImageBatchExtendWithOverlap",
+                "ImageBatchMulti",
+                "ImageConcatFromBatch",
+                "ImageConcatMulti",
+                "ImagePadKJ",
+                "ImagePadForOutpaintMasked",
+                "ImagePadForOutpaintTargetSize",
+                "ImageResizeKJ",
+                "InsertLatentToIndexed",
+                "LazySwitchKJ",
+                "LTX2MemoryEfficientSageAttentionPatch",
+                "LTX2SamplingPreviewOverride",
+                "LTXVAudioVideoMask",
+                "LoadAndResizeImage",
+                "LoadVideosFromFolder",
+                "MaskPreview",
+                "VRAM_Debug",
+                "WidgetToString",
             }
         ),
         pip_packages=("matplotlib",),
@@ -101,7 +182,21 @@ _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
     CustomNodePack(
         name="ComfyUI-VideoHelperSuite",
         repo="https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
-        classes=frozenset({"VHS_LoadVideo", "VHS_VideoCombine"}),
+        classes=frozenset({
+            "VHS_LoadVideo",
+            "VHS_VideoCombine",
+            "VHS_LoadAudio",
+            "VHS_LoadAudioUpload",
+            "VHS_LoadVideoFFmpeg",
+            "VHS_LoadVideoFFmpegPath",
+            "VHS_SelectEveryNthImage",
+            "VHS_SelectEveryNthLatent",
+            "VHS_SelectEveryNthMask",
+            "VHS_SplitImages",
+            "VHS_VideoInfo",
+            "VHS_VideoInfoLoaded",
+            "VHS_VideoInfoSource",
+        }),
     ),
     CustomNodePack(
         name="ComfyUI-segment-anything-2",
@@ -135,7 +230,11 @@ _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
     CustomNodePack(
         name="comfyui_controlnet_aux",
         repo="https://github.com/Fannovel16/comfyui_controlnet_aux.git",
-        classes=frozenset({"DWPreprocessor", "CannyEdgePreprocessor"}),
+        classes=frozenset({
+            "DWPreprocessor",
+            "CannyEdgePreprocessor",
+            "DepthAnythingPreprocessor",
+        }),
         pip_packages=("onnxruntime", "opencv-python-headless"),
     ),
     CustomNodePack(
@@ -151,6 +250,77 @@ _STATIC_NODE_PACKS: tuple[CustomNodePack, ...] = (
             }
         ),
         pip_packages=("transformers", "opencv-python-headless"),
+    ),
+    CustomNodePack(
+        name="ComfyUI-MelBandRoformer",
+        repo="https://github.com/kijai/ComfyUI-MelBandRoformer.git",
+        classes=frozenset(
+            {
+                "MelBandRoFormerModelLoader",
+                "MelBandRoFormerSampler",
+            }
+        ),
+    ),
+    CustomNodePack(
+        name="ComfyUI-Florence2",
+        repo="https://github.com/kijai/ComfyUI-Florence2.git",
+        classes=frozenset(
+            {
+                "DownloadAndLoadFlorence2Model",
+                "Florence2Run",
+            }
+        ),
+        pip_packages=("transformers", "einops", "timm"),
+    ),
+    CustomNodePack(
+        name="ComfyUI-GIMM-VFI",
+        repo="https://github.com/kijai/ComfyUI-GIMM-VFI.git",
+        classes=frozenset(
+            {
+                "DownloadAndLoadGIMMVFIModel",
+                "GIMMVFI_interpolate",
+            }
+        ),
+    ),
+    CustomNodePack(
+        name="ComfyUI-Custom-Scripts",
+        repo="https://github.com/pythongosssss/ComfyUI-Custom-Scripts.git",
+        classes=frozenset(
+            {
+                "ShowText|pysssss",
+                "MathExpression|pysssss",
+            }
+        ),
+    ),
+    CustomNodePack(
+        name="ComfyUI-Easy-Use",
+        repo="https://github.com/yolain/ComfyUI-Easy-Use.git",
+        classes=frozenset(
+            {
+                "easy showAnything",
+                "easy cleanGpuUsed",
+            }
+        ),
+    ),
+    CustomNodePack(
+        name="ComfyUI_Comfyroll_CustomNodes",
+        repo="https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes.git",
+        classes=frozenset(
+            {
+                "CR Float To Integer",
+            }
+        ),
+    ),
+    CustomNodePack(
+        name="comfy_mtb",
+        repo="https://github.com/melMass/comfy_mtb.git",
+        classes=frozenset(
+            {
+                "Audio Duration (mtb)",
+                "Audio To Text (mtb)",
+                "Load Whisper (mtb)",
+            }
+        ),
     ),
     CustomNodePack(
         name="ComfyUI-GGUF",

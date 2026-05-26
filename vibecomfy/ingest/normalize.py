@@ -72,7 +72,11 @@ def _normalize_ui_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider
                 continue
             name = input_item.get("name")
             link_id = input_item.get("link")
-            if name and link_id in link_map:
+            if link_id is not None and link_id in link_map:
+                if not name:
+                    # Reroute / passthrough nodes may have empty-string input
+                    # names — use a stable generated key to preserve the edge.
+                    name = f"_un{link_id}"
                 inputs[name] = [link_map[link_id][0], link_map[link_id][1]]
         widgets = node.get("widgets_values", [])
         if isinstance(widgets, dict):

@@ -220,6 +220,7 @@ def analyze_source(
                 ready_id=loaded.indexed_id or workflow.metadata.get("ready_template") or workflow.id,
                 source_path=loaded.source_path,
                 mode=resolved_mode,
+                is_post_resolution=False,
             ),
             api_prompt=api_prompt,
             widget_analysis=widget_analysis,

@@ -6,7 +6,16 @@ from typing import Any, Mapping, Sequence
 
 UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset({"Note", "MarkdownNote"})
 BROADCAST_HELPER_CLASS_TYPES: frozenset[str] = frozenset({"SetNode", "GetNode"})
+# Conversion-only: stripped only by the resolver inside port_convert_workflow, never silently
+# dropped by generic compile paths (is_helper_class_type / _is_ui_only_node do NOT consult this set).
+PASSTHROUGH_HELPER_CLASS_TYPES: frozenset[str] = frozenset({"Reroute", "PrimitiveNode"})
+# Conversion-only: stripped only by the resolver inside port_convert_workflow, never silently
+# dropped by generic compile paths (is_helper_class_type / _is_ui_only_node do NOT consult this set).
+VALUE_HELPER_CLASS_TYPES: frozenset[str] = frozenset(
+    {"PrimitiveBoolean", "PrimitiveInt", "PrimitiveFloat", "PrimitiveString", "PrimitiveStringMultiline"}
+)
 HELPER_CLASS_TYPES: frozenset[str] = UI_ONLY_CLASS_TYPES | BROADCAST_HELPER_CLASS_TYPES
+RESOLVABLE_HELPER_CLASS_TYPES: frozenset[str] = BROADCAST_HELPER_CLASS_TYPES | PASSTHROUGH_HELPER_CLASS_TYPES | VALUE_HELPER_CLASS_TYPES
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +34,14 @@ def is_ui_only_class_type(class_type: str) -> bool:
 
 def is_broadcast_helper_class_type(class_type: str) -> bool:
     return class_type in BROADCAST_HELPER_CLASS_TYPES
+
+
+def is_passthrough_helper_class_type(class_type: str) -> bool:
+    return class_type in PASSTHROUGH_HELPER_CLASS_TYPES
+
+
+def is_value_helper_class_type(class_type: str) -> bool:
+    return class_type in VALUE_HELPER_CLASS_TYPES
 
 
 def is_helper_class_type(class_type: str) -> bool:
@@ -53,6 +70,38 @@ def collect_helper_diagnostics(nodes: Mapping[str, Any], edges: Sequence[Any]) -
                 HelperDiagnostic(
                     code="ui_only_node_stripped",
                     message=f"{class_type} node {node_id} is UI-only and will be omitted from runtime prompts.",
+                    severity="info",
+                    node_id=str(node_id),
+                    class_type=class_type,
+                )
+            )
+            continue
+        if class_type in PASSTHROUGH_HELPER_CLASS_TYPES:
+            # Passthrough presence in source is expected — will be stripped at conversion.
+            # Report at info level so doctor.py can surface them without alarming.
+            diagnostics.append(
+                HelperDiagnostic(
+                    code="passthrough_helper_source_presence",
+                    message=(
+                        f"{class_type} node {node_id} is a passthrough helper; "
+                        f"expected — will be stripped at conversion."
+                    ),
+                    severity="info",
+                    node_id=str(node_id),
+                    class_type=class_type,
+                )
+            )
+            continue
+        if class_type in VALUE_HELPER_CLASS_TYPES:
+            # Value primitive presence in source is expected — will be stripped at conversion.
+            # Report at info level so doctor.py can surface them without alarming.
+            diagnostics.append(
+                HelperDiagnostic(
+                    code="value_helper_source_presence",
+                    message=(
+                        f"{class_type} node {node_id} is a value primitive; "
+                        f"expected — will be stripped at conversion."
+                    ),
                     severity="info",
                     node_id=str(node_id),
                     class_type=class_type,
@@ -215,7 +264,10 @@ __all__ = [
     "BROADCAST_HELPER_CLASS_TYPES",
     "HELPER_CLASS_TYPES",
     "HelperDiagnostic",
+    "PASSTHROUGH_HELPER_CLASS_TYPES",
+    "RESOLVABLE_HELPER_CLASS_TYPES",
     "UI_ONLY_CLASS_TYPES",
+    "VALUE_HELPER_CLASS_TYPES",
     "broadcast_name",
     "collect_broadcast_sources",
     "collect_helper_diagnostics",
@@ -225,5 +277,7 @@ __all__ = [
     "is_api_link",
     "is_broadcast_helper_class_type",
     "is_helper_class_type",
+    "is_passthrough_helper_class_type",
     "is_ui_only_class_type",
+    "is_value_helper_class_type",
 ]

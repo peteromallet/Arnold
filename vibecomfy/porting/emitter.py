@@ -12,7 +12,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
+from vibecomfy.errors import ConversionParityError
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
+from vibecomfy.porting.helpers import RESOLVABLE_HELPER_CLASS_TYPES
 from vibecomfy.porting.widget_aliases import resolve_widget_key_with_provenance
 from vibecomfy.porting.object_info import class_defaults, class_has_list_output, class_output_count
 from vibecomfy.porting.object_info import output_names as class_output_names
@@ -121,12 +123,8 @@ GENERATED_HEADER = (
 
 UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset({"Note", "MarkdownNote"})
 FALLBACK_CLASS_TYPES: frozenset[str] = frozenset({
-    "SetNode",
-    "GetNode",
     "Note",
     "MarkdownNote",
-    "Reroute",
-    "PrimitiveNode",
 })
 RESERVED_WRAPPER_INPUT_NAMES: frozenset[str] = frozenset({"class", "from", "type"})
 
@@ -1119,6 +1117,16 @@ def emit_scratchpad_python(
 
 
 def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any] | None) -> dict[str, Any]:
+    # Defensive assertion: resolver MUST have eliminated all helper nodes before emission.
+    # If any RESOLVABLE_HELPER_CLASS_TYPES node survives, the resolver has a bug.
+    for nid, node in getattr(workflow, 'nodes', {}).items():
+        if node.class_type in RESOLVABLE_HELPER_CLASS_TYPES:
+            raise ConversionParityError(
+                f"Resolver bug: unresolved helper node {nid} "
+                f"(class_type={node.class_type!r}) survived to emission. "
+                f"The resolver must eliminate all RESOLVABLE_HELPER_CLASS_TYPES nodes "
+                f"before _prepare_workflow_for_emit is called."
+            )
     workflow_nodes = {
         nid: node
         for nid, node in workflow.nodes.items()
@@ -1528,9 +1536,16 @@ def _apply_subgraph_names_to_prepared(prepared: dict[str, Any]) -> None:
             for index, output in enumerate(subgraph.outputs):
                 slot_vars[index] = _unique_var(_safe_var(output.name.lower()), used)
             output_var_names[str(node_id)] = slot_vars
-            var_names[str(node_id)] = _unique_var(subgraph.slug, used)
+            # Avoid collision: var name must not equal subgraph function name
+            base = _subgraph_result_base(subgraph.slug)
+            if base == subgraph.slug:
+                base = f"{subgraph.slug}_result"
+            var_names[str(node_id)] = _unique_var(base, used)
         else:
-            var_names[str(node_id)] = _unique_var(_subgraph_result_base(subgraph.slug), used)
+            base = _subgraph_result_base(subgraph.slug)
+            if base == subgraph.slug:
+                base = f"{subgraph.slug}_result"
+            var_names[str(node_id)] = _unique_var(base, used)
 
 
 def _subgraph_result_base(slug: str) -> str:
