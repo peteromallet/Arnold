@@ -1,0 +1,101 @@
+# Pristine Cleanup epic — derived from the 10-agent structural audit, revised after a
+# two-reviewer (Opus + Codex/GPT-5.5) holistic sense-check. See ./README.md.
+#
+# Single-branch policy (mirrors docs/megaplan_chains/readable_ready_templates):
+# all milestones accumulate on `base_branch`; no per-milestone `branch:` fields.
+# The final `publish-shared-branch` milestone commits/pushes for one human review.
+#
+# PREREQUISITE: create the shared branch off the CLEAN main, not the current
+# in-progress branch:   git branch megaplan/pristine-cleanup main
+#
+# Dependency DAG (chain runs sequentially; M3 ∥ M5a is the only real parallelism):
+#   M1 → M2 → {M3, M4}    M5a→{M2,M4}   M5b→M4   M6→all-code   M7→M6   publish→all
+
+base_branch: megaplan/pristine-cleanup
+merge_policy: review
+
+driver:
+  robustness: standard      # per-milestone overrides below take precedence
+  auto_approve: true
+  max_iterations: 60
+  poll_sleep: 8.0
+
+on_failure:
+  abort: stop_chain         # behavior-preserving refactors — halt and wait on failure
+on_escalate:
+  abort: stop_chain
+
+milestones:
+  # M1 — de-noise, repair the test net, AND close the parity-fixture gate gap BEFORE any
+  # structural change. Bumped directed→premium: deleting the wrong "generated" file
+  # (e.g. the repo-owned template_index.json) would break the ready-template contract, so
+  # this needs judgment, not mechanical execution.
+  - label: m1-triage-safety-net
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m1-triage-safety-net.md
+    profile: premium
+    vendor: codex
+    robustness: full
+
+  # M2 — the kernel: extract shared AST/graph/link utils; kill the duplication.
+  - label: m2-shared-foundation
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m2-shared-foundation.md
+    profile: apex
+    vendor: codex
+    robustness: thorough
+    depth: high
+
+  # M3 — collapse the schema/validation triad + decompose provider.py. (Independent of
+  # M5a; could run in parallel in a manual/cloud schedule.)
+  - label: m3-schema-validation-consolidation
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m3-schema-validation-consolidation.md
+    profile: premium
+    vendor: codex
+    robustness: thorough
+    depth: high
+
+  # M4 — collapse the 3 eval modules + unify diagnostics. Gates M5a (diagnostic base)
+  # and M5b (extracted queue/wait helper).
+  - label: m4-eval-diagnostics-consolidation
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m4-eval-diagnostics-consolidation.md
+    profile: premium
+    vendor: codex
+    robustness: full
+
+  # M5a — split emitter.py (3304 LOC). Depends on M2 (+ M4's diagnostic base). Gated by
+  # the 9/9 parity fixtures backfilled in M1.
+  - label: m5a-emitter-split
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m5a-emitter-split.md
+    profile: premium
+    vendor: codex
+    robustness: thorough
+    depth: high
+
+  # M5b — split session.py (1379 LOC) + fix run-path error architecture. Depends on M4.
+  - label: m5b-session-errors
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m5b-session-errors.md
+    profile: premium
+    vendor: codex
+    robustness: thorough
+    depth: high
+
+  # M6 — enforce conventions + API surface (CODE ONLY). Last code milestone.
+  - label: m6-conventions
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m6-conventions.md
+    profile: premium
+    vendor: codex
+    robustness: full
+
+  # M7 — reconcile docs to the settled API (DOCS ONLY). Cheap to execute; benefits from
+  # a smart plan. Cites M6's public-API artifact.
+  - label: m7-docs-reconciliation
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/m7-docs-reconciliation.md
+    profile: directed
+    vendor: codex
+    robustness: full
+
+  # Publish — verify green against the M1 golden gate, write RESULTS.md, push, open PR.
+  - label: publish-shared-branch
+    idea: /workspace/app/docs/megaplan_chains/pristine_cleanup/ideas/publish-shared-branch.md
+    profile: solo
+    vendor: codex
+    robustness: light

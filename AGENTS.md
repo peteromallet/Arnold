@@ -504,6 +504,7 @@ All VibeComfyError subclasses are caught by the CLI runner's `(OSError, RuntimeE
 
 JSON → Python → JSON roundtripping has known limitations:
 - **Helper/UI nodes** (`Note`, `MarkdownNote`, `SetNode`, `GetNode`, `Reroute`) are stripped during conversion and do not survive roundtrip.
+- **Primitive value nodes** (`PrimitiveBoolean`, `PrimitiveInt`, `PrimitiveFloat`, `PrimitiveString`, `PrimitiveStringMultiline`, `PrimitiveNode`) and passthrough helpers (`Reroute`) are stripped one-way alongside broadcast helpers and do not survive JSON → Python → JSON roundtrip.
 - **Unresolved widget_N keys** on community nodes without `object_info` produce positional output that may not roundtrip exactly.
 - **Subgraph UUIDs** are replaced by Python function names; re-importing the emitted Python may produce different UUIDs but structurally equivalent graphs.
 - **Broadcast edges** (one output → multiple inputs) are preserved but the ordering of parallel edges may differ from the source JSON.
