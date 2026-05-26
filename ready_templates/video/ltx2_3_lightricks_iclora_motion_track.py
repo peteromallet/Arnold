@@ -1,51 +1,61 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call, ref
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
-from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, LowVRAMAudioVAELoader, LowVRAMCheckpointLoader
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
+from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode
 
 
-CONTROL_AFTER_GENERATE = 'fixed'
-DEFAULT_FPS = 8
-DEFAULT_FRAMES = 5
-DEFAULT_PROMPT = 'Man on a small bycicle being chased by a police car. The sirens are blaring and the crowd of bystanders is cheering loudly. As he is pedaling away on the bike, he looks back at the police car and shouts in a taunting tone: "you can\'t catch me!" and waving his fist in the air. He then pedals away on his bike.'
-DEFAULT_PROMPT_2 = 'pc game, console game, video game, cartoon, childish, ugly'
+API_KEY = ''
+DEFAULT_FPS = 24.0
+DEFAULT_FRAMES = 121
+DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
+DEFAULT_PROMPT_2 = 'Man on a small bycicle being chased by a police car. The sirens are blaring and the crowd of bystanders is cheering loudly. As he is pedaling away on the bike, he looks back at the police car and shouts in a taunting tone: "you can\'t catch me!" and waving his fist in the air. He then pedals away on his bike.'
 DEFAULT_SEED = 42
-GUIDE_STRENGTH = 0.5
-GUIDE_STRENGTH_2 = 2.5
-IMAGE = 'example.png'
-MODEL_NAME = 'ltx-2.3-22b-dev-fp8.safetensors'
-MODEL_NAME_2 = 'gemma_3_12B_it_fp4_mixed.safetensors'
-MODEL_NAME_3 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
-MODEL_NAME_4 = 'ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors'
+FORMAT = 'auto'
+GUIDE_STRENGTH = 1
+GUIDE_STRENGTH_2 = 0.5
+MODEL_NAME = 'ltx-2.3-22b-dev.safetensors'
+MODEL_NAME_2 = 'comfy_gemma_3_12B_it.safetensors'
+MODEL_NAME_3 = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors'
+MODEL_NAME_4 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 SCALE_METHOD = 'lanczos'
-WIDGET_0 = ''
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME),
-    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'image': InputSpec(node=ref('image'), field='image', default=IMAGE),
-    'input_image': InputSpec(node=ref('image'), field='image', default=IMAGE),
+PUBLIC_INPUT_METADATA = {
+    'image': InputSpec(node='2004', field='image', default='motion_track_input.jpg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'frames': InputSpec(node='3059', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node='4849', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='2483', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
+
+def PUBLIC_INPUTS(**nodes):
+    image = nodes['image']
+    emptyltxvlatentvideo = nodes['emptyltxvlatentvideo']
+    randomnoise = nodes['randomnoise']
+    createvideo = nodes['createvideo']
+    cliptextencode = nodes['cliptextencode']
+    cliptextencode_2 = nodes['cliptextencode_2']
+    return {
+    'image': InputSpec(node=image, field='image', default='motion_track_input.jpg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'frames': InputSpec(node=emptyltxvlatentvideo, field='length', default=DEFAULT_FRAMES, type='INT'),
+    'seed': InputSpec(node=randomnoise, field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node=cliptextencode_2, field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
+    }
+
 READY_METADATA = ReadyMetadata.build(
-    capability='motion_track_control',
-    inputs=PUBLIC_INPUTS,
-    requirements={'models': ['euler_ancestral_cfg_pp', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
-    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'pinned'}},
-    approach='official IC-LoRA motion-track image anchor/control workflow',
-    manual_promotion_rationale='Promoted during sprint 7 because the declared upstream source workflow is absent; preserve the materialized graph and curate public contracts manually.',
-    discord_signal='Motion transfer, body/camera movement, and image anchors were recurring LTX channel themes.',
-    smoke_resolution='256x256x5_frames',
-    ltx_best_practices=['Use the official Lightricks workflows as runtime gates where possible.', 'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.', 'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes model_mmap_residency for LatentUpscaleModelManageable.', 'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom node packs and service credentials are declared.'],
-    comfy_configuration={'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True},
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json'},
+    capability='unknown',
+    inputs=PUBLIC_INPUT_METADATA,
+    requirements={'models': ['euler_ancestral_cfg_pp', 'ltx-2.3-22b-dev.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors', 'ltxv/ltx2/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors']},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'discovered'}},
+    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json', 'source_id': 'LTX-2.3_ICLoRA_Motion_Track_Distilled', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json', 'source_hash': 'sha256:05546a69f72653f7ffc24dbc5f8815e44dcce34c39866943ad10a63c156db5c8', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_iclora_motion_track'},
 )
 
 def build() -> VibeWorkflow:
@@ -53,108 +63,94 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         # Inputs
-        image, mask = LoadImage(image=IMAGE, widget_0='example.png')
-        model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=MODEL_NAME)
-        lowvramaudiovaeloader = LowVRAMAudioVAELoader(ckpt_name=MODEL_NAME)
+        image, mask = LoadImage(image='motion_track_input.jpg', unused_widget_1='image')
+
+        # Loaders
+        model, clip, vae = CheckpointLoaderSimple(ckpt_name=MODEL_NAME)
+        ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME)
 
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
 
         randomnoise = RandomNoise(
             noise_seed=DEFAULT_SEED,
-            control_after_generate=CONTROL_AFTER_GENERATE,
+            control_after_generate='fixed',
         )
 
-        primitivestring = raw_call('PrimitiveString', '5022', value='')
+        gemmaapitextencode = GemmaAPITextEncode(
+            ckpt_name=MODEL_NAME,
+            enhance_prompt=False,
+            prompt=DEFAULT_PROMPT,
+            widget_0='',
+        )
+
+        gemmaapitextencode_2 = GemmaAPITextEncode(
+            ckpt_name=MODEL_NAME,
+            enhance_prompt=MODEL_NAME,
+            widget_0='',
+        )
 
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
             text_encoder=MODEL_NAME_2,
             ckpt_name=MODEL_NAME,
             device='default',
-            widget_0='gemma_3_12B_it_fp4_mixed.safetensors',
-            widget_1='ltx-2.3-22b-dev-fp8.safetensors',
         )
 
         manualsigmas = ManualSigmas(
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
 
-        primitiveint = raw_call('PrimitiveInt', '5044', value=5, control_after_generate=CONTROL_AFTER_GENERATE)
-        primitivefloat = raw_call('PrimitiveFloat', '5045', value=8)
+        ltxfloattoint = LTXFloatToInt(rounding=0, a=24.0)
 
         # Conditioning
         cliptextencode = CLIPTextEncode(
-            text=DEFAULT_PROMPT,
-            clip=ltxavtextencoderloader,
-        )
-
-        cliptextencode_2 = CLIPTextEncode(
             text=DEFAULT_PROMPT_2,
             clip=ltxavtextencoderloader,
         )
 
+        cliptextencode_2 = CLIPTextEncode(
+            text=DEFAULT_PROMPT,
+            clip=ltxavtextencoderloader,
+        )
+
+        ltxvemptylatentaudio = LTXVEmptyLatentAudio(
+            frames_number=121,
+            frame_rate=ltxfloattoint,
+            audio_vae=ltxvaudiovaeloader,
+        )
+
         loraloadermodelonly = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_3,
-            strength_model=GUIDE_STRENGTH,
+            lora_name=MODEL_NAME_4,
+            strength_model=GUIDE_STRENGTH_2,
             model=model,
-        )
-
-        gemmaapitextencode = GemmaAPITextEncode(
-            widget_0=WIDGET_0,
-            widget_1='pc game, console game, video game, cartoon, childish, ugly',
-            widget_2=False,
-            widget_3=MODEL_NAME,
-            api_key=primitivestring,
-        )
-
-        gemmaapitextencode_2 = GemmaAPITextEncode(
-            widget_0=WIDGET_0,
-            widget_1='',
-            widget_2=MODEL_NAME,
-            widget_3=MODEL_NAME,
-            api_key=primitivestring,
         )
 
         resizeimagemasknode = ResizeImageMaskNode(
             resize_type='scale shorter dimension',
             scale_method=SCALE_METHOD,
+            unused_widget_1=544,
             input=image,
         )
 
-        ltxfloattoint = LTXFloatToInt(rounding=0, a=primitivefloat)
-
         positive, negative = LTXVConditioning(
-            widget_0=8,
-            frame_rate=primitivefloat,
+            frame_rate=24.0,
             negative=cliptextencode_2,
             positive=cliptextencode,
         )
 
-        ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-            widget_0=5,
-            widget_1=8,
-            frames_number=primitiveint,
-            frame_rate=ltxfloattoint,
-            audio_vae=lowvramaudiovaeloader,
-        )
-
         model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
-            lora_name=MODEL_NAME_4,
-            widget_0='ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors',
+            lora_name=MODEL_NAME_3,
             model=loraloadermodelonly,
         )
 
-        simplemath_ = raw_call('SimpleMath+', '5056',
-            _outputs=('INT', 'FLOAT'),
-            widget_0='a*32',
-            a=latent_downscale_factor,
-        )
+        simplemath_ = raw_call('SimpleMath+', '5056', value='a*32', a=latent_downscale_factor)
 
         resizeimagemasknode_2 = ResizeImageMaskNode(
             resize_type='scale to multiple',
             scale_method=SCALE_METHOD,
+            unused_widget_1=64,
             input=resizeimagemasknode,
-            **{'resize_type.multiple': simplemath_.out('INT')},
+            **{'resize_type.multiple': simplemath_.out(0)},
         )
 
         ltxvsparsetrackeditor = raw_call('LTXVSparseTrackEditor', '5040',
@@ -163,27 +159,23 @@ def build() -> VibeWorkflow:
             widget_2=121,
             widget_3='',
             image=resizeimagemasknode_2,
-            points_to_sample=primitiveint,
         )
 
         width, height, batch_size = GetImageSize(image=resizeimagemasknode_2)
 
+        emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+            length=DEFAULT_FRAMES,
+            width=width,
+            height=height,
+        )
+
         ltxvdrawtracks = raw_call('LTXVDrawTracks', '5034',
-            widget_0=WIDGET_0,
+            widget_0='',
             widget_1=512,
             widget_2=512,
             height=height,
             tracks=ltxvsparsetrackeditor,
             width=width,
-        )
-
-        emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-            widget_0=256,
-            widget_1=256,
-            widget_2=5,
-            width=width,
-            height=height,
-            length=primitiveint,
         )
 
         ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
@@ -192,13 +184,12 @@ def build() -> VibeWorkflow:
             vae=vae,
         )
 
-        createvideo = CreateVideo(widget_0=8, fps=primitivefloat, images=ltxvdrawtracks)
+        createvideo_2 = CreateVideo(fps=DEFAULT_FPS, images=ltxvdrawtracks)
 
         positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
             crop=1,
             use_tiled_encode='disabled',
-            tile_size=128,
-            tile_overlap=32,
+            unused_widget_4=False,
             image=ltxvdrawtracks,
             latent=ltxvimgtovideoconditiononly,
             latent_downscale_factor=latent_downscale_factor,
@@ -208,7 +199,7 @@ def build() -> VibeWorkflow:
         )
 
         # Outputs
-        savevideo = SaveVideo(filename_prefix='output', video=createvideo)
+        savevideo_2 = SaveVideo(filename_prefix='tracks', video=createvideo_2)
 
         ltxvconcatavlatent = LTXVConcatAVLatent(
             audio_latent=ltxvemptylatentaudio,
@@ -216,7 +207,7 @@ def build() -> VibeWorkflow:
         )
 
         cfgguider = CFGGuider(
-            cfg=GUIDE_STRENGTH_2,
+            cfg=GUIDE_STRENGTH,
             model=model_ltxic,
             negative=negative_ltx,
             positive=positive_ltx,
@@ -233,7 +224,7 @@ def build() -> VibeWorkflow:
         video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
         ltxvaudiovaedecode = LTXVAudioVAEDecode(
-            audio_vae=lowvramaudiovaeloader,
+            audio_vae=ltxvaudiovaeloader,
             samples=audio_latent,
         )
 
@@ -247,18 +238,19 @@ def build() -> VibeWorkflow:
             horizontal_tiles=2,
             vertical_tiles=2,
             overlap=6,
+            unused_widget_4='auto',
+            unused_widget_5='auto',
             latents=latent_ltxv,
             vae=vae,
         )
 
-        createvideo_2 = CreateVideo(
-            widget_0=8,
-            fps=primitivefloat,
+        createvideo = CreateVideo(
+            fps=DEFAULT_FPS,
             audio=ltxvaudiovaedecode,
             images=ltxvtiledvaedecode,
         )
 
-        savevideo_2 = SaveVideo(filename_prefix='output', video=createvideo_2)
+        savevideo = SaveVideo(filename_prefix='output', video=createvideo)
 
-        return wf.finalize(PUBLIC_INPUTS, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

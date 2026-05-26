@@ -1,91 +1,81 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call, ref
+from vibecomfy.templates import ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlux2LatentImage, Flux2Scheduler, KSamplerSelect, RandomNoise, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAELoader
 
-
-DEFAULT_SEED = 653844576367526
-GUIDE_STRENGTH = 5
-MODEL_NAME = 'flux-2-klein-base-9b-fp8.safetensors'
-MODEL_NAME_2 = 'qwen_3_8b_fp8mixed.safetensors'
-MODEL_NAME_3 = 'full_encoder_small_decoder.safetensors'
-TEXT = ''
-
-
-MODELS = {
-    'text_encoder': ModelAsset(url='https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors', sha256='abad16806e0cbabc54e0325d6565847443fe396d5f0be38bb3cd3fe75a1201d6', hf_revision='23fbc8aa8b621f29f2249cd1bd9c47e5d0eebd83', size_bytes=8664848742, subdir='text_encoders'),
-}
-
-
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
-    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node=ref('positive'), field='text', default=TEXT),
-    'negative_prompt': InputSpec(node=ref('negative'), field='text', default=TEXT),
-    'negative': InputSpec(node=ref('negative'), field='text', default=TEXT),
-    'width': InputSpec(node=ref('primitiveint'), field='value', default=1024),
-    'height': InputSpec(node=ref('primitiveint_2'), field='value', default=1024),
-}
-
 READY_METADATA = ReadyMetadata.build(
-    capability='text_to_image',
-    inputs=PUBLIC_INPUTS,
-    models=MODELS,
-    output_prefix='Flux2-Klein',
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json'},
+    capability='unknown',
+    provenance={'source_path': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_id': 'flux2_klein_9b_gguf_t2i', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_hash': 'sha256:ac7513756f3bf72b49292a334c48315aa40e6c0e4ff8dd152773bb55dac17fff', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_9b_gguf_t2i'},
 )
+
+# === Subgraph functions ===
+
+def text_to_image_flux2_klein_9b(
+    *,
+    width: int,
+    height: int,
+    unet_name: str,
+    clip_name: str,
+    vae_name: str,
+    prompt: str,
+):
+    """Text to Image (Flux.2 Klein 9B).
+
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json.
+    # vibecomfy source hash: sha256:24b6e274da9a4dc9cb71344032bb8cb28886bd7cf1d2a89d8ae9939a306b8739
+    Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
+    """
+
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    flux2scheduler = Flux2Scheduler()
+    emptyflux2latentimage = EmptyFlux2LatentImage()
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+
+    randomnoise = RandomNoise(
+        noise_seed=653844576367526,
+        control_after_generate='randomize',
+    )
+
+    negative = CLIPTextEncode(text='', clip=cliploader)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
+
+    cfgguider = CFGGuider(
+        cfg=5,
+        model=unetloader,
+        negative=negative,
+        positive=positive,
+    )
+
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=emptyflux2latentimage,
+        noise=randomnoise,
+        sampler=ksamplerselect,
+        sigmas=flux2scheduler,
+    )
+
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+
+    return vaedecode
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        # Sampling
-        ksamplerselect = KSamplerSelect(sampler_name='euler')
-
-        # Loaders
-        unetloader = UNETLoader(unet_name=MODEL_NAME)
-        cliploader = CLIPLoader(clip_name=MODEL_NAME_2, type_='flux2')
-        vaeloader = VAELoader(vae_name=MODEL_NAME_3)
-        randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
-
-        # Inputs
-        primitiveint = raw_call('PrimitiveInt', '75:68', value=1024)
-        primitiveint_2 = raw_call('PrimitiveInt', '75:69', value=1024)
-        flux2scheduler = Flux2Scheduler(width=primitiveint, height=primitiveint_2)
-
-        emptyflux2latentimage = EmptyFlux2LatentImage(
-            width=primitiveint,
-            height=primitiveint_2,
+        edited = text_to_image_flux2_klein_9b(
+            width=None,
+            height=None,
+            unet_name='flux-2-klein-base-9b-fp8.safetensors',
+            clip_name='qwen_3_8b_fp8mixed.safetensors',
+            vae_name='full_encoder_small_decoder.safetensors',
+            prompt='',
         )
+        saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
 
-        # Conditioning
-        negative = CLIPTextEncode(text=TEXT, clip=cliploader)
-        positive = CLIPTextEncode(text=TEXT, clip=cliploader)
-
-        cfgguider = CFGGuider(
-            cfg=GUIDE_STRENGTH,
-            model=unetloader,
-            negative=negative,
-            positive=positive,
-        )
-
-        output, denoised_output = SamplerCustomAdvanced(
-            guider=cfgguider,
-            latent_image=emptyflux2latentimage,
-            noise=randomnoise,
-            sampler=ksamplerselect,
-            sigmas=flux2scheduler,
-        )
-
-        # Decode
-        vaedecode = VAEDecode(samples=output, vae=vaeloader)
-
-        # Outputs
-        saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
-
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
+        return wf.finalize({}, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

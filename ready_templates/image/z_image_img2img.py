@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, ImageScale, KSampler, LoadImage, ModelSamplingAuraFlow, SaveImage, UNETLoader, VAEDecode, VAEEncode, VAELoader
 
 
@@ -23,20 +22,41 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=ref('positive'), field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
-    'steps': InputSpec(node=ref('ksampler'), field='steps', default=12),
-    'image': InputSpec(node=ref('image'), field='image', default='image_z_image_img2img_input.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='image_z_image_img2img_input.png'),
-    'width': InputSpec(node=ref('imagescale'), field='width', default=1024),
-    'height': InputSpec(node=ref('imagescale'), field='height', default=1024),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='2', field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node='10', field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node='10', field='steps', default=12),
+    'image': InputSpec(node='1', field='image', default='image_z_image_img2img_input.png'),
+    'input_image': InputSpec(node='1', field='image', default='image_z_image_img2img_input.png'),
+    'width': InputSpec(node='8', field='width', default=1024),
+    'height': InputSpec(node='8', field='height', default=1024),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    unetloader = nodes['unetloader']
+    positive = nodes['positive']
+    ksampler = nodes['ksampler']
+    ksampler = nodes['ksampler']
+    image = nodes['image']
+    image = nodes['image']
+    imagescale = nodes['imagescale']
+    imagescale = nodes['imagescale']
+    return {
+    'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node=positive, field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=ksampler, field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node=ksampler, field='steps', default=12),
+    'image': InputSpec(node=image, field='image', default='image_z_image_img2img_input.png'),
+    'input_image': InputSpec(node=image, field='image', default='image_z_image_img2img_input.png'),
+    'width': InputSpec(node=imagescale, field='width', default=1024),
+    'height': InputSpec(node=imagescale, field='height', default=1024),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_image',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     approach='Z-Image Turbo img2img via VAEEncode init latent and KSampler denoise strength',
     runtime_note='Intended to match Reigh z_image_turbo_i2i production semantics.',
@@ -90,5 +110,5 @@ def build() -> VibeWorkflow:
         # Outputs
         saveimage = SaveImage(filename_prefix='z-image-img2img', images=vaedecode)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image-img2img')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image-img2img')
 

@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, ConditioningZeroOut, EmptyFlux2LatentImage, Flux2Scheduler, GetImageSize, ImageScaleToTotalPixels, KSamplerSelect, LoadImage, RandomNoise, ReferenceLatent, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAEEncode, VAELoader
 
 
@@ -29,17 +28,32 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
-    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'image': InputSpec(node=ref('image'), field='image', default='bold_outfit_woman.jpeg'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='bold_outfit_woman.jpeg'),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='4', field='unet_name', default=MODEL_NAME),
+    'seed': InputSpec(node='7', field='noise_seed', default=DEFAULT_SEED),
+    'prompt': InputSpec(node='14', field='text', default=DEFAULT_PROMPT),
+    'image': InputSpec(node='1', field='image', default='bold_outfit_woman.jpeg'),
+    'input_image': InputSpec(node='1', field='image', default='bold_outfit_woman.jpeg'),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    unetloader = nodes['unetloader']
+    randomnoise = nodes['randomnoise']
+    cliptextencode = nodes['cliptextencode']
+    image = nodes['image']
+    image = nodes['image']
+    return {
+    'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME),
+    'seed': InputSpec(node=randomnoise, field='noise_seed', default=DEFAULT_SEED),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT),
+    'image': InputSpec(node=image, field='image', default='bold_outfit_woman.jpeg'),
+    'input_image': InputSpec(node=image, field='image', default='bold_outfit_woman.jpeg'),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_edit',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}},
     approach='official Flux.2 Klein 9B distilled image-edit workflow',
@@ -328,5 +342,5 @@ def build() -> VibeWorkflow:
         saveimage = SaveImage(filename_prefix='Flux2-Klein', images=vaedecode)
         saveimage_2 = SaveImage(images=vaedecode_2)
 
-        return wf.finalize(PUBLIC_INPUTS, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

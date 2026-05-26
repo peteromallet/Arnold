@@ -1,52 +1,60 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call, ref
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, VAEDecodeTiled
-from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVHDRDecodePostprocess, LowVRAMCheckpointLoader
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, VAEDecodeTiled
+from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVHDRDecodePostprocess
 
 
-DEFAULT_FPS = 8
-DEFAULT_PROMPT = 'pc game, console game, video game, ugly, still, static, slow'
+API_KEY = ''
+DEFAULT_FPS = 30
+DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
+DEFAULT_PROMPT_2 = 'pc game, console game, video game, ugly, still, static, slow'
 DEFAULT_SEED = 42
-GUIDE_STRENGTH = 0.5
-GUIDE_STRENGTH_2 = 2.5
-MODEL_NAME = 'ltx-2.3-22b-dev-fp8.safetensors'
-MODEL_NAME_2 = 'gemma_3_12B_it_fp4_mixed.safetensors'
-MODEL_NAME_3 = 'ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
-MODEL_NAME_4 = 'ltx-2.3-22b-ic-lora-hdr-0.9.safetensors'
-WIDGET_0 = ''
+GUIDE_STRENGTH = 1
+GUIDE_STRENGTH_2 = 0.5
+MODEL_NAME = 'comfy_gemma_3_12B_it.safetensors'
+MODEL_NAME_2 = 'ltx-2.3-22b-dev.safetensors'
+MODEL_NAME_3 = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-hdr-0.9.safetensors'
+MODEL_NAME_4 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME),
-    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default='HDR footage'),
-    'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
+PUBLIC_INPUT_METADATA = {
+    'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node='5108', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='2483', field='text', default='HDR footage', type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT_2, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
+
+def PUBLIC_INPUTS(**nodes):
+    randomnoise = nodes['randomnoise']
+    createvideo = nodes['createvideo']
+    cliptextencode = nodes['cliptextencode']
+    cliptextencode_2 = nodes['cliptextencode_2']
+    return {
+    'seed': InputSpec(node=randomnoise, field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node=cliptextencode, field='text', default='HDR footage', type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node=cliptextencode_2, field='text', default=DEFAULT_PROMPT_2, type='STRING', aliases=('negative',), media_semantics='text'),
+    }
+
 READY_METADATA = ReadyMetadata.build(
-    capability='video_guided_hdr',
-    inputs=PUBLIC_INPUTS,
-    requirements={'models': ['euler_ancestral', 'ltx-2.3-22b-dev-fp8.safetensors', 'ltx-2.3-22b-distilled-lora-384-1.1.safetensors', 'ltx-2.3-22b-ic-lora-hdr-0.9.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
-    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVConditioning', 'LTXVCropGuides'], 'pip_packages': [], 'status': 'pinned'}},
-    approach='official IC-LoRA HDR video guide',
-    smoke_resolution='256x256x5_frames',
-    manual_promotion_rationale='Promoted during sprint 7 because the declared upstream source workflow is absent; preserve the materialized graph and curate public contracts manually.',
-    discord_signal='IC-LoRA, relight/HDR, and guide-video workflows were recurring LTX channel themes.',
-    ltx_best_practices=['Use the official Lightricks workflows as runtime gates where possible.', 'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.', 'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes model_mmap_residency for LatentUpscaleModelManageable.', 'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom node packs and service credentials are declared.'],
-    comfy_configuration={'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True},
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json'},
+    capability='unknown',
+    inputs=PUBLIC_INPUT_METADATA,
+    requirements={'models': ['euler_ancestral', 'ltx-2.3-22b-dev.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors', 'ltxv/ltx2/ltx-2.3-22b-ic-lora-hdr-0.9.safetensors']},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVConditioning', 'LTXVCropGuides'], 'pip_packages': [], 'status': 'discovered'}},
+    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json', 'source_id': 'LTX-2.3_ICLoRA_HDR_Distilled', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_HDR_Distilled.json', 'source_hash': 'sha256:63dfbf9819ccbc4189964b6adccec84199e9763621c40ba0dd0f2eb0e462fd25', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_iclora_hdr'},
 )
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
-        model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=MODEL_NAME)
+        # Loaders
+        model, clip, vae = CheckpointLoaderSimple(ckpt_name=MODEL_NAME_2)
 
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral')
@@ -56,12 +64,22 @@ def build() -> VibeWorkflow:
             control_after_generate='fixed',
         )
 
-        # Inputs
-        primitivestring = raw_call('PrimitiveString', '5022', value='')
+        gemmaapitextencode = GemmaAPITextEncode(
+            ckpt_name=MODEL_NAME_2,
+            enhance_prompt=False,
+            prompt=DEFAULT_PROMPT,
+            widget_0='',
+        )
+
+        gemmaapitextencode_2 = GemmaAPITextEncode(
+            ckpt_name=MODEL_NAME_2,
+            enhance_prompt=MODEL_NAME_2,
+            widget_0='',
+        )
 
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
-            text_encoder=MODEL_NAME_2,
-            ckpt_name=MODEL_NAME,
+            text_encoder=MODEL_NAME,
+            ckpt_name=MODEL_NAME_2,
             device='default',
         )
 
@@ -69,37 +87,21 @@ def build() -> VibeWorkflow:
             sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
         )
 
-        loadvideo = LoadVideo(file='ltx_smoke_guide.mp4', video='ltx_smoke_guide.mp4')
+        loadvideo = LoadVideo(file='hdr_input_video (1).mp4', unused_widget_1='image')
 
         # Conditioning
         cliptextencode = CLIPTextEncode(text='HDR footage', clip=ltxavtextencoderloader)
 
         cliptextencode_2 = CLIPTextEncode(
-            text=DEFAULT_PROMPT,
+            text=DEFAULT_PROMPT_2,
             clip=ltxavtextencoderloader,
-        )
-
-        gemmaapitextencode = GemmaAPITextEncode(
-            widget_0=WIDGET_0,
-            widget_1='pc game, console game, video game, cartoon, childish, ugly',
-            widget_2=False,
-            widget_3=MODEL_NAME,
-            api_key=primitivestring,
-        )
-
-        gemmaapitextencode_2 = GemmaAPITextEncode(
-            widget_0=WIDGET_0,
-            widget_1='',
-            widget_2=MODEL_NAME,
-            widget_3=MODEL_NAME,
-            api_key=primitivestring,
         )
 
         images, audio, fps = GetVideoComponents(video=loadvideo)
 
-        model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
-            lora_name=MODEL_NAME_3,
-            strength_model=GUIDE_STRENGTH,
+        model_ltxic_2, latent_downscale_factor_ltxic = LTXICLoRALoaderModelOnly(
+            lora_name=MODEL_NAME_4,
+            strength_model=GUIDE_STRENGTH_2,
             model=model,
         )
 
@@ -109,22 +111,19 @@ def build() -> VibeWorkflow:
             positive=cliptextencode,
         )
 
-        model_ltxic_2, latent_downscale_factor_ltxic = LTXICLoRALoaderModelOnly(
-            lora_name=MODEL_NAME_4,
-            model=model_ltxic,
+        model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
+            lora_name=MODEL_NAME_3,
+            model=model_ltxic_2,
         )
 
-        simplemath_ = raw_call('SimpleMath+', '5111',
-            _outputs=('INT', 'FLOAT'),
-            widget_0='a*32',
-            a=latent_downscale_factor_ltxic,
-        )
+        simplemath_ = raw_call('SimpleMath+', '5111', value='a*32', a=latent_downscale_factor)
 
         resizeimagemasknode = ResizeImageMaskNode(
             resize_type='scale to multiple',
             scale_method='lanczos',
+            unused_widget_1=32,
             input=images,
-            **{'resize_type.multiple': simplemath_.out('INT')},
+            **{'resize_type.multiple': simplemath_.out(0)},
         )
 
         width, height, batch_size = GetImageSize(image=resizeimagemasknode)
@@ -138,8 +137,7 @@ def build() -> VibeWorkflow:
         positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
             crop=1,
             use_tiled_encode='disabled',
-            tile_size=128,
-            tile_overlap=32,
+            unused_widget_4=False,
             image=resizeimagemasknode,
             latent=emptyltxvlatentvideo,
             negative=negative,
@@ -148,8 +146,8 @@ def build() -> VibeWorkflow:
         )
 
         cfgguider = CFGGuider(
-            cfg=GUIDE_STRENGTH_2,
-            model=model_ltxic_2,
+            cfg=GUIDE_STRENGTH,
+            model=model_ltxic,
             negative=negative_ltx,
             positive=positive_ltx,
         )
@@ -179,23 +177,16 @@ def build() -> VibeWorkflow:
         )
 
         tonemapped, hdr_linear = LTXVHDRDecodePostprocess(
-            widget_0=7.1,
-            widget_1=True,
-            widget_2='output/hdr_exr3',
-            widget_3='frame',
-            widget_4=True,
+            exposure=7.1,
+            output_dir='output/hdr_exr3',
+            save_exr=True,
             image=vaedecodetiled,
         )
 
-        createvideo = CreateVideo(
-            fps=DEFAULT_FPS,
-            widget_0=8,
-            audio=audio,
-            images=hdr_linear,
-        )
+        createvideo = CreateVideo(audio=audio, images=hdr_linear)
 
         # Outputs
         savevideo = SaveVideo(filename_prefix='output', video=createvideo)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

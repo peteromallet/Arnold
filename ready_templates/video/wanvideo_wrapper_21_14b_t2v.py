@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoEnhanceAVideo, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader
@@ -23,17 +22,32 @@ MODEL_NAME_4 = 'umt5_xxl_fp16.safetensors'
 MODEL_NAME_5 = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('loadwanvideot5textencoder'), field='model_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
-    'width': InputSpec(node=ref('wanvideoemptyembeds'), field='width', default=256),
-    'height': InputSpec(node=ref('wanvideoemptyembeds'), field='height', default=256),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
+    'prompt': InputSpec(node='11', field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node='16', field='seed', default=DEFAULT_SEED),
+    'width': InputSpec(node='4', field='width', default=256),
+    'height': InputSpec(node='4', field='height', default=256),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    loadwanvideot5textencoder = nodes['loadwanvideot5textencoder']
+    cliptextencode = nodes['cliptextencode']
+    samples = nodes['samples']
+    wanvideoemptyembeds = nodes['wanvideoemptyembeds']
+    wanvideoemptyembeds = nodes['wanvideoemptyembeds']
+    return {
+    'model': InputSpec(node=loadwanvideot5textencoder, field='model_name', default=MODEL_NAME),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
+    'width': InputSpec(node=wanvideoemptyembeds, field='width', default=256),
+    'height': InputSpec(node=wanvideoemptyembeds, field='height', default=256),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors'], 'custom_nodes': ['ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']},
     custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEmptyEmbeds', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
     smoke_resolution='256x256x5_frames',
@@ -56,12 +70,12 @@ def build() -> VibeWorkflow:
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
 
         wanvideoemptyembeds = WanVideoEmptyEmbeds(
+            width=256,
             height=256,
             num_frames=DEFAULT_FRAMES,
             widget_0=256,
             widget_1=256,
             widget_2=5,
-            width=256,
         )
 
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
@@ -69,12 +83,7 @@ def build() -> VibeWorkflow:
 
         # Loaders
         cliploader = CLIPLoader(clip_name=MODEL_NAME_4, type_='wan')
-
-        wanvideoenhanceavideo = WanVideoEnhanceAVideo(
-            widget_0=2,
-            widget_1=0,
-            widget_2=1,
-        )
+        wanvideoenhanceavideo = WanVideoEnhanceAVideo()
 
         wanvideoloraselectmulti = WanVideoLoraSelectMulti(
             lora_0=MODEL_NAME_5,
@@ -127,5 +136,5 @@ def build() -> VibeWorkflow:
         # Outputs
         vhs_videocombine = VHS_VideoCombine(images=wanvideodecode)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

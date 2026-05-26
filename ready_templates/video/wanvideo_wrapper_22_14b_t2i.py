@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import SaveImage
 from vibecomfy.nodes.wanvideowrapper import WanVideoBlockSwap, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoVAELoader
 
@@ -35,16 +34,29 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('wanvideovaeloader'), field='model_name', default=MODEL_NAME_3),
-    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
-    'width': InputSpec(node=ref('wanvideoemptyembeds'), field='width', default=832),
-    'height': InputSpec(node=ref('wanvideoemptyembeds'), field='height', default=480),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='3', field='model_name', default=MODEL_NAME_3),
+    'seed': InputSpec(node='13', field='seed', default=DEFAULT_SEED),
+    'width': InputSpec(node='5', field='width', default=832),
+    'height': InputSpec(node='5', field='height', default=480),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    wanvideovaeloader = nodes['wanvideovaeloader']
+    samples = nodes['samples']
+    wanvideoemptyembeds = nodes['wanvideoemptyembeds']
+    wanvideoemptyembeds = nodes['wanvideoemptyembeds']
+    return {
+    'model': InputSpec(node=wanvideovaeloader, field='model_name', default=MODEL_NAME_3),
+    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
+    'width': InputSpec(node=wanvideoemptyembeds, field='width', default=832),
+    'height': InputSpec(node=wanvideoemptyembeds, field='height', default=480),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_image_single_frame',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     requirements={'custom_nodes': ['ComfyUI-WanVideoWrapper']},
     custom_node_packs={'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEmptyEmbeds', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncodeCached', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
@@ -75,12 +87,12 @@ def build() -> VibeWorkflow:
         wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
 
         wanvideoemptyembeds = WanVideoEmptyEmbeds(
+            width=832,
             height=480,
             num_frames=DEFAULT_FRAMES,
             widget_0=832,
             widget_1=480,
             widget_2=1,
-            width=832,
         )
 
         wanvideomodelloader_2 = WanVideoModelLoader(
@@ -156,5 +168,5 @@ def build() -> VibeWorkflow:
         # Outputs
         saveimage = SaveImage(filename_prefix='Wan-2-2-T2I', images=wanvideodecode)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
 

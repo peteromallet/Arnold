@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, LoadImage
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
@@ -39,19 +38,38 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('loadwanvideot5textencoder'), field='model_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT_2),
-    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node=ref('image'), field='image', default='oldman_upscaled.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='oldman_upscaled.png'),
-    'width': InputSpec(node=ref('image_image'), field='width', default=720),
-    'height': InputSpec(node=ref('image_image'), field='height', default=720),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
+    'prompt': InputSpec(node='13', field='text', default=DEFAULT_PROMPT_2),
+    'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED),
+    'image': InputSpec(node='7', field='image', default='oldman_upscaled.png'),
+    'input_image': InputSpec(node='7', field='image', default='oldman_upscaled.png'),
+    'width': InputSpec(node='15', field='width', default=720),
+    'height': InputSpec(node='15', field='height', default=720),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    loadwanvideot5textencoder = nodes['loadwanvideot5textencoder']
+    cliptextencode = nodes['cliptextencode']
+    samples = nodes['samples']
+    image = nodes['image']
+    image = nodes['image']
+    image_image = nodes['image_image']
+    image_image = nodes['image_image']
+    return {
+    'model': InputSpec(node=loadwanvideot5textencoder, field='model_name', default=MODEL_NAME),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT_2),
+    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
+    'image': InputSpec(node=image, field='image', default='oldman_upscaled.png'),
+    'input_image': InputSpec(node=image, field='image', default='oldman_upscaled.png'),
+    'width': InputSpec(node=image_image, field='width', default=720),
+    'height': InputSpec(node=image_image, field='height', default=720),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['CreateCFGScheduleFloatList', 'LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoImageToVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
@@ -210,5 +228,5 @@ def build() -> VibeWorkflow:
             images=image_get,
         )
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_2_I2V')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_2_I2V')
 

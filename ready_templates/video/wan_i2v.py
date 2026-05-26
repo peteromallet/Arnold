@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CLIPVisionEncode, CLIPVisionLoader, CreateVideo, KSampler, LoadImage, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader, WanImageToVideo
 
 
@@ -28,29 +27,68 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
-    'steps': InputSpec(node=ref('ksampler'), field='steps', default=20),
-    'negative_prompt': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT_2),
-    'negative': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT_2),
-    'output_fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'width': InputSpec(node=ref('positive'), field='width', default=512),
-    'height': InputSpec(node=ref('positive'), field='height', default=512),
-    'length': InputSpec(node=ref('positive'), field='length', default=DEFAULT_FRAMES),
-    'cfg': InputSpec(node=ref('ksampler'), field='cfg', default=GUIDE_STRENGTH),
-    'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='uni_pc'),
-    'start_image': InputSpec(node=ref('image'), field='image', default='image_to_video_wan_start_image.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='image_to_video_wan_start_image.png'),
-    'image': InputSpec(node=ref('image'), field='image', default='image_to_video_wan_start_image.png'),
-    'frames': InputSpec(node=ref('positive'), field='length', default=DEFAULT_FRAMES),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='1', field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node='11', field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node='11', field='steps', default=20),
+    'negative_prompt': InputSpec(node='7', field='text', default=DEFAULT_PROMPT_2),
+    'negative': InputSpec(node='7', field='text', default=DEFAULT_PROMPT_2),
+    'output_fps': InputSpec(node='13', field='fps', default=DEFAULT_FPS),
+    'fps': InputSpec(node='13', field='fps', default=DEFAULT_FPS),
+    'width': InputSpec(node='10', field='width', default=512),
+    'height': InputSpec(node='10', field='height', default=512),
+    'length': InputSpec(node='10', field='length', default=DEFAULT_FRAMES),
+    'cfg': InputSpec(node='11', field='cfg', default=GUIDE_STRENGTH),
+    'sampler_name': InputSpec(node='11', field='sampler_name', default='uni_pc'),
+    'start_image': InputSpec(node='5', field='image', default='image_to_video_wan_start_image.png'),
+    'input_image': InputSpec(node='5', field='image', default='image_to_video_wan_start_image.png'),
+    'image': InputSpec(node='5', field='image', default='image_to_video_wan_start_image.png'),
+    'frames': InputSpec(node='10', field='length', default=DEFAULT_FRAMES),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    unetloader = nodes['unetloader']
+    cliptextencode = nodes['cliptextencode']
+    ksampler = nodes['ksampler']
+    ksampler = nodes['ksampler']
+    cliptextencode_2 = nodes['cliptextencode_2']
+    cliptextencode_2 = nodes['cliptextencode_2']
+    createvideo = nodes['createvideo']
+    createvideo = nodes['createvideo']
+    positive = nodes['positive']
+    positive = nodes['positive']
+    positive = nodes['positive']
+    ksampler = nodes['ksampler']
+    ksampler = nodes['ksampler']
+    image = nodes['image']
+    image = nodes['image']
+    image = nodes['image']
+    positive = nodes['positive']
+    return {
+    'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=ksampler, field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node=ksampler, field='steps', default=20),
+    'negative_prompt': InputSpec(node=cliptextencode_2, field='text', default=DEFAULT_PROMPT_2),
+    'negative': InputSpec(node=cliptextencode_2, field='text', default=DEFAULT_PROMPT_2),
+    'output_fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS),
+    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS),
+    'width': InputSpec(node=positive, field='width', default=512),
+    'height': InputSpec(node=positive, field='height', default=512),
+    'length': InputSpec(node=positive, field='length', default=DEFAULT_FRAMES),
+    'cfg': InputSpec(node=ksampler, field='cfg', default=GUIDE_STRENGTH),
+    'sampler_name': InputSpec(node=ksampler, field='sampler_name', default='uni_pc'),
+    'start_image': InputSpec(node=image, field='image', default='image_to_video_wan_start_image.png'),
+    'input_image': InputSpec(node=image, field='image', default='image_to_video_wan_start_image.png'),
+    'image': InputSpec(node=image, field='image', default='image_to_video_wan_start_image.png'),
+    'frames': InputSpec(node=positive, field='length', default=DEFAULT_FRAMES),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     output_prefix='video/ComfyUI',
     provenance={'source_workflow': 'workflow_corpus/official/video/wan_i2v.json'},
@@ -111,5 +149,5 @@ def build() -> VibeWorkflow:
         # Outputs
         savevideo = SaveVideo(video=createvideo)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

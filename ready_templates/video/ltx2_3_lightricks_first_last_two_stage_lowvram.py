@@ -1,15 +1,16 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
 from vibecomfy.nodes.kjnodes import LTX2MemoryEfficientSageAttentionPatch, VRAM_Debug
 from vibecomfy.nodes.ltxvideo import LTXVTiledVAEDecode, LowVRAMCheckpointLoader
 
 
+DEFAULT_FPS = 16.0
+DEFAULT_FRAMES = 81
 DEFAULT_PROMPT = 'A cinematic first-last frame transition.'
 DEFAULT_SEED = 42
 GUIDE_STRENGTH = 1
@@ -28,41 +29,41 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'model': InputSpec(node=ref('model'), field='ckpt_name', default=MODEL_NAME_2),
-    'prompt': InputSpec(node=ref('cliptextencode_2'), field='text', default=DEFAULT_PROMPT),
-    'negative_prompt': InputSpec(node=ref('cliptextencode'), field='text', default='blurry, distorted, low quality'),
-    'negative': InputSpec(node=ref('cliptextencode'), field='text', default='blurry, distorted, low quality'),
-    'seed_first': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'seed_last': InputSpec(node=ref('randomnoise_2'), field='noise_seed', default=DEFAULT_SEED),
-    'width': InputSpec(node=ref('primitiveint_3'), field='value', default=832),
-    'height': InputSpec(node=ref('primitiveint'), field='value', default=480),
-    'stage1_width': InputSpec(node=ref('primitiveint_6'), field='value', default=832),
-    'stage1_height': InputSpec(node=ref('primitiveint_5'), field='value', default=480),
-    'output_fps': InputSpec(node=ref('primitivefloat'), field='value', default=16),
-    'fps': InputSpec(node=ref('primitivefloat'), field='value', default=16),
-    'fps_int': InputSpec(node=ref('primitiveint_4'), field='value', default=16),
-    'first_strength': InputSpec(node=ref('positive_ltxv'), field='strength', default=1.0),
-    'last_strength': InputSpec(node=ref('positive_ltxv_2'), field='strength', default=1.0),
-    'first_frame_strength': InputSpec(node=ref('positive_ltxv_4'), field='strength', default=1.0),
-    'last_frame_strength': InputSpec(node=ref('positive_ltxv_5'), field='strength', default=1.0),
-    'first_image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
-    'last_image': InputSpec(node=ref('image_load'), field='image', default='example_end.png'),
-    'start_image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
-    'end_image': InputSpec(node=ref('image_load'), field='image', default='example_end.png'),
-    'length': InputSpec(node=ref('primitiveint_2'), field='value', default=81),
-    'frames': InputSpec(node=ref('primitiveint_2'), field='value', default=81),
-    'image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='example_start.png'),
+PUBLIC_INPUT_METADATA = {
+    'image': InputSpec(node='1', field='image', default='example_start.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'frames': InputSpec(node='27', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'fps': InputSpec(node='46', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='13', field='text', default='blurry, distorted, low quality', type='STRING', required=True, media_semantics='text'),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    image = nodes['image']
+    randomnoise = nodes['randomnoise']
+    emptyltxvlatentvideo = nodes['emptyltxvlatentvideo']
+    createvideo = nodes['createvideo']
+    cliptextencode = nodes['cliptextencode']
+    return {
+    'image': InputSpec(node=image, field='image', default='example_start.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'seed': InputSpec(node=randomnoise, field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'frames': InputSpec(node=emptyltxvlatentvideo, field='length', default=DEFAULT_FRAMES, type='INT'),
+    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node=cliptextencode, field='text', default='blurry, distorted, low quality', type='STRING', required=True, media_semantics='text'),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='first_last_frame_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'version': 'unknown', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-LTXVideo', 'source': 'git', 'version': 'unknown', 'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize', 'LTXVAddGuide'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'pinned'}},
+    source_path='/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py',
+    source_id='video/ltx2_3_lightricks_first_last_two_stage_lowvram',
+    source_type='ready_template',
+    source_workflow_path='/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py',
+    output_mode='ready_template',
+    ready_id='video/ltx2_3_lightricks_first_last_two_stage_lowvram',
     smoke_resolution='256x256x5_frames',
     approach='two-stage first/last-frame route using LowVRAMCheckpointLoader',
     runtime_note="Stage 1 uses Wan2GP's half-resolution long sigma schedule; the latent is spatially upsampled before stage 2 reapplies first/last guides and uses the Wan2GP refine sigma schedule.",
@@ -70,6 +71,7 @@ READY_METADATA = ReadyMetadata.build(
     runtime_packages=[{'name': 'sageattention', 'reason': 'Required by LTX2MemoryEfficientSageAttentionPatch for the two-stage low-VRAM LTX route.', 'source': 'SageAttention-ada'}],
     ltx_best_practices=['Use LowVRAMCheckpointLoader for 4090 viability.', 'Use the dedicated distilled fp8 checkpoint rather than the dev checkpoint plus LoRA when possible.', "Preserve Wan2GP's two-stage sigma structure for parity checks."],
     comfy_configuration={'memory_profile': 3, 'fp8_e4m3fn_text_enc': True},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py', 'source_id': 'video/ltx2_3_lightricks_first_last_two_stage_lowvram', 'source_type': 'ready_template', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_first_last_two_stage_lowvram'},
 )
 
 def build() -> VibeWorkflow:
@@ -79,10 +81,8 @@ def build() -> VibeWorkflow:
         # Inputs
         image, mask = LoadImage(image='example_start.png')
         image_load, mask_load = LoadImage(image='example_end.png')
-        primitiveint = raw_call('PrimitiveInt', '98', value=480)
         randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
         randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED)
-        primitiveint_2 = raw_call('PrimitiveInt', '102', value=81)
 
         ltxavtextencoderloader = LTXAVTextEncoderLoader(
             text_encoder=MODEL_NAME,
@@ -90,14 +90,9 @@ def build() -> VibeWorkflow:
             device='default',
         )
 
-        primitiveint_3 = raw_call('PrimitiveInt', '113', value=832)
-        primitiveint_4 = raw_call('PrimitiveInt', '114', value=16)
-        primitivefloat = raw_call('PrimitiveFloat', '123', value=16)
         ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME_2)
         model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=MODEL_NAME_2)
         latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME_3)
-        primitiveint_5 = raw_call('PrimitiveInt', '981', value=480)
-        primitiveint_6 = raw_call('PrimitiveInt', '1131', value=832)
 
         # Sampling
         ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
@@ -119,14 +114,14 @@ def build() -> VibeWorkflow:
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
             input=image,
-            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint, 'resize_type.width': primitiveint_3},
+            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': 480, 'resize_type.width': 832},
         )
 
         resizeimagemasknode_2 = ResizeImageMaskNode(
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
             input=image_load,
-            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint, 'resize_type.width': primitiveint_3},
+            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': 480, 'resize_type.width': 832},
         )
 
         cliptextencode_2 = CLIPTextEncode(
@@ -139,8 +134,8 @@ def build() -> VibeWorkflow:
         )
 
         ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-            frames_number=primitiveint_2,
-            frame_rate=primitiveint_4,
+            frames_number=81,
+            frame_rate=16,
             audio_vae=ltxvaudiovaeloader,
         )
 
@@ -148,21 +143,21 @@ def build() -> VibeWorkflow:
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
             input=image,
-            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint_5, 'resize_type.width': primitiveint_6},
+            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': 480, 'resize_type.width': 832},
         )
 
         resizeimagemasknode_4 = ResizeImageMaskNode(
             resize_type=RESIZE_TYPE,
             scale_method=SCALE_METHOD,
             input=image_load,
-            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': primitiveint_5, 'resize_type.width': primitiveint_6},
+            **{'resize_type.crop': RESIZE_TYPE_CROP, 'resize_type.height': 480, 'resize_type.width': 832},
         )
 
         ltxvpreprocess = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_2)
         ltxvpreprocess_2 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode)
 
         positive, negative = LTXVConditioning(
-            frame_rate=primitivefloat,
+            frame_rate=16.0,
             negative=cliptextencode,
             positive=cliptextencode_2,
         )
@@ -180,13 +175,12 @@ def build() -> VibeWorkflow:
         )
 
         emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+            length=DEFAULT_FRAMES,
             width=width,
             height=height,
-            length=primitiveint_2,
         )
 
         positive_ltxv, negative_ltxv, latent = LTXVAddGuide(
-            strength=1.0,
             image=ltxvpreprocess_4,
             latent=emptyltxvlatentvideo,
             negative=negative,
@@ -196,7 +190,6 @@ def build() -> VibeWorkflow:
 
         positive_ltxv_2, negative_ltxv_2, latent_ltxv = LTXVAddGuide(
             frame_idx=-1,
-            strength=1.0,
             image=ltxvpreprocess_3,
             latent=latent,
             negative=negative_ltxv,
@@ -244,7 +237,6 @@ def build() -> VibeWorkflow:
         )
 
         positive_ltxv_4, negative_ltxv_4, latent_ltxv_3 = LTXVAddGuide(
-            strength=1.0,
             image=ltxvpreprocess_2,
             latent=latent_ltxv_2,
             negative=negative_ltxv_3,
@@ -254,7 +246,6 @@ def build() -> VibeWorkflow:
 
         positive_ltxv_5, negative_ltxv_5, latent_ltxv_4 = LTXVAddGuide(
             frame_idx=-1,
-            strength=1.0,
             image=ltxvpreprocess,
             latent=latent_ltxv_3,
             negative=negative_ltxv_4,
@@ -306,7 +297,7 @@ def build() -> VibeWorkflow:
         )
 
         createvideo = CreateVideo(
-            fps=primitivefloat,
+            fps=DEFAULT_FPS,
             audio=ltxvaudiovaedecode,
             images=ltxvtiledvaedecode,
         )
@@ -314,5 +305,5 @@ def build() -> VibeWorkflow:
         # Outputs
         savevideo = SaveVideo(filename_prefix='output', video=createvideo)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, LoadImage, PreviewImage
 from vibecomfy.nodes.kjnodes import CameraPoseVisualizer, INTConstant, ImageConcatMulti, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
@@ -12,37 +11,49 @@ from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoB
 
 
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
-DEFAULT_PROMPT = 'high quality video of an old man'
+DEFAULT_PROMPT = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
-DEFAULT_PROMPT_3 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
+DEFAULT_PROMPT_3 = 'high quality video of an old man'
 DEFAULT_SEED = 43
+GUIDE_STRENGTH = 6
+LOAD_DEVICE = 'offload_device'
 MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'WanVideo\\Wan2.1-Fun-V1.1-1.3B-Control-Camera.safetensors'
-MODEL_NAME_3 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+MODEL_NAME_3 = 'WanVideo\\Wan2.1-Fun-V1.1-1.3B-Control-Camera.safetensors'
 MODEL_NAME_4 = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
-WIDGET_0 = 'VAE'
-WIDGET_0_2 = 'InputImage'
-WIDGET_0_3 = ''
+PRECISION = 'bf16'
+QUANTIZATION = 'disabled'
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('loadwanvideot5textencoder'), field='model_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT_2),
-    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node=ref('image'), field='image', default='oldman_upscaled.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='oldman_upscaled.png'),
-    'width': InputSpec(node=ref('image_image'), field='width', default=256),
-    'height': InputSpec(node=ref('image_image'), field='height', default=256),
+PUBLIC_INPUT_METADATA = {
+    'seed': InputSpec(node='27', field='seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node='58', field='image', default='oldman_upscaled.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='97', field='width', default=624, type='INT'),
+    'height': InputSpec(node='97', field='height', default=624, type='INT'),
+    'prompt': InputSpec(node='49', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
 }
 
+
+def PUBLIC_INPUTS(**nodes):
+    samples = nodes['samples']
+    image = nodes['image']
+    image_image = nodes['image_image']
+    image_image = nodes['image_image']
+    cliptextencode = nodes['cliptextencode']
+    return {
+    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node=image, field='image', default='oldman_upscaled.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node=image_image, field='width', default=624, type='INT'),
+    'height': InputSpec(node=image_image, field='height', default=624, type='INT'),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    }
+
 READY_METADATA = ReadyMetadata.build(
-    capability='camera_control_video',
-    inputs=PUBLIC_INPUTS,
-    requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper', 'rgthree-comfy']},
-    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['INTConstant', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoExperimentalArgs', 'WanVideoImageToVideoEncode', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['GetNode', 'SetNode'], 'pip_packages': [], 'status': 'pinned'}},
-    approach='WanVideoFun camera-control workflow',
-    smoke_resolution='256x256x5_frames',
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json'},
+    capability='unknown',
+    inputs=PUBLIC_INPUT_METADATA,
+    requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors']},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['INTConstant', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoExperimentalArgs', 'WanVideoImageToVideoEncode', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
+    provenance={'source_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json', 'source_id': 'wan21_14b_fun_control_camera', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control_camera.json', 'source_hash': 'sha256:105091a3316f207216d8bcc95d127d1cddb092c8b925d22966fcbda77313dbe8', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_fun_control_camera'},
 )
 
 def build() -> VibeWorkflow:
@@ -50,46 +61,33 @@ def build() -> VibeWorkflow:
     with new_workflow(READY_METADATA, source_path=__file__) as wf:
 
         loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
-        wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME_2)
+        wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME_3)
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
         wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=15, use_non_blocking=True)
 
         # Loaders
         cliploader = CLIPLoader(clip_name=MODEL_NAME_4, type_='wan')
 
         wanvideoteacache = WanVideoTeaCache(
-            widget_0=0.08,
-            widget_1=6,
-            widget_2=-1,
-            widget_3='offload_device',
-            widget_4='true',
-            widget_5='e0',
+            rel_l1_thresh=0.08000000000000002,
+            start_step=6,
+            use_coefficients='true',
+            mode='e0',
         )
 
         # Inputs
-        image, mask = LoadImage(image='oldman_upscaled.png')
-        reroute = raw_call('Reroute', '80')
-        getnode = raw_call('GetNode', '85', widget_0=WIDGET_0)
-        getnode_2 = raw_call('GetNode', '86', widget_0=WIDGET_0)
-        getnode_3 = raw_call('GetNode', '89', widget_0=WIDGET_0_2)
+        image, mask = LoadImage(image='oldman_upscaled.png', unused_widget_1='image')
 
         wanvideoexperimentalargs = WanVideoExperimentalArgs(
-            widget_0=WIDGET_0_3,
-            widget_1=True,
-            widget_2=False,
-            widget_3=0,
-            widget_4=True,
-            widget_5=1,
-            widget_6=1.25,
-            widget_7=20,
+            cfg_zero_star=True,
+            use_fresca=True,
         )
 
         intconstant = INTConstant(value=81)
-        setnode = raw_call('SetNode', '83', widget_0=WIDGET_0, WANVAE=wanvideovaeloader)
 
         wanvideotextencode = WanVideoTextEncode(
-            positive_prompt=DEFAULT_PROMPT,
+            positive_prompt=DEFAULT_PROMPT_3,
             negative_prompt=DEFAULT_NEGATIVE,
             model_to_offload=wanvideomodelloader,
             t5=loadwanvideot5textencoder,
@@ -97,11 +95,11 @@ def build() -> VibeWorkflow:
 
         # Conditioning
         cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
+        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
         image_image, width, height, mask_image = ImageResizeKJv2(
-            width=256,
-            height=256,
+            width=624,
+            height=624,
             upscale_method='lanczos',
             keep_proportion='crop',
             divisible_by=16,
@@ -110,23 +108,9 @@ def build() -> VibeWorkflow:
 
         ade_cameraposebasic = raw_call('ADE_CameraPoseBasic', '99',
             widget_0='Zoom Out',
-            widget_1=0.1,
+            widget_1=0.10000000000000002,
             widget_2=40,
             frame_length=intconstant,
-        )
-
-        setnode_2 = raw_call('SetNode', '98', widget_0=WIDGET_0_2, IMAGE=image_image)
-
-        samples, denoised_samples = WanVideoSampler(
-            steps=1,
-            seed=DEFAULT_SEED,
-            batched_cfg='',
-            start_step='',
-            cache_args=wanvideoteacache,
-            experimental_args=wanvideoexperimentalargs,
-            image_embeds=reroute.out(0),
-            model=wanvideomodelloader,
-            text_embeds=wanvideotextencode,
         )
 
         wanvideotextembedbridge = WanVideoTextEmbedBridge(
@@ -135,54 +119,69 @@ def build() -> VibeWorkflow:
         )
 
         cameraposevisualizer = CameraPoseVisualizer(
-            widget_0=WIDGET_0_3,
-            widget_1=0.2,
-            widget_2=0.3,
-            widget_3=1,
-            widget_4=False,
-            widget_5=True,
-            widget_6=False,
             cameractrl_poses=ade_cameraposebasic.out(0),
         )
 
         wanvideofuncameraembeds = WanVideoFunCameraEmbeds(
+            start_percent=1,
+            strength=0,
             widget_0=832,
             widget_1=480,
             widget_2=1,
-            widget_3=0,
-            widget_4=1,
             height=height,
             poses=ade_cameraposebasic.out(0),
             width=width,
         )
 
-        wanvideodecode = WanVideoDecode(samples=samples, vae=getnode_2.out(0))
-
         wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
-            noise_aug_strength=0.03,
+            noise_aug_strength=0.030000000000000006,
             tiled_vae=True,
             width=width,
             height=height,
             num_frames=intconstant,
             control_embeds=wanvideofuncameraembeds,
-            start_image=setnode_2.out(0),
-            vae=getnode.out(0),
+            start_image=image_image,
+            vae=wanvideovaeloader,
         )
 
         # Outputs
         previewimage = PreviewImage(images=cameraposevisualizer)
 
+        samples, denoised_samples = WanVideoSampler(
+            seed=DEFAULT_SEED,
+            batched_cfg='',
+            start_step='',
+            unused_widget_4='fixed',
+            cache_args=wanvideoteacache,
+            experimental_args=wanvideoexperimentalargs,
+            image_embeds=wanvideoimagetovideoencode,
+            model=wanvideomodelloader,
+            text_embeds=wanvideotextencode,
+        )
+
+        wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
+
         imageconcatmulti = ImageConcatMulti(
             inputcount=3,
-            direction='left',
-            match_image_size=True,
-            unused_3=None,
+            direction=True,
+            match_image_size=None,
+            unused_widget_1='left',
             image_1=wanvideodecode,
-            image_2=getnode_3.out(0),
+            image_2=image_image,
             image_3=cameraposevisualizer,
         )
 
-        vhs_videocombine = VHS_VideoCombine(images=imageconcatmulti)
+        vhs_videocombine = VHS_VideoCombine(
+            frame_rate=16,
+            filename_prefix='WanVideoWrapper_FunControlCamera',
+            format='video/h264-mp4',
+            crf=19,
+            pix_fmt='yuv420p',
+            save_metadata=True,
+            trim_to_audio=False,
+            videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_FunControl_00318.mp4', 'subfolder': '', 'type': 'output', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_FunControl_00318.png', 'fullpath': 'N:\\AI\\ComfyUI\\output\\WanVideoWrapper_FunControl_00318.mp4'}},
+            images=imageconcatmulti,
+        )
 
-        return wf.finalize(PUBLIC_INPUTS, output_node=previewimage, output_type='PreviewImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideoWrapper_FunControlCamera')
 

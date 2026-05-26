@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, EmptyHunyuanLatentVideo, KSampler, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader
 
 
@@ -26,26 +25,59 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=ref('positive'), field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node=ref('ksampler'), field='seed', default=DEFAULT_SEED),
-    'steps': InputSpec(node=ref('ksampler'), field='steps', default=30),
-    'negative_prompt': InputSpec(node=ref('negative'), field='text', default=DEFAULT_PROMPT_2),
-    'negative': InputSpec(node=ref('negative'), field='text', default=DEFAULT_PROMPT_2),
-    'width': InputSpec(node=ref('emptyhunyuanlatentvideo'), field='width', default=832),
-    'height': InputSpec(node=ref('emptyhunyuanlatentvideo'), field='height', default=480),
-    'output_fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'cfg': InputSpec(node=ref('ksampler'), field='cfg', default=GUIDE_STRENGTH),
-    'sampler_name': InputSpec(node=ref('ksampler'), field='sampler_name', default='uni_pc'),
-    'length': InputSpec(node=ref('emptyhunyuanlatentvideo'), field='length', default=DEFAULT_FRAMES),
-    'frames': InputSpec(node=ref('emptyhunyuanlatentvideo'), field='length', default=DEFAULT_FRAMES),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='1', field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node='5', field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node='8', field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node='8', field='steps', default=30),
+    'negative_prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT_2),
+    'negative': InputSpec(node='6', field='text', default=DEFAULT_PROMPT_2),
+    'width': InputSpec(node='4', field='width', default=832),
+    'height': InputSpec(node='4', field='height', default=480),
+    'output_fps': InputSpec(node='10', field='fps', default=DEFAULT_FPS),
+    'fps': InputSpec(node='10', field='fps', default=DEFAULT_FPS),
+    'cfg': InputSpec(node='8', field='cfg', default=GUIDE_STRENGTH),
+    'sampler_name': InputSpec(node='8', field='sampler_name', default='uni_pc'),
+    'length': InputSpec(node='4', field='length', default=DEFAULT_FRAMES),
+    'frames': InputSpec(node='4', field='length', default=DEFAULT_FRAMES),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    unetloader = nodes['unetloader']
+    positive = nodes['positive']
+    ksampler = nodes['ksampler']
+    ksampler = nodes['ksampler']
+    negative = nodes['negative']
+    negative = nodes['negative']
+    emptyhunyuanlatentvideo = nodes['emptyhunyuanlatentvideo']
+    emptyhunyuanlatentvideo = nodes['emptyhunyuanlatentvideo']
+    createvideo = nodes['createvideo']
+    createvideo = nodes['createvideo']
+    ksampler = nodes['ksampler']
+    ksampler = nodes['ksampler']
+    emptyhunyuanlatentvideo = nodes['emptyhunyuanlatentvideo']
+    emptyhunyuanlatentvideo = nodes['emptyhunyuanlatentvideo']
+    return {
+    'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME),
+    'prompt': InputSpec(node=positive, field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=ksampler, field='seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node=ksampler, field='steps', default=30),
+    'negative_prompt': InputSpec(node=negative, field='text', default=DEFAULT_PROMPT_2),
+    'negative': InputSpec(node=negative, field='text', default=DEFAULT_PROMPT_2),
+    'width': InputSpec(node=emptyhunyuanlatentvideo, field='width', default=832),
+    'height': InputSpec(node=emptyhunyuanlatentvideo, field='height', default=480),
+    'output_fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS),
+    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS),
+    'cfg': InputSpec(node=ksampler, field='cfg', default=GUIDE_STRENGTH),
+    'sampler_name': InputSpec(node=ksampler, field='sampler_name', default='uni_pc'),
+    'length': InputSpec(node=emptyhunyuanlatentvideo, field='length', default=DEFAULT_FRAMES),
+    'frames': InputSpec(node=emptyhunyuanlatentvideo, field='length', default=DEFAULT_FRAMES),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     output_prefix='video/ComfyUI',
     provenance={'source_workflow': 'workflow_corpus/official/video/wan_t2v.json'},
@@ -90,5 +122,5 @@ def build() -> VibeWorkflow:
         # Outputs
         savevideo = SaveVideo(video=createvideo)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

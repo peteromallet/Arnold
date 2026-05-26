@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import ImageBlur
 from vibecomfy.nodes.kjnodes import ImageConcatMulti
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
@@ -19,14 +18,23 @@ MODEL_NAME_3 = 'WanVid\\wan2.1-1.3b-control-lora-tile-v1.1_comfy.safetensors'
 MODEL_NAME_4 = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('loadwanvideot5textencoder'), field='model_name', default=MODEL_NAME),
-    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
+    'seed': InputSpec(node='13', field='seed', default=DEFAULT_SEED),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    loadwanvideot5textencoder = nodes['loadwanvideot5textencoder']
+    samples = nodes['samples']
+    return {
+    'model': InputSpec(node=loadwanvideot5textencoder, field='model_name', default=MODEL_NAME),
+    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='control_lora_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors'], 'custom_nodes': ['ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']},
     custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoControlEmbeds', 'WanVideoDecode', 'WanVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
     smoke_resolution='256x256x5_frames',
@@ -41,15 +49,7 @@ def build() -> VibeWorkflow:
         loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
         wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
         wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
-
-        wanvideoteacache = WanVideoTeaCache(
-            widget_0=0.1,
-            widget_1=1,
-            widget_2=-1,
-            widget_3='offload_device',
-            widget_4='true',
-        )
-
+        wanvideoteacache = WanVideoTeaCache(rel_l1_thresh=0.1, use_coefficients='true')
         wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
 
         image, frame_count, audio, video_info = VHS_LoadVideo(
@@ -73,20 +73,17 @@ def build() -> VibeWorkflow:
         imageblur = ImageBlur(widget_0=4, widget_1=1, image=image)
 
         wanvideoencode = WanVideoEncode(
-            widget_0=False,
-            widget_1=272,
-            widget_2=272,
-            widget_3=144,
-            widget_4=128,
-            widget_5=0,
-            widget_6=1.0000000000000002,
+            enable_vae_tiling=272,
+            tile_x=144,
+            tile_y=128,
+            tile_stride_x=0,
+            tile_stride_y=1.0000000000000002,
             image=imageblur,
             vae=wanvideovaeloader,
         )
 
         wanvideocontrolembeds = WanVideoControlEmbeds(
-            widget_0=0,
-            widget_1=0.7,
+            end_percent=0.7,
             latents=wanvideoencode,
         )
 
@@ -111,5 +108,5 @@ def build() -> VibeWorkflow:
         # Outputs
         vhs_videocombine = VHS_VideoCombine(images=imageconcatmulti)
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

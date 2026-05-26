@@ -1,10 +1,9 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call, ref
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, LoadImage, LoraLoaderModelOnly, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader, WanImageToVideo
 
 
@@ -34,22 +33,47 @@ MODELS = {
 }
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('unetloader'), field='unet_name', default=MODEL_NAME_3),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node=ref('ksampleradvanced'), field='noise_seed', default=DEFAULT_SEED),
-    'steps': InputSpec(node=ref('ksampleradvanced'), field='steps', default=4),
-    'image': InputSpec(node=ref('image'), field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
-    'fps': InputSpec(node=ref('createvideo'), field='fps', default=DEFAULT_FPS),
-    'width': InputSpec(node=ref('positive'), field='width', default=720),
-    'height': InputSpec(node=ref('positive'), field='height', default=720),
-    'frames': InputSpec(node=ref('positive'), field='length', default=DEFAULT_FRAMES),
+PUBLIC_INPUT_METADATA = {
+    'model': InputSpec(node='4', field='unet_name', default=MODEL_NAME_3),
+    'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node='130:110', field='noise_seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node='130:110', field='steps', default=4),
+    'image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'input_image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'fps': InputSpec(node='14', field='fps', default=DEFAULT_FPS),
+    'width': InputSpec(node='12', field='width', default=720),
+    'height': InputSpec(node='12', field='height', default=720),
+    'frames': InputSpec(node='12', field='length', default=DEFAULT_FRAMES),
 }
+
+
+def PUBLIC_INPUTS(**nodes):
+    unetloader = nodes['unetloader']
+    cliptextencode = nodes['cliptextencode']
+    ksampleradvanced = nodes['ksampleradvanced']
+    ksampleradvanced = nodes['ksampleradvanced']
+    image = nodes['image']
+    image = nodes['image']
+    createvideo = nodes['createvideo']
+    positive = nodes['positive']
+    positive = nodes['positive']
+    positive = nodes['positive']
+    return {
+    'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME_3),
+    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT),
+    'seed': InputSpec(node=ksampleradvanced, field='noise_seed', default=DEFAULT_SEED),
+    'steps': InputSpec(node=ksampleradvanced, field='steps', default=4),
+    'image': InputSpec(node=image, field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'input_image': InputSpec(node=image, field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS),
+    'width': InputSpec(node=positive, field='width', default=720),
+    'height': InputSpec(node=positive, field='height', default=720),
+    'frames': InputSpec(node=positive, field='length', default=DEFAULT_FRAMES),
+    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
-    inputs=PUBLIC_INPUTS,
+    inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     source_path='vendor/ComfyUI/tests/unit/playwright_cache/1.43.1+t0.9.45/03_video_wan2_2_14B_i2v_subgraphed.json',
     source_id='03_video_wan2_2_14B_i2v_subgraphed',
@@ -160,5 +184,5 @@ def build() -> VibeWorkflow:
             video=createvideo,
         )
 
-        return wf.finalize(PUBLIC_INPUTS, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
+        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
 
