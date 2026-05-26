@@ -105,8 +105,12 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
                 _current_rank = 999
             if _current_rank > 1:
-                evaluator_model = CRITIC_MODEL_ROSTER[0].model
-                evaluator_resolved: Any = ("claude", _ce_mode, _ce_refreshed, evaluator_model)
+                _run_vendor = (state["config"].get("vendor") or "").strip().lower()
+                if _run_vendor == "codex":
+                    _eval_agent, evaluator_model = "codex", "gpt-5.5"
+                else:
+                    _eval_agent, evaluator_model = "claude", CRITIC_MODEL_ROSTER[0].model
+                evaluator_resolved: Any = (_eval_agent, _ce_mode, _ce_refreshed, evaluator_model)
             else:
                 evaluator_model = _rank_input
                 evaluator_resolved = resolved
