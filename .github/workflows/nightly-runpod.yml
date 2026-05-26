@@ -45,4 +45,4 @@ jobs:
           .venv/bin/python -m pip install -e ".[dev,runpod-launch]"
 
       - name: Run RunPod p1 smoke
-        run: uv run pytest --runpod tests/smoke/test_p1_runpod.py -q
+        run: .venv/bin/pytest --runpod tests/smoke/test_p1_runpod.py -q

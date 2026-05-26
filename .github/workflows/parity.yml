@@ -23,6 +23,4 @@ jobs:
           .venv/bin/python -m pip install -e ".[dev]"
 
       - name: Check canonical ready-template parity
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: uv run python -m tools.check_canonical_parity --all
+        run: .venv/bin/python -m tools.check_canonical_parity --all

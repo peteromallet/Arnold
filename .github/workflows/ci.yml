@@ -51,7 +51,7 @@ jobs:
 
       - name: Run fast suite with coverage
         run: |
-          uv run pytest -q --tb=no \
+          .venv/bin/pytest -q --tb=no \
             --cov=vibecomfy \
             --cov-report=term-missing \
             --cov-report=xml
@@ -68,7 +68,7 @@ jobs:
             echo "Snapshot bypass triggered; skipping --check"
             exit 0
           fi
-          uv run python scripts/regenerate_snapshots.py --check
+          .venv/bin/python scripts/regenerate_snapshots.py --check
 
       - name: Upload coverage artifact
         if: always()
