@@ -73,6 +73,7 @@ STEP_SCHEMA_FILENAMES: dict[str, str] = {
     "prep-distill": "prep.json",
     "revise": "revise.json",
     "critique": "critique.json",
+    "critique_evaluator": "critique_evaluator.json",
     "feedback": "feedback.json",
     "gate": "gate.json",
     "finalize": "finalize.json",
@@ -86,7 +87,7 @@ STEP_SCHEMA_FILENAMES: dict[str, str] = {
 
 # Derive required keys per step from SCHEMAS so they aren't duplicated.
 _STEP_REQUIRED_KEYS: dict[str, list[str]] = {
-    step: SCHEMAS[filename].get("required", [])
+    step: SCHEMAS.get(filename, {}).get("required", [])
     for step, filename in STEP_SCHEMA_FILENAMES.items()
 }
 
