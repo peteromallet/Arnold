@@ -47,7 +47,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv --seed
-          .venv/bin/python -m pip install -e ".[dev]"
+          .venv/bin/python -m pip install -e ".[dev,runpod-launch]"
 
       - name: Run fast suite with coverage
         run: |
