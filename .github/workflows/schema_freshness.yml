@@ -1,0 +1,49 @@
+name: Schema Freshness
+
+on:
+  workflow_dispatch:
+    inputs:
+      object_info_source:
+        description: "Optional path to a committed object_info JSON/cache file in the checkout"
+        required: false
+        default: "vibecomfy/porting/cache/object_info"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  schema-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Refresh schema cache from local object_info source
+        run: |
+          mkdir -p out/schema-freshness
+          python -m vibecomfy.cli schemas refresh --source "${{ inputs.object_info_source }}" --json \
+            > out/schema-freshness/refresh.json
+
+      - name: Capture schema diff
+        run: |
+          git diff -- vibecomfy/porting/cache/object_info > out/schema-freshness/schema.diff
+          if [ -s out/schema-freshness/schema.diff ]; then
+            echo "Schema cache changes detected. See uploaded schema.diff artifact."
+          else
+            echo "No schema cache changes detected." | tee out/schema-freshness/schema.diff
+          fi
+
+      - name: Upload schema freshness artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-freshness
+          path: out/schema-freshness/
