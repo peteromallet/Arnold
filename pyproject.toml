@@ -49,6 +49,7 @@ markers = [
   "gpu: marks tests that provision live GPU resources",
   "runpod: opt-in smoke tests that provision real RunPod GPU pods (requires --runpod and RUNPOD_API_KEY).",
   "runpod_full: opt-in production-resolution matrix tests; multi-pod, ~$5-10 per run (requires --runpod-full and RUNPOD_API_KEY).",
+  "comfy: opt-in release gate that imports ComfyUI and runs convert_ui_to_api; skipped offline (requires VIBECOMFY_COMFY_SMOKE=1).",
 ]
 
 [tool.hatch.metadata]

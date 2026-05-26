@@ -9,7 +9,7 @@ from vibecomfy.metadata import (
     _infer_requirements,
     _register_common_inputs,
 )
-from vibecomfy.porting.widget_aliases import widget_names_from_schema
+from vibecomfy.porting.widget_aliases import widget_names_for_class, widget_names_from_schema
 from vibecomfy.schema import OutputSpec, SchemaProvider, schema_for
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
@@ -138,6 +138,16 @@ def convert_to_vibe_format(
                 inputs[key] = value
         class_type = str(node.get("class_type", "Unknown"))
         metadata = {key: value for key, value in node.items() if key not in {"class_type", "inputs"}}
+        # ── retain control_after_generate (UI-only) into metadata ──
+        # Captured here, before the compile-time `_is_ui_only_prompt_input` filter
+        # (workflow.py:471) drops it from the compiled API dict, so the emitter can
+        # re-render it. Metadata-only: it never re-enters `inputs`/`widgets`, so
+        # `compile("api")` stays byte-for-byte identical. Never guessed — when no
+        # recognized control token is present, metadata stays unset and the emitter
+        # emits the documented `fixed` default itself.
+        control_value = _capture_control_after_generate(node, class_type)
+        if control_value is not None:
+            metadata.setdefault("control_after_generate", control_value)
         # ── enrich node metadata from schema ──
         output_names = _schema_output_names(schema_provider, class_type)
         if output_names:
@@ -178,6 +188,50 @@ def convert_to_vibe_format(
 
     workflow.requirements = _infer_requirements(workflow)
     return workflow
+
+
+# Recognized litegraph `control_after_generate` tokens. Capture is restricted to
+# these so an arbitrary widget value is never mistaken for a control mode.
+_CONTROL_AFTER_GENERATE_VALUES: frozenset[str] = frozenset(
+    {"fixed", "randomize", "increment", "decrement"}
+)
+
+
+def _capture_control_after_generate(node: dict[str, Any], class_type: str) -> str | None:
+    """Recover a node's ``control_after_generate`` value, if present.
+
+    Looks in two places, both available at ``convert_to_vibe_format`` time and both
+    examined BEFORE the ``_schema_input_names`` None-strip (:185) can discard the
+    value during ``_normalize_ui_to_api``:
+
+    1. A named ``control_after_generate`` input (e.g. api-format prompts, or schemas
+       like ``RandomNoise`` that name the position).
+    2. The raw litegraph ``widgets_values`` carried on the node's ``_ui`` payload,
+       located via the committed widget schema position whose name is ``None`` (the
+       UI-only control slot) or literally ``control_after_generate``.
+
+    Only recognized control tokens are returned; anything else yields ``None`` so the
+    value is never guessed.
+    """
+    inputs = node.get("inputs")
+    if isinstance(inputs, dict):
+        named = inputs.get("control_after_generate")
+        if isinstance(named, str) and named in _CONTROL_AFTER_GENERATE_VALUES:
+            return named
+
+    raw_ui = node.get("_ui")
+    widgets = raw_ui.get("widgets_values") if isinstance(raw_ui, dict) else None
+    if isinstance(widgets, list):
+        names = widget_names_for_class(class_type)
+        if names:
+            for idx, name in enumerate(names):
+                if name is not None and name != "control_after_generate":
+                    continue
+                if idx < len(widgets):
+                    candidate = widgets[idx]
+                    if isinstance(candidate, str) and candidate in _CONTROL_AFTER_GENERATE_VALUES:
+                        return candidate
+    return None
 
 
 def _schema_input_names(schema_provider: SchemaProvider | None, class_type: str) -> list[str]:
