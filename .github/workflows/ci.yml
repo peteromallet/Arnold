@@ -66,19 +66,9 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml
 
-      - name: Check snapshots are up to date (with bypass)
-        env:
-          MSG_PUSH: ${{ github.event.head_commit.message }}
-          MSG_PR_TITLE: ${{ github.event.pull_request.title }}
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: |
-          if [[ "$MSG_PUSH" == *snapshots:* \
-             || "$MSG_PR_TITLE" == *snapshots:* \
-             || ",$LABELS," == *,snapshots,* ]]; then
-            echo "Snapshot bypass triggered; skipping --check"
-            exit 0
-          fi
-          .venv/bin/python scripts/regenerate_snapshots.py --check
+      # Snapshot-check step intentionally omitted: scripts/regenerate_snapshots.py
+      # lives only on feature branches and has never landed on main. Re-add this
+      # step in the same PR that lands the regenerator script.
 
       - name: Upload coverage artifact
         if: always()
