@@ -145,6 +145,16 @@ def _build_state_config(
                 adaptive_critique_value = get_effective("execution", "adaptive_critique")
     adaptive_critique = bool(adaptive_critique_value)
 
+    # Layered defense (May 2026 — see docs/critique.md): when adaptive critique
+    # resolves True, fail fast at init if the runtime wiring is incomplete.
+    # The original silent-fallback bug shipped because the missing schema only
+    # KeyError'd inside the critique handler under a broad except. Probing at
+    # init means a misconfigured profile is rejected before any planning cost.
+    if adaptive_critique:
+        from megaplan.audits.critique_evaluator import assert_adaptive_critique_wired
+
+        assert_adaptive_critique_wired()
+
     # Precedence mirrors adaptive_critique: explicit --critic-model CLI flag >
     # explicit user-config setting > profile-level `critic_model` field > global
     # default (""). When set, the adaptive evaluator still picks lenses, but the
@@ -174,6 +184,18 @@ def _build_state_config(
             strict_notes_arg = get_effective("execution", "strict_notes")
     strict_notes = bool(strict_notes_arg)
 
+    # Strict adaptive critique (PR #52, May 2026): when True AND
+    # adaptive_critique is True, the critique handler raises
+    # AdaptiveCritiqueDegradedError instead of silently falling back to static
+    # lenses on a runtime-recoverable failure. Off by default for backward
+    # compat. Recommended for production / CI / important runs (see
+    # docs/critique.md). Precedence mirrors other execution settings: CLI flag
+    # > explicit user config > global default.
+    strict_adaptive_critique_arg = getattr(args, "strict_adaptive_critique", None)
+    if strict_adaptive_critique_arg is None:
+        strict_adaptive_critique_arg = get_effective("execution", "strict_adaptive_critique")
+    strict_adaptive_critique = bool(strict_adaptive_critique_arg)
+
     max_tasks_per_batch_arg = getattr(args, "max_tasks_per_batch", None)
     if max_tasks_per_batch_arg is not None:
         max_tasks_per_batch = int(max_tasks_per_batch_arg)
@@ -192,6 +214,7 @@ def _build_state_config(
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
         "adaptive_critique": adaptive_critique,
+        "strict_adaptive_critique": strict_adaptive_critique,
         "critic_model": critic_model,
         "robustness": robustness,
         "mode": mode,

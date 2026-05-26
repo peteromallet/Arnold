@@ -13,6 +13,7 @@ from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_si
 from megaplan.orchestration.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
+    AdaptiveCritiqueDegradedError,
     CliError,
     FLAG_BLOCKING_STATUSES,
     PlanState,
@@ -184,7 +185,34 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     _verified_flag_ids_set = apply_flag_verifications(plan_dir, _fv_list)
                 # Build check_id->why map for per-lens targeting notes in the critic prompt.
                 _selection_why = {sel["check_id"]: sel.get("why", "") for sel in selections}
-            except Exception as exc:
+            # Narrow except: structural / wiring errors (KeyError on the step
+            # dispatch, ImportError on a missing module, AttributeError on a
+            # misshapen worker payload) MUST bubble — these are bugs, not
+            # runtime conditions, and they should fail the run loudly so the
+            # operator sees them. Swallowing them is exactly how the
+            # original silent-fallback bug hid for every adaptive run.
+            #
+            # Runtime-recoverable exceptions (ValueError from
+            # validate_evaluator_verdict against a well-formed schema,
+            # RuntimeError from a worker/LLM call, OSError from IO) are still
+            # caught here and downgraded to static lenses — those represent
+            # an LLM that produced bad output or a transient infra issue,
+            # not a config/wiring incident.
+            except (ValueError, RuntimeError, OSError) as exc:
+                # Strict mode: refuse the silent downgrade. Raise loudly so
+                # production / CI / important runs cannot quietly lose
+                # adaptive critique to a transient LLM glitch.
+                _strict = bool(state["config"].get("strict_adaptive_critique", False))
+                if _strict:
+                    raise AdaptiveCritiqueDegradedError(
+                        f"adaptive critique evaluator failed under strict mode "
+                        f"({type(exc).__name__}: {exc}); refusing to silently "
+                        f"downgrade to static lenses. Disable strict mode "
+                        f"(execution.strict_adaptive_critique = false) to allow "
+                        f"the fallback, or fix the underlying critique_evaluator "
+                        f"failure.",
+                        reason=str(exc),
+                    ) from exc
                 fallback_checks = checks_for_robustness(robustness) or checks_for_robustness("standard")
                 active_checks = list(fallback_checks)
                 fallback_check_ids = [c["id"] for c in active_checks]
@@ -209,13 +237,13 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 # content. Treat it as a real config/wiring incident, not a
                 # routine fallback.
                 print(
-                    f"[megaplan] WARNING: critique_evaluator failed ({type(exc).__name__}: {exc}); "
-                    f"adaptive critique is silently downgraded to the static "
+                    f"[megaplan] ADAPTIVE CRITIQUE FALLBACK: critique_evaluator failed "
+                    f"({type(exc).__name__}: {exc}); falling back to static "
                     f"{robustness!r} lens set ({len(fallback_check_ids)} lenses: "
                     f"{', '.join(fallback_check_ids)}). The premium evaluator did NOT run "
-                    f"and will NOT run on subsequent iterations of this plan. Investigate "
-                    f"the critique_evaluator wiring (profile slot, schema, prompt) before "
-                    f"trusting this plan's critique output.",
+                    f"and will NOT run on subsequent iterations of this plan.\n"
+                    f"[megaplan] This usually indicates a misconfiguration. "
+                    f"Run: megaplan doctor --adaptive-critique",
                     file=sys.stderr,
                     flush=True,
                 )

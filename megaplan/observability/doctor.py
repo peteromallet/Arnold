@@ -640,10 +640,41 @@ def _doctor_repo(project_dir: Path) -> int:
     return 1 if has_error else 0
 
 
+def _doctor_adaptive_critique() -> int:
+    """Probe the adaptive critique wiring. Returns 0 if every probe passes,
+    1 otherwise. Pure read-only — no LLM calls, no plan-dir state.
+    """
+    from megaplan.audits.critique_evaluator import probe_adaptive_critique_wiring
+
+    results = probe_adaptive_critique_wiring()
+    has_failure = False
+    for label, passed, detail in results:
+        marker = "[OK]   " if passed else "[FAIL] "
+        suffix = f"  ({detail})" if detail else ""
+        print(f"{marker}{label}{suffix}", flush=True)
+        if not passed:
+            has_failure = True
+
+    if has_failure:
+        print(
+            "\nadaptive critique would fall back to static lenses at runtime.\n"
+            "  - to fix: investigate the failing probe(s) above\n"
+            "  - to suppress: set `[execution] adaptive_critique = false`\n"
+            "  - to refuse the silent fallback: "
+            "set `[execution] strict_adaptive_critique = true` (raises at run time)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+    print("\nadaptive critique wiring is healthy.", flush=True)
+    return 0
+
+
 def handle_doctor(root: Path, args: argparse.Namespace) -> int:
     """``megaplan doctor`` entry point; returns exit code."""
     plan_name = getattr(args, "plan", None)
     repo_mode = getattr(args, "repo", False)
+    adaptive_critique_mode = getattr(args, "adaptive_critique", False)
 
     if plan_name:
         from megaplan._core import find_plan_dir
@@ -658,5 +689,8 @@ def handle_doctor(root: Path, args: argparse.Namespace) -> int:
     if repo_mode:
         return _doctor_repo(root)
 
-    print("doctor: specify --plan X or --repo", file=sys.stderr)
+    if adaptive_critique_mode:
+        return _doctor_adaptive_critique()
+
+    print("doctor: specify --plan X, --repo, or --adaptive-critique", file=sys.stderr)
     return 1

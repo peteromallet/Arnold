@@ -77,6 +77,7 @@ In subagent mode (the default for Claude Code and Codex) the agent drives the ph
 - **Database mode** — keep state in Supabase Postgres instead of `.megaplan/` for shared state across machines and cloud runs (`pip install 'megaplan-harness[db]'`, then set `MEGAPLAN_ACTOR_ID`).
 - **Observability** — `megaplan status --plan <name>` shows the active step, cost, execute progress, and next-step guidance.
 - **Configuration** — `megaplan config show | set <key> <value> | reset` tunes timeouts, critique concurrency, and per-phase agents.
+- **Adaptive critique defense** — `megaplan doctor --adaptive-critique` probes the adaptive critique wiring; `[execution] strict_adaptive_critique = true` refuses silent fallback to static lenses on production runs. See [docs/critique.md](docs/critique.md).
 
 ## Code health
 
