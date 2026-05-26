@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from megaplan._core.state import write_plan_state
 from megaplan._pipeline.types import Pipeline
 
 
@@ -71,18 +72,14 @@ class ResumeCursor:
         return cls(stage=stage, payload=payload)
 
     def save(self, plan_dir: Path) -> Path:
-        path = Path(plan_dir) / "state.json"
-        if path.exists():
-            try:
-                data = json.loads(path.read_text())
-            except json.JSONDecodeError:
-                data = {}
-        else:
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
-        data["resume_cursor"] = {"phase": self.stage, **dict(self.payload)}
-        path.write_text(json.dumps(data, indent=2, sort_keys=True))
+        resolved_plan_dir = Path(plan_dir)
+        path = resolved_plan_dir / "state.json"
+        write_plan_state(
+            resolved_plan_dir,
+            mode="patch-key",
+            key="resume_cursor",
+            value={"phase": self.stage, **dict(self.payload)},
+        )
         return path
 
     def with_payload(self, **overrides: Any) -> "ResumeCursor":

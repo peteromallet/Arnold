@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +28,48 @@ STATE_AWAITING_PR_MERGE = "awaiting_pr_merge"
 STATE_AWAITING_HUMAN = "awaiting_human_verify"
 STATE_TIEBREAKER_PENDING = "tiebreaker_pending"
 STATE_TIEBREAKER_READY = "tiebreaker_ready"
+PlanCurrentState = Literal[
+    "initialized",
+    "prepped",
+    "planned",
+    "critiqued",
+    "gated",
+    "finalized",
+    "executed",
+    "reviewed",
+    "done",
+    "aborted",
+    "failed",
+    "blocked",
+    "paused",
+    "cancelled",
+    "awaiting_pr_merge",
+    "awaiting_human_verify",
+    "tiebreaker_pending",
+    "tiebreaker_ready",
+]
+CANONICAL_PLAN_STATES: frozenset[str] = frozenset(
+    {
+        STATE_INITIALIZED,
+        STATE_PREPPED,
+        STATE_PLANNED,
+        STATE_CRITIQUED,
+        STATE_GATED,
+        STATE_FINALIZED,
+        STATE_EXECUTED,
+        STATE_REVIEWED,
+        STATE_DONE,
+        STATE_ABORTED,
+        STATE_FAILED,
+        STATE_BLOCKED,
+        STATE_PAUSED,
+        STATE_CANCELLED,
+        STATE_AWAITING_PR_MERGE,
+        STATE_AWAITING_HUMAN,
+        STATE_TIEBREAKER_PENDING,
+        STATE_TIEBREAKER_READY,
+    }
+)
 TERMINAL_STATES = {STATE_DONE, STATE_ABORTED, STATE_FAILED, STATE_BLOCKED, STATE_CANCELLED}
 AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
     STATE_PAUSED,
@@ -35,6 +77,14 @@ AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 }
+
+
+def validate_plan_current_state(value: Any) -> str:
+    """Return a canonical plan state or raise for invalid persisted state."""
+
+    if value not in CANONICAL_PLAN_STATES:
+        raise ValueError(f"invalid current_state {value!r}")
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +199,7 @@ class LastGateRecord(TypedDict, total=False):
 class PlanState(TypedDict):
     name: str
     idea: str
-    current_state: str
+    current_state: PlanCurrentState
     iteration: int
     created_at: str
     config: PlanConfig

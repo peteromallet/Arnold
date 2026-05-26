@@ -4,11 +4,33 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import megaplan
+from megaplan.schemas.sprint1 import Plan
 from megaplan._core import ensure_runtime_layout, load_plan
 
 from tests.conftest import PlanFixture, read_json
+
+
+def test_plan_model_rejects_invalid_current_state() -> None:
+    with pytest.raises(ValidationError, match="invalid current_state"):
+        Plan(
+            id="p",
+            name="p",
+            revision=0,
+            idea="i",
+            current_state="not-a-real-state",
+            iteration=1,
+            config={},
+            sessions={},
+            plan_versions=[],
+            history=[],
+            meta={},
+            last_gate={},
+            created_at="2026-01-01T00:00:00Z",
+            updated_at="2026-01-01T00:00:00Z",
+        )
 
 
 def test_parse_claude_envelope_valid_with_result_block() -> None:

@@ -53,9 +53,20 @@ from megaplan.schemas import (
     Sprint,
     SprintItem,
     SystemLog,
+    Ticket,
+    TicketEpicLink,
     ToolCall,
 )
 from megaplan.schemas.base import utc_now
+from megaplan.tickets.files import (
+    iterate_ticket_files as iterate_frontmatter_ticket_files,
+    read_ticket_file,
+    slugify as ticket_slugify,
+    ticket_file_path as frontmatter_ticket_file_path,
+    tickets_dir as frontmatter_tickets_dir,
+    write_ticket_file,
+)
+from megaplan.tickets.identity import repo_codebase_identity
 
 from .base import (
     ArtifactRef,
@@ -77,6 +88,7 @@ from .base import (
     StoreError,
     ScheduledJobInput,
     Transaction,
+    validate_epic_update_fields,
     validate_plan_artifact_name,
 )
 from .blob import LocalDirBlobStore
@@ -208,9 +220,19 @@ class FileStore(Store):
     through the journal helpers added to ``megaplan._core.io`` in Sprint 1.
     """
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        repo_root: str | Path | None = None,
+        tickets_dir: str | Path | None = None,
+    ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        if repo_root is not None and tickets_dir is not None:
+            raise ValueError("Pass either repo_root or tickets_dir, not both")
+        self.repo_root = Path(repo_root).expanduser().resolve() if repo_root is not None else self.root
+        self._explicit_tickets_dir = Path(tickets_dir).expanduser().resolve() if tickets_dir is not None else None
         self._active_transaction: _FileStoreTransaction | None = None
         self.blobs = LocalDirBlobStore(self.root / "blobs")
         self._recover_all_journals()
@@ -345,6 +367,12 @@ class FileStore(Store):
     def _code_artifacts_dir(self) -> Path:
         return self.root / "code_artifacts"
 
+    def _tickets_dir(self) -> Path:
+        if self._explicit_tickets_dir is not None:
+            self._explicit_tickets_dir.mkdir(parents=True, exist_ok=True)
+            return self._explicit_tickets_dir
+        return frontmatter_tickets_dir(self.repo_root)
+
     def _leases_dir(self) -> Path:
         return self.root / "leases"
 
@@ -371,6 +399,13 @@ class FileStore(Store):
 
     def _migration_runs_dir(self) -> Path:
         return self.root / "migration_runs"
+
+    def _idempotency_dir(self, operation: str) -> Path:
+        return self.root / "idempotency" / operation
+
+    def _idempotency_path(self, operation: str, idempotency_key: str) -> Path:
+        digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        return self._idempotency_dir(operation) / f"{digest}.json"
 
     def _message_path(self, message_id: str) -> Path:
         return self._messages_dir() / f"{message_id}.json"
@@ -401,6 +436,12 @@ class FileStore(Store):
 
     def _code_artifact_path(self, artifact_id: str) -> Path:
         return self._code_artifacts_dir() / f"{artifact_id}.json"
+
+    def _ticket_path(self, ticket_id: str) -> Path:
+        existing = self._find_ticket_frontmatter_path(ticket_id)
+        if existing is not None:
+            return existing
+        return frontmatter_ticket_file_path(self.repo_root, ticket_id, ticket_slugify(ticket_id))
 
     def _lease_path(self, plan_id: str) -> Path:
         return self._leases_dir() / f"{plan_id}.json"
@@ -511,6 +552,14 @@ class FileStore(Store):
     def _save_model(self, path: Path, model: Any, *, journal_root: Path) -> None:
         self._commit_write(path, _model_bytes(model), journal_root=journal_root)
 
+    def _load_json(self, path: Path) -> dict[str, Any] | None:
+        staged = self._active_transaction.staged_bytes(path) if self._active_transaction is not None else None
+        if staged is not None:
+            return json.loads(staged.decode("utf-8"))
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
     def copy_entity_if_absent(self, entity_path: Path, model: Any, *, journal_root: Path) -> bool:
         if entity_path.exists():
             return False
@@ -534,6 +583,46 @@ class FileStore(Store):
             raise RevisionConflict(
                 f"expected revision {expected_revision}, found {current_revision}",
             )
+
+    def _request_hash(self, operation: str, args: Sequence[Any], kwargs: Mapping[str, Any]) -> str:
+        payload = {"operation": operation, "args": list(args), "kwargs": dict(kwargs)}
+        encoded = json.dumps(payload, default=self._json_default, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _json_default(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, (set, tuple)):
+            return list(value)
+        return str(value)
+
+    def _load_epic_idempotency(self, idempotency_key: str, request_hash: str) -> Epic | None:
+        record_path = self._idempotency_path("update_epic", idempotency_key)
+        record = self._load_json(record_path)
+        if record is None:
+            return None
+        if record.get("operation") != "update_epic" or record.get("request_hash") != request_hash:
+            raise ValueError(f"idempotency_key {idempotency_key!r} was reused with a different request")
+        return Epic.model_validate(record["response"])
+
+    def _save_epic_idempotency(
+        self,
+        *,
+        idempotency_key: str,
+        request_hash: str,
+        response: Epic,
+        journal_root: Path,
+    ) -> None:
+        record = {
+            "operation": "update_epic",
+            "request_hash": request_hash,
+            "response": response.model_dump(mode="json"),
+        }
+        self._commit_write(
+            self._idempotency_path("update_epic", idempotency_key),
+            json_dump(record).encode("utf-8"),
+            journal_root=journal_root,
+        )
 
     def _terminal_turn(self, status: str) -> bool:
         return status in _TERMINAL_TURN_STATUSES
@@ -600,6 +689,141 @@ class FileStore(Store):
 
     def _code_artifacts(self) -> list[CodeArtifact]:
         return self._iter_models(self._code_artifacts_dir(), CodeArtifact)
+
+    def _ticket_file_records(self) -> list[tuple[Path, dict[str, Any]]]:
+        if self._explicit_tickets_dir is not None:
+            ticket_dir = self._tickets_dir()
+            records: list[tuple[Path, dict[str, Any]]] = []
+            for entry in sorted(ticket_dir.iterdir()):
+                if entry.suffix != ".md":
+                    continue
+                record = read_ticket_file(entry)
+                if record is not None:
+                    records.append((entry, record))
+            return records
+        return list(iterate_frontmatter_ticket_files(self.repo_root))
+
+    def _find_ticket_frontmatter_path(self, ticket_id: str) -> Path | None:
+        for path, record in self._ticket_file_records():
+            if record.get("id") == ticket_id:
+                return path
+        return None
+
+    def _resolve_ticket_codebase(self) -> Codebase:
+        try:
+            identity = repo_codebase_identity(self.repo_root)
+        except Exception as exc:
+            raise StoreError(
+                "FileStore ticket operations require a git repository with a root commit"
+            ) from exc
+        existing = self.resolve_codebase_by_root_sha(identity.root_commit_sha)
+        if existing is not None:
+            return existing
+        return self.upsert_codebase(
+            owner=identity.owner,
+            name=identity.name,
+            default_branch=identity.default_branch,
+            root_commit_sha=identity.root_commit_sha,
+        )
+
+    def _ticket_from_frontmatter(self, record: Mapping[str, Any]) -> Ticket:
+        codebase_id = record.get("codebase_id")
+        if not isinstance(codebase_id, str) or not codebase_id:
+            codebase_id = self._resolve_ticket_codebase().id
+        return Ticket(
+            id=str(record["id"]),
+            codebase_id=codebase_id,
+            title=str(record.get("title") or ""),
+            body=str(record.get("__body__") or ""),
+            status=str(record.get("status") or "open"),
+            source=str(record.get("source") or "human"),
+            tags=list(record.get("tags") or []),
+            filed_by_actor_id=record.get("filed_by_actor_id"),
+            filed_in_turn_id=record.get("filed_in_turn_id"),
+            slug=ticket_slugify(str(record.get("title") or record["id"])),
+            created_at=_parse_datetime(record.get("created_at")) or utc_now(),
+            last_edited_at=_parse_datetime(record.get("last_edited_at")) or utc_now(),
+            resolution_note=record.get("resolution_note"),
+            addressed_at=_parse_datetime(record.get("addressed_at")),
+        )
+
+    def _write_ticket_frontmatter(
+        self,
+        ticket: Ticket,
+        *,
+        path: Path | None = None,
+        links: Sequence[TicketEpicLink] | None = None,
+    ) -> Path:
+        target = path or (
+            self._tickets_dir() / f"{ticket.id}-{ticket.slug}.md"
+            if self._explicit_tickets_dir is not None
+            else frontmatter_ticket_file_path(self.repo_root, ticket.id, ticket.slug)
+        )
+        if links is None and path is not None:
+            existing = read_ticket_file(path)
+            links = self._ticket_frontmatter_links(existing or {})
+        if links is None:
+            links = []
+        write_ticket_file(
+            target,
+            {
+                "id": ticket.id,
+                "title": ticket.title,
+                "status": ticket.status,
+                "source": ticket.source,
+                "tags": list(ticket.tags or []),
+                "filed_by_actor_id": ticket.filed_by_actor_id,
+                "filed_in_turn_id": ticket.filed_in_turn_id,
+                "codebase_id": ticket.codebase_id,
+                "created_at": ticket.created_at,
+                "last_edited_at": ticket.last_edited_at,
+                "resolution_note": ticket.resolution_note,
+                "addressed_at": ticket.addressed_at,
+                "epics": [
+                    {
+                        "epic_id": link.epic_id,
+                        "resolves_on_complete": link.resolves_on_complete,
+                        "linked_at": link.linked_at,
+                    }
+                    for link in links
+                ],
+                "__body__": ticket.body,
+            },
+        )
+        return target
+
+    def _tickets(self) -> list[Ticket]:
+        return [self._ticket_from_frontmatter(record) for _path, record in self._ticket_file_records()]
+
+    def _ticket_frontmatter_links(
+        self,
+        record: Mapping[str, Any],
+    ) -> list[TicketEpicLink]:
+        ticket_id = record.get("id")
+        if not isinstance(ticket_id, str) or not ticket_id:
+            return []
+        links: list[TicketEpicLink] = []
+        for entry in record.get("epics") or []:
+            if not isinstance(entry, Mapping):
+                continue
+            epic_id = entry.get("epic_id")
+            if not isinstance(epic_id, str) or not epic_id:
+                continue
+            links.append(
+                TicketEpicLink(
+                    ticket_id=ticket_id,
+                    epic_id=epic_id,
+                    resolves_on_complete=bool(entry.get("resolves_on_complete")),
+                    linked_at=_parse_datetime(entry.get("linked_at")) or utc_now(),
+                )
+            )
+        return links
+
+    def _ticket_epic_links(self) -> list[TicketEpicLink]:
+        links: list[TicketEpicLink] = []
+        for _path, record in self._ticket_file_records():
+            links.extend(self._ticket_frontmatter_links(record))
+        return links
 
     def _control_messages(self) -> list[ControlMessage]:
         return self._iter_models(self._control_messages_dir(), ControlMessage)
@@ -727,6 +951,17 @@ class FileStore(Store):
         return self._load_model(self._epic_path(epic_id), Epic)
 
     def update_epic(self, epic_id: str, *, expected_revision: int, idempotency_key: str | None = None, **changes: Any) -> Epic:
+        validate_epic_update_fields(changes)
+        request_hash = None
+        if idempotency_key is not None:
+            request_hash = self._request_hash(
+                "update_epic",
+                (epic_id,),
+                {"expected_revision": expected_revision, **changes},
+            )
+            replayed = self._load_epic_idempotency(idempotency_key, request_hash)
+            if replayed is not None:
+                return replayed
         current = self.load_epic(epic_id)
         if current is None:
             raise FileNotFoundError(epic_id)
@@ -741,6 +976,13 @@ class FileStore(Store):
             self._save_model(self._epic_path(epic_id), updated, journal_root=journal_root)
             if "body" in changes:
                 self._commit_write(self._body_path(epic_id), updated.body.encode("utf-8"), journal_root=journal_root)
+            if idempotency_key is not None and request_hash is not None:
+                self._save_epic_idempotency(
+                    idempotency_key=idempotency_key,
+                    request_hash=request_hash,
+                    response=updated,
+                    journal_root=journal_root,
+                )
         return updated
 
     def list_epics(
@@ -1018,12 +1260,12 @@ class FileStore(Store):
         existing = self._checklist_items(epic_id)
         next_position = max((item.position for item in existing), default=0) + 1
         created: list[ChecklistItem] = []
-        journal_root = self._journal_root_for_epic(epic_id)
-        with self.transaction(epic_id):
-            for entry in items:
-                position = entry.position or next_position
-                next_position = max(next_position, position + 1)
-                item = ChecklistItem(
+        for entry in items:
+            entry = ChecklistItemInput.model_validate(entry.model_dump() if isinstance(entry, ChecklistItemInput) else entry)
+            position = entry.position or next_position
+            next_position = max(next_position, position + 1)
+            created.append(
+                ChecklistItem(
                     id=entry.id or _new_id("check"),
                     epic_id=epic_id,
                     content=entry.content,
@@ -1035,8 +1277,11 @@ class FileStore(Store):
                     created_at=entry.created_at or utc_now(),
                     completed_at=entry.completed_at,
                 )
+            )
+        journal_root = self._journal_root_for_epic(epic_id)
+        with self.transaction(epic_id):
+            for item in created:
                 self._save_model(self._checklist_path(epic_id, item.id), item, journal_root=journal_root)
-                created.append(item)
         self._normalize_checklist_positions(epic_id, moved=[(item.id, item.position) for item in created])
         by_id = {item.id: item for item in self._checklist_items(epic_id)}
         return [by_id[item.id] for item in created if item.id in by_id]
@@ -1080,6 +1325,10 @@ class FileStore(Store):
         *,
         idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
+        items = [
+            ChecklistItemInput.model_validate(item.model_dump() if isinstance(item, ChecklistItemInput) else item)
+            for item in items
+        ]
         for existing in self._checklist_items(epic_id):
             self._delete_file(self._checklist_path(epic_id, existing.id))
         return self.add_checklist_items(epic_id, items)
@@ -1215,8 +1464,11 @@ class FileStore(Store):
         sprint = self.load_sprint(sprint_id)
         if sprint is None:
             raise FileNotFoundError(sprint_id)
+        items = [
+            SprintItemInput.model_validate(item.model_dump() if isinstance(item, SprintItemInput) else item)
+            for item in items
+        ]
         items_dir = self._sprint_items_dir(sprint.epic_id, sprint.id)
-        self._delete_tree(items_dir)
         created: list[SprintItem] = []
         next_position = 1
         for entry in items:
@@ -1231,8 +1483,10 @@ class FileStore(Store):
                 created_at=entry.created_at or utc_now(),
             )
             next_position = item.position + 1
-            self._save_model(items_dir / f"{item.id}.json", item, journal_root=self._journal_root_for_epic(sprint.epic_id))
             created.append(item)
+        self._delete_tree(items_dir)
+        for item in created:
+            self._save_model(items_dir / f"{item.id}.json", item, journal_root=self._journal_root_for_epic(sprint.epic_id))
         return sorted(created, key=lambda item: (item.position, item.id))
 
     def set_sprint_queue(
@@ -1985,6 +2239,7 @@ class FileStore(Store):
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
+        root_commit_sha: str | None = None,
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
@@ -2001,6 +2256,7 @@ class FileStore(Store):
             scope=scope,
             group_name=group_name,
             associated_epic_id=associated_epic_id,
+            root_commit_sha=root_commit_sha,
             added_at=utc_now(),
             added_via=added_via,
             verified_accessible_at=_parse_datetime(verified_accessible_at),
@@ -2009,9 +2265,39 @@ class FileStore(Store):
         self._save_model(self._codebase_path(codebase.id), codebase, journal_root=self.root)
         return codebase
 
-    def upsert_codebase(self, *, idempotency_key: str | None = None,
-        **fields: Any) -> Codebase:
-        existing = self.find_codebase(fields["owner"], fields["name"])
+    def upsert_codebase(
+        self,
+        *,
+        owner: str,
+        name: str,
+        default_branch: str,
+        repo_url: str | None = None,
+        repo_workspace: str | None = None,
+        scope: str = "global",
+        group_name: str | None = None,
+        associated_epic_id: str | None = None,
+        root_commit_sha: str | None = None,
+        added_via: str = "manual",
+        verified_accessible_at: str | None = None,
+        notes: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Codebase:
+        fields: dict[str, Any] = {
+            "owner": owner,
+            "name": name,
+            "default_branch": default_branch,
+            "repo_url": repo_url,
+            "repo_workspace": repo_workspace,
+            "scope": scope,
+            "group_name": group_name,
+            "associated_epic_id": associated_epic_id,
+            "root_commit_sha": root_commit_sha,
+            "added_via": added_via,
+            "verified_accessible_at": verified_accessible_at,
+            "notes": notes,
+            "idempotency_key": idempotency_key,
+        }
+        existing = self.find_codebase(owner, name)
         if existing is None:
             return self.create_codebase(**fields)
         return self.update_codebase(existing.id, **fields)
@@ -2024,6 +2310,18 @@ class FileStore(Store):
         name_l = name.lower()
         for codebase in self._codebases():
             if codebase.owner == owner_l and codebase.name == name_l:
+                return codebase
+        return None
+
+    def load_codebase_by_associated_epic(self, epic_id: str) -> Codebase | None:
+        for codebase in self._codebases():
+            if codebase.associated_epic_id == epic_id:
+                return codebase
+        return None
+
+    def resolve_codebase_by_root_sha(self, root_commit_sha: str) -> Codebase | None:
+        for codebase in self._codebases():
+            if codebase.root_commit_sha == root_commit_sha:
                 return codebase
         return None
 
@@ -2082,6 +2380,179 @@ class FileStore(Store):
         if default_branch is not None:
             changes["default_branch"] = default_branch
         return self.update_codebase(codebase_id, **changes)
+
+    def create_ticket(
+        self,
+        *,
+        codebase_id: str,
+        title: str,
+        body: str = "",
+        source: str = "human",
+        tags: list[str] | None = None,
+        filed_by_actor_id: str | None = None,
+        filed_in_turn_id: str | None = None,
+        slug: str,
+        ticket_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Ticket:
+        codebase = self.load_codebase(codebase_id)
+        resolved_codebase_id = codebase.id if codebase is not None else self._resolve_ticket_codebase().id
+        if codebase_id != resolved_codebase_id:
+            raise StoreError("FileStore ticket codebase_id must match the repository root codebase")
+        ticket = Ticket(
+            id=ticket_id or _new_id("ticket"),
+            codebase_id=resolved_codebase_id,
+            title=title,
+            body=body,
+            source=source,
+            tags=tags or [],
+            filed_by_actor_id=filed_by_actor_id,
+            filed_in_turn_id=filed_in_turn_id,
+            slug=slug,
+            created_at=utc_now(),
+            last_edited_at=utc_now(),
+        )
+        self._write_ticket_frontmatter(ticket)
+        return ticket
+
+    def load_ticket(self, ticket_id: str) -> Ticket | None:
+        for _path, record in self._ticket_file_records():
+            if record.get("id") == ticket_id:
+                return self._ticket_from_frontmatter(record)
+        return None
+
+    def list_tickets(
+        self,
+        *,
+        codebase_id: str | None = None,
+        codebase_ids: Sequence[str] | None = None,
+        status: str | None = None,
+        tags: Sequence[str] | None = None,
+        keywords: Sequence[str] | None = None,
+        keywords_all: bool = False,
+        sort: str = "created",
+        order: str = "desc",
+        limit: int | None = None,
+    ) -> list[Ticket]:
+        codebase_id_set = set(codebase_ids) if codebase_ids is not None else None
+        tag_set = set(tags) if tags is not None else None
+        lowered_keywords = [kw.lower() for kw in keywords or []]
+        rows: list[Ticket] = []
+        for ticket in self._tickets():
+            if codebase_id_set is not None and ticket.codebase_id not in codebase_id_set:
+                continue
+            if codebase_id_set is None and codebase_id is not None and ticket.codebase_id != codebase_id:
+                continue
+            if status is not None and ticket.status != status:
+                continue
+            if tag_set is not None and not tag_set.intersection(ticket.tags):
+                continue
+            if lowered_keywords:
+                searchable = " ".join(
+                    [ticket.title, ticket.body, ticket.resolution_note or "", *ticket.tags]
+                ).lower()
+                matches = [kw in searchable for kw in lowered_keywords]
+                if (keywords_all and not all(matches)) or (not keywords_all and not any(matches)):
+                    continue
+            rows.append(ticket)
+        sort_key = {
+            "created": lambda row: _utc_key(row.created_at),
+            "edited": lambda row: _utc_key(row.last_edited_at),
+            "length": lambda row: len(row.body or ""),
+            "title": lambda row: row.title.lower(),
+        }.get(sort, lambda row: _utc_key(row.created_at))
+        rows.sort(key=sort_key, reverse=order.lower() != "asc")
+        return rows[:limit] if limit is not None else rows
+
+    def update_ticket(self, ticket_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Ticket:
+        for path, record in self._ticket_file_records():
+            if record.get("id") != ticket_id:
+                continue
+            ticket = self._ticket_from_frontmatter(record)
+            data = ticket.model_dump()
+            data.update(changes)
+            data["last_edited_at"] = utc_now()
+            if "codebase_id" in data and data["codebase_id"] != self._resolve_ticket_codebase().id:
+                raise StoreError("FileStore ticket codebase_id must match the repository root codebase")
+            updated = Ticket.model_validate(data)
+            self._write_ticket_frontmatter(updated, path=path)
+            return updated
+        raise FileNotFoundError(self._ticket_path(ticket_id))
+
+    def link_ticket_to_epic(
+        self,
+        *,
+        ticket_id: str,
+        epic_id: str,
+        resolves_on_complete: bool = False,
+        idempotency_key: str | None = None,
+    ) -> TicketEpicLink:
+        for path, record in self._ticket_file_records():
+            if record.get("id") != ticket_id:
+                continue
+            ticket = self._ticket_from_frontmatter(record)
+            links = self._ticket_frontmatter_links(record)
+            existing = next((link for link in links if link.epic_id == epic_id), None)
+            linked_at = existing.linked_at if existing is not None else utc_now()
+            link = TicketEpicLink(
+                ticket_id=ticket_id,
+                epic_id=epic_id,
+                resolves_on_complete=resolves_on_complete,
+                linked_at=linked_at,
+            )
+            links = [row for row in links if row.epic_id != epic_id]
+            links.append(link)
+            self._write_ticket_frontmatter(ticket, path=path, links=links)
+            return link
+        raise FileNotFoundError(self._ticket_path(ticket_id))
+
+    def unlink_ticket_from_epic(
+        self,
+        *,
+        ticket_id: str,
+        epic_id: str,
+        idempotency_key: str | None = None,
+    ) -> None:
+        for path, record in self._ticket_file_records():
+            if record.get("id") != ticket_id:
+                continue
+            ticket = self._ticket_from_frontmatter(record)
+            links = [link for link in self._ticket_frontmatter_links(record) if link.epic_id != epic_id]
+            self._write_ticket_frontmatter(ticket, path=path, links=links)
+            return
+
+    def list_ticket_epic_links(
+        self,
+        *,
+        ticket_id: str | None = None,
+        epic_id: str | None = None,
+    ) -> list[TicketEpicLink]:
+        links = []
+        for link in self._ticket_epic_links():
+            if ticket_id is not None and link.ticket_id != ticket_id:
+                continue
+            if epic_id is not None and link.epic_id != epic_id:
+                continue
+            links.append(link)
+        links.sort(key=lambda row: _utc_key(row.linked_at), reverse=True)
+        return links
+
+    def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
+        addressed: list[str] = []
+        for link in self.list_ticket_epic_links(epic_id=epic_id):
+            if not link.resolves_on_complete:
+                continue
+            ticket = self.load_ticket(link.ticket_id)
+            if ticket is None or ticket.status != "open":
+                continue
+            self.update_ticket(
+                ticket.id,
+                status="addressed",
+                resolution_note=f"Resolved by epic {epic_id} completing.",
+                addressed_at=utc_now(),
+            )
+            addressed.append(ticket.id)
+        return addressed
 
     def create_code_artifact(
         self,
@@ -2598,6 +3069,7 @@ class FileStore(Store):
         *,
         idempotency_key: str | None = None,
     ) -> ControlMessage:
+        msg = ControlMessageInput.model_validate(msg.model_dump() if isinstance(msg, ControlMessageInput) else msg)
         control = ControlMessage(
             id=_new_id("ctrl"),
             epic_id=msg.epic_id,

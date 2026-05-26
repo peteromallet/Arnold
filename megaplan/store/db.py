@@ -80,6 +80,7 @@ from megaplan.store.base import (
     SprintItemInput,
     SprintWithItems,
     StoreError,
+    validate_epic_update_fields,
     validate_plan_artifact_name,
 )
 from megaplan.store.blob import LocalDirBlobStore, SupabaseStorageBlobStore
@@ -469,6 +470,8 @@ class DBStore:
 
         request_kwargs = dict(kwargs)
         request_kwargs.pop("idempotency_key", None)
+        if operation == "update_epic":
+            validate_epic_update_fields({key: value for key, value in request_kwargs.items() if key != "expected_revision"})
         request_hash = self._request_hash(operation, args, request_kwargs)
         conn = self._get_conn()
 
@@ -609,6 +612,7 @@ class DBStore:
             if row is None:
                 raise RevisionConflict(f"Epic {epic_id!r} not found")
             return Epic(**row)
+        validate_epic_update_fields(changes)
         set_parts = [f"{k} = %s" for k in changes]
         set_parts.append("revision = revision + 1")
         values = list(changes.values()) + [epic_id, expected_revision, expected_revision]
@@ -919,6 +923,10 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
         self._require_actor()
+        items = [
+            ChecklistItemInput.model_validate(item.model_dump() if isinstance(item, ChecklistItemInput) else item)
+            for item in items
+        ]
         conn = self._get_conn()
         max_row = conn.execute(
             "SELECT COALESCE(MAX(position), 0) AS max_pos FROM checklist_items WHERE epic_id = %s",
@@ -966,6 +974,7 @@ class DBStore:
             raise FileNotFoundError(item_id)
         if not changes:
             return ChecklistItem(**current)
+        ChecklistItem.model_validate({**dict(current), **changes})
         moved_position = changes.get("position")
         set_parts = [f"{k} = %s" for k in changes]
         values = list(changes.values())
@@ -1013,6 +1022,10 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> list[ChecklistItem]:
         self._require_actor()
+        items = [
+            ChecklistItemInput.model_validate(item.model_dump() if isinstance(item, ChecklistItemInput) else item)
+            for item in items
+        ]
         conn = self._get_conn()
         result = []
         with conn.transaction():
@@ -1226,6 +1239,10 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> list[SprintItem]:
         conn = self._get_conn()
+        items = [
+            SprintItemInput.model_validate(item.model_dump() if isinstance(item, SprintItemInput) else item)
+            for item in items
+        ]
         result = []
         with conn.transaction():
             conn.execute(
@@ -3407,6 +3424,7 @@ class DBStore:
         idempotency_key: str | None = None,
     ) -> ControlMessage:
         self._require_actor()
+        msg = ControlMessageInput.model_validate(msg.model_dump() if isinstance(msg, ControlMessageInput) else msg)
         conn = self._get_conn()
         row = conn.execute(
             """

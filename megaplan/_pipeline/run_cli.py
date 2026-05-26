@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from megaplan._core.state import write_plan_state
+
 
 def build_run_parser(subparsers: Any) -> None:
     """Attach the ``megaplan run`` subcommand to the main CLI."""
@@ -321,9 +323,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     # Persist state.json before running so the executor's state-merge
     # carries forward our identity snapshot.
     try:
-        (plan_dir / "state.json").write_text(
-            json.dumps(state, indent=2, sort_keys=True)
-        )
+        write_plan_state(plan_dir, mode="replace", state=state)
     except OSError:
         pass
 

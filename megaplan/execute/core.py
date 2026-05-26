@@ -759,6 +759,11 @@ def _compute_execute_scope_drift(
     try:
         observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
     except Exception:
+        log.warning(
+            "M3A_WARN_GIT_SNAPSHOT_FALLBACK execute scope drift snapshot fallback (project_dir=%s)",
+            project_dir,
+            exc_info=True,
+        )
         observed_snapshot = {}
         observed_error = "snapshot unavailable"
     files_in_diff = set(observed_snapshot.keys()) if observed_error is None else set()

@@ -1,8 +1,8 @@
 """Core ticket operations — mode-aware dispatch.
 
 Local-only mode: writes/reads ``.megaplan/tickets/*.md`` files only.
-Cloud-configured mode: writes files **and** mirrors to DB via
-:class:`~megaplan.store.db.DBStore`.
+Store-configured mode: writes files **and** mirrors through the
+:class:`~megaplan.store.base.Store` ticket protocol.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from .files import (
     tickets_dir,
     write_ticket_file,
 )
-from .identity import repo_owner_name, repo_root_sha
+from .identity import repo_codebase_identity, repo_owner_name, repo_root_sha
 
 
 # ---------------------------------------------------------------------------
@@ -36,14 +36,16 @@ from .identity import repo_owner_name, repo_root_sha
 
 
 def is_cloud_store(store: Store) -> bool:
-    """Return *True* when *store* is a :class:`~megaplan.store.db.DBStore`.
+    """Return *True* when *store* supports facade-backed ticket operations.
 
     This is the **single canonical predicate** used by every operation to
-    decide whether to hit the database in addition to the file system.
+    decide whether to hit a Store backend in addition to the file system.
     """
-    from megaplan.store.db import DBStore  # lazy to avoid import cycle
+    from megaplan.store.db import DBStore  # lazy to avoid import cycles
+    from megaplan.store.file import FileStore
+    from megaplan.store.multi import MultiStore
 
-    return isinstance(store, DBStore)
+    return isinstance(store, DBStore | FileStore | MultiStore)
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +106,6 @@ def _resolve_codebase_id(store: Store | None, cwd: Path | None = None) -> str | 
     except Exception:
         sha = None
 
-    from megaplan.store.db import DBStore
-
-    assert isinstance(store, DBStore)
     if sha:
         existing = store.resolve_codebase_by_root_sha(sha)
         if existing:
@@ -123,32 +122,17 @@ def _ensure_codebase(
     Auto-registers if needed (with ``root_commit_sha`` populated).
     Only meaningful in cloud mode; raises in local-only.
     """
-    from megaplan.store.db import DBStore
-
     assert is_cloud_store(store)
-    db: DBStore = store  # type: ignore[assignment]
+    identity = repo_codebase_identity(cwd)
+    existing = store.resolve_codebase_by_root_sha(identity.root_commit_sha)
+    if existing:
+        return existing.id
 
-    try:
-        sha = repo_root_sha(cwd)
-    except Exception:
-        sha = None
-
-    if sha:
-        existing = db.resolve_codebase_by_root_sha(sha)
-        if existing:
-            return existing.id
-
-    # Auto-register
-    from .identity import repo_owner_name
-
-    owner, name = repo_owner_name(cwd)
-    if not owner or not name:
-        owner, name = "unknown", "unknown"
-
-    cb = db.upsert_codebase(
-        owner=owner,
-        name=name,
-        root_commit_sha=sha,
+    cb = store.upsert_codebase(
+        owner=identity.owner,
+        name=identity.name,
+        default_branch=identity.default_branch,
+        root_commit_sha=identity.root_commit_sha,
     )
     return cb.id
 
@@ -233,12 +217,9 @@ def new(
     fpath = ticket_file_path(repo_root, ticket_id, slug)
     write_ticket_file(fpath, record)
 
-    # Cloud: write DB row
+    # Store-backed facade: write Store row
     if store is not None and is_cloud_store(store) and codebase_id:
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
-        db.create_ticket(
+        store.create_ticket(
             codebase_id=codebase_id,
             title=title,
             body=body,
@@ -271,7 +252,7 @@ def list_tickets(
     """List tickets, optionally filtered.
 
     In local-only mode reads from ``.megaplan/tickets/*.md``.
-    In cloud mode queries the DB.
+    In store-backed facade mode queries the Store.
     """
     if store is None:
         store = _resolve_store()
@@ -279,11 +260,8 @@ def list_tickets(
     results: list[dict[str, Any]] = []
 
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
         codebase_id = _resolve_codebase_id(store, cwd)
-        tickets = db.list_tickets(
+        tickets = store.list_tickets(
             codebase_id=codebase_id,
             status=status,
             tags=tags,
@@ -392,16 +370,12 @@ def search(
     results: list[dict[str, Any]] = []
 
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-        from .registry import resolve_project as _resolve_project
-
-        db: DBStore = store  # type: ignore[assignment]
         codebase_ids: list[str] | None = None
         # Map projects → codebase_ids
         if projects:
             ids: list[str] = []
             for p in projects:
-                resolved = _resolve_project_to_codebase(db, p)
+                resolved = _resolve_project_to_codebase(store, p)
                 if resolved:
                     ids.append(resolved)
             codebase_ids = ids or [""]  # empty → guaranteed no rows
@@ -414,7 +388,7 @@ def search(
             else:
                 codebase_ids = [""]
 
-        tickets = db.list_tickets(
+        tickets = store.list_tickets(
             codebase_ids=codebase_ids,
             status=status,
             tags=tags,
@@ -430,7 +404,7 @@ def search(
             project_label = ""
             if t.codebase_id:
                 if t.codebase_id not in cb_cache:
-                    cb = db.load_codebase(t.codebase_id)
+                    cb = store.load_codebase(t.codebase_id)
                     cb_cache[t.codebase_id] = (
                         f"{cb.owner}/{cb.name}" if cb and cb.owner and cb.name else t.codebase_id
                     )
@@ -511,14 +485,12 @@ def search(
     return results
 
 
-def _resolve_project_to_codebase(db: Any, project: str | Path) -> str | None:
+def _resolve_project_to_codebase(store: Store, project: str | Path) -> str | None:
     """Resolve a project spec to a codebase_id (cloud).
 
     Accepts: an ``owner/name`` string, a bare ``name`` (must be unique),
     or a filesystem path (uses git root_commit_sha lookup).
     """
-    from megaplan.store.db import DBStore  # noqa: F401  (typing hint only)
-
     spec = str(project)
     # Path-like first
     p = Path(spec).expanduser()
@@ -528,17 +500,17 @@ def _resolve_project_to_codebase(db: Any, project: str | Path) -> str | None:
         except Exception:
             sha = None
         if sha:
-            cb = db.resolve_codebase_by_root_sha(sha)
+            cb = store.resolve_codebase_by_root_sha(sha)
             if cb:
                 return cb.id
     # owner/name
     if "/" in spec:
         owner, name = spec.split("/", 1)
-        cb = db.find_codebase(owner, name)
+        cb = store.find_codebase(owner, name)
         if cb:
             return cb.id
     # bare name — scan list_codebases
-    matches = [c for c in db.list_codebases() if (c.name or "").lower() == spec.lower()]
+    matches = [c for c in store.list_codebases() if (c.name or "").lower() == spec.lower()]
     if len(matches) == 1:
         return matches[0].id
     return None
@@ -616,10 +588,7 @@ def show(
         store = _resolve_store()
 
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
-        t = db.load_ticket(ticket_id)
+        t = store.load_ticket(ticket_id)
         if t is None:
             return None
         result: dict[str, Any] = {
@@ -748,11 +717,8 @@ def edit(
     if found_path:
         write_ticket_file(found_path, found_fm)
 
-    # Cloud: update DB
+    # Store-backed facade: update Store row
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
         db_changes: dict[str, Any] = {}
         if title is not None:
             db_changes["title"] = title
@@ -766,7 +732,7 @@ def edit(
             tags_now = list(found_fm.get("tags") or [])
             db_changes["tags"] = tags_now
         if db_changes:
-            db.update_ticket(ticket_id, **db_changes)
+            store.update_ticket(ticket_id, **db_changes)
 
     return found_fm
 
@@ -784,7 +750,7 @@ def link(
     store: Store | None = None,
     cwd: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Link a ticket to an epic.  Updates frontmatter ``epics`` list and DB join."""
+    """Link a ticket to an epic.  Updates frontmatter ``epics`` list and Store link."""
     if store is None:
         store = _resolve_store()
 
@@ -812,12 +778,9 @@ def link(
     if found_path:
         write_ticket_file(found_path, found_fm)
 
-    # Cloud: DB join
+    # Store-backed facade: Store link
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
-        db.link_ticket_to_epic(
+        store.link_ticket_to_epic(
             ticket_id=ticket_id,
             epic_id=epic_id,
             resolves_on_complete=resolves,
@@ -833,7 +796,7 @@ def unlink(
     store: Store | None = None,
     cwd: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Unlink a ticket from an epic.  Updates frontmatter and DB."""
+    """Unlink a ticket from an epic.  Updates frontmatter and Store link."""
     if store is None:
         store = _resolve_store()
 
@@ -858,12 +821,9 @@ def unlink(
     if found_path:
         write_ticket_file(found_path, found_fm)
 
-    # Cloud: DB delete
+    # Store-backed facade: remove Store link
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
-        db.unlink_ticket_from_epic(ticket_id=ticket_id, epic_id=epic_id)
+        store.unlink_ticket_from_epic(ticket_id=ticket_id, epic_id=epic_id)
 
     return found_fm
 
@@ -881,7 +841,7 @@ def _change_status(
     store: Store | None = None,
     cwd: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Common status-change helper.  Flips status in file + DB."""
+    """Common status-change helper.  Flips status in file + Store."""
     if store is None:
         store = _resolve_store()
 
@@ -914,11 +874,8 @@ def _change_status(
     if found_path:
         write_ticket_file(found_path, found_fm)
 
-    # Cloud: DB update
+    # Store-backed facade: update Store row
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
         db_changes: dict[str, Any] = {"status": new_status}
         if new_status == "addressed":
             db_changes["addressed_at"] = datetime.now(timezone.utc)
@@ -930,7 +887,7 @@ def _change_status(
         elif new_status == "open":
             db_changes["resolution_note"] = None
             db_changes["addressed_at"] = None
-        db.update_ticket(ticket_id, **db_changes)
+        store.update_ticket(ticket_id, **db_changes)
 
     return found_fm
 
@@ -1003,12 +960,9 @@ def address_resolved_by_epic(
 
     updated: list[str] = []
 
-    # Cloud mode: SQL update (single atomic op, idempotent)
+    # Store-backed facade mode: backend update (idempotent)
     if store is not None and is_cloud_store(store):
-        from megaplan.store.db import DBStore
-
-        db: DBStore = store  # type: ignore[assignment]
-        updated = db.address_tickets_resolved_by_epic(epic_id)
+        updated = store.address_tickets_resolved_by_epic(epic_id)
 
     # File walk (both modes, but only if repo_root is set and dir exists)
     if repo_root is not None:

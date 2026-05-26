@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,8 @@ from megaplan._core import (
 
 from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
 from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
+
+log = logging.getLogger("megaplan")
 from .tiebreaker import _build_tiebreaker_reprompt
 
 def _safe_roster_rank(model: str) -> int:
@@ -95,6 +98,11 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             try:
                 _current_rank = roster_rank(_rank_input)
             except ValueError:
+                log.warning(
+                    "M3A_WARN_CRITIQUE_RANK_PARSE critique rank fallback (model=%r)",
+                    _rank_input,
+                    exc_info=True,
+                )
                 _current_rank = 999
             if _current_rank > 1:
                 evaluator_model = CRITIC_MODEL_ROSTER[0].model
@@ -237,6 +245,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             except Exception as exc:
                 clear_active_step(state, run_id=run_id)
                 save_state_merge_meta(plan_dir, state)
+                log.warning(
+                    "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK parallel critique fallback",
+                    exc_info=True,
+                )
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
                 worker, agent, mode, refreshed = _pkg._run_worker(

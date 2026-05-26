@@ -38,9 +38,18 @@ from megaplan.schemas import (
     SprintItem,
     StorageModel,
     SystemLog,
+    Ticket,
+    TicketEpicLink,
     ToolCall,
 )
+from megaplan.schemas.arnold import (
+    ChecklistSource,
+    ChecklistStatus,
+    SprintItemComplexity,
+    SprintItemStatus,
+)
 from megaplan.schemas.base import NormalizedDict, utc_now
+from megaplan.schemas.sprint1 import ControlIntent
 
 Backend = Literal["file", "db"]
 JSONDict: TypeAlias = dict[str, Any]
@@ -59,6 +68,25 @@ class StoreError(RuntimeError):
     """Base exception for store-contract failures."""
 
 
+EPIC_UPDATE_FIELDS = frozenset({
+    "title",
+    "goal",
+    "body",
+    "state",
+    "home_backend",
+    "migrated_to",
+    "last_active_at",
+    "planned_at",
+})
+
+
+def validate_epic_update_fields(changes: Mapping[str, object]) -> None:
+    unknown = sorted(set(changes) - EPIC_UPDATE_FIELDS)
+    if unknown:
+        allowed = ", ".join(sorted(EPIC_UPDATE_FIELDS))
+        raise StoreError(f"Unknown epic update field(s): {', '.join(unknown)}. Allowed fields: {allowed}")
+
+
 class RevisionConflict(StoreError):
     """Raised when an optimistic-concurrency write sees a stale revision."""
 
@@ -74,9 +102,9 @@ class LeaseConflict(StoreError):
 class ChecklistItemInput(StorageModel):
     id: str | None = None
     content: str
-    status: str = "open"
+    status: ChecklistStatus = "open"
     position: int | None = Field(default=None, gt=0)
-    source: str = "bot_inferred"
+    source: ChecklistSource = "bot_inferred"
     skip_reason: str | None = None
     superseded_by_item_id: str | None = None
     created_at: datetime | None = None
@@ -86,8 +114,8 @@ class ChecklistItemInput(StorageModel):
 class SprintItemInput(StorageModel):
     id: str | None = None
     content: str
-    estimated_complexity: str = "medium"
-    status: str = "open"
+    estimated_complexity: SprintItemComplexity = "medium"
+    status: SprintItemStatus = "open"
     source_section: str | None = None
     position: int | None = Field(default=None, gt=0)
     created_at: datetime | None = None
@@ -158,7 +186,7 @@ def validate_plan_artifact_name(name: str) -> str:
 class ControlMessageInput(StorageModel):
     epic_id: str
     actor_id: str
-    intent: str
+    intent: ControlIntent
     target_id: str
     payload: NormalizedDict = Field(default_factory=dict)
     idempotency_key: str
@@ -748,6 +776,7 @@ class Store(Protocol):
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
+        root_commit_sha: str | None = None,
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
@@ -767,6 +796,7 @@ class Store(Protocol):
         scope: str = "global",
         group_name: str | None = None,
         associated_epic_id: str | None = None,
+        root_commit_sha: str | None = None,
         added_via: str = "manual",
         verified_accessible_at: str | None = None,
         notes: str | None = None,
@@ -817,6 +847,79 @@ class Store(Protocol):
         default_branch: str | None = None,
         idempotency_key: str | None = None,
     ) -> Codebase:
+        ...
+
+    def load_codebase_by_associated_epic(self, epic_id: str) -> Codebase | None:
+        ...
+
+    def resolve_codebase_by_root_sha(self, root_commit_sha: str) -> Codebase | None:
+        ...
+
+    def create_ticket(
+        self,
+        *,
+        codebase_id: str,
+        title: str,
+        body: str = "",
+        source: str = "human",
+        tags: list[str] | None = None,
+        filed_by_actor_id: str | None = None,
+        filed_in_turn_id: str | None = None,
+        slug: str,
+        ticket_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Ticket:
+        ...
+
+    def load_ticket(self, ticket_id: str) -> Ticket | None:
+        ...
+
+    def list_tickets(
+        self,
+        *,
+        codebase_id: str | None = None,
+        codebase_ids: Sequence[str] | None = None,
+        status: str | None = None,
+        tags: Sequence[str] | None = None,
+        keywords: Sequence[str] | None = None,
+        keywords_all: bool = False,
+        sort: str = "created",
+        order: str = "desc",
+        limit: int | None = None,
+    ) -> list[Ticket]:
+        ...
+
+    def update_ticket(self, ticket_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Ticket:
+        ...
+
+    def link_ticket_to_epic(
+        self,
+        *,
+        ticket_id: str,
+        epic_id: str,
+        resolves_on_complete: bool = False,
+        idempotency_key: str | None = None,
+    ) -> TicketEpicLink:
+        ...
+
+    def unlink_ticket_from_epic(
+        self,
+        *,
+        ticket_id: str,
+        epic_id: str,
+        idempotency_key: str | None = None,
+    ) -> None:
+        ...
+
+    def list_ticket_epic_links(
+        self,
+        *,
+        ticket_id: str | None = None,
+        epic_id: str | None = None,
+    ) -> list[TicketEpicLink]:
+        ...
+
+    def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
         ...
 
     def create_code_artifact(

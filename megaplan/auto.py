@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shlex
 import signal
@@ -30,6 +31,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan._core import find_plan_dir
+from megaplan._core.state import write_plan_state
+from megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from megaplan.runtime.process import kill_group, spawn
 from megaplan.observability.events import emit as emit_event, EventKind
 from megaplan.orchestration.phase_result import (
@@ -332,15 +335,14 @@ def _run_megaplan(
             last_hard_progress = now
             liveness_changed_since_heartbeat = True
         if heartbeat_interval is not None and now - last_heartbeat >= heartbeat_interval:
-            print(
+            logging.getLogger("megaplan").info(
+                "%s",
                 _format_phase_heartbeat(
                     args,
                     elapsed_s=now - started,
                     plan_dir=liveness_plan_dir,
                     progress_changed=liveness_changed_since_heartbeat,
                 ),
-                file=sys.stderr,
-                flush=True,
             )
             last_heartbeat = now
             liveness_changed_since_heartbeat = False
@@ -420,7 +422,21 @@ def _format_phase_heartbeat(
     if state_path is not None:
         try:
             raw = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except FileNotFoundError:
+            raw = None
+        except json.JSONDecodeError:
+            _warn_read_fallback(
+                "M3A_WARN_HEARTBEAT_STATE_READ",
+                path=state_path,
+                reason="corrupt_json",
+            )
+            raw = None
+        except (OSError, UnicodeDecodeError):
+            _warn_read_fallback(
+                "M3A_WARN_HEARTBEAT_STATE_READ",
+                path=state_path,
+                reason="unreadable",
+            )
             raw = None
         if isinstance(raw, dict):
             plan_name = raw.get("name")
@@ -549,7 +565,21 @@ def _read_unresolved_flag_ids(plan_dir: Path | None) -> list[str]:
         try:
             with path.open(encoding="utf-8") as handle:
                 payload = json.load(handle)
-        except (OSError, json.JSONDecodeError):
+        except FileNotFoundError:
+            continue
+        except json.JSONDecodeError:
+            _warn_read_fallback(
+                "M3A_WARN_AUTO_FLAGS_READ",
+                path=path,
+                reason="corrupt_json",
+            )
+            continue
+        except (OSError, UnicodeDecodeError):
+            _warn_read_fallback(
+                "M3A_WARN_AUTO_FLAGS_READ",
+                path=path,
+                reason="unreadable",
+            )
             continue
         if not isinstance(payload, dict):
             continue
@@ -621,7 +651,21 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
     try:
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             state_data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return 0.0
+    except json.JSONDecodeError:
+        _warn_read_fallback(
+            "M3A_WARN_HISTORY_COST_READ",
+            path=plan_dir / "state.json",
+            reason="corrupt_json",
+        )
+        return 0.0
+    except (OSError, UnicodeDecodeError):
+        _warn_read_fallback(
+            "M3A_WARN_HISTORY_COST_READ",
+            path=plan_dir / "state.json",
+            reason="unreadable",
+        )
         return 0.0
 
     if not isinstance(state_data, dict):
@@ -634,6 +678,12 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
         try:
             total += float(entry.get("cost_usd", 0.0) or 0.0)
         except (TypeError, ValueError):
+            _warn_read_fallback(
+                "M3A_WARN_COST_COERCION",
+                path=plan_dir / "state.json",
+                reason="invalid_cost",
+                context={"entry": entry},
+            )
             continue
     return round(total, 6)
 
@@ -710,7 +760,21 @@ def _record_lifecycle_failure(
                 current_state = state_data.get("current_state") or STATE_BLOCKED
             else:
                 current_state = STATE_BLOCKED
-        except (OSError, json.JSONDecodeError, ValueError):
+        except FileNotFoundError:
+            current_state = STATE_BLOCKED
+        except json.JSONDecodeError:
+            _warn_read_fallback(
+                "M3A_WARN_LIFECYCLE_FAILURE_READ",
+                path=plan_dir / "state.json",
+                reason="corrupt_json",
+            )
+            current_state = STATE_BLOCKED
+        except (OSError, UnicodeDecodeError, ValueError):
+            _warn_read_fallback(
+                "M3A_WARN_LIFECYCLE_FAILURE_READ",
+                path=plan_dir / "state.json",
+                reason="unreadable",
+            )
             current_state = STATE_BLOCKED
     failure_details: dict[str, Any] | None = None
     try:
@@ -787,13 +851,31 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
             return False
         if not (plan_dir / "execution.json").exists():
             return False
-        state_data["current_state"] = (
+        next_state = (
             STATE_EXECUTED if execute_result == "success" else STATE_FINALIZED
         )
-        state_data.pop("active_step", None)
-        state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
+        write_plan_state(
+            plan_dir,
+            mode="patch-many",
+            patch={"current_state": next_state, "active_step": None},
+            mutation=lambda current: (current.pop("active_step", None), True)[1],
+        )
         return True
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return False
+    except json.JSONDecodeError:
+        _warn_read_fallback(
+            "M3A_WARN_CALLBACK_RECOVERY_READ",
+            path=state_path,
+            reason="corrupt_json",
+        )
+        return False
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        _warn_read_fallback(
+            "M3A_WARN_CALLBACK_RECOVERY_READ",
+            path=state_path,
+            reason="unreadable",
+        )
         return False
 
 
@@ -840,6 +922,11 @@ def _quarantine_phase_outputs(plan_dir: Path, step: str) -> list[str]:
             try:
                 payload = json.loads(stripped)
             except (json.JSONDecodeError, ValueError):
+                _warn_read_fallback(
+                    "M3A_WARN_QUARANTINE_READ",
+                    path=source,
+                    reason="corrupt_json",
+                )
                 payload = None
             # Non-empty parseable dicts/lists are left in place — only the
             # genuinely-empty corpses are quarantined.
@@ -870,7 +957,21 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     try:
         with state_path.open(encoding="utf-8") as handle:
             state_data = json.load(handle)
-    except (OSError, json.JSONDecodeError, ValueError):
+    except FileNotFoundError:
+        return False
+    except json.JSONDecodeError:
+        _warn_read_fallback(
+            "M3A_WARN_ORPHAN_CLEAR_READ",
+            path=state_path,
+            reason="corrupt_json",
+        )
+        return False
+    except (OSError, UnicodeDecodeError, ValueError):
+        _warn_read_fallback(
+            "M3A_WARN_ORPHAN_CLEAR_READ",
+            path=state_path,
+            reason="unreadable",
+        )
         return False
     if not isinstance(state_data, dict):
         return False
@@ -880,18 +981,29 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     recorded_step = current_active.get("step")
     if recorded_step != expected_step:
         return False
-    state_data.pop("active_step", None)
     quarantined = _quarantine_phase_outputs(plan_dir, expected_step)
-    if quarantined:
-        meta = state_data.setdefault("meta", {})
-        history = meta.setdefault("orphan_recoveries", [])
-        if isinstance(history, list):
-            history.append({
-                "step": expected_step,
-                "quarantined": list(quarantined),
-            })
+    def _patch_orphan_recovery(current: dict[str, Any]) -> bool:
+        changed = current.pop("active_step", None) is not None
+        if quarantined:
+            meta = current.setdefault("meta", {})
+            if isinstance(meta, dict):
+                history = meta.setdefault("orphan_recoveries", [])
+                if isinstance(history, list):
+                    history.append({
+                        "step": expected_step,
+                        "quarantined": list(quarantined),
+                    })
+                    changed = True
+        return changed
+
     try:
-        state_path.write_text(json.dumps(state_data, indent=2) + "\n", encoding="utf-8")
+        write_plan_state(
+            plan_dir,
+            mode="patch-many",
+            patch={},
+            mutation=_patch_orphan_recovery,
+            validate_current_state=False,
+        )
     except OSError:
         return False
     return True
@@ -1192,7 +1304,15 @@ def drive(
                     elif terminal_status == "done":
                         emit_event(EventKind.PLAN_FINISHED, plan_dir=plan_dir, payload={"state": state})
                 except Exception:
-                    pass
+                    _warn_best_effort_emit_failure(
+                        "M3A_WARN_EMIT_AUTO_TERMINAL",
+                        action="auto-terminal",
+                        plan_dir=plan_dir,
+                        event_kind=(
+                            "plan_aborted" if terminal_status == "aborted" else "plan_finished"
+                        ),
+                        context={"state": state},
+                    )
             return _outcome(
                 terminal_status,
                 final_state=state,
@@ -1360,7 +1480,13 @@ def drive(
                         payload={"from": last_state, "to": state},
                     )
                 except Exception:
-                    pass
+                    _warn_best_effort_emit_failure(
+                        "M3A_WARN_EMIT_AUTO_STATE_TRANSITION",
+                        action="auto-state-transition",
+                        plan_dir=plan_dir,
+                        event_kind="state_transition",
+                        context={"from_state": last_state, "to_state": state},
+                    )
             last_state = state
 
         # Escalation: no phase to run but overrides are available.
@@ -1544,7 +1670,13 @@ def drive(
             try:
                 emit_event(EventKind.PHASE_START, plan_dir=plan_dir, phase=next_step, payload={"phase": next_step})
             except Exception:
-                pass
+                _warn_best_effort_emit_failure(
+                    "M3A_WARN_EMIT_AUTO_PHASE_START",
+                    action="auto-phase-start",
+                    plan_dir=plan_dir,
+                    phase=next_step,
+                    event_kind="phase_start",
+                )
         code, out, err, result = _run_phase(cmd, next_step)
         if next_step == "override add-note" and last_phase == "override add-note":
             if code != 0:
@@ -1654,7 +1786,20 @@ def drive(
                         },
                     )
                 except Exception:
-                    pass
+                    _warn_best_effort_emit_failure(
+                        "M3A_WARN_EMIT_AUTO_PHASE_RETRY",
+                        action="auto-phase-retry",
+                        plan_dir=plan_dir,
+                        phase=next_step,
+                        event_kind="phase_retry",
+                        context={
+                            "provider": provider,
+                            "error_kind": error_kind,
+                            "error_layer": error_layer,
+                            "retry": phase_retry_count,
+                            "max_retries": max_external_retries,
+                        },
+                    )
             code, out, err, result = _run_phase(cmd, next_step)
 
         # Timeout detection: read from PhaseResult.exit_kind, not exit code.
@@ -1984,7 +2129,13 @@ def drive(
             try:
                 emit_event(EventKind.PHASE_END, plan_dir=plan_dir, phase=last_phase, payload={"phase": last_phase})
             except Exception:
-                pass
+                _warn_best_effort_emit_failure(
+                    "M3A_WARN_EMIT_AUTO_PHASE_END",
+                    action="auto-phase-end",
+                    plan_dir=plan_dir,
+                    phase=last_phase,
+                    event_kind="phase_end",
+                )
 
     # Hit iteration cap.
     log(f"hit max_iterations={max_iterations}")

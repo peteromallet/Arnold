@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from megaplan.types import (
     ActiveStep,
@@ -18,6 +18,7 @@ from megaplan.types import (
     PlanState,
     PlanVersionRecord,
     SessionInfo,
+    validate_plan_current_state,
 )
 
 from .base import HomeBackend, NormalizedDict, NormalizedStringList, StorageModel, utc_now
@@ -237,6 +238,11 @@ class Plan(StorageModel):
     feedback: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("current_state")
+    @classmethod
+    def _validate_current_state(cls, value: str) -> str:
+        return validate_plan_current_state(value)
 
     @classmethod
     def from_plan_state(

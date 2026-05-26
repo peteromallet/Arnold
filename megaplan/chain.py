@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -82,6 +83,8 @@ from megaplan.profiles import (
 )
 from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED
 
+log = logging.getLogger("megaplan")
+
 
 VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
 VALID_MERGE_POLICIES = ("auto", "review")
@@ -118,6 +121,22 @@ GH_TRANSIENT_ERROR_PATTERNS = (
     "try again",
 )
 GH_PR_STATE_ATTEMPTS = 3
+
+
+def _warn_chain_fallback(
+    token: str,
+    *,
+    reason: str,
+    path: Path | None = None,
+    context: dict[str, Any] | None = None,
+) -> None:
+    details = [f"reason={reason}"]
+    if path is not None:
+        details.append(f"path={path}")
+    if context:
+        for key in sorted(context):
+            details.append(f"{key}={context[key]!r}")
+    log.warning("%s chain fallback (%s)", token, ", ".join(details), exc_info=True)
 BLOCKED_EXECUTE_OUTCOME_STATUSES = {"blocked", "worker_blocked"}
 
 
@@ -564,6 +583,11 @@ def load_runtime_policy(spec_path: Path) -> dict[str, Any]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
+        _warn_chain_fallback(
+            "M3A_WARN_CHAIN_POLICY_READ",
+            reason="corrupt_json",
+            path=path,
+        )
         return {}
     if not isinstance(raw, dict):
         return {}
@@ -625,32 +649,59 @@ def _write_chain_policy_into_plan_meta(
     back atomically.  Does nothing if the plan directory cannot be resolved
     (best-effort, non-critical).
     """
-    from megaplan._core import atomic_write_json, read_json
+    from megaplan._core import read_json
+    from megaplan._core.state import write_plan_state
 
     try:
         plan_dir = resolve_plan_dir(root, plan_name)
     except CliError:
+        _warn_chain_fallback(
+            "M3A_WARN_CHAIN_POLICY_WRITE",
+            reason="plan_dir_unavailable",
+            context={"plan": plan_name},
+        )
         return
     state_path = plan_dir / "state.json"
     if not state_path.exists():
         return
     try:
         state = read_json(state_path)
-    except (json.JSONDecodeError, OSError):
+    except FileNotFoundError:
+        return
+    except json.JSONDecodeError:
+        _warn_chain_fallback(
+            "M3A_WARN_CHAIN_META_WRITE",
+            reason="corrupt_json",
+            path=state_path,
+        )
+        return
+    except (OSError, UnicodeDecodeError):
+        _warn_chain_fallback(
+            "M3A_WARN_CHAIN_META_WRITE",
+            reason="unreadable",
+            path=state_path,
+        )
         return
     if not isinstance(state, dict):
         return
     runtime_overrides = load_runtime_policy(spec_path)
     effective = effective_chain_policy(spec, runtime_overrides)
-    meta = state.setdefault("meta", {})
-    meta["chain_policy"] = {
+    chain_policy = {
         "prerequisite_policy": effective["prerequisite_policy"],
         "validation_policy": effective["validation_policy"],
         "review_policy": effective["review_policy"],
         "source": effective["source"],
         "milestone_label": milestone_label,
     }
-    atomic_write_json(state_path, state)
+
+    def _patch_chain_policy(current: dict[str, Any]) -> bool:
+        meta = current.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            current["meta"] = meta = {}
+        meta["chain_policy"] = chain_policy
+        return True
+
+    write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_patch_chain_policy)
 
 
 def validate_paths(spec: ChainSpec, root: Path) -> None:
@@ -977,6 +1028,11 @@ def _claimed_paths(root: Path, plan_name: str) -> set[str]:
         try:
             payload = json.loads(artifact.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
+            _warn_chain_fallback(
+                "M3A_WARN_CHAIN_CLAIMED_PATHS",
+                reason="corrupt_json",
+                path=artifact,
+            )
             continue
         for path in payload.get("files_changed") or []:
             if isinstance(path, str) and path.strip():
@@ -999,6 +1055,11 @@ def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str
             try:
                 path = path.resolve().relative_to(root_abs)
             except (OSError, ValueError):
+                _warn_chain_fallback(
+                    "M3A_WARN_NESTED_REPO_PATHS",
+                    reason="path_normalization",
+                    context={"raw_path": raw_path},
+                )
                 continue
         cursor = root
         for part in path.parts[:-1]:
@@ -1019,6 +1080,11 @@ def _claimed_root_paths(root: Path, plan_name: str) -> set[str]:
             try:
                 path = path.resolve().relative_to(root_abs)
             except (OSError, ValueError):
+                _warn_chain_fallback(
+                    "M3A_WARN_ROOT_PATHS",
+                    reason="path_normalization",
+                    context={"raw_path": raw_path},
+                )
                 continue
         cursor = root
         in_nested_repo = False
@@ -1060,6 +1126,11 @@ def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer
         try:
             rel = repo.resolve().relative_to(root_abs).as_posix()
         except (OSError, ValueError):
+            _warn_chain_fallback(
+                "M3A_WARN_DIRTY_NESTED_REPOS",
+                reason="path_normalization",
+                context={"repo": repo.as_posix()},
+            )
             rel = repo.as_posix()
         dirty.append(rel)
     return dirty
@@ -1096,6 +1167,11 @@ def _reset_staged_paths(root: Path, paths: list[Path], *, writer) -> None:
         try:
             rel_paths.append(path.resolve().relative_to(root_abs).as_posix())
         except (OSError, ValueError):
+            _warn_chain_fallback(
+                "M3A_WARN_RESET_STAGED",
+                reason="path_normalization",
+                context={"path": path.as_posix()},
+            )
             continue
     if rel_paths:
         cmd = ["git", "reset", "--", *sorted(set(rel_paths))]
@@ -1129,7 +1205,11 @@ def _branch_head(root: Path) -> str | None:
         if proc.returncode == 0:
             return proc.stdout.strip() or None
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
+        _warn_chain_fallback(
+            "M3A_WARN_BRANCH_HEAD",
+            reason="git_error",
+            context={"root": root.as_posix()},
+        )
     return None
 
 
@@ -1149,7 +1229,11 @@ def _remote_branch_head(root: Path, branch: str) -> str | None:
             if line:
                 return line[0].split()[0] if line[0] else None
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        pass
+        _warn_chain_fallback(
+            "M3A_WARN_REMOTE_BRANCH_HEAD",
+            reason="git_error",
+            context={"root": root.as_posix(), "branch": branch},
+        )
     return None
 
 
@@ -1166,6 +1250,11 @@ def _is_worktree_dirty(root: Path) -> bool:
         )
         return bool(proc.stdout.strip())
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        _warn_chain_fallback(
+            "M3A_WARN_WORKTREE_DIRTY",
+            reason="git_error",
+            context={"root": root.as_posix()},
+        )
         return False
 
 
@@ -1301,12 +1390,22 @@ def _commit_and_push_phase(
         try:
             claimed_nested_repo_roots.add(repo.resolve().relative_to(root_abs).as_posix())
         except (OSError, ValueError):
+            _warn_chain_fallback(
+                "M3A_WARN_COMMIT_PUSH_PATH",
+                reason="path_normalization",
+                context={"repo": repo.as_posix()},
+            )
             continue
     preexisting_unclaimed: list[Path] = []
     for path in preexisting_dirty_paths or []:
         try:
             rel = path.resolve().relative_to(root_abs).as_posix()
         except (OSError, ValueError):
+            _warn_chain_fallback(
+                "M3A_WARN_COMMIT_PUSH_PATH2",
+                reason="path_normalization",
+                context={"path": path.as_posix()},
+            )
             continue
         if rel not in claimed_root_paths and rel not in claimed_nested_repo_roots:
             preexisting_unclaimed.append(path)
@@ -1518,6 +1617,11 @@ def _warn_vendor_ignored_for_locked_profile(
     try:
         metadata = load_profile_metadata(project_dir=root)
     except Exception:
+        _warn_chain_fallback(
+            "M3A_WARN_VENDOR_LOCK",
+            reason="profile_metadata_unavailable",
+            context={"profile": profile},
+        )
         return
     if not bool((metadata.get(profile) or {}).get("vendor_locked", False)):
         return
@@ -1528,6 +1632,11 @@ def _warn_vendor_ignored_for_locked_profile(
             effective_vendor = _resolve_default_vendor()
             inherited = True
         except Exception:
+            _warn_chain_fallback(
+                "M3A_WARN_VENDOR_LOCK_RESOLVE",
+                reason="default_vendor_unavailable",
+                context={"profile": profile},
+            )
             effective_vendor = None
     if effective_vendor not in VALID_VENDORS:
         return
@@ -1571,7 +1680,21 @@ def _execution_batch_sort_key(path: Path) -> tuple[int, str]:
 def _latest_execute_result(plan_dir: Path) -> str | None:
     try:
         state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        _warn_chain_fallback(
+            "M3A_WARN_EXECUTE_RESULT_READ",
+            reason="corrupt_json",
+            path=plan_dir / "state.json",
+        )
+        return None
+    except (OSError, UnicodeDecodeError):
+        _warn_chain_fallback(
+            "M3A_WARN_EXECUTE_RESULT_READ",
+            reason="unreadable",
+            path=plan_dir / "state.json",
+        )
         return None
     history = state.get("history")
     if not isinstance(history, list):
@@ -1635,15 +1758,20 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
 
 
 def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
-    state_path = plan_dir / "state.json"
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not isinstance(state, dict):
-        return
-    state["current_state"] = STATE_EXECUTED
-    state.pop("active_step", None)
-    state.pop("latest_failure", None)
-    state.pop("resume_cursor", None)
-    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    from megaplan._core.state import write_plan_state
+
+    def _patch_blocked_execute(current: dict[str, Any]) -> bool:
+        current.pop("active_step", None)
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        return True
+
+    write_plan_state(
+        plan_dir,
+        mode="patch-many",
+        patch={"current_state": STATE_EXECUTED},
+        mutation=_patch_blocked_execute,
+    )
 
 
 def _recover_blocked_execute_if_tasks_done(
@@ -1657,6 +1785,11 @@ def _recover_blocked_execute_if_tasks_done(
     try:
         plan_dir = resolve_plan_dir(root, outcome.plan)
     except CliError:
+        _warn_chain_fallback(
+            "M3A_WARN_BLOCKED_EXECUTE_RECOVERY",
+            reason="plan_dir_unavailable",
+            context={"plan": outcome.plan},
+        )
         return False
     if _latest_execute_result(plan_dir) != "blocked":
         return False

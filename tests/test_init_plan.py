@@ -667,24 +667,23 @@ def test_format_duration_hint_uses_human_readable_ranges() -> None:
     assert execute_hint == "Expected minimum duration: 5m (depends on task count)."
 
 
-def test_emit_phase_notice_writes_to_stderr_only(capsys: pytest.CaptureFixture[str]) -> None:
+def test_emit_phase_notice_logs_on_megaplan_logger(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+    caplog.set_level(logging.INFO, logger="megaplan")
     megaplan.handlers._emit_phase_notice("plan")
 
-    captured = capsys.readouterr()
-
-    assert captured.out == ""
-    assert "[megaplan]" in captured.err
-    assert "plan" in captured.err
-    assert "Expected duration:" in captured.err
+    assert "[megaplan]" in caplog.text
+    assert "plan" in caplog.text
+    assert "Expected duration:" in caplog.text
+    assert any(record.name == "megaplan" for record in caplog.records)
 
 
-def test_emit_phase_notice_ignores_non_phase_commands(capsys: pytest.CaptureFixture[str]) -> None:
+def test_emit_phase_notice_ignores_non_phase_commands(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+    caplog.set_level(logging.INFO, logger="megaplan")
     megaplan.handlers._emit_phase_notice("status")
 
-    captured = capsys.readouterr()
-
-    assert captured.out == ""
-    assert captured.err == ""
+    assert caplog.text == ""
 
 
 def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
