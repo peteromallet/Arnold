@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv venv
-          uv pip install -e ".[dev,runpod-launch]"
+          .venv/bin/python -m pip install -e ".[dev,runpod-launch]"
 
       - name: Dry-run E2E matrix (always)
         run: uv run python3 scripts/runpod_e2e_matrix.py --dry-run
