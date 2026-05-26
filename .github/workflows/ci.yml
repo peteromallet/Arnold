@@ -51,7 +51,7 @@ jobs:
 
       - name: Run fast suite with coverage
         run: |
-          .venv/bin/pytest -q --tb=no \
+          .venv/bin/pytest -q --tb=short \
             --cov=vibecomfy \
             --cov-report=term-missing \
             --cov-report=xml
