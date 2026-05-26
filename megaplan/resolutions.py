@@ -4,6 +4,14 @@ A resolution is a machine-readable record that tells the executor how to treat
 a user action prerequisite: proceed with fallback instructions, confirm
 satisfaction, or hard-block.  Resolutions live in a colocated
 ``user_action_resolutions.json`` artifact inside the plan directory.
+
+.. note::
+
+   This module is a **disk-source compatibility wrapper** around the canonical
+   shared contract in :mod:`megaplan.resolution_contract`.  All resolution
+   semantics (applicability checks, classifier decisions, recommended-action
+   mapping) are delegated to the shared module with ``source="disk"``, while
+   disk I/O helpers remain local to this module.
 """
 
 from __future__ import annotations
@@ -16,26 +24,28 @@ from megaplan._core.io import atomic_write_json, read_json
 from megaplan.types import CliError
 
 # ---------------------------------------------------------------------------
-# Constants
+# Re-export shared constants from the canonical contract module.
+# ---------------------------------------------------------------------------
+
+from megaplan.resolution_contract import (  # noqa: E402
+    FALLBACK_STATES,
+    HARD_BLOCK_STATES,
+    SUPPORTED_USER_ACTION_RESOLUTION_STATES,
+    resolution_applies_to_task as _shared_resolution_applies_to_task,
+    resolution_recommended_action as _shared_resolution_recommended_action,
+)
+
+# ---------------------------------------------------------------------------
+# File-local constants (not in shared contract)
 # ---------------------------------------------------------------------------
 
 USER_ACTION_RESOLUTIONS_FILE = "user_action_resolutions.json"
 
-SUPPORTED_USER_ACTION_RESOLUTION_STATES = frozenset(
-    {"satisfied", "accepted_blocked", "waived", "manual_required", "rejected"}
-)
-
-# Resolution states that allow the executor to proceed (with fallback if needed).
-FALLBACK_STATES: frozenset[str] = frozenset({"accepted_blocked", "waived"})
-
-# Resolution states that require a hard stop — plus the implicit "missing"
-# state (no resolution at all), which is handled by callers, not this set.
-HARD_BLOCK_STATES: frozenset[str] = frozenset({"manual_required", "rejected"})
-
 
 # ---------------------------------------------------------------------------
-# I/O helpers
+# I/O helpers (disk-specific — kept in this module)
 # ---------------------------------------------------------------------------
+
 
 def load_user_action_resolutions(plan_dir: Path) -> dict[str, dict[str, Any]]:
     """Load the resolutions artifact, returning {} when the file is absent.
@@ -75,7 +85,10 @@ def load_user_action_resolutions(plan_dir: Path) -> dict[str, dict[str, Any]]:
                 f"Resolution for action '{key}' must be a JSON object.",
             )
         state = value.get("state")
-        if not isinstance(state, str) or state not in SUPPORTED_USER_ACTION_RESOLUTION_STATES:
+        if (
+            not isinstance(state, str)
+            or state not in SUPPORTED_USER_ACTION_RESOLUTION_STATES
+        ):
             raise CliError(
                 "invalid_user_action_resolutions",
                 f"Resolution for action '{key}' has invalid or missing state "
@@ -98,6 +111,7 @@ def save_user_action_resolutions(
 # ---------------------------------------------------------------------------
 # Upsert
 # ---------------------------------------------------------------------------
+
 
 def upsert_user_action_resolution(
     plan_dir: Path,
@@ -150,9 +164,7 @@ def upsert_user_action_resolution(
     # are preserved across upserts.
     existing_entry = existing.get(action_id)
     prior: dict[str, Any] = (
-        dict(existing_entry)
-        if isinstance(existing_entry, dict)
-        else {}
+        dict(existing_entry) if isinstance(existing_entry, dict) else {}
     )
 
     # Preserve the original created_at if this is an update.
@@ -184,8 +196,9 @@ def upsert_user_action_resolution(
 
 
 # ---------------------------------------------------------------------------
-# Query helpers
+# Query helpers — thin wrappers around the shared contract
 # ---------------------------------------------------------------------------
+
 
 def resolution_applies_to_task(
     resolution: dict[str, Any] | None,
@@ -195,15 +208,11 @@ def resolution_applies_to_task(
 
     A resolution applies when its ``applies_to_task_ids`` list is empty
     (meaning all tasks) or contains *task_id*.
+
+    Delegates to :func:`megaplan.resolution_contract.resolution_applies_to_task`
+    with ``source="disk"``.
     """
-    if not isinstance(resolution, dict):
-        return False
-    task_ids = resolution.get("applies_to_task_ids", [])
-    if not isinstance(task_ids, list):
-        return False
-    if not task_ids:
-        return True  # empty list = applies to all
-    return task_id in task_ids
+    return _shared_resolution_applies_to_task(resolution, task_id, source="disk")
 
 
 def resolution_recommended_action(
@@ -217,19 +226,8 @@ def resolution_recommended_action(
     * ``"retry_execute"`` — state is ``satisfied``
     * ``"awaiting_human"`` — state is ``manual_required`` or no resolution exists
     * ``"cannot_continue"`` — state is ``rejected``
+
+    Delegates to :func:`megaplan.resolution_contract.resolution_recommended_action`
+    with ``source="disk"``.
     """
-    if not isinstance(resolution, dict):
-        return "awaiting_human"  # unresolved
-
-    state = resolution.get("state")
-    if state in FALLBACK_STATES:
-        return "continue_with_fallback"
-    if state == "satisfied":
-        return "retry_execute"
-    if state == "rejected":
-        return "cannot_continue"
-    if state == "manual_required":
-        return "awaiting_human"
-
-    # Unknown / missing state — treat as unresolved.
-    return "awaiting_human"
+    return _shared_resolution_recommended_action(resolution, source="disk")

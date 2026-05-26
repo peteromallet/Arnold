@@ -17,12 +17,12 @@ from megaplan._core import (
     latest_plan_meta_path,
     read_json,
 )
-from megaplan.resolutions import (
+from megaplan.resolution_contract import (
     FALLBACK_STATES,
     HARD_BLOCK_STATES,
-    load_user_action_resolutions,
     resolution_applies_to_task,
 )
+from megaplan.resolutions import load_user_action_resolutions
 from megaplan.types import PlanState
 
 from ._shared import _debt_watch_lines, _gate_summary_or_skipped, _render_prep_block
@@ -293,7 +293,7 @@ def _format_user_action_guidance(
             action_id = action.get("id", "unknown")
             description = action.get("description", "")
             resolution = resolutions.get(action_id)
-            applies = resolution_applies_to_task(resolution, task_id)
+            applies = resolution_applies_to_task(resolution, task_id, source="disk")
 
             if applies and isinstance(resolution, dict):
                 state = resolution.get("state", "")

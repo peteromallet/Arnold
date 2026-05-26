@@ -22,12 +22,14 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import hashlib
 from pathlib import Path
 from unittest import mock
 
 import pytest
 import yaml
 
+from megaplan.store import MultiStore, StoreError
 from megaplan.store.file import FileStore
 from megaplan.tickets import (
     address_resolved_by_epic,
@@ -51,7 +53,7 @@ from megaplan.tickets.files import (
     tickets_dir,
     write_ticket_file,
 )
-from megaplan.tickets.identity import repo_root_sha
+from megaplan.tickets.identity import repo_codebase_identity, repo_root_sha
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +189,100 @@ class TestLocalOnlyNew:
         assert fm["source"] == "agent"
         assert fm["filed_in_turn_id"] == "plan_worker_t1"
         assert fm["filed_by_actor_id"] == "actor-1"
+
+
+class TestStoreBackedFacade:
+    """Facade operations routed through the Store protocol."""
+
+    def test_file_store_facade_round_trip(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        sha = _init_git_repo(tmp_path)
+        monkeypatch.delenv("MEGAPLAN_BACKEND", raising=False)
+        store = FileStore(tmp_path / "store", repo_root=tmp_path)
+
+        ticket_id = new("Store ticket", body="store body", tags=["bug"], store=store, cwd=tmp_path)
+        codebase = store.resolve_codebase_by_root_sha(sha)
+        assert codebase is not None
+
+        listed = list_tickets(status="open", tags=["bug"], store=store, cwd=tmp_path)
+        assert [item["id"] for item in listed] == [ticket_id]
+
+        shown = show(ticket_id, store=store, cwd=tmp_path)
+        assert shown is not None
+        assert shown["codebase_id"] == codebase.id
+        assert shown["body"] == "store body"
+
+        edit(ticket_id, title="Store ticket edited", add_tag="p0", store=store, cwd=tmp_path)
+        link(ticket_id, "EPIC-1", resolves=True, store=store, cwd=tmp_path)
+        assert store.list_ticket_epic_links(ticket_id=ticket_id)[0].epic_id == "EPIC-1"
+
+        updated = address_resolved_by_epic("EPIC-1", store=store, repo_root=tmp_path)
+        assert updated == [ticket_id]
+        assert store.load_ticket(ticket_id).status == "addressed"
+
+        unlink(ticket_id, "EPIC-1", store=store, cwd=tmp_path)
+        assert store.list_ticket_epic_links(ticket_id=ticket_id) == []
+
+    def test_file_store_facade_no_origin_identity_uses_local_metadata(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = _init_git_repo(tmp_path)
+        monkeypatch.delenv("MEGAPLAN_BACKEND", raising=False)
+        store = FileStore(tmp_path / "store", repo_root=tmp_path)
+
+        ticket_id = new("No origin store ticket", body="body", store=store, cwd=tmp_path)
+
+        ticket = store.load_ticket(ticket_id)
+        assert ticket is not None
+        codebase = store.load_codebase(ticket.codebase_id)
+        assert codebase is not None
+        expected_path_hash = hashlib.sha256(str(tmp_path.resolve()).encode("utf-8")).hexdigest()[:12]
+        assert codebase.owner == "local"
+        assert codebase.name == f"{slugify(tmp_path.name)}-{expected_path_hash}-{sha[:12]}"
+        assert codebase.default_branch == "main"
+        assert codebase.root_commit_sha == sha
+
+    def test_file_store_facade_refuses_repo_without_root_sha_before_writing(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _git_init_no_commits(tmp_path)
+        monkeypatch.delenv("MEGAPLAN_BACKEND", raising=False)
+        store = FileStore(tmp_path / "store", repo_root=tmp_path)
+
+        with pytest.raises(subprocess.CalledProcessError):
+            new("No root facade ticket", body="body", store=store, cwd=tmp_path)
+
+        assert list(iterate_ticket_files(tmp_path)) == []
+        assert store.list_tickets() == []
+
+    def test_multi_store_facade_round_trip_routes_through_store_predicate(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MEGAPLAN_BACKEND", raising=False)
+        file_repo = tmp_path / "file-repo"
+        db_repo = tmp_path / "db-repo"
+        sha = _init_git_repo(file_repo)
+        _init_git_repo(db_repo)
+        file_store = FileStore(tmp_path / "file-store", repo_root=file_repo)
+        db_store = FileStore(tmp_path / "db-store", repo_root=db_repo)
+        store = MultiStore(file_store=file_store, db_store=db_store)
+        epic = store.create_epic(title="Multi facade epic", goal="g", body="body", home_backend="file")
+
+        ticket_id = new("Multi facade ticket", body="body", tags=["multi"], store=store, cwd=file_repo)
+
+        codebase = store.resolve_codebase_by_root_sha(sha)
+        assert codebase is not None
+        assert file_store.load_ticket(ticket_id) is not None
+        assert db_store.load_ticket(ticket_id) is not None
+        assert [item["id"] for item in list_tickets(status="open", store=store, cwd=file_repo)] == [ticket_id]
+        assert show(ticket_id, store=store, cwd=file_repo)["codebase_id"] == codebase.id
+        with pytest.raises(StoreError, match="exists in both file and db backends"):
+            link(ticket_id, epic.id, resolves=True, store=store, cwd=file_repo)
 
 
 class TestLocalOnlyListShow:
@@ -581,6 +677,20 @@ class TestIdentity:
         with pytest.raises(subprocess.CalledProcessError):
             repo_root_sha(tmp_path)
 
+    def test_repo_codebase_identity_requires_root_sha(self, tmp_path: Path) -> None:
+        _git_init_no_commits(tmp_path)
+        with pytest.raises(subprocess.CalledProcessError):
+            repo_codebase_identity(tmp_path)
+
+    def test_repo_codebase_identity_falls_back_without_origin(self, tmp_path: Path) -> None:
+        sha = _init_git_repo(tmp_path)
+        identity = repo_codebase_identity(tmp_path)
+        expected_path_hash = hashlib.sha256(str(tmp_path.resolve()).encode("utf-8")).hexdigest()[:12]
+        assert identity.owner == "local"
+        assert identity.name == f"{slugify(tmp_path.name)}-{expected_path_hash}-{sha[:12]}"
+        assert identity.default_branch == "main"
+        assert identity.root_commit_sha == sha
+
     def test_slugify(self) -> None:
         assert slugify("Hello World!") == "hello-world"
         assert slugify("  Foo & Bar  ") == "foo-bar"
@@ -664,6 +774,31 @@ class TestDBStoreTickets:
             cb2 = store.resolve_codebase_by_root_sha(sha)
             assert cb2 is not None
             assert cb2.id == cb.id
+        finally:
+            store.close()
+
+    def test_codebase_auto_registration_without_origin_uses_local_fallback(
+        self,
+        db_store_factory,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = _init_git_repo(tmp_path)
+        monkeypatch.setenv("MEGAPLAN_BACKEND", "db")
+        monkeypatch.setenv("MEGAPLAN_TURN_ID", "")
+
+        store = db_store_factory()
+        try:
+            ticket_id = new("First ticket", body="body", store=store, cwd=tmp_path)
+            assert ticket_id
+
+            cb = store.resolve_codebase_by_root_sha(sha)
+            assert cb is not None
+            expected_path_hash = hashlib.sha256(str(tmp_path.resolve()).encode("utf-8")).hexdigest()[:12]
+            assert cb.owner == "local"
+            assert cb.name == f"{slugify(tmp_path.name)}-{expected_path_hash}-{sha[:12]}"
+            assert cb.default_branch == "main"
+            assert cb.root_commit_sha == sha
         finally:
             store.close()
 
@@ -943,9 +1078,15 @@ class TestDBStoreTickets:
 
 
 class TestIsCloudStore:
-    def test_file_store_is_not_cloud(self) -> None:
+    def test_file_store_is_cloud(self) -> None:
         fs = FileStore(Path("/tmp"))
-        assert is_cloud_store(fs) is False
+        assert is_cloud_store(fs) is True
+
+    def test_multi_store_is_cloud(self) -> None:
+        fs = FileStore(Path("/tmp/file"))
+        db = FileStore(Path("/tmp/db"))
+        store = MultiStore(file_store=fs, db_store=db)
+        assert is_cloud_store(store) is True
 
     def test_db_store_is_cloud(self, db_store_factory) -> None:
         store = db_store_factory()

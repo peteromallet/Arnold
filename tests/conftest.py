@@ -31,6 +31,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="Optional storage backend selector used by Sprint 1 backend tests.",
     )
+    parser.addoption(
+        "--write-fixture",
+        action="store_true",
+        default=False,
+        help="Regenerate characterization test fixtures on disk.",
+    )
 
 
 def read_json(path: Path) -> dict:

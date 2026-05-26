@@ -25,9 +25,12 @@ recommendation reads off today.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+log = logging.getLogger("megaplan")
 
 
 FaultSeverity = Literal["significant", "minor", "info"]
@@ -88,6 +91,11 @@ class FaultRegistry:
         try:
             data = json.loads(path.read_text())
         except json.JSONDecodeError:
+            log.warning(
+                "M3A_WARN_CORRUPT_FAULTS read fallback (reason=corrupt_json, path=%s)",
+                path,
+                exc_info=True,
+            )
             return cls()
         faults: dict[str, Fault] = {}
         for entry in data.get("faults", []):

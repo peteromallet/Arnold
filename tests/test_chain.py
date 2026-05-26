@@ -2332,3 +2332,47 @@ def test_initialized_plan_respects_runtime_override_source(
     assert cp["prerequisite_policy"] == "required"
     assert cp["source"] == "runtime_override"
     assert cp["milestone_label"] == "m1"
+
+
+def test_load_runtime_policy_logs_corrupt_json(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    runtime_path = chain_module._runtime_policy_path_for(spec_path)
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_path.write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert chain_module.load_runtime_policy(spec_path) == {}
+    assert any("M3A_WARN_CHAIN_POLICY_READ" in record.getMessage() for record in caplog.records)
+
+
+def test_branch_head_logs_git_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        chain_module.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("git missing")),
+    )
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert chain_module._branch_head(tmp_path) is None
+    assert any("M3A_WARN_BRANCH_HEAD" in record.getMessage() for record in caplog.records)
+
+
+def test_latest_execute_result_logs_corrupt_state(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert chain_module._latest_execute_result(plan_dir) is None
+    assert any("M3A_WARN_EXECUTE_RESULT_READ" in record.getMessage() for record in caplog.records)

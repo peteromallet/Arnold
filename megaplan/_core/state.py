@@ -9,17 +9,21 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
 
 import fcntl
 
 from megaplan.types import (
     ActiveStep,
+    CANONICAL_PLAN_STATES,
     CliError,
     HistoryEntry,
     PlanState,
     PlanVersionRecord,
+    STATE_CRITIQUED,
+    STATE_INITIALIZED,
     TERMINAL_STATES,
+    validate_plan_current_state,
 )
 from .phase_runtime import DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS, phase_stale_seconds
 
@@ -38,7 +42,6 @@ if TYPE_CHECKING:
 
 
 DEFAULT_ACTIVE_STEP_STALE_SECONDS = DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS
-
 
 # ---------------------------------------------------------------------------
 # Plan resolution
@@ -89,22 +92,12 @@ def load_plan(root: Path, requested_name: str | None) -> tuple[Path, PlanState]:
 
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     state = read_json(plan_dir / "state.json")
-    migrated = False
-    if state.get("current_state") == "clarified":
-        state["current_state"] = "initialized"
-        migrated = True
-    elif state.get("current_state") == "evaluated":
-        state["current_state"] = "critiqued"
-        state["last_gate"] = {}
-        migrated = True
-    if "last_evaluation" in state:
-        del state["last_evaluation"]
-        migrated = True
-    if "last_gate" not in state:
-        state["last_gate"] = {}
-        migrated = True
-    if migrated:
-        atomic_write_json(plan_dir / "state.json", state)
+    if isinstance(state, dict) and (
+        state.get("current_state") in {"clarified", "evaluated"}
+        or "last_evaluation" in state
+        or "last_gate" not in state
+    ):
+        state = write_plan_state(plan_dir, mode="legacy-migration")
     return plan_dir, state
 
 
@@ -208,7 +201,213 @@ def load_plan_locked(
 
 
 def save_state(plan_dir: Path, state: PlanState) -> None:
-    atomic_write_json(plan_dir / "state.json", state)
+    write_plan_state(plan_dir, mode="replace", state=state)
+
+
+PlanStateWriteMode = Literal[
+    "replace",
+    "executor-key-merge",
+    "patch-key",
+    "patch-many",
+    "active-step-heartbeat",
+    "merge-meta-list",
+    "legacy-migration",
+    "copy-time-rewrite",
+]
+
+PlanStateMutation = Callable[[dict[str, Any]], bool | None]
+
+
+def plan_state_lock_path(plan_dir: Path) -> Path:
+    if plan_dir.parent.name == "plans":
+        return plan_dir.parent.parent / ".state-locks" / f"{plan_dir.name}.lock"
+    return plan_dir.parent / ".state-locks" / f"{plan_dir.name}.lock"
+
+
+@contextmanager
+def plan_state_lock(plan_dir: Path) -> Iterator[None]:
+    """Serialize short read/modify/write cycles for ``state.json``."""
+
+    lock_path = plan_state_lock_path(plan_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _validate_plan_state_for_persist(state: dict[str, Any], *, plan_dir: Path) -> None:
+    current_state = state.get("current_state")
+    if current_state is None:
+        return
+    try:
+        validate_plan_current_state(current_state)
+    except ValueError as exc:
+        raise CliError(
+            "invalid_plan_state",
+            f"Refusing to persist plan state with invalid current_state={current_state!r}",
+            extra={
+                "plan": plan_dir.name,
+                "current_state": current_state,
+                "allowed_states": sorted(CANONICAL_PLAN_STATES),
+            },
+        ) from exc
+
+
+def _read_state_for_write(state_path: Path) -> dict[str, Any]:
+    if not state_path.exists():
+        return {}
+    state = read_json(state_path)
+    return state if isinstance(state, dict) else {}
+
+
+def _apply_legacy_state_migration(state: dict[str, Any]) -> bool:
+    migrated = False
+    if state.get("current_state") == "clarified":
+        state["current_state"] = STATE_INITIALIZED
+        migrated = True
+    elif state.get("current_state") == "evaluated":
+        state["current_state"] = STATE_CRITIQUED
+        state["last_gate"] = {}
+        migrated = True
+    if "last_evaluation" in state:
+        del state["last_evaluation"]
+        migrated = True
+    if "last_gate" not in state:
+        state["last_gate"] = {}
+        migrated = True
+    return migrated
+
+
+def _apply_copy_time_rewrite(
+    state: dict[str, Any],
+    *,
+    project_dir: str | None,
+) -> bool:
+    config = state.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        state["config"] = config
+    original = config.get("project_dir")
+    changed = config.get("project_dir") != project_dir
+    if "archived_project_dir" not in config:
+        config["archived_project_dir"] = original
+        changed = True
+    config["project_dir"] = project_dir
+    return changed
+
+
+def write_plan_state(
+    plan_dir: Path,
+    *,
+    mode: PlanStateWriteMode,
+    state: dict[str, Any] | None = None,
+    patch: dict[str, Any] | None = None,
+    key: str | None = None,
+    value: Any = None,
+    executor_owned_keys: Iterable[str] | None = None,
+    merge_fields: Iterable[str] | None = None,
+    run_id: str | None = None,
+    kind: str | None = None,
+    detail: str | None = None,
+    project_dir: str | None = None,
+    mutation: PlanStateMutation | None = None,
+    validate_current_state: bool = True,
+) -> dict[str, Any]:
+    """Read, modify, validate, and atomically replace a plan ``state.json``.
+
+    The dedicated state lock covers the whole sequence. Blob/artifact helpers
+    intentionally stay outside this API; this is only for live plan-run state.
+    """
+
+    state_path = plan_dir / "state.json"
+    should_write = True
+    with plan_state_lock(plan_dir):
+        if mode == "replace":
+            if state is None:
+                raise TypeError("state is required for replace mode")
+            next_state = dict(state)
+        else:
+            existing = _read_state_for_write(state_path)
+            if mode == "executor-key-merge":
+                if state is None:
+                    raise TypeError("state is required for executor-key-merge mode")
+                if state_path.exists() and executor_owned_keys is not None:
+                    next_state = dict(existing)
+                    for owned_key in executor_owned_keys:
+                        if owned_key in state:
+                            next_state[owned_key] = state[owned_key]
+                elif state_path.exists():
+                    next_state = {**dict(state), **existing}
+                else:
+                    next_state = dict(state)
+            elif mode == "patch-key":
+                if key is None:
+                    raise TypeError("key is required for patch-key mode")
+                next_state = dict(existing)
+                next_state[key] = value
+            elif mode == "patch-many":
+                if patch is None:
+                    raise TypeError("patch is required for patch-many mode")
+                next_state = dict(existing)
+                next_state.update(patch)
+            elif mode == "active-step-heartbeat":
+                next_state = dict(existing)
+                active_step = next_state.get("active_step")
+                if (
+                    not run_id
+                    or not isinstance(active_step, dict)
+                    or active_step.get("run_id") != run_id
+                ):
+                    should_write = False
+                else:
+                    active_step = dict(active_step)
+                    active_step["last_activity_at"] = now_utc()
+                    active_step["last_activity_kind"] = kind or "heartbeat"
+                    if detail:
+                        active_step["last_activity_detail"] = detail[-500:]
+                    next_state["active_step"] = active_step
+            elif mode == "merge-meta-list":
+                if state is None:
+                    raise TypeError("state is required for merge-meta-list mode")
+                next_state = dict(state)
+                disk_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
+                meta = next_state.setdefault("meta", {})
+                if not isinstance(meta, dict):
+                    meta = {}
+                    next_state["meta"] = meta
+                for field in (merge_fields or _DEFAULT_MERGE_FIELDS):
+                    key_func = _FIELD_KEY_FUNCS.get(field)
+                    if key_func is None:
+                        continue
+                    meta[field] = _merge_meta_lists(
+                        disk_meta.get(field, []),
+                        meta.get(field, []),
+                        key_func=key_func,
+                    )
+            elif mode == "legacy-migration":
+                next_state = dict(existing)
+                should_write = _apply_legacy_state_migration(next_state)
+                if mutation is not None:
+                    mutation_changed = mutation(next_state)
+                    should_write = should_write or bool(mutation_changed)
+            elif mode == "copy-time-rewrite":
+                next_state = dict(existing)
+                should_write = _apply_copy_time_rewrite(next_state, project_dir=project_dir)
+            else:
+                raise ValueError(f"unknown plan state write mode: {mode}")
+
+        if mutation is not None and mode != "legacy-migration":
+            mutation_changed = mutation(next_state)
+            if mutation_changed is False:
+                should_write = False
+        if validate_current_state:
+            _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
+        if should_write:
+            atomic_write_json(state_path, next_state)
+        return next_state
 
 
 # ---------------------------------------------------------------------------
@@ -412,34 +611,14 @@ def save_state_merge_meta(
 
     For fields not in ``merge_fields``, the in-memory value wins as usual.
     """
-    state_path = plan_dir / "state.json"
-    on_disk_meta: dict[str, Any] = {}
-    if state_path.exists():
-        try:
-            existing = read_json(state_path)
-        except Exception:
-            existing = None
-        if isinstance(existing, dict):
-            disk_meta = existing.get("meta")
-            if isinstance(disk_meta, dict):
-                on_disk_meta = disk_meta
-
-    state.setdefault("meta", {})
-    for field in merge_fields:
-        key_func = _FIELD_KEY_FUNCS.get(field)
-        if key_func is None:
-            # Unknown merge field: skip rather than guess at semantics.
-            continue
-        in_memory_value = state["meta"].get(field, [])
-        on_disk_value = on_disk_meta.get(field, [])
-        merged = _merge_meta_lists(
-            on_disk_value,
-            in_memory_value,
-            key_func=key_func,
-        )
-        state["meta"][field] = merged
-
-    atomic_write_json(state_path, state)
+    merged = write_plan_state(
+        plan_dir,
+        mode="merge-meta-list",
+        state=state,
+        merge_fields=merge_fields,
+    )
+    state.clear()
+    state.update(merged)
 
 
 def apply_session_update(
@@ -527,22 +706,16 @@ def touch_active_step(
     """
     if not run_id:
         return
-    state_path = plan_dir / "state.json"
     try:
-        state = read_json(state_path)
+        write_plan_state(
+            plan_dir,
+            mode="active-step-heartbeat",
+            run_id=run_id,
+            kind=kind,
+            detail=detail,
+        )
     except Exception:
         return
-    if not isinstance(state, dict):
-        return
-    active_step = state.get("active_step")
-    if not isinstance(active_step, dict) or active_step.get("run_id") != run_id:
-        return
-    active_step["last_activity_at"] = now_utc()
-    active_step["last_activity_kind"] = kind
-    if detail:
-        active_step["last_activity_detail"] = detail[-500:]
-    state["active_step"] = active_step
-    atomic_write_json(state_path, state)
 
 
 def clear_active_step(state: PlanState, *, run_id: str | None = None) -> None:

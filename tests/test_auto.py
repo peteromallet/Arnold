@@ -15,6 +15,8 @@ import subprocess
 import sys
 from unittest.mock import patch
 
+import pytest
+
 from megaplan import auto
 from megaplan.auto import DriverOutcome, drive
 
@@ -2407,3 +2409,140 @@ def test_drive_does_not_auto_retry_execute_external_stream_stall(tmp_path: Path)
             plan,
         ]
     ]
+
+
+def test_format_phase_heartbeat_logs_corrupt_state(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "corrupt-heartbeat")
+    (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    line = auto._format_phase_heartbeat(
+        ["execute", "--plan", "corrupt-heartbeat"],
+        elapsed_s=5,
+        plan_dir=plan_dir,
+        progress_changed=False,
+    )
+
+    assert "heartbeat" in line
+    assert any("M3A_WARN_HEARTBEAT_STATE_READ" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("payload", "error", "expected_warning"),
+    [
+        (None, None, False),
+        ("{not valid json", None, True),
+        (None, PermissionError("denied"), True),
+    ],
+)
+def test_read_unresolved_flag_ids_visibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    payload: str | None,
+    error: Exception | None,
+    expected_warning: bool,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "flags-plan")
+    artifact_path = plan_dir / "gate_signals_v2.json"
+    if payload is not None:
+        artifact_path.write_text(payload, encoding="utf-8")
+    elif error is not None:
+        artifact_path.write_text("{}", encoding="utf-8")
+
+    if error is not None:
+        original_open = Path.open
+
+        def _open(self: Path, *args, **kwargs):
+            if self == artifact_path:
+                raise error
+            return original_open(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", _open)
+
+    caplog.set_level("WARNING", logger="megaplan")
+
+    assert auto._read_unresolved_flag_ids(plan_dir) == []
+    messages = [record.getMessage() for record in caplog.records]
+    if expected_warning:
+        assert any("M3A_WARN_AUTO_FLAGS_READ" in message for message in messages)
+    else:
+        assert not messages
+
+
+def test_drive_logs_warning_when_phase_start_emit_fails(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan = "emit-warning-plan"
+    _make_plan_dir(tmp_path, plan)
+    statuses = [_phase_status(plan, state="planning", next_step="prep"), _done_status(plan)]
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        assert plan_name == plan
+        return statuses.pop(0)
+
+    def fake_run(args: list[str], cwd=None, timeout=60, progress_env=None):
+        return 0, "ok", ""
+
+    original_emit = auto.emit_event
+
+    def maybe_fail_emit(kind, *args, **kwargs):
+        if kind == auto.EventKind.INIT:
+            return original_emit(kind, *args, **kwargs)
+        raise RuntimeError("emit broke")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    with patch.object(auto, "_status", side_effect=fake_status), patch.object(
+        auto,
+        "_run_megaplan",
+        side_effect=fake_run,
+    ), patch.object(auto, "emit_event", side_effect=maybe_fail_emit):
+        outcome = drive(plan, cwd=tmp_path, max_iterations=3, poll_sleep=0, writer=lambda _message: None)
+
+    assert outcome.status == "done"
+    assert any("M3A_WARN_EMIT_AUTO_PHASE_START" in record.getMessage() for record in caplog.records)
+
+
+def test_sum_history_cost_usd_logs_invalid_cost_entry(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "cost-plan")
+    (plan_dir / "state.json").write_text(
+        json.dumps({"history": [{"cost_usd": "bad"}, {"cost_usd": 1.5}]}),
+        encoding="utf-8",
+    )
+
+    caplog.set_level("WARNING", logger="megaplan")
+    total = auto._sum_history_cost_usd(plan_dir)
+
+    assert total == 1.5
+    assert any("M3A_WARN_COST_COERCION" in record.getMessage() for record in caplog.records)
+
+
+def test_recover_execute_callback_failure_state_logs_corrupt_state(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "callback-plan")
+    (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert auto._recover_execute_callback_failure_state(plan_dir) is False
+    assert any("M3A_WARN_CALLBACK_RECOVERY_READ" in record.getMessage() for record in caplog.records)
+
+
+def test_clear_orphaned_active_step_logs_corrupt_state(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "orphan-plan")
+    (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert auto._clear_orphaned_active_step(plan_dir, "execute") is False
+    assert any("M3A_WARN_ORPHAN_CLEAR_READ" in record.getMessage() for record in caplog.records)

@@ -63,6 +63,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from megaplan._core.state import write_plan_state
 from megaplan._pipeline.types import (
     ParallelStage,
     Pipeline,
@@ -86,7 +87,7 @@ def _atomic_write_json(dest: Path, payload: Any) -> None:
 
 
 def _merge_state_to_disk(
-    dest: Path,
+    plan_dir: Path,
     executor_state: dict[str, Any],
     *,
     executor_owned_keys: set[str] | None = None,
@@ -107,23 +108,12 @@ def _merge_state_to_disk(
     (or no on-disk state exists), the executor's full state is
     written as the cold-start.
     """
-    if dest.exists():
-        try:
-            on_disk: dict[str, Any] = json.loads(dest.read_text())
-            if isinstance(on_disk, dict):
-                if executor_owned_keys is None:
-                    # No owned-keys signal — be conservative; on-disk wins.
-                    merged = {**executor_state, **on_disk}
-                else:
-                    merged = dict(on_disk)
-                    for key in executor_owned_keys:
-                        if key in executor_state:
-                            merged[key] = executor_state[key]
-                _atomic_write_json(dest, merged)
-                return
-        except json.JSONDecodeError:
-            pass
-    _atomic_write_json(dest, executor_state)
+    write_plan_state(
+        plan_dir,
+        mode="executor-key-merge",
+        state=executor_state,
+        executor_owned_keys=executor_owned_keys,
+    )
 
 
 def _verify_outputs(stage_name: str, outputs: Mapping[str, Path]) -> None:
@@ -249,10 +239,7 @@ def run_pipeline(
         patch = dict(result.state_patch)
         state.update(patch)
         executor_owned_keys.update(patch.keys())
-        _merge_state_to_disk(
-            artifact_root / "state.json", state,
-            executor_owned_keys=executor_owned_keys,
-        )
+        _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
 
         if result.next == "halt":
             if state.get("_pipeline_paused"):
@@ -357,10 +344,7 @@ def run_pipeline_with_policy(
         patch = dict(result.state_patch)
         state.update(patch)
         executor_owned_keys.update(patch.keys())
-        _merge_state_to_disk(
-            artifact_root / "state.json", state,
-            executor_owned_keys=executor_owned_keys,
-        )
+        _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
 
         # Policy hooks — observation is side-effecting.
         policy.stall.observe(state)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
 from megaplan.types import CliError, STATE_AWAITING_HUMAN, STATE_DONE, StepResponse
 from megaplan._core import atomic_write_json, latest_plan_meta_path, load_plan, now_utc, read_json, save_state_merge_meta
+from .shared import _warn_read_fallback
 
 
 def get_human_verification_status(
@@ -48,10 +50,22 @@ def get_human_verification_status(
     raw_verifications: list[dict[str, Any]] = []
     if verifications_path.exists():
         try:
-            loaded = read_json(verifications_path)
+            loaded = json.loads(verifications_path.read_text(encoding="utf-8"))
             if isinstance(loaded, list):
                 raw_verifications = loaded
-        except Exception:
+        except json.JSONDecodeError:
+            _warn_read_fallback(
+                "M3A_WARN_CORRUPT_VERIFICATIONS",
+                path=verifications_path,
+                reason="corrupt_json",
+            )
+            raw_verifications = []
+        except (OSError, UnicodeDecodeError):
+            _warn_read_fallback(
+                "M3A_WARN_CORRUPT_VERIFICATIONS",
+                path=verifications_path,
+                reason="unreadable",
+            )
             raw_verifications = []
 
     # --- group by criterion_idx, pick latest per criterion ------------------

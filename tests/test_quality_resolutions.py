@@ -99,3 +99,17 @@ def test_quality_resolution_behavior_keeps_active_fixed_non_advancing() -> None:
     assert is_non_terminal_quality_resolution(ACCEPTED_WITH_DEBT)
     assert not is_non_terminal_quality_resolution(FIXED)
     assert is_non_terminal_quality_resolution(FIXED, deviation_active=False)
+
+
+def test_classify_quality_behavior_none_and_unknown_are_hard_block() -> None:
+    """None and unknown resolution strings fall back to HARD_BLOCK."""
+    assert classify_quality_resolution_behavior(None) == HARD_BLOCK
+    assert classify_quality_resolution_behavior("bogus") == HARD_BLOCK
+    assert classify_quality_resolution_behavior("") == HARD_BLOCK
+
+
+def test_is_non_terminal_quality_none_and_unknown() -> None:
+    """None and unknown resolutions are terminal (not non_terminal)."""
+    assert not is_non_terminal_quality_resolution(None)
+    assert not is_non_terminal_quality_resolution("bogus")
+    assert not is_non_terminal_quality_resolution("")

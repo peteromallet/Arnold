@@ -41,6 +41,8 @@ from megaplan.schemas import (
     Sprint,
     SprintItem,
     SystemLog,
+    Ticket,
+    TicketEpicLink,
     ToolCall,
     utc_now,
 )
@@ -143,6 +145,51 @@ class MultiStore(Store):
     ) -> None:
         self.close()
 
+    # ── MultiStore ownership map ──────────────────────────────────────────
+    #
+    # This store routes every operation to either the file backend or the DB
+    # backend.  The routing rules are:
+    #
+    # File-owned / epic-scoped entities
+    #   Entities that carry an epic_id and whose epic has home_backend="file"
+    #   are routed through _route_for_epic → file backend.  This includes
+    #   sprints, sprint items, plans (when reachable via epic/sprint),
+    #   checklist items, epic events, images, second opinions, feedback,
+    #   code artifacts, and progress events.
+    #
+    # DB-owned control-plane entities
+    #   These always route directly to self.db regardless of epic routing:
+    #   control messages, resident conversations, scheduled jobs, cloud runs,
+    #   external requests (pending/confirmed/failed/orphaned), automation
+    #   actors, API cache, migrations, and migration runs.
+    #
+    # Lookup-by-existing-id entities
+    #   Messages, images, codebases, tickets, code artifacts, and feedback
+    #   are loaded via _load_from_backends (try file then db) or routed
+    #   through _route_by_loaded_method (load first, then route by the
+    #   loaded entity's epic/sprint/plan/codebase chain).
+    #
+    # Codebase ambiguity
+    #   create/upsert_codebase: route by associated_epic_id if present, else db.
+    #   load_codebase / resolve_codebase_by_root_sha: try both backends.
+    #   find_codebase(owner, name): file first, then db.
+    #   update_codebase / remove_codebase / touch_codebase_accessed /
+    #   mark_codebase_verified: route by the loaded codebase's owner.
+    #
+    # Ticket ambiguity
+    #   create_ticket: route by the codebase's ownership chain.
+    #   load_ticket: try both backends.
+    #   list_tickets: route by codebase_id if given, else merge both backends.
+    #   update_ticket / link / unlink / list_ticket_epic_links: route by
+    #     loaded ticket's codebase chain.
+    #
+    # Transaction-id-only merged event lookup
+    #   events_by_transaction(transaction_id) always queries self.db.
+    #   Transaction ids are globally unique (UUIDs), so there is no
+    #   ambiguity — the single DB lookup is sufficient even when events
+    #   may originate from file-home epics that have since been migrated.
+    # ─────────────────────────────────────────────────────────────────────
+
     def _backend(self, backend: Backend) -> Store:
         return self.file if backend == "file" else self.db
 
@@ -182,6 +229,28 @@ class MultiStore(Store):
                 return result
         return None
 
+    def _load_owned_from_backends(self, method: str, identifier: str, *, context: str) -> tuple[Store, Any] | None:
+        matches: list[tuple[Store, Any]] = []
+        for backend in (self.file, self.db):
+            result = getattr(backend, method)(identifier)
+            if result is not None:
+                matches.append((backend, result))
+        if len(matches) > 1:
+            raise StoreError(f"{context} {identifier!r} exists in both file and db backends")
+        return matches[0] if matches else None
+
+    def _route_by_loaded_owner(self, method: str, identifier: str, *, context: str) -> Store:
+        match = self._load_owned_from_backends(method, identifier, context=context)
+        if match is None:
+            raise KeyError(f"{context} {identifier!r} not found in file or db backends")
+        return match[0]
+
+    def _route_by_codebase_owner(self, codebase_id: str) -> Store:
+        return self._route_by_loaded_owner("load_codebase", codebase_id, context="Codebase")
+
+    def _route_by_ticket_owner(self, ticket_id: str) -> Store:
+        return self._route_by_loaded_owner("load_ticket", ticket_id, context="Ticket")
+
     def _route_for_loaded(self, item: Any, *, context: str) -> Store:
         epic_id = getattr(item, "epic_id", None)
         if epic_id is not None:
@@ -192,7 +261,15 @@ class MultiStore(Store):
         plan_id = getattr(item, "plan_id", None)
         if plan_id is not None:
             return self._route_for_plan(plan_id)
-        raise KeyError(f"Cannot route {context}: no epic_id, sprint_id, or plan_id")
+        associated_epic_id = getattr(item, "associated_epic_id", None)
+        if associated_epic_id is not None:
+            return self._route_for_epic(associated_epic_id)
+        codebase_id = getattr(item, "codebase_id", None)
+        if codebase_id is not None:
+            codebase = self._load_from_backends("load_codebase", codebase_id)
+            if codebase is not None:
+                return self._route_for_loaded(codebase, context="Codebase")
+        raise KeyError(f"Cannot route {context}: no epic_id, sprint_id, plan_id, associated_epic_id, or codebase_id")
 
     def _route_for_sprint(self, sprint_id: str) -> Store:
         sprint = self._load_from_backends("load_sprint", sprint_id)
@@ -211,10 +288,14 @@ class MultiStore(Store):
         return self.db
 
     def _route_by_loaded_method(self, method: str, identifier: str, *, context: str) -> Store:
-        item = self._load_from_backends(method, identifier)
-        if item is None:
+        match = self._load_owned_from_backends(method, identifier, context=context)
+        if match is None:
             raise KeyError(f"{context} {identifier!r} not found in file or db backends")
+        item = match[1]
         return self._route_for_loaded(item, context=context)
+
+    def _event_sort_key(self, event: EpicEvent) -> tuple[datetime, str]:
+        return (event.occurred_at, event.id)
 
     def transaction(self, epic_id: str | None = None) -> AbstractContextManager[Transaction]:
         if epic_id is None:
@@ -350,15 +431,12 @@ class MultiStore(Store):
         return self._route_for_epic(epic_id).add_checklist_items(epic_id, items, idempotency_key=idempotency_key)
 
     def update_checklist_item(self, item_id: str, *, idempotency_key: str | None = None, **changes: Any) -> ChecklistItem:
-        backend = self._route_by_loaded_method("load_checklist_item", item_id, context="Checklist item") if hasattr(self.file, "load_checklist_item") else None
-        if backend is None:
-            for candidate in (self.file, self.db):
-                try:
-                    return candidate.update_checklist_item(item_id, idempotency_key=idempotency_key, **changes)
-                except Exception:
-                    continue
-            raise KeyError(f"Checklist item {item_id!r} not found in file or db backends")
-        return backend.update_checklist_item(item_id, idempotency_key=idempotency_key, **changes)
+        for candidate in (self.file, self.db):
+            try:
+                return candidate.update_checklist_item(item_id, idempotency_key=idempotency_key, **changes)
+            except FileNotFoundError:
+                continue
+        raise KeyError(f"Checklist item {item_id!r} not found in file or db backends")
 
     def delete_checklist_items(self, item_ids: Sequence[str], *, idempotency_key: str | None = None) -> None:
         self.file.delete_checklist_items(item_ids, idempotency_key=idempotency_key)
@@ -495,7 +573,13 @@ class MultiStore(Store):
         return self._route_for_epic(epic_id).latest_transaction_id(epic_id)
 
     def events_by_transaction(self, transaction_id: str) -> list[EpicEvent]:
-        return self.db.events_by_transaction(transaction_id)
+        # Query both backends so file-home events remain visible before migration
+        # while still tolerating migration copies that preserve event ids.
+        merged: dict[str, EpicEvent] = {}
+        for backend in (self.file, self.db):
+            for event in backend.events_by_transaction(transaction_id):
+                merged.setdefault(event.id, event)
+        return sorted(merged.values(), key=self._event_sort_key)
 
     def create_message(
         self,
@@ -700,19 +784,25 @@ class MultiStore(Store):
                 continue
         raise KeyError(f"Second opinion {second_opinion_id!r} not found in file or db backends")
 
-    def create_codebase(self, *, owner: str, name: str, default_branch: str, repo_url: str | None = None, repo_workspace: str | None = None, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, codebase_id: str | None = None, idempotency_key: str | None = None) -> Codebase:
+    def create_codebase(self, *, owner: str, name: str, default_branch: str, repo_url: str | None = None, repo_workspace: str | None = None, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, root_commit_sha: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, codebase_id: str | None = None, idempotency_key: str | None = None) -> Codebase:
         backend = self._route_for_epic(associated_epic_id) if associated_epic_id is not None else self.db
-        return backend.create_codebase(owner=owner, name=name, default_branch=default_branch, repo_url=repo_url, repo_workspace=repo_workspace, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, codebase_id=codebase_id, idempotency_key=idempotency_key)
+        return backend.create_codebase(owner=owner, name=name, default_branch=default_branch, repo_url=repo_url, repo_workspace=repo_workspace, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, root_commit_sha=root_commit_sha, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, codebase_id=codebase_id, idempotency_key=idempotency_key)
 
-    def upsert_codebase(self, *, owner: str, name: str, default_branch: str, repo_url: str | None = None, repo_workspace: str | None = None, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, idempotency_key: str | None = None) -> Codebase:
+    def upsert_codebase(self, *, owner: str, name: str, default_branch: str, repo_url: str | None = None, repo_workspace: str | None = None, scope: str = "global", group_name: str | None = None, associated_epic_id: str | None = None, root_commit_sha: str | None = None, added_via: str = "manual", verified_accessible_at: str | None = None, notes: str | None = None, idempotency_key: str | None = None) -> Codebase:
         backend = self._route_for_epic(associated_epic_id) if associated_epic_id is not None else self.db
-        return backend.upsert_codebase(owner=owner, name=name, default_branch=default_branch, repo_url=repo_url, repo_workspace=repo_workspace, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, idempotency_key=idempotency_key)
+        return backend.upsert_codebase(owner=owner, name=name, default_branch=default_branch, repo_url=repo_url, repo_workspace=repo_workspace, scope=scope, group_name=group_name, associated_epic_id=associated_epic_id, root_commit_sha=root_commit_sha, added_via=added_via, verified_accessible_at=verified_accessible_at, notes=notes, idempotency_key=idempotency_key)
 
     def load_codebase(self, codebase_id: str) -> Codebase | None:
         return self._load_from_backends("load_codebase", codebase_id)
 
     def find_codebase(self, owner: str, name: str) -> Codebase | None:
         return self.file.find_codebase(owner, name) or self.db.find_codebase(owner, name)
+
+    def load_codebase_by_associated_epic(self, epic_id: str) -> Codebase | None:
+        return self._route_for_epic(epic_id).load_codebase_by_associated_epic(epic_id)
+
+    def resolve_codebase_by_root_sha(self, root_commit_sha: str) -> Codebase | None:
+        return self.file.resolve_codebase_by_root_sha(root_commit_sha) or self.db.resolve_codebase_by_root_sha(root_commit_sha)
 
     def list_codebases(self, *, scope: str | None = None, group_name: str | None = None, epic_id: str | None = None, include_global: bool = True) -> list[Codebase]:
         if epic_id is not None:
@@ -722,16 +812,77 @@ class MultiStore(Store):
         return rows
 
     def update_codebase(self, codebase_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Codebase:
-        return self.db.update_codebase(codebase_id, idempotency_key=idempotency_key, **changes)
+        return self._route_by_codebase_owner(codebase_id).update_codebase(
+            codebase_id,
+            idempotency_key=idempotency_key,
+            **changes,
+        )
 
     def remove_codebase(self, codebase_id: str, *, idempotency_key: str | None = None) -> None:
-        return self.db.remove_codebase(codebase_id, idempotency_key=idempotency_key)
+        return self._route_by_codebase_owner(codebase_id).remove_codebase(
+            codebase_id,
+            idempotency_key=idempotency_key,
+        )
 
     def touch_codebase_accessed(self, codebase_id: str, *, accessed_at: str | None = None, idempotency_key: str | None = None) -> Codebase:
-        return self.db.touch_codebase_accessed(codebase_id, accessed_at=accessed_at, idempotency_key=idempotency_key)
+        return self._route_by_codebase_owner(codebase_id).touch_codebase_accessed(
+            codebase_id,
+            accessed_at=accessed_at,
+            idempotency_key=idempotency_key,
+        )
 
     def mark_codebase_verified(self, codebase_id: str, *, verified_at: str | None = None, default_branch: str | None = None, idempotency_key: str | None = None) -> Codebase:
-        return self.db.mark_codebase_verified(codebase_id, verified_at=verified_at, default_branch=default_branch, idempotency_key=idempotency_key)
+        return self._route_by_codebase_owner(codebase_id).mark_codebase_verified(codebase_id, verified_at=verified_at, default_branch=default_branch, idempotency_key=idempotency_key)
+
+    def create_ticket(self, *, codebase_id: str, title: str, body: str = "", source: str = "human", tags: list[str] | None = None, filed_by_actor_id: str | None = None, filed_in_turn_id: str | None = None, slug: str, ticket_id: str | None = None, idempotency_key: str | None = None) -> Ticket:
+        backend = self._route_by_codebase_owner(codebase_id)
+        return backend.create_ticket(codebase_id=codebase_id, title=title, body=body, source=source, tags=tags, filed_by_actor_id=filed_by_actor_id, filed_in_turn_id=filed_in_turn_id, slug=slug, ticket_id=ticket_id, idempotency_key=idempotency_key)
+
+    def load_ticket(self, ticket_id: str) -> Ticket | None:
+        return self._load_from_backends("load_ticket", ticket_id)
+
+    def list_tickets(self, *, codebase_id: str | None = None, codebase_ids: Sequence[str] | None = None, status: str | None = None, tags: Sequence[str] | None = None, keywords: Sequence[str] | None = None, keywords_all: bool = False, sort: str = "created", order: str = "desc", limit: int | None = None) -> list[Ticket]:
+        if codebase_id is not None:
+            return self._route_by_codebase_owner(codebase_id).list_tickets(codebase_id=codebase_id, status=status, tags=tags, keywords=keywords, keywords_all=keywords_all, sort=sort, order=order, limit=limit)
+        rows: list[Ticket] = []
+        if codebase_ids is not None:
+            owned_ids: dict[Store, list[str]] = {self.file: [], self.db: []}
+            for scoped_codebase_id in codebase_ids:
+                owned_ids[self._route_by_codebase_owner(scoped_codebase_id)].append(scoped_codebase_id)
+            for backend, ids in owned_ids.items():
+                if ids:
+                    rows.extend(backend.list_tickets(codebase_ids=ids, status=status, tags=tags, keywords=keywords, keywords_all=keywords_all, sort=sort, order=order, limit=limit))
+        else:
+            rows = self.file.list_tickets(status=status, tags=tags, keywords=keywords, keywords_all=keywords_all, sort=sort, order=order, limit=limit) + self.db.list_tickets(status=status, tags=tags, keywords=keywords, keywords_all=keywords_all, sort=sort, order=order, limit=limit)
+        reverse = order.lower() != "asc"
+        if sort == "edited":
+            rows.sort(key=lambda row: (row.last_edited_at, row.id), reverse=reverse)
+        elif sort == "length":
+            rows.sort(key=lambda row: (len(row.body or ""), row.id), reverse=reverse)
+        elif sort == "title":
+            rows.sort(key=lambda row: (row.title.lower(), row.id), reverse=reverse)
+        else:
+            rows.sort(key=lambda row: (row.created_at, row.id), reverse=reverse)
+        return rows[:limit] if limit is not None else rows
+
+    def update_ticket(self, ticket_id: str, *, idempotency_key: str | None = None, **changes: Any) -> Ticket:
+        return self._route_by_ticket_owner(ticket_id).update_ticket(ticket_id, idempotency_key=idempotency_key, **changes)
+
+    def link_ticket_to_epic(self, *, ticket_id: str, epic_id: str, resolves_on_complete: bool = False, idempotency_key: str | None = None) -> TicketEpicLink:
+        return self._route_by_ticket_owner(ticket_id).link_ticket_to_epic(ticket_id=ticket_id, epic_id=epic_id, resolves_on_complete=resolves_on_complete, idempotency_key=idempotency_key)
+
+    def unlink_ticket_from_epic(self, *, ticket_id: str, epic_id: str, idempotency_key: str | None = None) -> None:
+        return self._route_by_ticket_owner(ticket_id).unlink_ticket_from_epic(ticket_id=ticket_id, epic_id=epic_id, idempotency_key=idempotency_key)
+
+    def list_ticket_epic_links(self, *, ticket_id: str | None = None, epic_id: str | None = None) -> list[TicketEpicLink]:
+        if ticket_id is not None:
+            return self._route_by_ticket_owner(ticket_id).list_ticket_epic_links(ticket_id=ticket_id, epic_id=epic_id)
+        if epic_id is not None:
+            return self._route_for_epic(epic_id).list_ticket_epic_links(epic_id=epic_id)
+        return self.file.list_ticket_epic_links() + self.db.list_ticket_epic_links()
+
+    def address_tickets_resolved_by_epic(self, epic_id: str) -> list[str]:
+        return self._route_for_epic(epic_id).address_tickets_resolved_by_epic(epic_id)
 
     def create_code_artifact(self, *, kind: str, source: str, content: str, codebase_id: str | None = None, epic_id: str | None = None, file_path: str | None = None, line_range: Any = None, scope: str | None = None, content_summary: str | None = None, metadata: dict[str, Any] | None = None, expires_at: str | None = None, artifact_id: str | None = None, idempotency_key: str | None = None) -> CodeArtifact:
         backend = self._route_for_epic(epic_id) if epic_id is not None else self.db
@@ -768,6 +919,7 @@ class MultiStore(Store):
         )
 
     def get_api_cache(self, cache_key: str, *, now: str | None = None, touch: bool = True) -> CodeArtifact | None:
+        # API cache is control-plane state and intentionally DB-owned.
         return self.db.get_api_cache(cache_key, now=now, touch=touch)
 
     def upsert_api_cache(self, *, cache_key: str, content: str, content_summary: str | None = None, metadata: dict[str, Any] | None = None, codebase_id: str | None = None, epic_id: str | None = None, file_path: str | None = None, scope: str | None = None, expires_at: str | None = None, ttl_seconds: int = 3600, idempotency_key: str | None = None) -> CodeArtifact:
@@ -775,6 +927,7 @@ class MultiStore(Store):
         return backend.upsert_api_cache(cache_key=cache_key, content=content, content_summary=content_summary, metadata=metadata, codebase_id=codebase_id, epic_id=epic_id, file_path=file_path, scope=scope, expires_at=expires_at, ttl_seconds=ttl_seconds, idempotency_key=idempotency_key)
 
     def cleanup_expired_api_cache(self, *, now: str | None = None, idempotency_key: str | None = None) -> int:
+        # API cache cleanup is control-plane state and intentionally DB-owned.
         return self.db.cleanup_expired_api_cache(now=now, idempotency_key=idempotency_key)
 
     def create_feedback(self, *, kind: str, content: str, source: str, source_message_id: str | None = None, epic_id: str | None = None, turn_id: str | None = None, context_snapshot: dict[str, Any] | None = None, idempotency_key: str | None = None) -> Feedback:
@@ -880,6 +1033,7 @@ class MultiStore(Store):
         return self._route_for_epic(epic_id).release_lock(epic_id, holder_id, idempotency_key=idempotency_key)
 
     def put_control_message(self, msg: ControlMessageInput, *, idempotency_key: str | None = None) -> ControlMessage:
+        # Control messages coordinate workers across backends and are DB-owned.
         return self.db.put_control_message(msg, idempotency_key=idempotency_key)
 
     def claim_pending_control_messages(self, *, processor_id: str, max: int = 10, idempotency_key: str | None = None) -> list[ControlMessage]:

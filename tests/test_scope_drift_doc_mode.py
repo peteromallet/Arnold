@@ -109,3 +109,26 @@ def test_compute_scope_drift_without_state_is_safe(
 
     assert drift.files_added == ["docs/foo.md"]
     assert drift.severity == "high"
+
+
+def test_compute_scope_drift_logs_snapshot_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        execute_core,
+        "_capture_git_status_snapshot",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("snapshot boom")),
+    )
+    monkeypatch.setattr(
+        execute_core,
+        "collect_loc_by_file",
+        lambda _project_dir, _paths: {},
+    )
+
+    caplog.set_level("WARNING")
+    drift = execute_core._compute_execute_scope_drift(tmp_path, _empty_payload())
+
+    assert drift.files_added == []
+    assert any("M3A_WARN_GIT_SNAPSHOT_FALLBACK" in record.getMessage() for record in caplog.records)

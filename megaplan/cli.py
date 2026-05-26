@@ -238,13 +238,13 @@ def _compute_user_action_blockers(
     Returns a dict with ``blocked_tasks_detail``, ``user_action_resolution_summary``,
     and a plan-level ``recommended_action``.
     """
-    from megaplan.resolutions import (
+    from megaplan.resolution_contract import (
         FALLBACK_STATES,
         HARD_BLOCK_STATES,
-        load_user_action_resolutions,
         resolution_applies_to_task,
         resolution_recommended_action,
     )
+    from megaplan.resolutions import load_user_action_resolutions
 
     resolutions = load_user_action_resolutions(plan_dir)
     user_actions = finalize_data.get("user_actions", [])
@@ -307,11 +307,11 @@ def _compute_user_action_blockers(
         for action in blocking_actions:
             action_id = action.get("id", "unknown")
             resolution = resolutions.get(action_id)
-            applies = resolution_applies_to_task(resolution, tid)
+            applies = resolution_applies_to_task(resolution, tid, source="disk")
 
             if isinstance(resolution, dict):
                 state = resolution.get("state", "")
-                rec_action = resolution_recommended_action(resolution)
+                rec_action = resolution_recommended_action(resolution, source="disk")
 
                 res_detail = {
                     "action_id": action_id,
@@ -4221,9 +4221,10 @@ def handle_user_action(root: Path, args: argparse.Namespace) -> StepResponse:
 
     Validates that *action_id* exists in ``finalize.json.user_actions``,
     validates ``--tasks`` against known task IDs, builds a resolution event
-    via :func:`megaplan.user_actions.build_resolution_event`, appends it to
-    ``state.meta.user_action_resolutions``, and persists with
-    :func:`save_state_merge_meta`.
+    via :func:`megaplan.user_actions.build_resolution_event`, appends the
+    memory-source event to ``state.meta.user_action_resolutions``, mirrors the
+    resolution into ``user_action_resolutions.json`` for disk callers, and
+    persists with :func:`save_state_merge_meta`.
     """
     from megaplan._core.state import save_state_merge_meta
     from megaplan.blocker_recovery import build_prerequisite_scopes
