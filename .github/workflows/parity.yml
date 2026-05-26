@@ -18,7 +18,11 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: Check canonical ready-template parity
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: uv run python -m tools.check_canonical_parity --all

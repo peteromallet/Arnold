@@ -45,7 +45,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: Run fast suite with coverage
         run: |

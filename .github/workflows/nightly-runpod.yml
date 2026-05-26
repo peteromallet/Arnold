@@ -40,7 +40,9 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra runpod-launch
+        run: |
+          uv venv
+          uv pip install -e ".[dev,runpod-launch]"
 
       - name: Run RunPod p1 smoke
         run: uv run pytest --runpod tests/smoke/test_p1_runpod.py -q
