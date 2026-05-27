@@ -172,6 +172,7 @@ def _emit_llm_end(
     tokens_in: int,
     tokens_out: int,
     request_id: str | None,
+    model: str | None = None,
 ) -> None:
     """Emit an llm_call_end event."""
     try:
@@ -185,6 +186,7 @@ def _emit_llm_end(
                 "tokens_in": tokens_in,
                 "tokens_out": tokens_out,
                 "request_id": request_id,
+                "model": model,
             },
         )
     except Exception:
@@ -975,7 +977,7 @@ def run_hermes_step(
         request_id = _extract_request_id(current_result)
         tokens_in = int(current_result.get("prompt_tokens", 0) or 0)
         tokens_out = int(current_result.get("completion_tokens", 0) or 0)
-        _emit_llm_end(plan_dir, step, tokens_in, tokens_out, request_id)
+        _emit_llm_end(plan_dir, step, tokens_in, tokens_out, request_id, model=resolved_model)
 
         try:
             validate_payload(step, current_payload)
