@@ -897,6 +897,19 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     return True
 
 
+def _plan_clarification(plan_dir: Path | None) -> dict[str, Any] | None:
+    """Read the ``clarification`` field from the plan state file, if any."""
+    if plan_dir is None:
+        return None
+    try:
+        state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(state_data, dict):
+        return None
+    return state_data.get("clarification")
+
+
 def drive(
     plan: str,
     *,
@@ -1141,12 +1154,31 @@ def drive(
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
             if state == STATE_AWAITING_HUMAN:
-                log("plan awaiting human verification — automation stopping")
+                # Distinguish prep-sourced halts (blocking ambiguities) from
+                # criteria-verification halts. Prep halts include the blocking
+                # questions and the resume loop so the operator can act.
+                clarification = _plan_clarification(plan_dir)
+                if isinstance(clarification, dict) and clarification.get("source") == "prep":
+                    questions = clarification.get("questions") or []
+                    question_list = "\n".join(f"  - {q}" for q in questions)
+                    hint = (
+                        "answer via `megaplan override add-note \"…\"` and resume via "
+                        "`megaplan override resume-clarify`"
+                    )
+                    reason = (
+                        f"prep surfaced {len(questions)} blocking "
+                        f"ambiguities; a human may judge a flagged blocker a non-issue.\n"
+                        f"blocking questions:\n{question_list}\n{hint}"
+                    )
+                    log(f"plan awaiting human clarification ({len(questions)} blocking questions) — automation stopping")
+                else:
+                    log("plan awaiting human verification — automation stopping")
+                    reason = "plan has criteria requiring human verification"
                 return _outcome(
                     "awaiting_human",
                     final_state=state,
                     iterations=iteration,
-                    reason="plan has criteria requiring human verification",
+                    reason=reason,
                     last_phase=last_phase,
                 )
             if state == STATE_TIEBREAKER_PENDING:

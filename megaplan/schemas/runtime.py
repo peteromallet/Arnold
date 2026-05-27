@@ -140,6 +140,21 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "constraints": {"type": "array", "items": {"type": "string"}},
             "primary_criterion": {"type": "string"},
             "suggested_approach": {"type": "string"},
+            "open_questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {
+                            "type": "string",
+                            "enum": ["blocking", "assume_and_proceed"],
+                        },
+                        "question": {"type": "string"},
+                        "assumption": {"type": "string"},
+                    },
+                    "required": ["severity", "question"],
+                },
+            },
         },
         "required": [
             "skip",

@@ -595,3 +595,50 @@ def test_research_child_uses_parse_fallback_chain_and_keeps_metrics(tmp_path: Pa
     assert result["prompt_tokens"] == 5
     assert result["completion_tokens"] == 6
     assert result["total_tokens"] == 11
+
+
+# ---------------------------------------------------------------------------
+# T12(g): _compatible_prep_payload preserves open_questions
+# ---------------------------------------------------------------------------
+
+
+def test_compatible_prep_payload_preserves_open_questions() -> None:
+    """open_questions must survive the _compatible_prep_payload filter."""
+    payload = {
+        "skip": False,
+        "task_summary": "summary",
+        "key_evidence": [],
+        "relevant_code": [],
+        "test_expectations": [],
+        "constraints": [],
+        "suggested_approach": "approach",
+        "open_questions": [
+            {"severity": "blocking", "question": "Which auth library?"},
+            {"severity": "assume_and_proceed", "question": "Which cache?", "assumption": "Redis."},
+        ],
+        # Extra key not in PREP_COMPATIBLE_KEYS
+        "extra_field": "should be stripped",
+    }
+    result = prep_research._compatible_prep_payload(payload)
+    assert "open_questions" in result
+    assert result["open_questions"] == payload["open_questions"]
+    assert "extra_field" not in result
+    # Verify other keys are preserved
+    assert result["skip"] is False
+    assert result["task_summary"] == "summary"
+
+
+def test_compatible_prep_payload_handles_absent_open_questions() -> None:
+    """Payload without open_questions should pass through unchanged (minus extra keys)."""
+    payload = {
+        "skip": False,
+        "task_summary": "summary",
+        "key_evidence": [],
+        "relevant_code": [],
+        "test_expectations": [],
+        "constraints": [],
+        "suggested_approach": "approach",
+    }
+    result = prep_research._compatible_prep_payload(payload)
+    assert "open_questions" not in result
+    assert result["skip"] is False

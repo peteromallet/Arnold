@@ -43,6 +43,7 @@ class Transition:
 WORKFLOW: dict[str, list[Transition]] = {
     STATE_INITIALIZED: [
         Transition("prep", STATE_PREPPED),
+        Transition("prep", STATE_AWAITING_HUMAN),
     ],
     STATE_PREPPED: [
         Transition("plan", STATE_PLANNED),
@@ -75,6 +76,7 @@ WORKFLOW: dict[str, list[Transition]] = {
     ],
     STATE_AWAITING_HUMAN: [
         Transition("verify-human", STATE_DONE),
+        Transition("resume-clarify", STATE_PREPPED),
     ],
     STATE_TIEBREAKER_PENDING: [
         Transition("tiebreaker-run", STATE_TIEBREAKER_READY),

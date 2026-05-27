@@ -38,6 +38,7 @@ PREP_COMPATIBLE_KEYS = {
     "constraints",
     "suggested_approach",
     "primary_criterion",
+    "open_questions",
 }
 PREP_RESEARCH_TOOLSETS = ["file-readonly", "web"]
 DEFAULT_PREP_RESEARCH_MAX_ITERATIONS = 12

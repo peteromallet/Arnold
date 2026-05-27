@@ -3123,6 +3123,15 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
         "Redundant on --robustness thorough|extreme (no-op).",
     )
     parser.add_argument(
+        "--no-prep-clarify",
+        action="store_false",
+        dest="prep_clarify",
+        default=True,
+        help="Disable the prep clarification gate. When set, prep blocking "
+        "questions are recorded in prep.json but do not halt the run; "
+        "planning proceeds immediately. Default: enabled.",
+    )
+    parser.add_argument(
         "--with-feedback",
         action="store_true",
         default=False,
@@ -3807,6 +3816,7 @@ def build_parser() -> argparse.ArgumentParser:
             "add-note",
             "replan",
             "recover-blocked",
+            "resume-clarify",
             "set-robustness",
             "set-profile",
             "set-model",
