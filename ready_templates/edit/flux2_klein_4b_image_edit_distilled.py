@@ -14,7 +14,7 @@ PUBLIC_INPUT_METADATA = {
 READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json', 'source_id': 'flux2_klein_4b_image_edit_distilled', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_4b_image_edit_distilled'},
+    provenance={'source_path': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json', 'source_id': 'flux2_klein_4b_image_edit_distilled', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_4b_image_edit_distilled'},
 )
 
 # === Subgraph functions ===
@@ -29,7 +29,7 @@ def image_edit_flux2_klein_4b_distilled(
 ):
     """Image Edit (Flux.2 Klein 4B Distilled) - single-image variant.
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
     # vibecomfy source hash: sha256:e532a05f63f1bca6714349dfeb92151f8d66393fe1f88595bed4e404e642b2d6
     Inner nodes: KSamplerSelect, UNETLoader, CLIPLoader, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, Flux2Scheduler, CLIPTextEncode, ConditioningZeroOut, ReferenceLatentx2, GetImageSize, VAEEncode, SamplerCustomAdvanced, VAEDecode, RandomNoise, CFGGuider.
     """
@@ -149,7 +149,7 @@ def reference_conditioning(
 ):
     """Reference Conditioning - single-image variant.
 
-    Materialized from subgraph 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Materialized from subgraph 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
     # vibecomfy source hash: sha256:0a54ae9cc50d44681b6bf8ae109ddc6010b6ae19d9222f4581ca22dc967db4b0
     Inner nodes: ReferenceLatentx2, VAEEncode.
     """
@@ -184,7 +184,7 @@ def reference_conditioning_93041a64(
 ):
     """Reference Conditioning - single-image variant.
 
-    Materialized from subgraph 93041a64-452a-477a-9447-40330b7c1136 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Materialized from subgraph 93041a64-452a-477a-9447-40330b7c1136 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
     # vibecomfy source hash: sha256:b77feaa1986e88bb2b5924db33685bce2c22a9498c9969a3624ae0b7955ff0db
     Inner nodes: ReferenceLatentx2, VAEEncode.
     """
@@ -221,7 +221,7 @@ def image_edit_flux2_klein_4b_distilled_dual(
 ):
     """Image Edit (Flux.2 Klein 4B Distilled) - two-image variant.
 
-    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
+    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_4b_image_edit_distilled.json.
     # vibecomfy source hash: sha256:56221cc5c44463fbeff7b13305983b432aea67f150181e0ca528f120ab5daf6a
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncode, VAELoader, ImageScaleToTotalPixelsx2, 27eacb9f-0da2-421d-a0bf-b4b4e5fe5709, 93041a64-452a-477a-9447-40330b7c1136, ConditioningZeroOut, EmptyFlux2LatentImage, GetImageSize.
     """

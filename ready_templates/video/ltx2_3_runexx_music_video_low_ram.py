@@ -56,7 +56,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['LTX23_audio_vae_bf16_KJ.safetensors', 'LTX23_video_vae_bf16_KJ.safetensors', 'LTXVideo/v2/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors', 'LTX/LTX-2/ltx-2.3-22b-distilled-lora-384.safetensors', 'LTXvideo/LTX-2/quantstack/LTX-2.3-distilled-Q4_K_S.gguf', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'vae_approx/taeltx2_3.safetensors']},
     custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['DualCLIPLoaderGGUF', 'UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2', 'PathchSageAttentionKJ', 'ResizeImagesByLongerEdge', 'SimpleCalculatorKJ', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTX2AttentionTunerPatch', 'LTX2_NAG', 'LTXVChunkFeedForward', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Power Lora Loader (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json', 'source_id': 'LTX-2.3_Music_Video_Creator_Low_RAM', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_runexx_music_video_low_ram'},
+    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json', 'source_id': 'LTX-2.3_Music_Video_Creator_Low_RAM', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_runexx_music_video_low_ram'},
 )
 
 # === Subgraph functions ===
@@ -70,7 +70,7 @@ def prompt_enhancer_3bd4eeb9(
 ):
     """Prompt Enhancer - single-image variant.
 
-    Materialized from subgraph 3bd4eeb9-31fa-461a-8c04-2b24dd0aabaf in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 3bd4eeb9-31fa-461a-8c04-2b24dd0aabaf in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:2d0dc3ed6d0c2a03de0305f15253f33dd30611c205abd2e7e3c0c63e010bf8b3
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
@@ -109,7 +109,7 @@ def prompt_enhancer(
 ):
     """Prompt Enhancer - single-image variant.
 
-    Materialized from subgraph 2413a8aa-1f77-466f-8508-ed07fa6ac302 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 2413a8aa-1f77-466f-8508-ed07fa6ac302 in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:19a6af25c0629d69f9a8f32abaaca0da5690f4b1d5f343983d6aaa3665559463
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
@@ -174,7 +174,7 @@ def generate_video_c4106aee(
 ):
     """Generate Video - single-image variant.
 
-    Materialized from subgraph c4106aee-ad7a-4925-972b-6f5b3d34db6e in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph c4106aee-ad7a-4925-972b-6f5b3d34db6e in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:cbf37f5017a5530871597dcd4b5d008c9ea29dde34de0757fec85749b6b65546
     Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SamplerCustomAdvancedx2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 2413a8aa-1f77-466f-8508-ed07fa6ac302, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2.
     """
@@ -386,7 +386,7 @@ def total_duration(
 ):
     """Total duration.
 
-    Materialized from subgraph 5e410bb1-405a-4d3d-808b-8f5f29426943 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 5e410bb1-405a-4d3d-808b-8f5f29426943 in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:499d1097b28fe35bbf263370c1665c25ad008f551cb2fc33f04b8e0c5df2c383
     Inner nodes: SimpleCalculatorKJ.
     """
@@ -409,7 +409,7 @@ def prompt_enhancer_97b9884d(
 ):
     """Prompt Enhancer - single-image variant.
 
-    Materialized from subgraph 97b9884d-4a32-4b0d-ad19-be662c1c2002 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 97b9884d-4a32-4b0d-ad19-be662c1c2002 in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:36dbf4b3119343559cc3c2b629aed447d88526100f83b417258078b290ff28aa
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
@@ -474,7 +474,7 @@ def generate_video(
 ):
     """Generate Video - single-image variant.
 
-    Materialized from subgraph 17238add-9973-482f-8fa3-248d4ed29886 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 17238add-9973-482f-8fa3-248d4ed29886 in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:28643b6c64068643a90cd88b40ab7b216aa3728cbc287a2d0c67a24484f18244
     Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 97b9884d-4a32-4b0d-ad19-be662c1c2002, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
     """
@@ -685,7 +685,7 @@ def prompt_enhancer_cc5ea718(
 ):
     """Prompt Enhancer - single-image variant.
 
-    Materialized from subgraph cc5ea718-db6a-47c7-83cf-7d9a8442ba99 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph cc5ea718-db6a-47c7-83cf-7d9a8442ba99 in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:8ce010c65ed2457df2de94406016a7eee37b5fb7a7cb0a3a41246a5e9c74f342
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
@@ -750,7 +750,7 @@ def generate_video_a3fb563d(
 ):
     """Generate Video - single-image variant.
 
-    Materialized from subgraph a3fb563d-4711-4225-9210-fbe61b1bd79d in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph a3fb563d-4711-4225-9210-fbe61b1bd79d in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:238dc4a8d04df1c8b62437cb86819e13f8c09a55b0c565dbd9a2982b277aa858
     Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, cc5ea718-db6a-47c7-83cf-7d9a8442ba99, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
     """
@@ -961,7 +961,7 @@ def prompt_enhancer_50a3ed96(
 ):
     """Prompt Enhancer - single-image variant.
 
-    Materialized from subgraph 50a3ed96-aa61-4734-97cb-28cb47d171be in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 50a3ed96-aa61-4734-97cb-28cb47d171be in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:106b8c1e1f848de09ddc31f53b525c819c6acea35ef8cb989b287387898d3fed
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
@@ -1026,7 +1026,7 @@ def generate_video_4acc9924(
 ):
     """Generate Video - single-image variant.
 
-    Materialized from subgraph 4acc9924-c0bd-470a-b000-46c75e61d004 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
+    Materialized from subgraph 4acc9924-c0bd-470a-b000-46c75e61d004 in workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
     # vibecomfy source hash: sha256:15e1174c0eeb3e4b46f8553675deed8c2ed2828151886bf61a1a1df15272cabf
     Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 50a3ed96-aa61-4734-97cb-28cb47d171be, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
     """

@@ -30,7 +30,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='video',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['clip_vision_h.safetensors', 'umt5_xxl_fp8_e4m3fn_scaled.safetensors', 'wan2.1_i2v_480p_14B_fp16.safetensors', 'wan_2.1_vae.safetensors']},
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/video/wan_i2v.json', 'source_id': 'wan_i2v', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/video/wan_i2v.json', 'output_mode': 'ready_template', 'ready_id': 'video/wan_i2v'},
+    provenance={'source_path': 'workflow_corpus/official/video/wan_i2v.json', 'source_id': 'wan_i2v', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/video/wan_i2v.json', 'output_mode': 'ready_template', 'ready_id': 'video/wan_i2v'},
 )
 
 def build() -> VibeWorkflow:

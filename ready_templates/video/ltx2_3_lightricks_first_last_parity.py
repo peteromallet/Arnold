@@ -51,7 +51,7 @@ READY_METADATA = ReadyMetadata.build(
     discord_signal='Banodoco LTX notes point to the dedicated distilled fp8/quantized route for 4090 viability; dev+LoRA two-stage routes can OOM at 24GB.',
     ltx_best_practices=['Use the dedicated distilled fp8 checkpoint for first/last workflows on 24GB GPUs.', "Keep guide strengths in Wan2GP's 0..1 range.", 'Use tiled VAE decode for full-size app outputs.', 'Do not force the LTX2 memory-efficient Sage/Triton patch in the portable 4090 profile; LTX 2.3 guide masks must remain on the stable SDPA-compatible path unless a separate optimized profile proves the patch end-to-end.'],
     comfy_configuration={'memory_profile': 3, 'fp8_e4m3fn_text_enc': True},
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_parity.py', 'source_id': 'video/ltx2_3_lightricks_first_last_parity', 'source_type': 'ready_template', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_parity.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_first_last_parity'},
+    provenance={'source_path': 'ready_templates/video/ltx2_3_lightricks_first_last_parity.py', 'source_id': 'video/ltx2_3_lightricks_first_last_parity', 'source_type': 'ready_template', 'source_workflow_path': 'ready_templates/video/ltx2_3_lightricks_first_last_parity.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_first_last_parity'},
 )
 
 def build() -> VibeWorkflow:

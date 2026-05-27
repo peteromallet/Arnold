@@ -56,7 +56,7 @@ READY_METADATA = ReadyMetadata.build(
     runtime_packages=[{'name': 'sageattention', 'reason': 'Required by LTX2MemoryEfficientSageAttentionPatch for the two-stage low-VRAM LTX route.', 'source': 'SageAttention-ada'}],
     ltx_best_practices=['Use LowVRAMCheckpointLoader for 4090 viability.', 'Use the dedicated distilled fp8 checkpoint rather than the dev checkpoint plus LoRA when possible.', "Preserve Wan2GP's two-stage sigma structure for parity checks."],
     comfy_configuration={'memory_profile': 3, 'fp8_e4m3fn_text_enc': True},
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py', 'source_id': 'video/ltx2_3_lightricks_first_last_two_stage_lowvram', 'source_type': 'ready_template', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_first_last_two_stage_lowvram'},
+    provenance={'source_path': 'ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py', 'source_id': 'video/ltx2_3_lightricks_first_last_two_stage_lowvram', 'source_type': 'ready_template', 'source_workflow_path': 'ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_first_last_two_stage_lowvram'},
 )
 
 def build() -> VibeWorkflow:

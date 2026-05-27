@@ -14,7 +14,7 @@ PUBLIC_INPUT_METADATA = {
 READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json', 'source_id': 'flux2_klein_9b_image_edit_base', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_9b_image_edit_base'},
+    provenance={'source_path': 'workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json', 'source_id': 'flux2_klein_9b_image_edit_base', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_9b_image_edit_base'},
 )
 
 # === Subgraph functions ===
@@ -29,7 +29,7 @@ def image_edit_flux2_klein_9b(
 ):
     """Image Edit (Flux.2 Klein 9B) - single-image variant.
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json.
     # vibecomfy source hash: sha256:b2d3d67eb296d6e0e41bc55934c4f7c02695f20c73be184bf6fe5349ebefd8af
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncodex2, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, GetImageSize, ReferenceLatentx2, VAEEncode.
     """
@@ -151,7 +151,7 @@ def image_edit_flux2_klein_9b_dual(
 ):
     """Image Edit (Flux.2 Klein 9B) - two-image variant.
 
-    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json.
+    Materialized from subgraph 65c22b29-59aa-496b-89c6-55a603658670 in workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json.
     # vibecomfy source hash: sha256:99bcee3dbb6e2838d7c3275e03f30c27d09b5f53173f2f049a42eff86bbb883c
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, VAELoader, GetImageSize, EmptyFlux2LatentImage, ImageScaleToTotalPixelsx2, CLIPLoader, CLIPTextEncodex2, CFGGuider, Flux2Scheduler, ReferenceLatentx4, VAEEncodex2.
     """

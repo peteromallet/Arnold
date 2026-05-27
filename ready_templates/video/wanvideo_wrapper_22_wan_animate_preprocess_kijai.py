@@ -66,7 +66,7 @@ READY_METADATA = ReadyMetadata.build(
     runtime_note='Worker scratchpads patch reference image, motion video, prompt, seed, and output options.',
     smoke_resolution='832x480_motion_source',
     source_url='https://raw.githubusercontent.com/kijai/ComfyUI-WanVideoWrapper/main/example_workflows/wanvideo_WanAnimate_preprocess_example_02.json',
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/wanvideo_wrapper_22_wan_animate_preprocess_kijai.py', 'source_id': 'video/wanvideo_wrapper_22_wan_animate_preprocess_kijai', 'source_type': 'ready_template', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/wanvideo_wrapper_22_wan_animate_preprocess_kijai.py', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_22_wan_animate_preprocess_kijai'},
+    provenance={'source_path': 'ready_templates/video/wanvideo_wrapper_22_wan_animate_preprocess_kijai.py', 'source_id': 'video/wanvideo_wrapper_22_wan_animate_preprocess_kijai', 'source_type': 'ready_template', 'source_workflow_path': 'ready_templates/video/wanvideo_wrapper_22_wan_animate_preprocess_kijai.py', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_22_wan_animate_preprocess_kijai'},
 )
 
 def build() -> VibeWorkflow:

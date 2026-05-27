@@ -67,7 +67,7 @@ READY_METADATA = ReadyMetadata.build(
     comfy_configuration={'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True},
     runtime_note='Uses non-IC LTXVAddGuide; raw mode intentionally avoids LTXICLoRALoaderModelOnly and LTXAddVideoICLoRAGuide.',
     discord_signal='Matches Wan2GP LTX VG-style full-video guide without IC-LoRA.',
-    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py', 'source_id': 'video/ltx2_3_runexx_first_last_raw_video_guide', 'source_type': 'ready_template', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_runexx_first_last_raw_video_guide'},
+    provenance={'source_path': 'ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py', 'source_id': 'video/ltx2_3_runexx_first_last_raw_video_guide', 'source_type': 'ready_template', 'source_workflow_path': 'ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_runexx_first_last_raw_video_guide'},
 )
 
 def build() -> VibeWorkflow:
