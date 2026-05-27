@@ -193,6 +193,51 @@ def _clear_workflow_contextvar() -> None:
         pass
 
 
+def _canonicalize_broadcast_widget_keys(workflow: Any) -> None:
+    """Ensure SetNode/GetNode broadcast names live at ``widgets['widget_0']``.
+
+    The helper resolver in ``vibecomfy.porting.helpers`` reads broadcast names
+    exclusively from ``inputs['widget_0']`` or ``widgets['widget_0']``. When the
+    source JSON is a UI-format litegraph, ``normalize_to_api`` routes the value
+    through the schema's widget name (e.g. ``inputs['name'] = 'width'`` for
+    ``GetNode``), which then becomes a regular input on the VibeNode rather than
+    a ``widget_0`` slot. Mirror those values into ``widgets['widget_0']`` so the
+    Phase-A broadcast resolver can see them. This is a non-mutating projection:
+    we only ADD widget_0 when it is missing.
+    """
+    BROADCAST = {"SetNode", "GetNode"}
+    for _node_id, node in workflow.nodes.items():
+        class_type = getattr(node, "class_type", "")
+        if class_type not in BROADCAST:
+            continue
+        widgets = getattr(node, "widgets", None)
+        inputs = getattr(node, "inputs", None)
+        if widgets is None or inputs is None:
+            continue
+        if widgets.get("widget_0") is not None:
+            continue
+        # Candidate keys in priority order: rgthree's "Constant" key, KJNodes'
+        # named "name" input, and the raw "title" metadata fallback.
+        candidate = None
+        for key in ("Constant", "constant", "name"):
+            value = inputs.get(key)
+            if isinstance(value, str) and value:
+                candidate = value
+                break
+        if candidate is None:
+            # Last-ditch: scrape _ui metadata for widgets_values[0].
+            meta = getattr(node, "metadata", None) or {}
+            ui = meta.get("_ui") if isinstance(meta, dict) else None
+            if isinstance(ui, dict):
+                widgets_values = ui.get("widgets_values")
+                if isinstance(widgets_values, list) and widgets_values:
+                    first = widgets_values[0]
+                    if isinstance(first, str) and first:
+                        candidate = first
+        if candidate:
+            widgets["widget_0"] = candidate
+
+
 def _emit_from_source_json(template_path: Path, template_id: str) -> tuple[str | None, str | None]:
     """Run the standard ``port convert`` pipeline against the source JSON.
 
@@ -216,6 +261,7 @@ def _emit_from_source_json(template_path: Path, template_id: str) -> tuple[str |
         from vibecomfy.porting.workbench import load_port_source
 
         loaded = load_port_source(str(source_path))
+        _canonicalize_broadcast_widget_keys(loaded.workflow)
         result = port_convert_workflow(
             loaded.workflow,
             ready_id=template_id,
@@ -392,6 +438,25 @@ def _convert_template(
     except Exception as exc:
         row.build = "fail"
         row.note = f"emit_failed: {type(exc).__name__}: {exc}"
+        # Bucket 1.5 fallback: standard emit_ready_template_python raised
+        # (e.g. ConversionParityError on a helper resolver edge case the
+        # standard load path didn't canonicalize). If the user opted into
+        # --regen-from-source and a provenance source JSON exists, re-emit
+        # from the JSON via the canonicalizing path.
+        if regen_from_source:
+            _clear_workflow_contextvar()
+            regen_emitted, regen_note = _emit_from_source_json(path, template_id)
+            if regen_emitted is not None:
+                row.parse = "skip-broken-original"
+                row.build = "ok"
+                row.validate = "skip-broken-original"
+                row.roundtrip = "skip-broken-original"
+                row.note = (
+                    f"{row.note}; regenerated_from_source_json_after_emit_fail"
+                )
+                return (row, regen_emitted, None)
+            if regen_note:
+                row.note = f"{row.note}; {regen_note}"
         return (row, None, original_api)
 
     # Sanity-check by exec'ing the emitted code in an isolated namespace.
@@ -410,7 +475,46 @@ def _convert_template(
     except Exception as exc:
         row.validate = "fail"
         row.note = f"exec_failed: {type(exc).__name__}: {exc}"
+        # Bucket 3 fallback: standard emission produced a workflow whose
+        # validate() fails (e.g. wrong VAE-loader pairing). If --regen-from-source
+        # is opted in and a provenance source JSON exists, re-emit from the
+        # JSON — that bypasses the broken authored .py entirely.
+        if regen_from_source:
+            _clear_workflow_contextvar()
+            regen_emitted, regen_note = _emit_from_source_json(path, template_id)
+            if regen_emitted is not None:
+                row.parse = "skip-broken-original"
+                row.build = "ok"
+                row.validate = "skip-broken-original"
+                row.roundtrip = "skip-broken-original"
+                row.note = (
+                    f"{row.note}; regenerated_from_source_json_after_validate_fail"
+                )
+                return (row, regen_emitted, None)
+            if regen_note:
+                row.note = f"{row.note}; {regen_note}"
         return (row, emitted, original_api)
+
+    # Bucket 3 secondary fallback: validate ran but reported failures.
+    # Same regen-from-source recovery path.
+    if row.validate == "fail" and regen_from_source:
+        _clear_workflow_contextvar()
+        regen_emitted, regen_note = _emit_from_source_json(path, template_id)
+        if regen_emitted is not None:
+            row.parse = "skip-broken-original"
+            row.build = "ok"
+            row.validate = "skip-broken-original"
+            row.roundtrip = "skip-broken-original"
+            existing_note = row.note or ""
+            sep = "; " if existing_note else ""
+            row.note = (
+                f"{existing_note}{sep}regenerated_from_source_json_after_validate_fail"
+            )
+            return (row, regen_emitted, None)
+        if regen_note:
+            existing_note = row.note or ""
+            sep = "; " if existing_note else ""
+            row.note = f"{existing_note}{sep}{regen_note}"
 
     # All emitted previews must be canonical-equal to the original compiled
     # workflow before dry-run/write accepts them. The canonical comparator
