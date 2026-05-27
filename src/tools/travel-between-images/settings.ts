@@ -401,6 +401,7 @@ export function normalizeVideoTravelSettings(value: unknown): VideoTravelSetting
     textAfterPrompts: asString(record.textAfterPrompts) ?? defaults.textAfterPrompts,
     generationTypeMode: asEnum(record.generationTypeMode, ['i2v', 'vace']) ?? defaults.generationTypeMode,
     smoothContinuations: asBoolean(record.smoothContinuations) ?? defaults.smoothContinuations,
+    ltxHdResolution: asBoolean(record.ltxHdResolution) ?? defaults.ltxHdResolution,
     pairConfigs: normalizePairConfigs(record.pairConfigs),
     shotImageIds: normalizeShotImageIds(record.shotImageIds),
     loras: normalizeShotLoras(record.loras),
