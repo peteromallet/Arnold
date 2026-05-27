@@ -9,7 +9,8 @@ from typing import Any
 
 from megaplan import handlers as _pkg
 from megaplan.review import checks as review_checks
-from megaplan.execute.core import _check_done_task_evidence, build_monitor_hint
+from megaplan.execute.quality import _check_done_task_evidence
+from megaplan.execute.batch import build_monitor_hint
 from megaplan.orchestration.evaluation import is_rubber_stamp
 from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt

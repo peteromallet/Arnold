@@ -5,7 +5,7 @@ import copy
 from pathlib import Path
 from typing import Any
 
-from megaplan.execute.core import (
+from megaplan.execute.batch import (
     handle_execute_auto_loop,
     handle_execute_one_batch,
 )
