@@ -1,683 +1,565 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, finalize, new_workflow, node as raw_call, ref
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, UNETLoader
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, UNETLoader
 from vibecomfy.nodes.gguf import UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import VAELoaderKJ
 from vibecomfy.nodes.videohelpersuite import VHS_LoadAudioUpload
 
 
-CONTROL_AFTER_GENERATE = 'randomize'
-DEFAULT_FRAMES = 5
-DEFAULT_PROMPT = 'cinematic image to video shot of a singer actor acting and singing a song during a musical, intense expression, coherent motion, smooth camera movement, high detail, stable composition, audio-reactive motion'
-DEFAULT_PROMPT_2 = 'flicker, jitter, low quality, bad anatomy, static image, frozen frame, deformed motion'
-DEFAULT_SEED = 851629932274714
-DEFAULT_SEED_2 = 264060544821466
+ALL = 'all'
+AUTO = 'auto'
+BF16 = 'bf16'
+CLIP_NAME = 'gemma_3_12B_it_fp8_e4m3fn.safetensors'
+CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
+CUT = 'cut'
+DEFAULT_FRAMES = 249
+DEFAULT_FRAMES_2 = 241
+DEFAULT_PROMPT = 'flicker, jitter, low quality, bad anatomy, static image, frozen frame, deformed motion'
+DEFAULT_PROMPT_2 = 'cinematic image to video shot of a singer actor acting and singing a song during a musical, intense expression, coherent motion, smooth camera movement, high detail, stable composition, audio-reactive motion'
+DEFAULT_SEED = 264060544821466
+DEFAULT_SEED_2 = 851629932274714
 DEFAULT_SEED_3 = 606399719654025
 GUIDE_STRENGTH = 0.7
-GUIDE_STRENGTH_2 = 2.5
-MODEL_NAME = 'ltx-2.3-22b-dev-Q4_K_S.gguf'
-MODEL_NAME_2 = 'gemma_3_12B_it_fp8_e4m3fn.safetensors'
-MODEL_NAME_3 = 'ltx-2.3_text_projection_bf16.safetensors'
-MODEL_NAME_4 = 'ltx-2.3-22b-dev_video_vae.safetensors'
-MODEL_NAME_5 = 'LTX23_audio_vae_bf16.safetensors'
-MODEL_NAME_6 = 'MelBandRoformer_fp32.safetensors'
-MODEL_NAME_7 = 'ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors'
-WIDGET_0 = 'iamccs_vae_frames/30s_free_low_ram/seg0'
-WIDGET_1 = 'left_context_only'
-WIDGET_10 = 'videoclip_audio_24fps'
-WIDGET_11 = ''
-WIDGET_1_2 = 'all'
-WIDGET_2 = 'jpg'
-WIDGET_4 = 'use_timeline_cursor'
-WIDGET_4_2 = 'source'
-WIDGET_5 = 'snap_to_video_duration'
-WIDGET_5_2 = 'auto'
-WIDGET_5_3 = 'cut'
-WIDGET_6 = 'soft_clamp'
-WIDGET_7 = 'none'
-WIDGET_8 = 'native_workflow_safe'
-WIDGET_9 = 'iamccs_seam_debug'
+GUIDE_STRENGTH_2 = 1
+IAMCCS_SEAM_DEBUG = 'iamccs_seam_debug'
+IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0 = 'iamccs_vae_frames/30s_free_low_ram/seg0'
+JPG = 'jpg'
+LEFT_CONTEXT_ONLY = 'left_context_only'
+LORA_NAME = 'ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors'
+MAIN_DEVICE = 'main_device'
+NATIVE_WORKFLOW_SAFE = 'native_workflow_safe'
+NONE = 'none'
+RANDOMIZE = 'randomize'
+SNAP_TO_VIDEO_DURATION = 'snap_to_video_duration'
+SOFT_CLAMP = 'soft_clamp'
+SOURCE = 'source'
+UNET_NAME = 'ltx-2.3-22b-dev-Q4_K_S.gguf'
+UNET_NAME_2 = 'MelBandRoformer_fp32.safetensors'
+USE_TIMELINE_CURSOR = 'use_timeline_cursor'
+VAE_NAME = 'ltx-2.3-22b-dev_video_vae.safetensors'
+VAE_NAME_2 = 'ltx-2.3-22b-dev_audio_vae.safetensors'
+VALUE = ''
+VIDEOCLIP_AUDIO_24FPS = 'videoclip_audio_24fps'
 
 
-MODELS = {
-    'ltx23_audio_vae_bf16': ModelAsset(url='https://huggingface.co/Kijai/LTX2.3_comfy/resolve/main/vae/LTX23_audio_vae_bf16.safetensors', subdir='checkpoints'),
-}
-
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('ltxvaudiovaeloader'), field='ckpt_name', default=MODEL_NAME_5),
-    'seed': InputSpec(node=ref('randomnoise'), field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node=ref('cliptextencode'), field='text', default=DEFAULT_PROMPT),
-    'image': InputSpec(node=ref('loadimage'), field='image', default='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png'),
-    'input_image': InputSpec(node=ref('loadimage'), field='image', default='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png'),
-    'width': InputSpec(node=ref('emptyltxvlatentvideo'), field='width', default=256),
-    'height': InputSpec(node=ref('emptyltxvlatentvideo'), field='height', default=256),
-    'frames': InputSpec(node=ref('emptyltxvlatentvideo'), field='length', default=DEFAULT_FRAMES),
+PUBLIC_INPUT_METADATA = {
+    'image': InputSpec(node='1', field='image', default='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='16', field='width', default=1024, type='INT'),
+    'height': InputSpec(node='16', field='height', default=1024, type='INT'),
+    'frames': InputSpec(node='17', field='length', default=DEFAULT_FRAMES_2, type='INT'),
+    'seed': InputSpec(node='25', field='noise_seed', default=DEFAULT_SEED_2, type='INT'),
+    'prompt': InputSpec(node='8', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node='9', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='audio_extended_multisegment_video',
-    inputs=PUBLIC_INPUTS,
-    models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-GGUF', 'ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
-    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'pinned'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ResizeImagesByLongerEdge', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'pinned'}},
-    approach='low-RAM three-segment audio extension',
-    smoke_resolution='256x256x5_frames',
-    ltx_best_practices=['Use the official Lightricks workflows as runtime gates where possible.', 'Patch smoke runs to fp8/fp4 model assets, tiny frame counts, and low-VRAM loaders.', 'Bypass latent spatial upscalers in smoke runs until HiddenSwitch Comfy exposes model_mmap_residency for LatentUpscaleModelManageable.', 'Keep community audio, lip-sync, and long-form workflows as ready templates until their custom node packs and service credentials are declared.'],
-    comfy_configuration={'reserve_vram': 12, 'cache_none': True, 'fp8_e4m3fn_text_enc': True},
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json'},
+    capability='unknown',
+    inputs=PUBLIC_INPUT_METADATA,
+    requirements={'models': ['MelBandRoformer_fp32.safetensors', 'euler', 'ltx-2.3-22b-dev-Q4_K_S.gguf', 'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors', 'ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors']},
+    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ResizeImagesByLongerEdge', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Label (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json', 'source_id': 'IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_iamccs_audio_extend_low_ram'},
 )
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        # Inputs
-        loadimage = LoadImage(
-            _id='1',
-            image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png',
-            _outputs=('IMAGE', 'MASK'),
-        )
-        wf.metadata.setdefault('id_map', {})['loadimage'] = loadimage.node.id
+    # Inputs
+    image, mask = LoadImage(
+        image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png',
+        unused_widget_1='image',
+    )
 
-        vhs_loadaudioupload = VHS_LoadAudioUpload(
-            _id='4',
-            _outputs=('AUDIO', 'DURATION'),
-        )
-        wf.metadata.setdefault('id_map', {})['vhs_loadaudioupload'] = vhs_loadaudioupload.node.id
+    audio, duration = VHS_LoadAudioUpload(
+        audio='It’s only Rock and roll.mp3',
+        audiopreview={'params': {'start_time': 38, 'duration': 28, 'filename': 'It’s only Rock and roll.mp3', 'type': 'input'}},
+        duration=28,
+        start_time=38,
+    )
 
-        unetloadergguf = UnetLoaderGGUF(_id='5', unet_name=MODEL_NAME)
-        wf.metadata.setdefault('id_map', {})['unetloadergguf'] = unetloadergguf.node.id
-        # Loaders
-        dualcliploader = DualCLIPLoader(
-            _id='7',
-            clip_name1=MODEL_NAME_2,
-            clip_name2=MODEL_NAME_3,
-            type_='ltxv',
-            device='default',
-        )
-        wf.metadata.setdefault('id_map', {})['dualcliploader'] = dualcliploader.node.id
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
 
-        # Sampling
-        ksamplerselect = KSamplerSelect(_id='12', sampler_name='euler')
-        wf.metadata.setdefault('id_map', {})['ksamplerselect'] = ksamplerselect.node.id
-        manualsigmas = ManualSigmas(
-            _id='13',
-            sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
-        )
-        wf.metadata.setdefault('id_map', {})['manualsigmas'] = manualsigmas.node.id
+    # Loaders
+    dualcliploader = DualCLIPLoader(
+        clip_name1=CLIP_NAME,
+        clip_name2=CLIP_NAME_2,
+        type_='ltxv',
+        device='default',
+    )
 
-        vaeloaderkj = VAELoaderKJ(
-            _id='14',
-            vae_name=MODEL_NAME_4,
-            device='main_device',
-            weight_dtype='bf16',
-        )
-        wf.metadata.setdefault('id_map', {})['vaeloaderkj'] = vaeloaderkj.node.id
+    # Sampling
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
 
-        ltxvaudiovaeloader = LTXVAudioVAELoader(_id='15', ckpt_name=MODEL_NAME_5)
-        wf.metadata.setdefault('id_map', {})['ltxvaudiovaeloader'] = ltxvaudiovaeloader.node.id
-        solidmask = SolidMask(
-            _id='16',
-            widget_0=0,
-            widget_1=1024,
-            widget_2=1024,
-        )
-        wf.metadata.setdefault('id_map', {})['solidmask'] = solidmask.node.id
+    manualsigmas = ManualSigmas(
+        sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
+    )
 
-        emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-            _id='17',
-            width=256,
-            height=256,
-            length=DEFAULT_FRAMES,
-            widget_0=256,
-            widget_1=256,
-            widget_2=5,
-        )
-        wf.metadata.setdefault('id_map', {})['emptyltxvlatentvideo'] = emptyltxvlatentvideo.node.id
+    vaeloaderkj = VAELoaderKJ(vae_name=VAE_NAME, device=MAIN_DEVICE, weight_dtype=BF16)
 
-        randomnoise = RandomNoise(
-            _id='25',
-            noise_seed=DEFAULT_SEED,
-            control_after_generate=CONTROL_AFTER_GENERATE,
-        )
-        wf.metadata.setdefault('id_map', {})['randomnoise'] = randomnoise.node.id
+    vaeloaderkj_2 = VAELoaderKJ(
+        vae_name=VAE_NAME_2,
+        device=MAIN_DEVICE,
+        weight_dtype=BF16,
+    )
 
-        ltxvpreprocess_2 = LTXVPreprocess(_id='31', img_compression=33)
-        wf.metadata.setdefault('id_map', {})['ltxvpreprocess_2'] = ltxvpreprocess_2.node.id
-        emptyltxvlatentvideo_2 = EmptyLTXVLatentVideo(
-            _id='32',
-            width=256,
-            height=256,
-            length=DEFAULT_FRAMES,
-            widget_0=256,
-            widget_1=256,
-            widget_2=5,
-        )
-        wf.metadata.setdefault('id_map', {})['emptyltxvlatentvideo_2'] = emptyltxvlatentvideo_2.node.id
+    solidmask = SolidMask(value=0, width=1024, height=1024)
 
-        randomnoise_2 = RandomNoise(
-            _id='39',
-            noise_seed=DEFAULT_SEED_2,
-            control_after_generate=CONTROL_AFTER_GENERATE,
-        )
-        wf.metadata.setdefault('id_map', {})['randomnoise_2'] = randomnoise_2.node.id
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        width=1920,
+        height=1088,
+        length=DEFAULT_FRAMES_2,
+    )
 
-        ltxvpreprocess_3 = LTXVPreprocess(_id='45', img_compression=33)
-        wf.metadata.setdefault('id_map', {})['ltxvpreprocess_3'] = ltxvpreprocess_3.node.id
-        emptyltxvlatentvideo_3 = EmptyLTXVLatentVideo(
-            _id='46',
-            width=256,
-            height=256,
-            length=DEFAULT_FRAMES,
-            widget_0=256,
-            widget_1=256,
-            widget_2=5,
-        )
-        wf.metadata.setdefault('id_map', {})['emptyltxvlatentvideo_3'] = emptyltxvlatentvideo_3.node.id
+    randomnoise = RandomNoise(
+        noise_seed=DEFAULT_SEED_2,
+        control_after_generate=RANDOMIZE,
+    )
 
-        randomnoise_3 = RandomNoise(
-            _id='53',
-            noise_seed=DEFAULT_SEED_3,
-            control_after_generate=CONTROL_AFTER_GENERATE,
-        )
-        wf.metadata.setdefault('id_map', {})['randomnoise_3'] = randomnoise_3.node.id
+    ltxvpreprocess_2 = LTXVPreprocess(img_compression=33)
 
-        # Loaders
-        unetloader = UNETLoader(_id='77', unet_name=MODEL_NAME_6)
-        wf.metadata.setdefault('id_map', {})['unetloader'] = unetloader.node.id
-        resizeimagemasknode = ResizeImageMaskNode(
-            _id='2',
-            resize_type='scale dimensions',
-            scale_method=1080,
-            widget_3='center',
-            widget_4='lanczos',
-            input=loadimage.out('IMAGE'),
-        )
-        wf.metadata.setdefault('id_map', {})['resizeimagemasknode'] = resizeimagemasknode.node.id
+    emptyltxvlatentvideo_2 = EmptyLTXVLatentVideo(
+        width=1920,
+        height=1088,
+        length=DEFAULT_FRAMES,
+    )
 
-        loraloadermodelonly = LoraLoaderModelOnly(
-            _id='6',
-            lora_name=MODEL_NAME_7,
-            strength_model=GUIDE_STRENGTH,
-            model=unetloadergguf,
-        )
-        wf.metadata.setdefault('id_map', {})['loraloadermodelonly'] = loraloadermodelonly.node.id
+    randomnoise_2 = RandomNoise(
+        noise_seed=DEFAULT_SEED,
+        control_after_generate=RANDOMIZE,
+    )
 
-        # Conditioning
-        cliptextencode = CLIPTextEncode(
-            _id='8',
-            text=DEFAULT_PROMPT,
-            clip=dualcliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode'] = cliptextencode.node.id
+    ltxvpreprocess_3 = LTXVPreprocess(img_compression=33)
 
-        cliptextencode_2 = CLIPTextEncode(
-            _id='9',
-            text=DEFAULT_PROMPT_2,
-            clip=dualcliploader,
-        )
-        wf.metadata.setdefault('id_map', {})['cliptextencode_2'] = cliptextencode_2.node.id
+    emptyltxvlatentvideo_3 = EmptyLTXVLatentVideo(
+        width=1920,
+        height=1088,
+        length=DEFAULT_FRAMES,
+    )
 
-        iamccs_audioextensionmath = raw_call(wf, 'IAMCCS_AudioExtensionMath', '20',
-            widget_0=24,
-            widget_1=0,
-            widget_2=240,
-            widget_3=240,
-            widget_4=True,
-            widget_5=240,
-            widget_6=0,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audioextensionmath'] = iamccs_audioextensionmath.node.id
+    randomnoise_3 = RandomNoise(
+        noise_seed=DEFAULT_SEED_3,
+        control_after_generate=RANDOMIZE,
+    )
 
-        resizeimagesbylongeredge = ResizeImagesByLongerEdge(
-            _id='3',
-            longer_edge=1536,
-            images=resizeimagemasknode,
-        )
-        wf.metadata.setdefault('id_map', {})['resizeimagesbylongeredge'] = resizeimagesbylongeredge.node.id
+    label__rgthree_ = raw_call('Label (rgthree)', '75')
+    label__rgthree__2 = raw_call('Label (rgthree)', '76')
+    unetloader = UNETLoader(unet_name=UNET_NAME_2)
+    label__rgthree__3 = raw_call('Label (rgthree)', '79')
+    label__rgthree__4 = raw_call('Label (rgthree)', '81')
+    label__rgthree__5 = raw_call('Label (rgthree)', '82')
+    label__rgthree__6 = raw_call('Label (rgthree)', '83')
+    label__rgthree__7 = raw_call('Label (rgthree)', '84')
+    label__rgthree__8 = raw_call('Label (rgthree)', '85')
+    label__rgthree__9 = raw_call('Label (rgthree)', '86')
+    label__rgthree__10 = raw_call('Label (rgthree)', '87')
+    label__rgthree__11 = raw_call('Label (rgthree)', '88')
+    label__rgthree__12 = raw_call('Label (rgthree)', '89')
+    label__rgthree__13 = raw_call('Label (rgthree)', '90')
+    label__rgthree__14 = raw_call('Label (rgthree)', '91')
+    label__rgthree__15 = raw_call('Label (rgthree)', '92')
 
-        ltxvconditioning = LTXVConditioning(
-            _id='10',
-            frame_rate=8,
-            negative=cliptextencode_2,
-            positive=cliptextencode,
-            _outputs=('POSITIVE', 'NEGATIVE'),
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvconditioning'] = ltxvconditioning.node.id
+    resizeimagemasknode = ResizeImageMaskNode(
+        resize_type='scale dimensions',
+        scale_method=1080,
+        unused_widget_1=1920,
+        widget_3='center',
+        widget_4='lanczos',
+        input=image,
+    )
 
-        iamccs_audioextender = raw_call(wf, 'IAMCCS_AudioExtender', '21',
-            widget_0=24,
-            widget_1=WIDGET_1,
-            widget_10=240,
-            widget_11=240,
-            widget_12=0,
-            widget_13=0,
-            widget_14=240,
-            widget_15=240,
-            widget_2=0.5,
-            widget_3=0,
-            widget_4=WIDGET_4,
-            widget_5=WIDGET_5,
-            widget_6=WIDGET_6,
-            widget_7=0,
-            widget_8=10,
-            widget_9=240,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-            effective_unique_frames=iamccs_audioextensionmath.out(3),
-            segment_start_frames=iamccs_audioextensionmath.out(1),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audioextender'] = iamccs_audioextender.node.id
+    loraloadermodelonly = LoraLoaderModelOnly(
+        lora_name=LORA_NAME,
+        strength_model=GUIDE_STRENGTH,
+        model=unetloadergguf,
+    )
 
-        iamccs_audiotimelinegate = raw_call(wf, 'IAMCCS_AudioTimelineGate', '30',
-            widget_0=1,
-            widget_1=True,
-            widget_2=1,
-            widget_3=True,
-            widget_4=0,
-            widget_5=0,
-            cursor_frames_out=iamccs_audioextensionmath.out(0),
-            effective_unique_frames=iamccs_audioextensionmath.out(3),
-            is_last_segment=iamccs_audioextensionmath.out(8),
-            remaining_frames_after=iamccs_audioextensionmath.out(7),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audiotimelinegate'] = iamccs_audiotimelinegate.node.id
+    # Conditioning
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=dualcliploader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
 
-        cfgguider = CFGGuider(
-            _id='11',
-            cfg=GUIDE_STRENGTH_2,
-            model=loraloadermodelonly,
-            negative=ltxvconditioning.out('NEGATIVE'),
-            positive=ltxvconditioning.out('POSITIVE'),
-        )
-        wf.metadata.setdefault('id_map', {})['cfgguider'] = cfgguider.node.id
+    iamccs_audioextensionmath = raw_call('IAMCCS_AudioExtensionMath', '20',
+        widget_0=24,
+        widget_1=0,
+        widget_2=240,
+        widget_3=240,
+        widget_4=True,
+        widget_5=240,
+        widget_6=0,
+        audio=audio,
+    )
 
-        ltxvpreprocess = LTXVPreprocess(
-            _id='18',
-            img_compression=33,
-            image=resizeimagesbylongeredge,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvpreprocess'] = ltxvpreprocess.node.id
+    resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        longer_edge=1536,
+        images=resizeimagemasknode,
+    )
 
-        ltxvaudiovaeencode = LTXVAudioVAEEncode(
-            _id='22',
-            audio=iamccs_audioextender.out(0),
-            audio_vae=ltxvaudiovaeloader,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvaudiovaeencode'] = ltxvaudiovaeencode.node.id
+    positive, negative = LTXVConditioning(
+        frame_rate=24,
+        negative=cliptextencode_2,
+        positive=cliptextencode,
+    )
 
-        iamccs_audioextensionmath_2 = raw_call(wf, 'IAMCCS_AudioExtensionMath', '34',
-            widget_0=24,
-            widget_1=1,
-            widget_2=249,
-            widget_3=240,
-            widget_4=True,
-            widget_5=240,
-            widget_6=0,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-            cursor_frames_in=iamccs_audiotimelinegate.out(3),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audioextensionmath_2'] = iamccs_audioextensionmath_2.node.id
+    iamccs_audioextender = raw_call('IAMCCS_AudioExtender', '21',
+        widget_0=24,
+        widget_1=LEFT_CONTEXT_ONLY,
+        widget_10=240,
+        widget_11=240,
+        widget_12=0,
+        widget_13=0,
+        widget_14=240,
+        widget_15=240,
+        widget_2=0.5,
+        widget_3=0,
+        widget_4=USE_TIMELINE_CURSOR,
+        widget_5=SNAP_TO_VIDEO_DURATION,
+        widget_6=SOFT_CLAMP,
+        widget_7=0,
+        widget_8=10,
+        widget_9=240,
+        audio=audio,
+        effective_unique_frames=iamccs_audioextensionmath.out(3),
+        segment_start_frames=iamccs_audioextensionmath.out(1),
+    )
 
-        ltxvimgtovideoinplace = LTXVImgToVideoInplace(
-            _id='19',
-            widget_0=1,
-            widget_1=False,
-            image=ltxvpreprocess,
-            latent=emptyltxvlatentvideo,
-            vae=vaeloaderkj,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvimgtovideoinplace'] = ltxvimgtovideoinplace.node.id
+    iamccs_audiotimelinegate = raw_call('IAMCCS_AudioTimelineGate', '30',
+        widget_0=1,
+        widget_1=True,
+        widget_2=1,
+        widget_3=True,
+        widget_4=0,
+        widget_5=0,
+        cursor_frames_out=iamccs_audioextensionmath.out(0),
+        effective_unique_frames=iamccs_audioextensionmath.out(3),
+        is_last_segment=iamccs_audioextensionmath.out(8),
+        remaining_frames_after=iamccs_audioextensionmath.out(7),
+    )
 
-        setlatentnoisemask = SetLatentNoiseMask(
-            _id='23',
-            mask=solidmask,
-            samples=ltxvaudiovaeencode,
-        )
-        wf.metadata.setdefault('id_map', {})['setlatentnoisemask'] = setlatentnoisemask.node.id
+    cfgguider = CFGGuider(
+        cfg=GUIDE_STRENGTH_2,
+        model=loraloadermodelonly,
+        negative=negative,
+        positive=positive,
+    )
 
-        iamccs_audioextender_2 = raw_call(wf, 'IAMCCS_AudioExtender', '35',
-            widget_0=24,
-            widget_1=WIDGET_1,
-            widget_10=249,
-            widget_11=240,
-            widget_12=0,
-            widget_13=240,
-            widget_14=240,
-            widget_15=240,
-            widget_2=0.5,
-            widget_3=0,
-            widget_4=WIDGET_4,
-            widget_5=WIDGET_5,
-            widget_6=WIDGET_6,
-            widget_7=1,
-            widget_8=10,
-            widget_9=240,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-            effective_unique_frames=iamccs_audioextensionmath_2.out(3),
-            segment_start_frames=iamccs_audioextensionmath_2.out(1),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audioextender_2'] = iamccs_audioextender_2.node.id
+    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
 
-        iamccs_audiotimelinegate_2 = raw_call(wf, 'IAMCCS_AudioTimelineGate', '44',
-            widget_0=1,
-            widget_1=True,
-            widget_2=1,
-            widget_3=True,
-            widget_4=0,
-            widget_5=0,
-            cursor_frames_out=iamccs_audioextensionmath_2.out(0),
-            effective_unique_frames=iamccs_audioextensionmath_2.out(3),
-            is_last_segment=iamccs_audioextensionmath_2.out(8),
-            remaining_frames_after=iamccs_audioextensionmath_2.out(7),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audiotimelinegate_2'] = iamccs_audiotimelinegate_2.node.id
+    ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        audio=iamccs_audioextender.out(0),
+        audio_vae=vaeloaderkj_2,
+    )
 
-        ltxvconcatavlatent = LTXVConcatAVLatent(
-            _id='24',
-            audio_latent=setlatentnoisemask,
-            video_latent=ltxvimgtovideoinplace,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent'] = ltxvconcatavlatent.node.id
+    iamccs_audioextensionmath_2 = raw_call('IAMCCS_AudioExtensionMath', '34',
+        widget_0=24,
+        widget_1=1,
+        widget_2=249,
+        widget_3=240,
+        widget_4=True,
+        widget_5=240,
+        widget_6=0,
+        audio=audio,
+        cursor_frames_in=iamccs_audiotimelinegate.out(3),
+    )
 
-        ltxvaudiovaeencode_2 = LTXVAudioVAEEncode(
-            _id='36',
-            audio=iamccs_audioextender_2.out(0),
-            audio_vae=ltxvaudiovaeloader,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvaudiovaeencode_2'] = ltxvaudiovaeencode_2.node.id
+    ltxvimgtovideoinplace = LTXVImgToVideoInplace(
+        image=ltxvpreprocess,
+        latent=emptyltxvlatentvideo,
+        vae=vaeloaderkj,
+    )
 
-        iamccs_audioextensionmath_3 = raw_call(wf, 'IAMCCS_AudioExtensionMath', '48',
-            widget_0=24,
-            widget_1=2,
-            widget_2=249,
-            widget_3=240,
-            widget_4=True,
-            widget_5=240,
-            widget_6=0,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-            cursor_frames_in=iamccs_audiotimelinegate_2.out(3),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audioextensionmath_3'] = iamccs_audioextensionmath_3.node.id
+    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
 
-        # Sampling
-        samplercustomadvanced = SamplerCustomAdvanced(
-            _id='26',
-            guider=cfgguider,
-            latent_image=ltxvconcatavlatent,
-            noise=randomnoise,
-            sampler=ksamplerselect,
-            sigmas=manualsigmas,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
-        )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced'] = samplercustomadvanced.node.id
+    iamccs_audioextender_2 = raw_call('IAMCCS_AudioExtender', '35',
+        widget_0=24,
+        widget_1=LEFT_CONTEXT_ONLY,
+        widget_10=249,
+        widget_11=240,
+        widget_12=0,
+        widget_13=240,
+        widget_14=240,
+        widget_15=240,
+        widget_2=0.5,
+        widget_3=0,
+        widget_4=USE_TIMELINE_CURSOR,
+        widget_5=SNAP_TO_VIDEO_DURATION,
+        widget_6=SOFT_CLAMP,
+        widget_7=1,
+        widget_8=10,
+        widget_9=240,
+        audio=audio,
+        effective_unique_frames=iamccs_audioextensionmath_2.out(3),
+        segment_start_frames=iamccs_audioextensionmath_2.out(1),
+    )
 
-        setlatentnoisemask_2 = SetLatentNoiseMask(
-            _id='37',
-            mask=solidmask,
-            samples=ltxvaudiovaeencode_2,
-        )
-        wf.metadata.setdefault('id_map', {})['setlatentnoisemask_2'] = setlatentnoisemask_2.node.id
+    iamccs_audiotimelinegate_2 = raw_call('IAMCCS_AudioTimelineGate', '44',
+        widget_0=1,
+        widget_1=True,
+        widget_2=1,
+        widget_3=True,
+        widget_4=0,
+        widget_5=0,
+        cursor_frames_out=iamccs_audioextensionmath_2.out(0),
+        effective_unique_frames=iamccs_audioextensionmath_2.out(3),
+        is_last_segment=iamccs_audioextensionmath_2.out(8),
+        remaining_frames_after=iamccs_audioextensionmath_2.out(7),
+    )
 
-        iamccs_audioextender_3 = raw_call(wf, 'IAMCCS_AudioExtender', '49',
-            widget_0=24,
-            widget_1=WIDGET_1,
-            widget_10=249,
-            widget_11=240,
-            widget_12=0,
-            widget_13=480,
-            widget_14=240,
-            widget_15=240,
-            widget_2=0.5,
-            widget_3=0,
-            widget_4=WIDGET_4,
-            widget_5=WIDGET_5,
-            widget_6=WIDGET_6,
-            widget_7=2,
-            widget_8=10,
-            widget_9=240,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-            effective_unique_frames=iamccs_audioextensionmath_3.out(3),
-            segment_start_frames=iamccs_audioextensionmath_3.out(1),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audioextender_3'] = iamccs_audioextender_3.node.id
+    ltxvconcatavlatent = LTXVConcatAVLatent(
+        audio_latent=setlatentnoisemask,
+        video_latent=ltxvimgtovideoinplace,
+    )
 
-        iamccs_audiotimelinegate_3 = raw_call(wf, 'IAMCCS_AudioTimelineGate', '58',
-            widget_0=1,
-            widget_1=True,
-            widget_2=1,
-            widget_3=True,
-            widget_4=0,
-            widget_5=0,
-            cursor_frames_out=iamccs_audioextensionmath_3.out(0),
-            effective_unique_frames=iamccs_audioextensionmath_3.out(3),
-            is_last_segment=iamccs_audioextensionmath_3.out(8),
-            remaining_frames_after=iamccs_audioextensionmath_3.out(7),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_audiotimelinegate_3'] = iamccs_audiotimelinegate_3.node.id
+    ltxvaudiovaeencode_2 = LTXVAudioVAEEncode(
+        audio=iamccs_audioextender_2.out(0),
+        audio_vae=vaeloaderkj_2,
+    )
 
-        ltxvseparateavlatent = LTXVSeparateAVLatent(
-            _id='27',
-            av_latent=samplercustomadvanced.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent'] = ltxvseparateavlatent.node.id
+    iamccs_audioextensionmath_3 = raw_call('IAMCCS_AudioExtensionMath', '48',
+        widget_0=24,
+        widget_1=2,
+        widget_2=249,
+        widget_3=240,
+        widget_4=True,
+        widget_5=240,
+        widget_6=0,
+        audio=audio,
+        cursor_frames_in=iamccs_audiotimelinegate_2.out(3),
+    )
 
-        ltxvaudiovaeencode_3 = LTXVAudioVAEEncode(
-            _id='50',
-            audio=iamccs_audioextender_3.out(0),
-            audio_vae=ltxvaudiovaeloader,
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvaudiovaeencode_3'] = ltxvaudiovaeencode_3.node.id
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=ltxvconcatavlatent,
+        noise=randomnoise,
+        sampler=ksamplerselect,
+        sigmas=manualsigmas,
+    )
 
-        setlatentnoisemask_3 = SetLatentNoiseMask(
-            _id='51',
-            mask=solidmask,
-            samples=ltxvaudiovaeencode_3,
-        )
-        wf.metadata.setdefault('id_map', {})['setlatentnoisemask_3'] = setlatentnoisemask_3.node.id
+    setlatentnoisemask_2 = SetLatentNoiseMask(
+        mask=solidmask,
+        samples=ltxvaudiovaeencode_2,
+    )
 
-        iamccs_vaedecodetodisk = raw_call(wf, 'IAMCCS_VAEDecodeToDisk', '60',
-            widget_0=WIDGET_0,
-            widget_1='seg0',
-            widget_10=True,
-            widget_2=WIDGET_2,
-            widget_3=95,
-            widget_4=True,
-            widget_5=WIDGET_5_2,
-            widget_6=512,
-            widget_7=64,
-            widget_8=True,
-            widget_9=WIDGET_9,
-            samples=ltxvseparateavlatent.out('VIDEO_LATENT'),
-            vae=vaeloaderkj,
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_vaedecodetodisk'] = iamccs_vaedecodetodisk.node.id
+    iamccs_audioextender_3 = raw_call('IAMCCS_AudioExtender', '49',
+        widget_0=24,
+        widget_1=LEFT_CONTEXT_ONLY,
+        widget_10=249,
+        widget_11=240,
+        widget_12=0,
+        widget_13=480,
+        widget_14=240,
+        widget_15=240,
+        widget_2=0.5,
+        widget_3=0,
+        widget_4=USE_TIMELINE_CURSOR,
+        widget_5=SNAP_TO_VIDEO_DURATION,
+        widget_6=SOFT_CLAMP,
+        widget_7=2,
+        widget_8=10,
+        widget_9=240,
+        audio=audio,
+        effective_unique_frames=iamccs_audioextensionmath_3.out(3),
+        segment_start_frames=iamccs_audioextensionmath_3.out(1),
+    )
 
-        iamccs_ltx2_extensionmodule_disk = raw_call(wf, 'IAMCCS_LTX2_ExtensionModule_Disk', '29',
-            widget_0=WIDGET_0,
-            widget_1='iamccs_extension_disk/30s_free_low_ram/seg0_extended',
-            widget_10=WIDGET_10,
-            widget_11=WIDGET_11,
-            widget_12=1,
-            widget_2='iamccs_extension_disk/30s_free_low_ram/seg0_start',
-            widget_3=9,
-            widget_4=WIDGET_4_2,
-            widget_5=WIDGET_5_3,
-            widget_6=True,
-            widget_7=WIDGET_7,
-            widget_8=WIDGET_8,
-            widget_9='none',
-            source_dir=iamccs_vaedecodetodisk.out(0),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_ltx2_extensionmodule_disk'] = iamccs_ltx2_extensionmodule_disk.node.id
+    iamccs_audiotimelinegate_3 = raw_call('IAMCCS_AudioTimelineGate', '58',
+        widget_0=1,
+        widget_1=True,
+        widget_2=1,
+        widget_3=True,
+        widget_4=0,
+        widget_5=0,
+        cursor_frames_out=iamccs_audioextensionmath_3.out(0),
+        effective_unique_frames=iamccs_audioextensionmath_3.out(3),
+        is_last_segment=iamccs_audioextensionmath_3.out(8),
+        remaining_frames_after=iamccs_audioextensionmath_3.out(7),
+    )
 
-        iamccs_startdirtovideolatent = raw_call(wf, 'IAMCCS_StartDirToVideoLatent', '33',
-            widget_0='iamccs_extension_disk/30s_free_low_ram/seg0_start',
-            widget_1=WIDGET_1_2,
-            widget_2=9,
-            widget_3=0,
-            widget_4=1,
-            widget_5=True,
-            widget_6=33,
-            latent=emptyltxvlatentvideo_2,
-            start_dir=iamccs_ltx2_extensionmodule_disk.out(1),
-            vae=vaeloaderkj,
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_startdirtovideolatent'] = iamccs_startdirtovideolatent.node.id
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
-        ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-            _id='38',
-            audio_latent=setlatentnoisemask_2,
-            video_latent=iamccs_startdirtovideolatent.out(0),
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent_2'] = ltxvconcatavlatent_2.node.id
+    ltxvaudiovaeencode_3 = LTXVAudioVAEEncode(
+        audio=iamccs_audioextender_3.out(0),
+        audio_vae=vaeloaderkj_2,
+    )
 
-        samplercustomadvanced_2 = SamplerCustomAdvanced(
-            _id='40',
-            guider=cfgguider,
-            latent_image=ltxvconcatavlatent_2,
-            noise=randomnoise_2,
-            sampler=ksamplerselect,
-            sigmas=manualsigmas,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
-        )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced_2'] = samplercustomadvanced_2.node.id
+    setlatentnoisemask_3 = SetLatentNoiseMask(
+        mask=solidmask,
+        samples=ltxvaudiovaeencode_3,
+    )
 
-        ltxvseparateavlatent_2 = LTXVSeparateAVLatent(
-            _id='41',
-            av_latent=samplercustomadvanced_2.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent_2'] = ltxvseparateavlatent_2.node.id
+    iamccs_vaedecodetodisk = raw_call('IAMCCS_VAEDecodeToDisk', '60',
+        widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
+        widget_1='seg0',
+        widget_10=True,
+        widget_2=JPG,
+        widget_3=95,
+        widget_4=True,
+        widget_5=AUTO,
+        widget_6=512,
+        widget_7=64,
+        widget_8=True,
+        widget_9=IAMCCS_SEAM_DEBUG,
+        samples=video_latent,
+        vae=vaeloaderkj,
+    )
 
-        iamccs_vaedecodetodisk_2 = raw_call(wf, 'IAMCCS_VAEDecodeToDisk', '61',
-            widget_0='iamccs_vae_frames/30s_free_low_ram/seg1',
-            widget_1='seg1',
-            widget_10=True,
-            widget_2=WIDGET_2,
-            widget_3=95,
-            widget_4=True,
-            widget_5=WIDGET_5_2,
-            widget_6=512,
-            widget_7=64,
-            widget_8=True,
-            widget_9=WIDGET_9,
-            samples=ltxvseparateavlatent_2.out('VIDEO_LATENT'),
-            vae=vaeloaderkj,
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_vaedecodetodisk_2'] = iamccs_vaedecodetodisk_2.node.id
+    iamccs_ltx2_extensionmodule_disk = raw_call('IAMCCS_LTX2_ExtensionModule_Disk', '29',
+        widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
+        widget_1='iamccs_extension_disk/30s_free_low_ram/seg0_extended',
+        widget_10=VIDEOCLIP_AUDIO_24FPS,
+        widget_11=VALUE,
+        widget_12=1,
+        widget_2='iamccs_extension_disk/30s_free_low_ram/seg0_start',
+        widget_3=9,
+        widget_4=SOURCE,
+        widget_5=CUT,
+        widget_6=True,
+        widget_7=NONE,
+        widget_8=NATIVE_WORKFLOW_SAFE,
+        widget_9='none',
+        source_dir=iamccs_vaedecodetodisk.out(0),
+    )
 
-        iamccs_ltx2_extensionmodule_disk_2 = raw_call(wf, 'IAMCCS_LTX2_ExtensionModule_Disk', '43',
-            widget_0=WIDGET_0,
-            widget_1='iamccs_extension_disk/30s_free_low_ram/seg1_extended',
-            widget_10=WIDGET_10,
-            widget_11=WIDGET_11,
-            widget_12=0,
-            widget_2='iamccs_extension_disk/30s_free_low_ram/seg1_start',
-            widget_3=9,
-            widget_4=WIDGET_4_2,
-            widget_5=WIDGET_5_3,
-            widget_6=True,
-            widget_7=WIDGET_7,
-            widget_8=WIDGET_8,
-            widget_9='none',
-            new_dir=iamccs_vaedecodetodisk_2.out(0),
-            source_dir=iamccs_ltx2_extensionmodule_disk.out(0),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_ltx2_extensionmodule_disk_2'] = iamccs_ltx2_extensionmodule_disk_2.node.id
+    iamccs_startdirtovideolatent = raw_call('IAMCCS_StartDirToVideoLatent', '33',
+        widget_0='iamccs_extension_disk/30s_free_low_ram/seg0_start',
+        widget_1=ALL,
+        widget_2=9,
+        widget_3=0,
+        widget_4=1,
+        widget_5=True,
+        widget_6=33,
+        latent=emptyltxvlatentvideo_2,
+        start_dir=iamccs_ltx2_extensionmodule_disk.out(1),
+        vae=vaeloaderkj,
+    )
 
-        iamccs_startdirtovideolatent_2 = raw_call(wf, 'IAMCCS_StartDirToVideoLatent', '47',
-            widget_0='iamccs_extension_disk/30s_free_low_ram/seg1_start',
-            widget_1=WIDGET_1_2,
-            widget_2=9,
-            widget_3=0,
-            widget_4=1,
-            widget_5=True,
-            widget_6=33,
-            latent=emptyltxvlatentvideo_3,
-            start_dir=iamccs_ltx2_extensionmodule_disk_2.out(1),
-            vae=vaeloaderkj,
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_startdirtovideolatent_2'] = iamccs_startdirtovideolatent_2.node.id
+    ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        audio_latent=setlatentnoisemask_2,
+        video_latent=iamccs_startdirtovideolatent.out(0),
+    )
 
-        ltxvconcatavlatent_3 = LTXVConcatAVLatent(
-            _id='52',
-            audio_latent=setlatentnoisemask_3,
-            video_latent=iamccs_startdirtovideolatent_2.out(0),
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvconcatavlatent_3'] = ltxvconcatavlatent_3.node.id
+    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=ltxvconcatavlatent_2,
+        noise=randomnoise_2,
+        sampler=ksamplerselect,
+        sigmas=manualsigmas,
+    )
 
-        samplercustomadvanced_3 = SamplerCustomAdvanced(
-            _id='54',
-            guider=cfgguider,
-            latent_image=ltxvconcatavlatent_3,
-            noise=randomnoise_3,
-            sampler=ksamplerselect,
-            sigmas=manualsigmas,
-            _outputs=('OUTPUT', 'DENOISED_OUTPUT'),
-        )
-        wf.metadata.setdefault('id_map', {})['samplercustomadvanced_3'] = samplercustomadvanced_3.node.id
+    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+        av_latent=output_sampler,
+    )
 
-        ltxvseparateavlatent_3 = LTXVSeparateAVLatent(
-            _id='55',
-            av_latent=samplercustomadvanced_3.out('OUTPUT'),
-            _outputs=('VIDEO_LATENT', 'AUDIO_LATENT'),
-        )
-        wf.metadata.setdefault('id_map', {})['ltxvseparateavlatent_3'] = ltxvseparateavlatent_3.node.id
+    iamccs_vaedecodetodisk_2 = raw_call('IAMCCS_VAEDecodeToDisk', '61',
+        widget_0='iamccs_vae_frames/30s_free_low_ram/seg1',
+        widget_1='seg1',
+        widget_10=True,
+        widget_2=JPG,
+        widget_3=95,
+        widget_4=True,
+        widget_5=AUTO,
+        widget_6=512,
+        widget_7=64,
+        widget_8=True,
+        widget_9=IAMCCS_SEAM_DEBUG,
+        samples=video_latent_ltxv,
+        vae=vaeloaderkj,
+    )
 
-        iamccs_vaedecodetodisk_3 = raw_call(wf, 'IAMCCS_VAEDecodeToDisk', '62',
-            widget_0='iamccs_vae_frames/30s_free_low_ram/seg2',
-            widget_1='seg2',
-            widget_10=True,
-            widget_2=WIDGET_2,
-            widget_3=95,
-            widget_4=True,
-            widget_5=WIDGET_5_2,
-            widget_6=512,
-            widget_7=64,
-            widget_8=True,
-            widget_9=WIDGET_9,
-            samples=ltxvseparateavlatent_3.out('VIDEO_LATENT'),
-            vae=vaeloaderkj,
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_vaedecodetodisk_3'] = iamccs_vaedecodetodisk_3.node.id
+    iamccs_ltx2_extensionmodule_disk_2 = raw_call('IAMCCS_LTX2_ExtensionModule_Disk', '43',
+        widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
+        widget_1='iamccs_extension_disk/30s_free_low_ram/seg1_extended',
+        widget_10=VIDEOCLIP_AUDIO_24FPS,
+        widget_11=VALUE,
+        widget_12=0,
+        widget_2='iamccs_extension_disk/30s_free_low_ram/seg1_start',
+        widget_3=9,
+        widget_4=SOURCE,
+        widget_5=CUT,
+        widget_6=True,
+        widget_7=NONE,
+        widget_8=NATIVE_WORKFLOW_SAFE,
+        widget_9='none',
+        new_dir=iamccs_vaedecodetodisk_2.out(0),
+        source_dir=iamccs_ltx2_extensionmodule_disk.out(0),
+    )
 
-        iamccs_ltx2_extensionmodule_disk_3 = raw_call(wf, 'IAMCCS_LTX2_ExtensionModule_Disk', '57',
-            widget_0=WIDGET_0,
-            widget_1='iamccs_extension_disk/30s_free_low_ram/final_extended',
-            widget_10=WIDGET_10,
-            widget_11=WIDGET_11,
-            widget_12=1,
-            widget_2='iamccs_extension_disk/30s_free_low_ram/final_start',
-            widget_3=9,
-            widget_4=WIDGET_4_2,
-            widget_5=WIDGET_5_3,
-            widget_6=True,
-            widget_7=WIDGET_7,
-            widget_8=WIDGET_8,
-            widget_9='none',
-            new_dir=iamccs_vaedecodetodisk_3.out(0),
-            source_dir=iamccs_ltx2_extensionmodule_disk_2.out(0),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_ltx2_extensionmodule_disk_3'] = iamccs_ltx2_extensionmodule_disk_3.node.id
+    iamccs_startdirtovideolatent_2 = raw_call('IAMCCS_StartDirToVideoLatent', '47',
+        widget_0='iamccs_extension_disk/30s_free_low_ram/seg1_start',
+        widget_1=ALL,
+        widget_2=9,
+        widget_3=0,
+        widget_4=1,
+        widget_5=True,
+        widget_6=33,
+        latent=emptyltxvlatentvideo_3,
+        start_dir=iamccs_ltx2_extensionmodule_disk_2.out(1),
+        vae=vaeloaderkj,
+    )
 
-        iamccs_videocombinefromdir = raw_call(wf, 'IAMCCS_VideoCombineFromDir', '59',
-            widget_0='iamccs_extension_disk/30s_free_low_ram/final_extended',
-            widget_1=24,
-            widget_2='IAMCCS/LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM',
-            widget_3=19,
-            widget_4='yuv420p',
-            widget_5=True,
-            audio=vhs_loadaudioupload.out('AUDIO'),
-            frames_dir=iamccs_ltx2_extensionmodule_disk_3.out(0),
-        )
-        wf.metadata.setdefault('id_map', {})['iamccs_videocombinefromdir'] = iamccs_videocombinefromdir.node.id
+    ltxvconcatavlatent_3 = LTXVConcatAVLatent(
+        audio_latent=setlatentnoisemask_3,
+        video_latent=iamccs_startdirtovideolatent_2.out(0),
+    )
 
-        return wf.finalize(PUBLIC_INPUTS)
+    output_sampler_2, denoised_output_sampler_2 = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=ltxvconcatavlatent_3,
+        noise=randomnoise_3,
+        sampler=ksamplerselect,
+        sigmas=manualsigmas,
+    )
+
+    video_latent_ltxv_2, audio_latent_ltxv_2 = LTXVSeparateAVLatent(
+        av_latent=output_sampler_2,
+    )
+
+    iamccs_vaedecodetodisk_3 = raw_call('IAMCCS_VAEDecodeToDisk', '62',
+        widget_0='iamccs_vae_frames/30s_free_low_ram/seg2',
+        widget_1='seg2',
+        widget_10=True,
+        widget_2=JPG,
+        widget_3=95,
+        widget_4=True,
+        widget_5=AUTO,
+        widget_6=512,
+        widget_7=64,
+        widget_8=True,
+        widget_9=IAMCCS_SEAM_DEBUG,
+        samples=video_latent_ltxv_2,
+        vae=vaeloaderkj,
+    )
+
+    iamccs_ltx2_extensionmodule_disk_3 = raw_call('IAMCCS_LTX2_ExtensionModule_Disk', '57',
+        widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
+        widget_1='iamccs_extension_disk/30s_free_low_ram/final_extended',
+        widget_10=VIDEOCLIP_AUDIO_24FPS,
+        widget_11=VALUE,
+        widget_12=1,
+        widget_2='iamccs_extension_disk/30s_free_low_ram/final_start',
+        widget_3=9,
+        widget_4=SOURCE,
+        widget_5=CUT,
+        widget_6=True,
+        widget_7=NONE,
+        widget_8=NATIVE_WORKFLOW_SAFE,
+        widget_9='none',
+        new_dir=iamccs_vaedecodetodisk_3.out(0),
+        source_dir=iamccs_ltx2_extensionmodule_disk_2.out(0),
+    )
+
+    iamccs_videocombinefromdir = raw_call('IAMCCS_VideoCombineFromDir', '59',
+        widget_0='iamccs_extension_disk/30s_free_low_ram/final_extended',
+        widget_1=24,
+        widget_2='IAMCCS/LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM',
+        widget_3=19,
+        widget_4='yuv420p',
+        widget_5=True,
+        audio=audio,
+        frames_dir=iamccs_ltx2_extensionmodule_disk_3.out(0),
+    )
+
+    return wf.finalize(PUBLIC_INPUT_METADATA)
 

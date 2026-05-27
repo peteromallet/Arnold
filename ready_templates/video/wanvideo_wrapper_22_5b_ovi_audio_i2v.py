@@ -1,176 +1,176 @@
-# vibecomfy: generated - converted by tools/convert_ready_templates.py
-# Edits will be overwritten on regeneration. Put the manual opt-out
-# marker on the first line if hand-editing is required.
-"""Auto-generated ready_template - see tools/convert_ready_templates.py."""
+# vibecomfy: generated
+# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>
+"""Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, ref
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import LoadImage, PreviewAudio
 from vibecomfy.nodes.kjnodes import ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import OviMMAudioVAELoader, WanVideoBlockSwap, WanVideoDecode, WanVideoDecodeOviAudio, WanVideoEasyCache, WanVideoEmptyEmbeds, WanVideoEmptyMMAudioLatents, WanVideoEncode, WanVideoExtraModelSelect, WanVideoModelLoader, WanVideoOviCFG, WanVideoSLG, WanVideoSampler, WanVideoSetBlockSwap, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
-DEFAULT_FRAMES = 5
-DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
-DEFAULT_NEGATIVE_2 = 'robotic, muffled, echo, distorted'
+BF16 = 'bf16'
+DEFAULT_FRAMES = 121
+DEFAULT_FRAMES_2 = 157
+DEFAULT_NEGATIVE = 'robotic, muffled, echo, distorted'
+DEFAULT_NEGATIVE_2 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = 'A tired old man is very sarcastically saying: <S>Oh great, they are making me talk now too.<E>. <AUDCAP>Clear older male voices speaking dialogue, subtle outdoor ambience.<ENDAUDCAP>'
 DEFAULT_SEED = 42
+DISABLED = 'disabled'
+EXTRA_MODEL_NAME = 'WanVideo/Ovi/Wan_2_1_Ovi_audio_model_bf16.safetensors'
+GPU = 'gpu'
 GUIDE_STRENGTH = 4
-MODEL_NAME = 'WanVideo/Ovi/Wan_2_1_Ovi_audio_model_bf16.safetensors'
-MODEL_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
+MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
+MODEL_NAME_2 = 'WanVideo/Ovi/Wan_2_1_Ovi_video_model_bf16.safetensors'
 MODEL_NAME_3 = 'Wan2_2_VAE_bf16.safetensors'
-MODEL_NAME_4 = 'mmaudio_vae_16k_fp32.safetensors'
-MODEL_NAME_5 = 'mmaudio_vocoder_bigvgan_best_netG_fp32.safetensors'
-MODEL_NAME_6 = 'WanVideo/Ovi/Wan_2_1_Ovi_video_model_bf16.safetensors'
+VAE_NAME = 'mmaudio_vae_16k_fp32.safetensors'
+VOCODER_NAME = 'mmaudio_vocoder_bigvgan_best_netG_fp32.safetensors'
 
 
-PUBLIC_INPUTS = {
-    'model': InputSpec(node=ref('text_embeds'), field='model_name', default=MODEL_NAME_2),
-    'seed': InputSpec(node=ref('samples'), field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node=ref('image'), field='image', default='oldman_upscaled.png'),
-    'input_image': InputSpec(node=ref('image'), field='image', default='oldman_upscaled.png'),
-    'width': InputSpec(node=ref('image_image'), field='width', default=256),
-    'height': InputSpec(node=ref('image_image'), field='height', default=256),
+PUBLIC_INPUT_METADATA = {
+    'seed': InputSpec(node='80', field='seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node='109', field='image', default='oldman_upscaled.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='110', field='width', default=704, type='INT'),
+    'height': InputSpec(node='110', field='height', default=704, type='INT'),
+    'frames': InputSpec(node='125', field='length', default=DEFAULT_FRAMES_2, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='audio_image_to_video',
-    inputs=PUBLIC_INPUTS,
-    requirements={'models': ['Wan2_2_VAE_bf16.safetensors', 'umt5-xxl-enc-bf16.safetensors'], 'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']},
-    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEasyCache', 'WanVideoEmptyEmbeds', 'WanVideoEncode', 'WanVideoModelLoader', 'WanVideoSLG', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoTextEncodeCached', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
-    smoke_resolution='256x256x5_frames',
-    approach='Ovi image-to-video with audio',
-    provenance={'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json'},
+    capability='unknown',
+    inputs=PUBLIC_INPUT_METADATA,
+    requirements={'models': ['Wan2_2_VAE_bf16.safetensors', 'umt5-xxl-enc-bf16.safetensors']},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEasyCache', 'WanVideoEmptyEmbeds', 'WanVideoEncode', 'WanVideoModelLoader', 'WanVideoSLG', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoTextEncodeCached', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json', 'source_id': 'wan22_5b_ovi_audio_i2v', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_5b_ovi_audio_i2v.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_22_5b_ovi_audio_i2v'},
 )
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        wanvideoextramodelselect = WanVideoExtraModelSelect(widget_0=MODEL_NAME)
+    wanvideoextramodelselect = WanVideoExtraModelSelect(extra_model=EXTRA_MODEL_NAME)
 
-        wanvideoblockswap = WanVideoBlockSwap(
-            blocks_to_swap=15,
-            use_non_blocking=True,
-            prefetch_blocks=1,
-        )
+    wanvideoblockswap = WanVideoBlockSwap(
+        blocks_to_swap=15,
+        use_non_blocking=True,
+        prefetch_blocks=1,
+    )
 
-        text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-            model_name=MODEL_NAME_2,
-            positive_prompt=DEFAULT_PROMPT,
-            negative_prompt=DEFAULT_NEGATIVE,
-            use_disk_cache=False,
-        )
+    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+        model_name=MODEL_NAME,
+        positive_prompt=DEFAULT_PROMPT,
+        negative_prompt=DEFAULT_NEGATIVE_2,
+        use_disk_cache=False,
+    )
 
-        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
 
-        ovimmaudiovaeloader = OviMMAudioVAELoader(
-            widget_0=MODEL_NAME_4,
-            widget_1=MODEL_NAME_5,
-            widget_2='fp32',
-        )
+    ovimmaudiovaeloader = OviMMAudioVAELoader(
+        precision='fp32',
+        vae=VAE_NAME,
+        vocoder=VOCODER_NAME,
+    )
 
-        wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-        wanvideoslg = WanVideoSLG(widget_0='11', widget_1=0, widget_2=1)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+    wanvideoslg = WanVideoSLG(blocks='11', start_percent=0)
 
-        text_embeds_wan, negative_text_embeds_wan, positive_prompt_wan = WanVideoTextEncodeCached(
-            model_name=MODEL_NAME_2,
-            negative_prompt=DEFAULT_NEGATIVE_2,
-        )
+    text_embeds_wan, negative_text_embeds_wan, positive_prompt_wan = WanVideoTextEncodeCached(
+        model_name=MODEL_NAME,
+        negative_prompt=DEFAULT_NEGATIVE,
+    )
 
-        # Inputs
-        image, mask = LoadImage(image='oldman_upscaled.png')
+    # Inputs
+    image, mask = LoadImage(image='oldman_upscaled.png', unused_widget_1='image')
+    wanvideoeasycache = WanVideoEasyCache()
+    wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents()
 
-        wanvideoeasycache = WanVideoEasyCache(
-            widget_0=0.015,
-            widget_1=10,
-            widget_2=-1,
-            widget_3='offload_device',
-        )
+    wanvideomodelloader = WanVideoModelLoader(
+        model=MODEL_NAME_2,
+        attention_mode='sageattn',
+        compile_args=wanvideotorchcompilesettings,
+        extra_model=wanvideoextramodelselect,
+    )
 
-        wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents(widget_0=157)
+    wanvideoovicfg = WanVideoOviCFG(
+        widget_0=3,
+        original_text_embeds=text_embeds,
+        ovi_negative_text_embeds=negative_text_embeds_wan,
+    )
 
-        wanvideomodelloader = WanVideoModelLoader(
-            model=MODEL_NAME_6,
-            compile_args=wanvideotorchcompilesettings,
-            extra_model=wanvideoextramodelselect,
-        )
+    image_image, width, height, mask_image = ImageResizeKJv2(
+        width=704,
+        height=704,
+        upscale_method='lanczos',
+        keep_proportion='crop',
+        divisible_by=32,
+        device='cpu',
+        image=image,
+    )
 
-        wanvideoovicfg = WanVideoOviCFG(
-            widget_0=3,
-            original_text_embeds=text_embeds,
-            ovi_negative_text_embeds=negative_text_embeds_wan,
-        )
+    wanvideosetblockswap = WanVideoSetBlockSwap(
+        block_swap_args=wanvideoblockswap,
+        model=wanvideomodelloader,
+    )
 
-        image_image, width, height, mask_image = ImageResizeKJv2(
-            width=256,
-            height=256,
-            upscale_method='lanczos',
-            keep_proportion='crop',
-            divisible_by=32,
-            device='cpu',
-            image=image,
-        )
+    wanvideoencode = WanVideoEncode(
+        enable_vae_tiling=272,
+        tile_x=144,
+        tile_y=128,
+        tile_stride_x=0,
+        tile_stride_y=1,
+        unused_widget_0=False,
+        unused_widget_1=272,
+        image=image_image,
+        vae=wanvideovaeloader,
+    )
 
-        wanvideosetblockswap = WanVideoSetBlockSwap(
-            block_swap_args=wanvideoblockswap,
-            model=wanvideomodelloader,
-        )
+    wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        num_frames=DEFAULT_FRAMES,
+        width=width,
+        height=height,
+        extra_latents=wanvideoencode,
+    )
 
-        wanvideoencode = WanVideoEncode(
-            widget_0=False,
-            widget_1=272,
-            widget_2=272,
-            widget_3=144,
-            widget_4=128,
-            widget_5=0,
-            widget_6=1,
-            image=image_image,
-            vae=wanvideovaeloader,
-        )
+    samples, denoised_samples = WanVideoSampler(
+        steps=50,
+        cfg=GUIDE_STRENGTH,
+        seed=DEFAULT_SEED,
+        rope_function='default',
+        unused_widget_4='fixed',
+        cache_args=wanvideoeasycache,
+        image_embeds=wanvideoemptyembeds,
+        model=wanvideosetblockswap,
+        samples=wanvideoemptymmaudiolatents,
+        slg_args=wanvideoslg,
+        text_embeds=wanvideoovicfg,
+    )
 
-        wanvideoemptyembeds = WanVideoEmptyEmbeds(
-            num_frames=DEFAULT_FRAMES,
-            widget_0=256,
-            widget_1=256,
-            widget_2=5,
-            extra_latents=wanvideoencode,
-            height=height,
-            width=width,
-        )
+    wanvideodecode = WanVideoDecode(
+        normalization='default',
+        samples=samples,
+        vae=wanvideovaeloader,
+    )
 
-        samples, denoised_samples = WanVideoSampler(
-            steps=1,
-            cfg=GUIDE_STRENGTH,
-            seed=DEFAULT_SEED,
-            rope_function='default',
-            cache_args=wanvideoeasycache,
-            image_embeds=wanvideoemptyembeds,
-            model=wanvideosetblockswap,
-            samples=wanvideoemptymmaudiolatents,
-            slg_args=wanvideoslg,
-            text_embeds=wanvideoovicfg,
-        )
+    wanvideodecodeoviaudio = WanVideoDecodeOviAudio(
+        mmaudio_vae=ovimmaudiovaeloader,
+        samples=samples,
+    )
 
-        wanvideodecode = WanVideoDecode(
-            normalization='default',
-            samples=samples,
-            vae=wanvideovaeloader,
-        )
+    # Outputs
+    vhs_videocombine = VHS_VideoCombine(
+        frame_rate=24,
+        filename_prefix='WanVideo_Ovi',
+        format='video/h264-mp4',
+        crf=20,
+        pix_fmt='yuv420p',
+        save_metadata=True,
+        trim_to_audio=False,
+        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideo_Ovi_00027-audio.webm', 'subfolder': '', 'type': 'temp', 'format': 'video/webm', 'frame_rate': 24, 'workflow': 'WanVideo_Ovi_00027.png', 'fullpath': '/home/kijai/AI/ComfyUI/temp/WanVideo_Ovi_00027-audio.webm'}},
+        audio=wanvideodecodeoviaudio,
+        images=wanvideodecode,
+    )
 
-        wanvideodecodeoviaudio = WanVideoDecodeOviAudio(
-            mmaudio_vae=ovimmaudiovaeloader,
-            samples=samples,
-        )
+    previewaudio = PreviewAudio(audio=wanvideodecodeoviaudio)
 
-        # Outputs
-        vhs_videocombine = VHS_VideoCombine(
-            audio=wanvideodecodeoviaudio,
-            images=wanvideodecode,
-        )
-
-        previewaudio = PreviewAudio(audio=wanvideodecodeoviaudio)
-
-        return wf.finalize(PUBLIC_INPUTS, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo_Ovi')
 
