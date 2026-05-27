@@ -43,7 +43,7 @@ def test_idle_timeout_default_env_override_and_floor(monkeypatch):
     assert (
         _worker_stream_idle_timeout_seconds()
         == DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS
-        == 900.0
+        == 1800.0
     )
 
     monkeypatch.setenv("SHANNON_STREAM_READ_TIMEOUT", "200")
