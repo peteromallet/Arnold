@@ -32,10 +32,6 @@ Design decision (per plan SD1 + gate sign-off)
 from __future__ import annotations
 
 import inspect
-import sys
-from typing import Callable
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -220,6 +216,47 @@ EVALUATION_SYMBOLS = [
     # (already covered: validate_plan_structure)
 ]
 
+EXECUTE_CORE_SYMBOLS = [
+    # Direct imports from megaplan.execute.core
+    # test_creative_mode_smoke.py, test_directors_notes_idempotency.py
+    "_build_aggregate_execution_payload",
+    # test_execute_merge_creative.py
+    "_merge_batch_results",
+    # Attribute access (megaplan.execute.core.X) and monkeypatch targets
+    # test_execute.py — attribute access
+    "BatchResult",
+    "handle_execute_auto_loop",
+    "handle_execute_one_batch",
+    "_has_code_task_advisory_evidence",
+    # test_execute.py — monkeypatch targets
+    "_capture_git_status_snapshot",
+    "_capture_git_status_snapshot_recursive",
+    "_compute_execute_scope_drift",
+    "_resolve_tier_spec",
+    "_run_and_merge_batch",
+    "load_config",
+    # test_init_plan.py — attribute access
+    "build_monitor_hint",
+    # test_scope_drift_doc_mode.py — attribute access (via execute_core alias)
+    # (_compute_execute_scope_drift already listed above)
+    # test_review.py — source inspection (via execution_module alias)
+    # (_merge_batch_results already listed above)
+    # test_receipts_drift_blocking.py — monkeypatch target
+    # (_capture_git_status_snapshot already listed above)
+]
+
+EXECUTE_SYMBOLS = [
+    # From megaplan.execute.__all__ — explicit public API
+    "BatchResult",
+    "build_blocking_reasons",
+    "build_monitor_hint",
+    "handle_execute_auto_loop",
+    "handle_execute_one_batch",
+    "worker_module",
+    "run_quality_checks",
+    "_validate_and_merge_batch",
+]
+
 
 # ====================================================================
 # Tests
@@ -328,3 +365,19 @@ class TestEvaluationImportSurface:
         _assert_resolves(
             "megaplan.orchestration.evaluation", EVALUATION_SYMBOLS
         )
+
+
+class TestExecuteCoreImportSurface:
+    """De-facto surface: every symbol that existing tests import from or
+    monkeypatch on ``megaplan.execute.core`` must resolve."""
+
+    def test_surveyed_symbols_resolve(self) -> None:
+        _assert_resolves("megaplan.execute.core", EXECUTE_CORE_SYMBOLS)
+
+
+class TestExecuteImportSurface:
+    """Explicit surface: every ``megaplan.execute.__all__`` symbol must
+    resolve."""
+
+    def test_all_symbols_resolve(self) -> None:
+        _assert_resolves("megaplan.execute", EXECUTE_SYMBOLS)

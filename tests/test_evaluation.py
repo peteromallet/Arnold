@@ -1204,3 +1204,72 @@ def test_build_gate_signals_emits_scope_creep_and_high_iteration_warnings(tmp_pa
     result = build_gate_signals(plan_dir, state)
     assert any("Scope creep detected" in warning for warning in result["warnings"])
     assert any("hard iteration limit reached" in warning for warning in result["warnings"])
+
+
+def test_build_gate_signals_fixture_shape_is_stable(tmp_path: Path) -> None:
+    """Characterization: the returned GateSignals dict must contain the
+    expected top-level keys with stable sub-structure.  This is the single
+    fixture-based assertion that future refactors must keep passing."""
+    flags = [
+        {
+            "id": "FLAG-001",
+            "concern": "Missing verification command",
+            "category": "correctness",
+            "severity_hint": "likely-significant",
+            "evidence": "No test listed",
+            "status": "open",
+            "severity": "significant",
+            "verified": False,
+            "raised_in": "critique_v2.json",
+        }
+    ]
+    plan_dir, state = _scaffold(tmp_path, iteration=2, flags=flags)
+    result = build_gate_signals(plan_dir, state)
+
+    # Top-level keys
+    assert set(result.keys()) == {"robustness", "signals", "warnings"}
+    assert result["robustness"] == "full"  # standard → full canonical
+    assert isinstance(result["warnings"], list)
+
+    # Signals sub-keys
+    signals = result["signals"]
+    expected_signal_keys = {
+        "iteration",
+        "idea",
+        "significant_flags",
+        "unresolved_flags",
+        "resolved_flags",
+        "weighted_score",
+        "weighted_history",
+        "plan_delta_from_previous",
+        "recurring_critiques",
+        "scope_creep_flags",
+        "loop_summary",
+        "debt_overlaps",
+        "escalated_debt_subsystems",
+    }
+    assert set(signals.keys()) == expected_signal_keys, (
+        f"Unexpected signal keys: {set(signals.keys()) - expected_signal_keys}"
+    )
+
+    # Scalar signal fields
+    assert signals["iteration"] == 2
+    assert signals["idea"] == "ship it"
+    assert signals["significant_flags"] == 1
+    assert isinstance(signals["weighted_score"], float)
+    assert isinstance(signals["weighted_history"], list)
+    assert signals["plan_delta_from_previous"] is not None
+    assert isinstance(signals["recurring_critiques"], list)
+    assert isinstance(signals["scope_creep_flags"], list)
+
+    # List-shaped signal fields
+    assert isinstance(signals["unresolved_flags"], list)
+    assert signals["unresolved_flags"]  # FLAG-001 should be unresolved
+    assert signals["unresolved_flags"][0]["id"] == "FLAG-001"
+    assert isinstance(signals["resolved_flags"], list)
+    assert isinstance(signals["debt_overlaps"], list)
+    assert isinstance(signals["escalated_debt_subsystems"], list)
+
+    # loop_summary is a human-readable string
+    assert isinstance(signals["loop_summary"], str)
+    assert "Iteration 2" in signals["loop_summary"]

@@ -4093,3 +4093,136 @@ def test_one_batch_active_step_reflects_tier_selected_model(
         f"Expected set_active_step to be called with tier-selected model "
         f"'model-tier-3', got calls: {active_step_calls}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic handle_execute_auto_loop characterization
+# ---------------------------------------------------------------------------
+
+
+def test_handle_execute_auto_loop_deterministic_characterization(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Characterization: handle_execute_auto_loop must return a well-shaped
+    StepResponse when a single pending task completes successfully.
+
+    Stubs git snapshots and _run_and_merge_batch so the test is fully
+    deterministic — no external workers, no git commands.  The assertions
+    verify stable response keys, state transition, and artifact presence
+    without overfitting implementation details like exact token counts or
+    auto-attribution records."""
+    # 1. Set up a finalized plan with exactly one pending task.
+    make_args = plan_fixture.make_args
+    megaplan.handle_plan(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_override(
+        plan_fixture.root,
+        make_args(
+            plan=plan_fixture.plan_name,
+            override_action="force-proceed",
+            reason="test",
+        ),
+    )
+    megaplan.handle_finalize(plan_fixture.root, make_args(plan=plan_fixture.plan_name))
+
+    finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
+    finalize_data["tasks"] = [
+        {
+            "id": "T1",
+            "description": "Write a minimal module.",
+            "depends_on": [],
+            "status": "pending",
+            "executor_notes": "",
+            "files_changed": [],
+            "commands_run": [],
+            "evidence_files": [],
+            "reviewer_verdict": "",
+        }
+    ]
+    finalize_data["sense_checks"] = []
+    (plan_fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(finalize_data, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # 2. Stub git snapshots and the batch runner.
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_capture_git_status_snapshot",
+        lambda *_: ({}, None),
+    )
+
+    def _fake_run_and_merge(**kwargs):
+        # Update finalize.json so the post-loop tracking sees completed tasks.
+        fd = read_json(kwargs["plan_dir"] / "finalize.json")
+        for tid in kwargs["batch_task_ids"]:
+            for task in fd.get("tasks", []):
+                if task.get("id") == tid:
+                    task["status"] = "done"
+                    task["executor_notes"] = f"Completed {tid}."
+                    task["files_changed"] = [f"batch{kwargs['batch_number']}.py"]
+        (kwargs["plan_dir"] / "finalize.json").write_text(
+            json.dumps(fd, indent=2) + "\n", encoding="utf-8"
+        )
+        return _make_fake_batch_result(
+            batch_task_ids=kwargs["batch_task_ids"],
+            batch_sense_check_ids=kwargs["batch_sense_check_ids"],
+            batch_number=kwargs["batch_number"],
+            agent=kwargs["agent"],
+            mode=kwargs["mode"],
+            refreshed=kwargs.get("refreshed", False),
+            session_id="char-session",
+        )
+
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_run_and_merge_batch",
+        _fake_run_and_merge,
+    )
+
+    # 3. Invoke handle_execute_auto_loop.
+    state = load_state(plan_fixture.plan_dir)
+    response = megaplan.execute.core.handle_execute_auto_loop(
+        root=plan_fixture.root,
+        plan_dir=plan_fixture.plan_dir,
+        state=state,
+        args=plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            confirm_destructive=True,
+            user_approved=True,
+        ),
+        auto_approve=False,
+        agent="codex",
+        mode="persistent",
+        refreshed=False,
+    )
+
+    # 4. Assert deterministic response shape.
+    assert response["success"] is True
+    assert response["step"] == "execute"
+    assert response["next_step"] == "review"
+    assert response["state"] == megaplan.STATE_EXECUTED
+    assert response["auto_approve"] is False
+    assert "_phase_outcome" in response
+    assert response["_phase_outcome"] == "success"
+
+    # Summary contains the worker output.
+    assert "Batch 1 complete" in str(response["summary"])
+
+    # Artifacts are written.
+    assert isinstance(response["artifacts"], list)
+    for artifact_name in ("execution.json", "execution_audit.json", "finalize.json", "final.md"):
+        assert artifact_name in response["artifacts"], (
+            f"Missing artifact: {artifact_name}"
+        )
+
+    # No warnings on success.
+    assert response["warnings"] == []
+
+    # Monitor hint is present.
+    assert isinstance(response["monitor_hint"], str)
+    assert response["monitor_hint"] != ""
+
+    # Files_changed and deviations are lists.
+    assert isinstance(response["files_changed"], list)
+    assert isinstance(response["deviations"], list)
