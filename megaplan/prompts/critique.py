@@ -159,13 +159,57 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
         elif isinstance(decisions_data, dict):
             settled_decisions = decisions_data.get("decisions", [])
 
+    debt_block = _planning_debt_block(plan_dir, root)
+
+    # ----- prompt-size guard: keep the assembled context under ~150K tokens -----
+    # Estimate tokens ≈ chars / 4.  The debt block and the full plan text are
+    # the dominant contributors; a 1.6M-token prompt silently overflows the model
+    # context and produces an empty response (see hermes retry-on-empty guard).
+    _TOKEN_BUDGET = 150_000
+    _CHAR_BUDGET = _TOKEN_BUDGET * 4  # ~600K chars
+
+    # Rough size check on the fields that end up in the assembled prompt.
+    # The prompt template adds ~5K chars of fixed text, so leave headroom.
+    _plan_len = len(latest_plan)
+    _debt_len = len(debt_block)
+    _flags_len = len(json_dump(unresolved).strip())
+    _meta_len = len(json_dump(latest_meta).strip())
+    _warn_len = len(json_dump(structure_warnings).strip())
+    _total_est = _plan_len + _debt_len + _flags_len + _meta_len + _warn_len
+
+    if _total_est > _CHAR_BUDGET:
+        overage = _total_est - _CHAR_BUDGET
+        # 1. Trim the debt block first (it is the least essential for critique)
+        if _debt_len > 0 and overage > 0:
+            trim = min(_debt_len, overage)
+            debt_block = debt_block[:max(1, _debt_len - trim)] + (
+                "\n\n[TRUNCATED: debt registry trimmed by "
+                + str(trim) + " chars to stay within model context budget]"
+            )
+            overage -= trim
+
+        # 2. If still over budget, trim the plan text (keep the beginning
+        #    and the end — the middle is typically per-step detail)
+        if overage > 0:
+            keep_head = max(1, (_plan_len - overage) // 2)
+            keep_tail = max(1, _plan_len - overage - keep_head)
+            if keep_head + keep_tail < _plan_len:
+                truncated_middle = _plan_len - keep_head - keep_tail
+                latest_plan = (
+                    latest_plan[:keep_head]
+                    + "\n\n[... TRUNCATED " + str(truncated_middle)
+                    + " chars of plan body to stay within model context budget ...]\n\n"
+                    + latest_plan[-keep_tail:]
+                )
+                overage = 0
+
     return {
         "project_dir": project_dir,
         "latest_plan": latest_plan,
         "latest_meta": latest_meta,
         "structure_warnings": structure_warnings,
         "unresolved": unresolved,
-        "debt_block": _planning_debt_block(plan_dir, root),
+        "debt_block": debt_block,
         "robustness": configured_robustness(state),
         "settled_tiebreaker_decisions": settled_decisions,
     }

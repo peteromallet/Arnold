@@ -31,6 +31,7 @@ from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
     _activity_callback_for_state,
+    _check_mock_safe,
     _extract_claude_usage,
     _external_worker_env,
     _normalize_worker_payload,
@@ -883,6 +884,7 @@ def run_shannon_step(
     """
     # ── (a) mock worker shortcut ────────────────────────────────────────
     if os.getenv(MOCK_ENV_VAR) == "1":
+        _check_mock_safe()
         return mock_worker_output(
             step, state, plan_dir,
             prompt_override=prompt_override,

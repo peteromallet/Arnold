@@ -17,6 +17,7 @@ from megaplan.types import CliError, MOCK_ENV_VAR, PlanState
 from megaplan.workers._impl import (
     STEP_SCHEMA_FILENAMES,
     WorkerResult,
+    _check_mock_safe,
     mock_worker_output,
     session_key_for,
     validate_payload,
@@ -713,6 +714,7 @@ def run_hermes_step(
     embed the JSON schema). The final response is parsed and validated.
     """
     if os.getenv(MOCK_ENV_VAR) == "1":
+        _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override)
     fresh = fresh or step != "execute"
 
@@ -911,104 +913,136 @@ def run_hermes_step(
         # The streaming response is reassembled inside run_agent into the
         # same shape non-streaming returns, so the rest of megaplan is
         # unchanged.
-        run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens, plan_dir=plan_dir)
-        tracker = run_kwargs.get("stream_callback")
-        is_streaming = isinstance(tracker, _StreamTracker)
 
-        # Wire the reasoning_callback to the tracker so reasoning_emitted_so_far
-        # advances on every reasoning_content delta. Without this, a reasoning
-        # model (DeepSeek-V4-Pro, DeepSeek-R1) that streams reasoning before
-        # producing its first content delta is invisible to the heartbeat:
-        # tokens_emitted_so_far stays at 0 while chunks pour in (the exact
-        # failure mode that masked the 21-minute wedge on 2026-05-24).
-        if is_streaming and tracker is not None:
-            current_agent.reasoning_callback = tracker.on_reasoning
-            # Surface silent in-agent retries (TimeoutError / APITimeoutError
-            # that the retry loop catches and reissues without emitting any
-            # event) as llm_call_error so observability sees the wedge fast.
-            current_agent._megaplan_retry_error_callback = (
-                lambda info: _emit_llm_error(
-                    plan_dir,
-                    step,
-                    (
-                        f"{info.get('error_type', 'APIError')}: "
-                        f"{info.get('error_message', '')} "
-                        f"(retry {info.get('retry_count', 0)}/"
-                        f"{info.get('max_retries', 0)}, "
-                        f"streaming_timeout="
-                        f"{info.get('is_streaming_timeout', False)})"
-                    ),
-                    retry_after_s=None,
-                )
-            )
+        _MAX_EMPTY_RETRIES = 3
+        for _empty_attempt in range(1, _MAX_EMPTY_RETRIES + 1):
+            run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens, plan_dir=plan_dir)
+            tracker = run_kwargs.get("stream_callback")
+            is_streaming = isinstance(tracker, _StreamTracker)
 
-        # Emit llm_call_start
-        prompt_text = rendered_prompt or prompt_override or ""
-        prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
-        _emit_llm_start(plan_dir, step, resolved_model, prompt_hash, is_streaming)
-
-        # Heartbeat thread for streaming calls
-        heartbeat_stop = threading.Event()
-        if is_streaming and tracker is not None:
-            _start_heartbeat(plan_dir, step, tracker, heartbeat_stop, run_id=run_id)
-
-        try:
-            current_result = current_agent.run_conversation(
-                user_message=prompt,
-                conversation_history=conversation_history,
-                **run_kwargs,
-            )
-        finally:
-            if is_streaming:
-                heartbeat_stop.set()
-            # Clear the retry-error hook so it doesn't leak across attempts.
+            # Wire the reasoning_callback to the tracker so reasoning_emitted_so_far
+            # advances on every reasoning_content delta. Without this, a reasoning
+            # model (DeepSeek-V4-Pro, DeepSeek-R1) that streams reasoning before
+            # producing its first content delta is invisible to the heartbeat:
+            # tokens_emitted_so_far stays at 0 while chunks pour in (the exact
+            # failure mode that masked the 21-minute wedge on 2026-05-24).
             if is_streaming and tracker is not None:
-                try:
-                    current_agent._megaplan_retry_error_callback = None
-                except Exception:
-                    pass
+                current_agent.reasoning_callback = tracker.on_reasoning
+                # Surface silent in-agent retries (TimeoutError / APITimeoutError
+                # that the retry loop catches and reissues without emitting any
+                # event) as llm_call_error so observability sees the wedge fast.
+                current_agent._megaplan_retry_error_callback = (
+                    lambda info: _emit_llm_error(
+                        plan_dir,
+                        step,
+                        (
+                            f"{info.get('error_type', 'APIError')}: "
+                            f"{info.get('error_message', '')} "
+                            f"(retry {info.get('retry_count', 0)}/"
+                            f"{info.get('max_retries', 0)}, "
+                            f"streaming_timeout="
+                            f"{info.get('is_streaming_timeout', False)})"
+                        ),
+                        retry_after_s=None,
+                    )
+                )
 
-        current_payload, current_raw_output = parse_agent_output(
-            current_agent,
-            current_result,
-            output_path=current_output_path,
-            schema=schema,
-            step=step,
-            project_dir=project_dir,
-            plan_dir=plan_dir,
-            plan_mode=plan_mode,
-            run_kwargs=run_kwargs,
-        )
-        clean_parsed_payload(current_payload, schema, step)
-        messages = current_result.get("messages", [])
+            # Emit llm_call_start
+            prompt_text = rendered_prompt or prompt_override or ""
+            prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()[:16] if prompt_text else None
+            _emit_llm_start(plan_dir, step, resolved_model, prompt_hash, is_streaming)
 
-        # Emit llm_call_end
-        request_id = _extract_request_id(current_result)
-        tokens_in = int(current_result.get("prompt_tokens", 0) or 0)
-        tokens_out = int(current_result.get("completion_tokens", 0) or 0)
-        _emit_llm_end(plan_dir, step, tokens_in, tokens_out, request_id)
+            # Heartbeat thread for streaming calls
+            heartbeat_stop = threading.Event()
+            if is_streaming and tracker is not None:
+                _start_heartbeat(plan_dir, step, tracker, heartbeat_stop, run_id=run_id)
 
-        try:
-            validate_payload(step, current_payload)
-        except CliError as error:
-            # For execute, try reconstructed payload if validation fails
-            if step == "execute":
-                reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
-                if reconstructed is not None:
+            try:
+                current_result = current_agent.run_conversation(
+                    user_message=prompt,
+                    conversation_history=conversation_history,
+                    **run_kwargs,
+                )
+            finally:
+                if is_streaming:
+                    heartbeat_stop.set()
+                # Clear the retry-error hook so it doesn't leak across attempts.
+                if is_streaming and tracker is not None:
                     try:
-                        validate_payload(step, reconstructed)
-                        current_payload = reconstructed
-                        print(
-                            "[hermes-worker] Using reconstructed payload (original failed validation)",
-                            file=activity_stderr,
-                        )
-                        error = None
-                    except CliError:
+                        current_agent._megaplan_retry_error_callback = None
+                    except Exception:
                         pass
-            if error is not None:
-                raise CliError(error.code, error.message, extra={"raw_output": current_raw_output}) from error
 
-        return current_result, current_payload, current_raw_output
+            try:
+                current_payload, current_raw_output = parse_agent_output(
+                    current_agent,
+                    current_result,
+                    output_path=current_output_path,
+                    schema=schema,
+                    step=step,
+                    project_dir=project_dir,
+                    plan_dir=plan_dir,
+                    plan_mode=plan_mode,
+                    run_kwargs=run_kwargs,
+                )
+            except CliError as exc:
+                # Retry on transient empty responses (e.g. context overflow
+                # or API hiccup that returns nothing). Uses exponential
+                # backoff: 2s, 4s, 8s.
+                if (
+                    _empty_attempt < _MAX_EMPTY_RETRIES
+                    and exc.code == "worker_parse_error"
+                    and "0 chars" in exc.message
+                ):
+                    delay = 2**_empty_attempt
+                    print(
+                        f"[hermes-worker] Empty response on attempt "
+                        f"{_empty_attempt}/{_MAX_EMPTY_RETRIES}, "
+                        f"retrying in {delay}s...",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+
+            clean_parsed_payload(current_payload, schema, step)
+            messages = current_result.get("messages", [])
+
+            # Emit llm_call_end
+            request_id = _extract_request_id(current_result)
+            tokens_in = int(current_result.get("prompt_tokens", 0) or 0)
+            tokens_out = int(current_result.get("completion_tokens", 0) or 0)
+            _emit_llm_end(plan_dir, step, tokens_in, tokens_out, request_id)
+
+            try:
+                validate_payload(step, current_payload)
+            except CliError as error:
+                # For execute, try reconstructed payload if validation fails
+                if step == "execute":
+                    reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
+                    if reconstructed is not None:
+                        try:
+                            validate_payload(step, reconstructed)
+                            current_payload = reconstructed
+                            print(
+                                "[hermes-worker] Using reconstructed payload (original failed validation)",
+                                file=activity_stderr,
+                            )
+                            error = None
+                        except CliError:
+                            pass
+                if error is not None:
+                    raise CliError(error.code, error.message, extra={"raw_output": current_raw_output}) from error
+
+            return current_result, current_payload, current_raw_output
+
+        # Exhausted all retries -- this line is unreachable because the last
+        # iteration either returns or propagates the exception.
+        raise CliError(
+            "worker_parse_error",
+            f"Hermes worker returned empty response for step '{step}' after "
+            f"{_MAX_EMPTY_RETRIES} attempts",
+        )
 
     agent = _make_agent(resolved_model, agent_kwargs)
     # Don't set response_format when tools are enabled — many models
