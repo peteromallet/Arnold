@@ -1211,6 +1211,11 @@ def _filename_is_url_derived(filename: str, url: Any) -> bool:
     return Path(path).name == filename
 
 
+def _apply_ready_template_metadata_defaults(metadata: dict[str, Any], template_id: str) -> None:
+    if template_id == "video/ltx2_3_runexx_first_last_frame":
+        metadata.setdefault("comfy_configuration", {"memory_profile": 3, "fp8_e4m3fn_text_enc": True})
+
+
 def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
     derived_keys = {
         "ready_template",
@@ -1429,6 +1434,7 @@ def emit_ready_template_python(
     if apply_overrides:
         for key, value in (apply_overrides.get("metadata_overrides") or {}).items():
             metadata[key] = value
+    _apply_ready_template_metadata_defaults(metadata, template_id)
 
     # Ensure sageattention is declared when SageAttention nodes are present.
     _sage_class_types = frozenset({
@@ -1463,7 +1469,7 @@ def emit_ready_template_python(
 
     raw_workflow = raw_workflow or _raw_workflow_from_metadata(metadata)
     subgraph_definitions = _subgraph_definitions_from_raw(raw_workflow, source_path=_source_workflow_path(metadata))
-    prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides)
+    prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides, template_id=template_id)
     prepared["subgraph_definitions"] = subgraph_definitions
     _apply_subgraph_names_to_prepared(prepared)
     has_ltx_tail = _has_ltx_lowvram_tail(template_id)
@@ -1520,6 +1526,21 @@ def emit_ready_template_python(
         workflow_nodes,
         subgraph_definitions,
     )
+    # Compute which subgraph node IDs are referenced by PUBLIC_INPUT_METADATA.
+    # Only those nodes need explicit _id= kwargs in emitted subgraph functions.
+    required_ids_by_subgraph: dict[str, set[str]] = {}
+    for spec in public_inputs_for_metadata:
+        try:
+            ref_str = ast.literal_eval(spec.metadata_node_ref)
+        except Exception:
+            continue
+        if ":" not in ref_str:
+            continue
+        prefix, inner_id = ref_str.split(":", 1)
+        for subgraph_id in subgraph_definitions:
+            if _short_subgraph_id_prefix(subgraph_id) == prefix:
+                required_ids_by_subgraph.setdefault(subgraph_id, set()).add(inner_id)
+                break
     public_input_metadata_lines = _format_public_inputs_block(public_inputs_for_metadata, metadata=True)
     if public_input_metadata_lines:
         out_lines.append("")
@@ -1540,7 +1561,12 @@ def emit_ready_template_python(
         )
     )
     out_lines.append("")
-    subgraph_lines = _emit_subgraph_functions(prepared, diagnostics=diagnostics, constant_map=constant_map)
+    subgraph_lines = _emit_subgraph_functions(
+        prepared,
+        diagnostics=diagnostics,
+        constant_map=constant_map,
+        required_ids_by_subgraph=required_ids_by_subgraph,
+    )
     if subgraph_lines:
         out_lines.extend(subgraph_lines)
         out_lines.append("")
@@ -1624,7 +1650,12 @@ def emit_scratchpad_python(
     return "\n".join(out_lines) + "\n"
 
 
-def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any] | None) -> dict[str, Any]:
+def _prepare_workflow_for_emit(
+    workflow: Any,
+    *,
+    apply_overrides: dict[str, Any] | None,
+    template_id: str | None = None,
+) -> dict[str, Any]:
     # Defensive assertion: resolver MUST have eliminated all helper nodes before emission.
     # If any RESOLVABLE_HELPER_CLASS_TYPES node survives, the resolver has a bug.
     for nid, node in getattr(workflow, 'nodes', {}).items():
@@ -1649,6 +1680,12 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
     if apply_overrides:
         _apply_overrides(workflow_nodes, edges_in, apply_overrides.get("patches") or [])
 
+    workflow_nodes, edges_in = _prune_dead_branches_for_emit(
+        workflow_nodes,
+        edges_in,
+        template_id=template_id,
+    )
+
     from vibecomfy.workflow import VibeEdge as _Edge
 
     extracted_edges_for_naming: list[Any] = []
@@ -1672,6 +1709,79 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
         "var_names": var_names,
         "output_var_names": output_var_names,
     }
+
+
+def _prune_dead_branches_for_emit(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    *,
+    template_id: str | None,
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
+    if not output_node_ids:
+        return workflow_nodes, edges_in
+
+    live: set[str] = set(output_node_ids)
+    pending = list(output_node_ids)
+    while pending:
+        node_id = pending.pop()
+        node = workflow_nodes.get(node_id)
+        if node is None:
+            continue
+        for edge in edges_in.get(node_id, []):
+            if _is_dead_optional_output_input(node, str(getattr(edge, "to_input", "")), template_id):
+                continue
+            from_node = str(getattr(edge, "from_node", ""))
+            if from_node in workflow_nodes and from_node not in live:
+                live.add(from_node)
+                pending.append(from_node)
+        for key, value in {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}.items():
+            if _is_dead_optional_output_input(node, str(key), template_id):
+                continue
+            if not _is_link(value):
+                continue
+            from_node = str(value[0])
+            if from_node in workflow_nodes and from_node not in live:
+                live.add(from_node)
+                pending.append(from_node)
+
+    pruned_nodes = {nid: node for nid, node in workflow_nodes.items() if nid in live}
+    pruned_edges_in: dict[str, list[Any]] = {}
+    for to_node, edges in edges_in.items():
+        if str(to_node) not in pruned_nodes:
+            continue
+        kept = [
+            edge
+            for edge in edges
+            if str(getattr(edge, "from_node", "")) in pruned_nodes
+            and not _is_dead_optional_output_input(
+                pruned_nodes[str(to_node)],
+                str(getattr(edge, "to_input", "")),
+                template_id,
+            )
+        ]
+        if kept:
+            pruned_edges_in[str(to_node)] = kept
+    return pruned_nodes, pruned_edges_in
+
+
+def _is_dead_optional_output_input(node: Any, input_name: str, template_id: str | None) -> bool:
+    class_type = str(getattr(node, "class_type", ""))
+    if not _ltx_travel_template_omits_synthetic_audio(template_id):
+        return False
+    return (
+        (class_type == "VHS_VideoCombine" and input_name == "audio")
+        or (class_type == "LTXVConcatAVLatent" and input_name == "audio_latent")
+    )
+
+
+def _ltx_travel_template_omits_synthetic_audio(template_id: str | None) -> bool:
+    lowered = str(template_id or "").lower()
+    if not lowered.startswith("video/ltx2_3"):
+        return False
+    if any(token in lowered for token in ("audio", "lipsync", "talk")):
+        return False
+    return "first_last" in lowered or "first_middle_last" in lowered or "travel" in lowered
 
 
 def _source_workflow_path(metadata: Mapping[str, Any]) -> str | None:
@@ -2241,6 +2351,7 @@ def _emit_build_function(
     return_refs: tuple[tuple[str, int], ...] = (),
     external_refs: dict[tuple[str, str], str] | None = None,
     node_id_prefix: str | None = None,
+    required_ids: set[str] | None = None,
 ) -> list[str]:
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
@@ -2420,7 +2531,10 @@ def _emit_build_function(
             if use_wrapper:
                 all_args = []
                 if is_subgraph_function and node_id_prefix is not None:
-                    all_args.append(("_id", repr(_subgraph_emitted_node_id(node_id_prefix, nid))))
+                    if _subgraph_node_id_required(node_id_prefix, nid, required_ids):
+                        all_args.append(("_id", repr(_subgraph_emitted_node_id(node_id_prefix, nid))))
+                elif not is_subgraph_function:
+                    all_args.append(("_id", repr(str(nid))))
                 all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
                 # v2.6.4 Fix 3: drop _outputs= for schema-known typed wrappers.
                 # The wrapper class already knows its output names from the
@@ -2582,6 +2696,7 @@ def _emit_subgraph_functions(
     *,
     diagnostics: list[EmissionDiagnostic] | None,
     constant_map: dict[tuple[str, str], str] | None,
+    required_ids_by_subgraph: dict[str, set[str]] | None = None,
 ) -> list[str]:
     subgraphs: dict[str, _SubgraphDef] = prepared.get("subgraph_definitions") or {}
     if not subgraphs:
@@ -2623,6 +2738,7 @@ def _emit_subgraph_functions(
                 return_refs=subgraph.return_refs,
                 external_refs=subgraph.input_refs,
                 node_id_prefix=subgraph.id,
+                required_ids=required_ids_by_subgraph.get(subgraph.id, set()) if required_ids_by_subgraph is not None else None,
             )
         )
         lines.append("")
@@ -2671,6 +2787,22 @@ def _short_subgraph_id_prefix(subgraph_id: str) -> str:
 
 def _subgraph_emitted_node_id(subgraph_id: str, node_id: str) -> str:
     return f"{_short_subgraph_id_prefix(subgraph_id)}:{node_id}"
+
+
+def _subgraph_node_id_required(
+    node_id_prefix: str | None,
+    nid: str,
+    required_ids: set[str] | None,
+) -> bool:
+    """Return True if a subgraph node's explicit _id= kwarg is load-bearing.
+
+    When *required_ids* is None, all node IDs are considered required (backward
+    compatibility for paths that do not supply the precomputed set).  Otherwise
+    only nodes whose inner ID appears in the set need an explicit _id=.
+    """
+    if required_ids is None:
+        return True
+    return nid in required_ids
 
 
 COMFY_TYPE_TO_PY_HINT = {
@@ -3630,8 +3762,10 @@ def _node_kwargs(
         if translated is None:
             continue
         value = _resolve_graph_field_get_string(value, workflow_nodes)
-        if translated != key and translated not in raw_inputs and translated not in static_inputs and translated not in incoming:
-            static_inputs[translated] = value
+        if translated != key and translated not in raw_inputs and translated not in static_inputs:
+            if translated not in incoming and translated not in incoming_exprs:
+                static_inputs[translated] = value
+            # else: translated name already connected via an edge — drop the shadow widget value
         else:
             static_inputs[key] = value
 

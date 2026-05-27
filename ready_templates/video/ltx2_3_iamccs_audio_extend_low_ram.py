@@ -68,19 +68,21 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, _ = LoadImage(image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png')
+    image, _ = LoadImage(_id='1', image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png')
 
     audio, _ = VHS_LoadAudioUpload(
+        _id='4',
         audio='It’s only Rock and roll.mp3',
         audiopreview={'params': {'start_time': 38, 'duration': 28, 'filename': 'It’s only Rock and roll.mp3', 'type': 'input'}},
         duration=28,
         start_time=38,
     )
 
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
+    unetloadergguf = UnetLoaderGGUF(_id='5', unet_name=UNET_NAME_GGUF)
 
     # Loaders
     dualcliploader = DualCLIPLoader(
+        _id='7',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
@@ -88,66 +90,81 @@ def build() -> VibeWorkflow:
     )
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    ksamplerselect = KSamplerSelect(_id='12', sampler_name='euler')
 
     manualsigmas = ManualSigmas(
+        _id='13',
         sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
     vaeloaderkj = VAELoaderKJ(
+        _id='14',
         vae_name=VIDEO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
     vaeloaderkj_2 = VAELoaderKJ(
+        _id='15',
         vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
-    solidmask = SolidMask(value=0, width=1024, height=1024)
+    solidmask = SolidMask(
+        _id='16',
+        value=0,
+        width=1024,
+        height=1024,
+    )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='17',
         width=1920,
         height=1088,
         length=DEFAULT_FRAMES_2,
     )
 
     randomnoise = RandomNoise(
+        _id='25',
         noise_seed=DEFAULT_SEED_2,
         control_after_generate=RANDOMIZE,
     )
 
-    ltxvpreprocess_2 = LTXVPreprocess(img_compression=33)
+    ltxvpreprocess_2 = LTXVPreprocess(_id='31', img_compression=33)
 
     emptyltxvlatentvideo_2 = EmptyLTXVLatentVideo(
+        _id='32',
         width=1920,
         height=1088,
         length=DEFAULT_FRAMES,
     )
 
     randomnoise_2 = RandomNoise(
+        _id='39',
         noise_seed=DEFAULT_SEED,
         control_after_generate=RANDOMIZE,
     )
 
-    ltxvpreprocess_3 = LTXVPreprocess(img_compression=33)
+    ltxvpreprocess_3 = LTXVPreprocess(_id='45', img_compression=33)
 
     emptyltxvlatentvideo_3 = EmptyLTXVLatentVideo(
+        _id='46',
         width=1920,
         height=1088,
         length=DEFAULT_FRAMES,
     )
 
     randomnoise_3 = RandomNoise(
+        _id='53',
         noise_seed=DEFAULT_SEED_3,
         control_after_generate=RANDOMIZE,
     )
 
-    unetloader = UNETLoader(unet_name=MEL_BAND_ROFORMER_NAME)
+    unetloader = UNETLoader(_id='77', unet_name=MEL_BAND_ROFORMER_NAME)
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='2',
         resize_type='scale dimensions',
         scale_method=1080,
         widget_3='center',
@@ -156,14 +173,15 @@ def build() -> VibeWorkflow:
     )
 
     loraloadermodelonly = LoraLoaderModelOnly(
+        _id='6',
         lora_name=LORA_NAME,
         strength_model=GUIDE_STRENGTH,
         model=unetloadergguf,
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=dualcliploader)
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
+    cliptextencode = CLIPTextEncode(_id='8', text=DEFAULT_PROMPT_2, clip=dualcliploader)
+    cliptextencode_2 = CLIPTextEncode(_id='9', text=DEFAULT_PROMPT, clip=dualcliploader)
 
     iamccs_audioextensionmath = raw_call('IAMCCS_AudioExtensionMath', '20',
         widget_0=24,
@@ -177,11 +195,13 @@ def build() -> VibeWorkflow:
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        _id='3',
         longer_edge=1536,
         images=resizeimagemasknode,
     )
 
     positive, negative = LTXVConditioning(
+        _id='10',
         frame_rate=24,
         negative=cliptextencode_2,
         positive=cliptextencode,
@@ -223,15 +243,21 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider = CFGGuider(
+        _id='11',
         cfg=GUIDE_STRENGTH_2,
         model=loraloadermodelonly,
         negative=negative,
         positive=positive,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
+    ltxvpreprocess = LTXVPreprocess(
+        _id='18',
+        img_compression=33,
+        image=resizeimagesbylongeredge,
+    )
 
     ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='22',
         audio=iamccs_audioextender.out(0),
         audio_vae=vaeloaderkj_2,
     )
@@ -249,12 +275,17 @@ def build() -> VibeWorkflow:
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
+        _id='19',
         image=ltxvpreprocess,
         latent=emptyltxvlatentvideo,
         vae=vaeloaderkj,
     )
 
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='23',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
 
     iamccs_audioextender_2 = raw_call('IAMCCS_AudioExtender', '35',
         widget_0=24,
@@ -292,11 +323,13 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='24',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplace,
     )
 
     ltxvaudiovaeencode_2 = LTXVAudioVAEEncode(
+        _id='36',
         audio=iamccs_audioextender_2.out(0),
         audio_vae=vaeloaderkj_2,
     )
@@ -314,6 +347,7 @@ def build() -> VibeWorkflow:
     )
 
     output, _ = SamplerCustomAdvanced(
+        _id='26',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -322,6 +356,7 @@ def build() -> VibeWorkflow:
     )
 
     setlatentnoisemask_2 = SetLatentNoiseMask(
+        _id='37',
         mask=solidmask,
         samples=ltxvaudiovaeencode_2,
     )
@@ -361,14 +396,16 @@ def build() -> VibeWorkflow:
         remaining_frames_after=iamccs_audioextensionmath_3.out(7),
     )
 
-    video_latent, _ = LTXVSeparateAVLatent(av_latent=output)
+    video_latent, _ = LTXVSeparateAVLatent(_id='27', av_latent=output)
 
     ltxvaudiovaeencode_3 = LTXVAudioVAEEncode(
+        _id='50',
         audio=iamccs_audioextender_3.out(0),
         audio_vae=vaeloaderkj_2,
     )
 
     setlatentnoisemask_3 = SetLatentNoiseMask(
+        _id='51',
         mask=solidmask,
         samples=ltxvaudiovaeencode_3,
     )
@@ -420,11 +457,13 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        _id='38',
         audio_latent=setlatentnoisemask_2,
         video_latent=iamccs_startdirtovideolatent.out(0),
     )
 
     output_2, _ = SamplerCustomAdvanced(
+        _id='40',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -432,7 +471,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_2, _ = LTXVSeparateAVLatent(av_latent=output_2)
+    video_latent_2, _ = LTXVSeparateAVLatent(_id='41', av_latent=output_2)
 
     iamccs_vaedecodetodisk_2 = raw_call('IAMCCS_VAEDecodeToDisk', '61',
         widget_0='iamccs_vae_frames/30s_free_low_ram/seg1',
@@ -482,11 +521,13 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent_3 = LTXVConcatAVLatent(
+        _id='52',
         audio_latent=setlatentnoisemask_3,
         video_latent=iamccs_startdirtovideolatent_2.out(0),
     )
 
     output_3, _ = SamplerCustomAdvanced(
+        _id='54',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_3,
         noise=randomnoise_3,
@@ -494,7 +535,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_3, _ = LTXVSeparateAVLatent(av_latent=output_3)
+    video_latent_3, _ = LTXVSeparateAVLatent(_id='55', av_latent=output_3)
 
     iamccs_vaedecodetodisk_3 = raw_call('IAMCCS_VAEDecodeToDisk', '62',
         widget_0='iamccs_vae_frames/30s_free_low_ram/seg2',

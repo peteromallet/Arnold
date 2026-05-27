@@ -42,24 +42,30 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
-    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME,
+    )
+
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='35')
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
 
     wanvideoexperimentalargs = WanVideoExperimentalArgs(
+        _id='90',
         cfg_zero_star=True,
         use_tcfg=True,
     )
 
-    wanvideoslg = WanVideoSLG(blocks='7,8,9', end_percent=0.7)
-    wanvideoeasycache = WanVideoEasyCache()
-    wanvideocontrolnetloader = WanVideoControlnetLoader(model=UNET_NAME)
-    wanvideoenhanceavideo = WanVideoEnhanceAVideo()
-    intconstant = INTConstant(value=121)
-    intconstant_2 = INTConstant(value=1280)
-    intconstant_3 = INTConstant(value=704)
+    wanvideoslg = WanVideoSLG(_id='91', blocks='7,8,9', end_percent=0.7)
+    wanvideoeasycache = WanVideoEasyCache(_id='94')
+    wanvideocontrolnetloader = WanVideoControlnetLoader(_id='103', model=UNET_NAME)
+    wanvideoenhanceavideo = WanVideoEnhanceAVideo(_id='107')
+    intconstant = INTConstant(_id='116', value=121)
+    intconstant_2 = INTConstant(_id='117', value=1280)
+    intconstant_3 = INTConstant(_id='118', value=704)
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='22',
         model=MODEL_NAME,
         base_precision='fp16_fast',
         attention_mode='sageattn',
@@ -67,6 +73,7 @@ def build() -> VibeWorkflow:
     )
 
     image, _, _, _ = VHS_LoadVideo(
+        _id='98',
         video='bubble.mp4',
         format='Wan',
         videopreview={'hidden': False, 'paused': False, 'params': {'frame_load_cap': 121, 'skip_first_frames': 0, 'force_rate': 0, 'filename': 'bubble.mp4', 'type': 'input', 'format': 'video/mp4', 'select_every_nth': 1}, 'muted': False},
@@ -75,6 +82,7 @@ def build() -> VibeWorkflow:
     )
 
     image_2, _, _, _ = ImageResizeKJv2(
+        _id='101',
         upscale_method=NEAREST_EXACT,
         keep_proportion=STRETCH,
         device=CPU,
@@ -90,9 +98,14 @@ def build() -> VibeWorkflow:
         image=image_2,
     )
 
-    getimagesfrombatchindexed = GetImagesFromBatchIndexed(indexes='0', images=image_2)
+    getimagesfrombatchindexed = GetImagesFromBatchIndexed(
+        _id='113',
+        indexes='0',
+        images=image_2,
+    )
 
     image_3, _, _, _ = ImageResizeKJv2(
+        _id='109',
         upscale_method=NEAREST_EXACT,
         keep_proportion=STRETCH,
         device=CPU,
@@ -102,6 +115,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoencode = WanVideoEncode(
+        _id='114',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -112,24 +126,27 @@ def build() -> VibeWorkflow:
     )
 
     # Outputs
-    previewimage = PreviewImage(images=getimagesfrombatchindexed)
+    previewimage = PreviewImage(_id='115', images=getimagesfrombatchindexed)
 
     wanvideocontrolnet = WanVideoControlnet(
+        _id='105',
         control_images=image_3,
         controlnet=wanvideocontrolnetloader,
         model=wanvideomodelloader,
     )
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        _id='106',
         num_frames=DEFAULT_FRAMES,
         width=intconstant_2,
         height=intconstant_3,
         extra_latents=wanvideoencode,
     )
 
-    previewanimation = PreviewAnimation(fps=DEFAULT_FPS, images=image_3)
+    previewanimation = PreviewAnimation(_id='112', fps=DEFAULT_FPS, images=image_3)
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='16',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         model_to_offload=wanvideocontrolnet,
@@ -137,6 +154,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='27',
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,
@@ -153,12 +171,14 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='28',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
     )
 
     vhs_videocombine = VHS_VideoCombine(
+        _id='92',
         frame_rate=24,
         filename_prefix='WanVideoWrapper_5BI2V',
         format='video/h264-mp4',

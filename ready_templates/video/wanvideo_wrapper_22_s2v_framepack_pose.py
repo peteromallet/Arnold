@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.controlnet_aux import DWPreprocessor
-from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, GetImageRangeFromBatch, LoadAudio, LoadImage
+from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, GetImageRangeFromBatch, LoadImage
 from vibecomfy.nodes.kjnodes import ColorMatch, GetImageSizeAndCount, INTConstant, ImageConcatMulti, ImageResizeKJv2, LazySwitchKJ
 from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
-from vibecomfy.nodes.videohelpersuite import VHS_LoadAudio, VHS_LoadVideo, VHS_VideoCombine
+from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import NormalizeAudioLoudness, WanVideoAddS2VEmbeds, WanVideoBlockSwap, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoEncode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
@@ -52,42 +52,48 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='35')
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
 
     wanvideoblockswap = WanVideoBlockSwap(
+        _id='39',
         blocks_to_swap=32,
         use_non_blocking=True,
         prefetch_blocks=1,
     )
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
+        _id='60',
         lora_0=LORA__NAME,
         strength_0=1.2,
         merge_loras=False,
     )
 
-    audioencoderloader = AudioEncoderLoader(audio_encoder_name=AUDIO_ENCODER_NAME)
-    loadaudio = LoadAudio(audio='0321. Alphaville - Big In Japan.mp3')
+    audioencoderloader = AudioEncoderLoader(
+        _id='65',
+        audio_encoder_name=AUDIO_ENCODER_NAME,
+    )
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
+        _id='67',
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
-    image_2, _ = LoadImage(image='2b.jpg')
+    image_2, _ = LoadImage(_id='73', image='2b.jpg')
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
+        _id='81',
         model=MEL_BAND_ROFORMER_NAME,
     )
 
-    VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
-    intconstant = INTConstant(value=640)
-    intconstant_2 = INTConstant(value=640)
+    intconstant = INTConstant(_id='131', value=640)
+    intconstant_2 = INTConstant(_id='132', value=640)
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='22',
         model=MODEL_NAME,
         base_precision='fp16_fast',
         quantization='fp8_e4m3fn_scaled',
@@ -96,6 +102,7 @@ def build() -> VibeWorkflow:
     )
 
     image_3, width_2, height_2, _ = ImageResizeKJv2(
+        _id='74',
         upscale_method='lanczos',
         keep_proportion=CROP,
         divisible_by=16,
@@ -105,7 +112,8 @@ def build() -> VibeWorkflow:
         image=image_2,
     )
 
-    _, _, audio_2, _ = VHS_LoadVideo(
+    _, _, audio, _ = VHS_LoadVideo(
+        _id='106',
         video='weightoftheworld2.mp4',
         force_rate=16,
         frame_load_cap=501,
@@ -117,6 +125,7 @@ def build() -> VibeWorkflow:
     )
 
     image_7, _, _, _ = VHS_LoadVideo(
+        _id='116',
         video='weight-world-bones_00003-audio.mp4',
         force_rate=16,
         frame_load_cap=501,
@@ -128,17 +137,20 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        _id='37',
         num_frames=DEFAULT_FRAMES,
         width=width_2,
         height=height_2,
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
+        _id='58',
         lora=wanvideoloraselectmulti,
         model=wanvideomodelloader,
     )
 
     wanvideoencode = WanVideoEncode(
+        _id='72',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -149,11 +161,13 @@ def build() -> VibeWorkflow:
     )
 
     melbandroformersampler = MelBandRoFormerSampler(
-        audio=audio_2,
+        _id='82',
+        audio=audio,
         model=melbandroformermodelloader.out(0),
     )
 
     image_5, _, _, _ = ImageResizeKJv2(
+        _id='110',
         upscale_method=BILINEAR,
         keep_proportion=CROP,
         divisible_by=16,
@@ -164,13 +178,18 @@ def build() -> VibeWorkflow:
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='56',
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras,
     )
 
-    normalizeaudioloudness = NormalizeAudioLoudness(audio=melbandroformersampler.out(0))
+    normalizeaudioloudness = NormalizeAudioLoudness(
+        _id='98',
+        audio=melbandroformersampler.out(0),
+    )
 
     dwpreprocessor = DWPreprocessor(
+        _id='107',
         detect_hand='disable',
         detect_body='disable',
         detect_face='enable',
@@ -181,11 +200,13 @@ def build() -> VibeWorkflow:
     )
 
     audioencoderencode = AudioEncoderEncode(
+        _id='64',
         audio=normalizeaudioloudness,
         audio_encoder=audioencoderloader,
     )
 
     image_6, _, _, _ = ImageResizeKJv2(
+        _id='111',
         width=640,
         height=640,
         upscale_method=BILINEAR,
@@ -196,6 +217,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoencode_2 = WanVideoEncode(
+        _id='109',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -206,10 +228,10 @@ def build() -> VibeWorkflow:
     )
 
     image_embeds, _ = WanVideoAddS2VEmbeds(
+        _id='117',
         audio_scale=0,
         frame_window_size=1,
         pose_start_percent=1,
-        widget_0=80,
         audio_encoder_output=audioencoderencode,
         embeds=wanvideoemptyembeds,
         pose_latent=wanvideoencode_2,
@@ -218,6 +240,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='27',
         steps=4,
         cfg=GUIDE_STRENGTH,
         shift=4,
@@ -229,15 +252,22 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='28',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
     )
 
-    image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
-    image_8, _ = GetImageRangeFromBatch(num_frames=DEFAULT_FRAMES, images=image)
+    image, _, _, _ = GetImageSizeAndCount(_id='70', image=wanvideodecode)
+
+    image_8, _ = GetImageRangeFromBatch(
+        _id='143',
+        num_frames=DEFAULT_FRAMES,
+        images=image,
+    )
 
     colormatch = ColorMatch(
+        _id='105',
         widget_0='mkl',
         widget_1=1,
         widget_2=True,
@@ -246,12 +276,14 @@ def build() -> VibeWorkflow:
     )
 
     imageconcatmulti = ImageConcatMulti(
+        _id='112',
         unused_3=None,
         image_1=image_6,
         image_2=colormatch,
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='127',
         switch=True,
         on_false=colormatch,
         on_true=imageconcatmulti,
@@ -259,6 +291,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='97',
         frame_rate=16,
         filename_prefix='WanVideo2_2_S2V',
         format='video/h264-mp4',
@@ -268,7 +301,7 @@ def build() -> VibeWorkflow:
         save_metadata=True,
         trim_to_audio=False,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideo2_2_S2V_00014-audio.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideo2_2_S2V_00014.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideo2_2_S2V_00014-audio.mp4'}},
-        audio=audio_2,
+        audio=audio,
         images=lazyswitchkj,
     )
 

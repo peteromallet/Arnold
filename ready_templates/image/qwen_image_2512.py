@@ -35,43 +35,52 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='qwen_image')
-    vaeloader = VAELoader(vae_name=VAE_NAME)
-    unetloader = UNETLoader(unet_name=UNET_NAME)
+    cliploader = CLIPLoader(_id='238:219', clip_name=CLIP_NAME, type_='qwen_image')
+    vaeloader = VAELoader(_id='238:220', vae_name=VAE_NAME)
+    unetloader = UNETLoader(_id='238:226', unet_name=UNET_NAME)
 
     # Sampling
-    emptysd3latentimage = EmptySD3LatentImage(width=1328, height=1328)
+    emptysd3latentimage = EmptySD3LatentImage(_id='238:232', width=1328, height=1328)
 
     comfyswitchnode_2 = ComfySwitchNode(
+        _id='238:240',
         switch=['238:229', 0],
         on_false=['238:224', 0],
         on_true=['238:225', 0],
     )
 
     comfyswitchnode_3 = ComfySwitchNode(
+        _id='238:243',
         switch=['238:229', 0],
         on_false=['238:223', 0],
         on_true=['238:218', 0],
     )
 
-    loraloadermodelonly = LoraLoaderModelOnly(lora_name=LORA_NAME, model=unetloader)
+    loraloadermodelonly = LoraLoaderModelOnly(
+        _id='238:221',
+        lora_name=LORA_NAME,
+        model=unetloader,
+    )
 
     # Conditioning
-    positive = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
-    negative = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+    positive = CLIPTextEncode(_id='238:227', text=DEFAULT_PROMPT, clip=cliploader)
+    negative = CLIPTextEncode(_id='238:228', text=DEFAULT_PROMPT_2, clip=cliploader)
 
     comfyswitchnode = ComfySwitchNode(
+        _id='238:233',
         switch=['238:229', 0],
         on_false=unetloader,
         on_true=loraloadermodelonly,
     )
 
     modelsamplingauraflow = ModelSamplingAuraFlow(
+        _id='238:222',
         shift=3.1000000000000005,
         model=comfyswitchnode,
     )
 
     ksampler = KSampler(
+        _id='238:230',
         seed=DEFAULT_SEED,
         sampler_name='euler',
         steps=comfyswitchnode_2,
@@ -83,10 +92,10 @@ def build() -> VibeWorkflow:
     )
 
     # Decode
-    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+    vaedecode = VAEDecode(_id='238:231', samples=ksampler, vae=vaeloader)
 
     # Outputs
-    saveimage = SaveImage(filename_prefix='Qwen-Image-2512', images=vaedecode)
+    saveimage = SaveImage(_id='60', filename_prefix='Qwen-Image-2512', images=vaedecode)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Qwen-Image-2512')
 

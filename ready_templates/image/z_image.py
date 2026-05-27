@@ -36,28 +36,15 @@ def text_to_image_z_image_base(
     Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
     """
 
-    cliploader = CLIPLoader(_id='9b9009e4:62', type_='lumina2', clip_name=clip_name)
-    vaeloader = VAELoader(_id='9b9009e4:63', vae_name=vae_name)
-    unetloader = UNETLoader(_id='9b9009e4:66', unet_name=unet_name)
-
-    emptysd3latentimage = EmptySD3LatentImage(
-        _id='9b9009e4:68',
-        width=width,
-        height=height,
-    )
-
-    positive = CLIPTextEncode(_id='9b9009e4:67', text=prompt, clip=cliploader)
-
-    modelsamplingauraflow = ModelSamplingAuraFlow(
-        _id='9b9009e4:70',
-        shift=3,
-        model=unetloader,
-    )
-
-    negative = CLIPTextEncode(_id='9b9009e4:71', text='', clip=cliploader)
+    cliploader = CLIPLoader(type_='lumina2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+    unetloader = UNETLoader(unet_name=unet_name)
+    emptysd3latentimage = EmptySD3LatentImage(width=width, height=height)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
+    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
+    negative = CLIPTextEncode(text='', clip=cliploader)
 
     ksampler = KSampler(
-        _id='9b9009e4:69',
         seed=770044821593082,
         sampler_name='res_multistep',
         steps=steps,
@@ -68,7 +55,7 @@ def text_to_image_z_image_base(
         positive=positive,
     )
 
-    vaedecode = VAEDecode(_id='9b9009e4:65', samples=ksampler, vae=vaeloader)
+    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
 
     return vaedecode
 
@@ -86,7 +73,7 @@ def build() -> VibeWorkflow:
         steps=25,
         cfg=4,
     )
-    saveimage = SaveImage(filename_prefix='z-image', images=edited)
+    saveimage = SaveImage(_id='9', filename_prefix='z-image', images=edited)
 
     return wf.finalize({}, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image')
 

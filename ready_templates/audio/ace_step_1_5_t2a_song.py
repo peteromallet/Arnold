@@ -32,18 +32,26 @@ def build() -> VibeWorkflow:
 
     # Loaders
     dualcliploader = DualCLIPLoader(
+        _id='105',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_NAME_2,
         type_='ace',
         device='default',
     )
 
-    vaeloader = VAELoader(vae_name=VAE_NAME)
-    emptyacestep1_5latentaudio = EmptyAceStep1_5LatentAudio(seconds=2.0, widget_0=2)
-    unetloader = UNETLoader(unet_name=UNET_NAME)
-    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
+    vaeloader = VAELoader(_id='106', vae_name=VAE_NAME)
+
+    emptyacestep1_5latentaudio = EmptyAceStep1_5LatentAudio(
+        _id='122',
+        seconds=2.0,
+        widget_0=2,
+    )
+
+    unetloader = UNETLoader(_id='125', unet_name=UNET_NAME)
+    modelsamplingauraflow = ModelSamplingAuraFlow(_id='78', shift=3, model=unetloader)
 
     textencodeacestepaudio1_5 = TextEncodeAceStepAudio1_5(
+        _id='124',
         tags='synthwave, techno, synthpop, futuristic, electro, with liquid drum & bass drive.\nRestless, confident, dreamy mood at 128 BPM.\nAnalog bass, pulsating arps, percussive synth stabs, gated drums.\nQuick build,  then explosive drum burst, then clean fade.\nBreathy, rhythmic female vocals, minimal emotion, metallic echo.',
         lyrics='Verse\nNeon rain on my screen,\nDreams compile in silver sheen.\nNo weight, just motion,\nI’m plugged into emotion.\n\nChorus\nComfy Cloud — breathing light,\nCode and color, spark and wire.\nDrift through data, feel alive,\nIn your circuits, I arrive.',
         seed=DEFAULT_SEED,
@@ -55,10 +63,14 @@ def build() -> VibeWorkflow:
         clip=dualcliploader,
     )
 
-    conditioningzeroout = ConditioningZeroOut(conditioning=textencodeacestepaudio1_5)
+    conditioningzeroout = ConditioningZeroOut(
+        _id='47',
+        conditioning=textencodeacestepaudio1_5,
+    )
 
     # Sampling
     ksampler = KSampler(
+        _id='3',
         seed=DEFAULT_SEED,
         steps=1,
         cfg=GUIDE_STRENGTH,
@@ -69,10 +81,11 @@ def build() -> VibeWorkflow:
         positive=textencodeacestepaudio1_5,
     )
 
-    vaedecodeaudio = VAEDecodeAudio(samples=ksampler, vae=vaeloader)
+    vaedecodeaudio = VAEDecodeAudio(_id='123', samples=ksampler, vae=vaeloader)
 
     # Outputs
     saveaudiomp3 = SaveAudioMP3(
+        _id='59',
         filename_prefix='audio/vibecomfy_ace_step_smoke',
         audio=vaedecodeaudio,
     )
