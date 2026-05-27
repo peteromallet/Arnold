@@ -1559,6 +1559,23 @@ def _mock_step(
     return _mock_result(payload, trace_output=_MOCK_TRACE_OUTPUTS.get(step))
 
 
+def _check_mock_safe() -> None:
+    """Raise if MOCK_WORKERS is set but the process is not running under pytest.
+
+    A stale ``MEGAPLAN_MOCK_WORKERS=1`` env var in a production context would
+    silently produce synthetic output trusted as real.  This guard ensures the
+    mock shortcut only engages inside a test run.
+    """
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        raise CliError(
+            "mock_worker_blocked",
+            "MEGAPLAN_MOCK_WORKERS is set but the process is not running "
+            "under pytest. Refusing to produce synthetic output in a "
+            "non-test context. Unset MEGAPLAN_MOCK_WORKERS to run real "
+            "workers.",
+        )
+
+
 def mock_worker_output(
     step: str,
     state: PlanState,
@@ -1686,6 +1703,7 @@ def run_codex_step(
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
     if os.getenv(MOCK_ENV_VAR) == "1":
+        _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
     project_dir = Path(state["config"]["project_dir"])
     work_dir = resolve_work_dir(state)
@@ -2167,6 +2185,7 @@ def run_codex_prep_step(
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     if os.getenv(MOCK_ENV_VAR) == "1":
+        _check_mock_safe()
         return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
 
     out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
@@ -2589,6 +2608,7 @@ def run_step_with_worker(
                                 "worker_timeout",
                                 "connection_error",
                                 "codex_pre_first_byte_stall",
+                                "worker_error",
                             }
                         ):
                             raise

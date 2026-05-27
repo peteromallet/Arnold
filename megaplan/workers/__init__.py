@@ -23,6 +23,7 @@ from megaplan.workers._impl import (
     session_key_for,
     update_session_state,
     mock_worker_output,
+    _check_mock_safe,
 )
 
 __all__ = [
@@ -49,4 +50,5 @@ __all__ = [
     "session_key_for",
     "update_session_state",
     "mock_worker_output",
+    "_check_mock_safe",
 ]
