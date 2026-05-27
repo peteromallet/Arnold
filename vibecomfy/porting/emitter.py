@@ -8,7 +8,7 @@ import keyword
 import pprint
 import re
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -98,6 +98,7 @@ class _SubgraphPort:
     name: str
     type: str | None = None
     source_name: str | None = None
+    external_ref: tuple[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +123,7 @@ GENERATED_HEADER = (
 )
 
 UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset(
-    {"Note", "MarkdownNote", "Label (rgthree)", "PreviewAny"}
+    {"Note", "MarkdownNote", "Label (rgthree)", "PreviewAny", "easy showAnything"}
 )
 FALLBACK_CLASS_TYPES: frozenset[str] = frozenset({
     "Note",
@@ -971,6 +972,60 @@ def _format_public_inputs_block(specs: list[_PublicInputSpec], *, metadata: bool
     return lines
 
 
+def _remap_public_inputs_for_materialized_subgraphs(
+    specs: list[_PublicInputSpec],
+    workflow_nodes: dict[str, Any],
+    subgraphs: dict[str, _SubgraphDef],
+) -> list[_PublicInputSpec]:
+    if not specs or not subgraphs:
+        return specs
+    remapped: list[_PublicInputSpec] = []
+    for spec in specs:
+        try:
+            node_id = ast.literal_eval(spec.metadata_node_ref)
+        except Exception:
+            remapped.append(spec)
+            continue
+        node = workflow_nodes.get(str(node_id))
+        subgraph = subgraphs.get(str(getattr(node, "class_type", ""))) if node is not None else None
+        if subgraph is None:
+            remapped.append(spec)
+            continue
+        port_index = _subgraph_port_index_for_instance_field(node, subgraph, spec.field)
+        if port_index is None:
+            remapped.append(spec)
+            continue
+        port = subgraph.inputs[port_index]
+        consumer = next(
+            (
+                (internal_node_id, internal_field)
+                for (internal_node_id, internal_field), port_name in subgraph.input_refs.items()
+                if port_name == port.name
+            ),
+            None,
+        )
+        if consumer is None:
+            remapped.append(spec)
+            continue
+        internal_node_id, internal_field = consumer
+        remapped.append(
+            replace(
+                spec,
+                metadata_node_ref=repr(_subgraph_emitted_node_id(subgraph.id, internal_node_id)),
+                field=internal_field,
+            )
+        )
+    return remapped
+
+
+def _subgraph_port_index_for_instance_field(node: Any, subgraph: _SubgraphDef, field: str) -> int | None:
+    candidates = _subgraph_instance_port_candidate_names(node, subgraph)
+    for index, names in candidates.items():
+        if field in names:
+            return index
+    return None
+
+
 def _model_assets_for_emit(
     metadata: Mapping[str, Any],
     requirements: Mapping[str, Any],
@@ -1263,6 +1318,7 @@ def emit_ready_template_python(
 
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
+    ordering_edges_in = _edges_in_with_subgraph_external_refs(prepared, workflow_nodes, edges_in)
     var_names = prepared["var_names"]
 
     # Hoist constants and build section groups
@@ -1307,7 +1363,12 @@ def emit_ready_template_python(
         out_lines.append("")
         out_lines.extend(model_lines)
         out_lines.append("")
-    public_input_metadata_lines = _format_public_inputs_block(public_inputs, metadata=True)
+    public_inputs_for_metadata = _remap_public_inputs_for_materialized_subgraphs(
+        public_inputs,
+        workflow_nodes,
+        subgraph_definitions,
+    )
+    public_input_metadata_lines = _format_public_inputs_block(public_inputs_for_metadata, metadata=True)
     if public_input_metadata_lines:
         out_lines.append("")
         out_lines.extend(public_input_metadata_lines)
@@ -1632,7 +1693,7 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
                 source_name=source_name,
             )
         )
-    inputs = tuple(input_ports)
+    declared_inputs = tuple(input_ports)
 
     used_output_names: set[str] = set()
     output_ports: list[_SubgraphPort] = []
@@ -1657,7 +1718,7 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
     nodes: dict[str, Any] = {}
     edges_in: dict[str, list[Any]] = {}
     input_refs: dict[tuple[str, str], str] = {}
-    defaults = _subgraph_default_args(raw, inputs)
+    defaults = _subgraph_default_args(raw, declared_inputs)
 
     for node_id, node in api.items():
         class_type = str(node.get("class_type", "Unknown"))
@@ -1690,13 +1751,31 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
                 continue
             from_node, from_slot = str(value[0]), int(value[1])
             if from_node == "-10":
-                if 0 <= from_slot < len(inputs):
-                    input_refs[(str(node_id), str(key))] = inputs[from_slot].name
+                if 0 <= from_slot < len(input_ports):
+                    input_refs[(str(node_id), str(key))] = input_ports[from_slot].name
             else:
-                if from_node not in nodes or str(node_id) not in nodes:
+                if str(node_id) not in nodes:
+                    continue
+                if from_node not in nodes:
+                    input_name = _unique_port_name(
+                        _safe_kwarg_name(str(key), fallback=f"input_{len(input_ports)}"),
+                        used_input_names,
+                    )
+                    input_ports.append(
+                        _SubgraphPort(
+                            input_name,
+                            None,
+                            source_name=str(key),
+                            external_ref=(from_node, from_slot),
+                        )
+                    )
+                    nodes[str(node_id)].inputs[str(key)] = ["-10", len(input_ports) - 1]
+                    input_refs[(str(node_id), str(key))] = input_name
                     continue
                 edge = _Edge(from_node, str(from_slot), str(node_id), str(key))
                 edges_in.setdefault(str(node_id), []).append(edge)
+
+    inputs = tuple(input_ports)
 
     return_refs: list[tuple[str, int]] = []
     links = [link for link in raw.get("links") or () if isinstance(link, Mapping)]
@@ -2017,9 +2096,11 @@ def _emit_build_function(
     function_docstring: list[str] | None = None,
     return_refs: tuple[tuple[str, int], ...] = (),
     external_refs: dict[tuple[str, str], str] | None = None,
+    node_id_prefix: str | None = None,
 ) -> list[str]:
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
+    ordering_edges_in = _edges_in_with_subgraph_external_refs(prepared, workflow_nodes, edges_in)
     var_names = prepared["var_names"]
     output_var_names = prepared.get("output_var_names", {}) if use_shared_helpers else {}
 
@@ -2031,6 +2112,13 @@ def _emit_build_function(
     for output_nid, slot_vars in output_var_names.items():
         for output_var in slot_vars.values():
             var_to_nid[str(output_var)] = str(output_nid)
+    live_output_slots = _live_output_slots_for_function(
+        workflow_nodes,
+        ordering_edges_in,
+        output_var_names,
+        return_refs=return_refs,
+        tail_lines=tail_lines,
+    )
     public_preserve_fields: dict[str, set[str]] = {}
     for spec in public_inputs or []:
         node_ref = spec.node_ref
@@ -2051,7 +2139,7 @@ def _emit_build_function(
         section_nids.update(nids)
 
     # Build ordered list of (section_name, nid) for topological-sorted nodes
-    topo_order = _topological_node_order(workflow_nodes, edges_in)
+    topo_order = _topological_node_order(workflow_nodes, ordering_edges_in)
     section_order_map: dict[str, str] = {}  # nid -> section_name
     for section_name in _SECTION_ORDER:
         for nid in section_groups.get(section_name, []):
@@ -2187,6 +2275,8 @@ def _emit_build_function(
 
             if use_wrapper:
                 all_args = []
+                if is_subgraph_function and node_id_prefix is not None:
+                    all_args.append(("_id", repr(_subgraph_emitted_node_id(node_id_prefix, nid))))
                 all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
                 # v2.6.4 Fix 3: drop _outputs= for schema-known typed wrappers.
                 # The wrapper class already knows its output names from the
@@ -2195,7 +2285,11 @@ def _emit_build_function(
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))
                 call_name = _wrapper_symbol_for_class(str(node.class_type)) or str(node.class_type)
-                assignment_target = _assignment_target(var, output_var_names.get(str(nid)))
+                assignment_target = _assignment_target(
+                    var,
+                    output_var_names.get(str(nid)),
+                    live_slots=live_output_slots.get(str(nid)),
+                )
             else:
                 all_args = []
                 if outputs_expr is not None:
@@ -2210,12 +2304,18 @@ def _emit_build_function(
             kwarg_lines = [f"**{expr}" if key == "**" else f"{key}={expr}" for key, expr in all_args]
             if use_wrapper:
                 call_args = ", ".join(kwarg_lines)
-                single_line = f"{body_indent}{assignment_target} = {call_name}({call_args})"
+                call_expr = f"{call_name}({call_args})"
             else:
                 # v2.6.4 Fix 5: raw_call reads wf from ContextVar (set by
                 # new_workflow context manager); no need to pass wf positional.
-                call_args = ", ".join([repr(node.class_type), repr(nid), *kwarg_lines])
-                single_line = f"{body_indent}{assignment_target} = raw_call({call_args})"
+                raw_node_id = _subgraph_emitted_node_id(node_id_prefix, nid) if is_subgraph_function and node_id_prefix is not None else nid
+                call_args = ", ".join([repr(node.class_type), repr(raw_node_id), *kwarg_lines])
+                call_expr = f"raw_call({call_args})"
+            single_line = (
+                f"{body_indent}{assignment_target} = {call_expr}"
+                if assignment_target is not None
+                else f"{body_indent}{call_expr}"
+            )
 
             # -- readability diagnostic: long one-line node call ----------
             if diagnostics is not None and len(single_line) > 120:
@@ -2246,10 +2346,17 @@ def _emit_build_function(
                 if out_lines and prev != "" and not is_section_comment:
                     out_lines.append("")
                 if use_wrapper:
-                    lines = [f"{body_indent}{assignment_target} = {call_name}("]
+                    head = f"{body_indent}{call_name}(" if assignment_target is None else f"{body_indent}{assignment_target} = {call_name}("
+                    lines = [head]
                 else:
                     # v2.6.4 Fix 5: drop wf positional from raw_call (ContextVar).
-                    lines = [f"{body_indent}{assignment_target} = raw_call({node.class_type!r}, {nid!r},"]
+                    raw_node_id = _subgraph_emitted_node_id(node_id_prefix, nid) if is_subgraph_function and node_id_prefix is not None else nid
+                    head = (
+                        f"{body_indent}raw_call({node.class_type!r}, {raw_node_id!r},"
+                        if assignment_target is None
+                        else f"{body_indent}{assignment_target} = raw_call({node.class_type!r}, {raw_node_id!r},"
+                    )
+                    lines = [head]
                 for key, expr in all_args:
                     if key == "**":
                         lines.append(f"{continuation_indent}**{expr},")
@@ -2371,6 +2478,7 @@ def _emit_subgraph_functions(
                 function_docstring=docstring,
                 return_refs=subgraph.return_refs,
                 external_refs=subgraph.input_refs,
+                node_id_prefix=subgraph.id,
             )
         )
         lines.append("")
@@ -2409,6 +2517,10 @@ def _subgraph_topological_order(subgraphs: dict[str, _SubgraphDef]) -> list[str]
     for subgraph_id in subgraphs:
         visit(subgraph_id, [])
     return ordered
+
+
+def _subgraph_emitted_node_id(subgraph_id: str, node_id: str) -> str:
+    return f"{subgraph_id}:{node_id}"
 
 
 COMFY_TYPE_TO_PY_HINT = {
@@ -2476,7 +2588,16 @@ def _emit_subgraph_call_statement(
     continuation_indent: str,
     diagnostics: list[EmissionDiagnostic] | None,
 ) -> list[str]:
-    assignment_target = _assignment_target(var_names[str(node.id)], output_var_names.get(str(node.id)))
+    live_output_slots = _live_output_slots_for_function(
+        workflow_nodes,
+        edges_in,
+        output_var_names,
+    )
+    assignment_target = _assignment_target(
+        var_names[str(node.id)],
+        output_var_names.get(str(node.id)),
+        live_slots=live_output_slots.get(str(node.id)),
+    )
     kwargs = _subgraph_call_kwargs(
         node,
         subgraph,
@@ -2487,9 +2608,15 @@ def _emit_subgraph_call_statement(
         diagnostics=diagnostics,
     )
     kwarg_lines = [f"{key}={expr}" for key, expr in kwargs]
-    single_line = f"{body_indent}{assignment_target} = {subgraph.slug}({', '.join(kwarg_lines)})"
+    call_expr = f"{subgraph.slug}({', '.join(kwarg_lines)})"
+    single_line = (
+        f"{body_indent}{assignment_target} = {call_expr}"
+        if assignment_target is not None
+        else f"{body_indent}{call_expr}"
+    )
     if len(kwargs) > 3 or len(single_line) > 88:
-        lines = [f"{body_indent}{assignment_target} = {subgraph.slug}("]
+        head = f"{body_indent}{subgraph.slug}(" if assignment_target is None else f"{body_indent}{assignment_target} = {subgraph.slug}("
+        lines = [head]
         for key, expr in kwargs:
             lines.append(f"{continuation_indent}{key}={expr},")
         lines.append(f"{body_indent})")
@@ -2516,9 +2643,29 @@ def _subgraph_call_kwargs(
 
     static = {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}
     widget_values = _subgraph_instance_widget_values(node)
+    port_candidate_names = _subgraph_instance_port_candidate_names(node, subgraph)
     kwargs: list[tuple[str, str]] = []
-    for port in subgraph.inputs:
-        candidate_names = (port.name, port.source_name or port.name)
+    for index, port in enumerate(subgraph.inputs):
+        if port.external_ref is not None:
+            src, slot = port.external_ref
+            kwargs.append(
+                (
+                    port.name,
+                    _edge_ref_expr(
+                        workflow_nodes,
+                        var_names,
+                        output_var_names,
+                        src,
+                        slot,
+                        bare_single_output_refs=True,
+                        diagnostics=diagnostics,
+                        target_node=node,
+                        target_input=port.name,
+                    ),
+                )
+            )
+            continue
+        candidate_names = port_candidate_names.get(index, (port.name, port.source_name or port.name))
         incoming_name = next((name for name in candidate_names if name in incoming), None)
         widget_name = next((name for name in candidate_names if name in widget_values), None)
         static_name = next((name for name in candidate_names if name in static), None)
@@ -2564,6 +2711,31 @@ def _subgraph_call_kwargs(
                     )
                 )
     return kwargs
+
+
+def _subgraph_instance_port_candidate_names(node: Any, subgraph: _SubgraphDef) -> dict[int, tuple[str, ...]]:
+    ui = getattr(node, "metadata", {}).get("_ui")
+    input_items = [item for item in (ui or {}).get("inputs") or () if isinstance(item, Mapping)] if isinstance(ui, Mapping) else []
+    out: dict[int, tuple[str, ...]] = {}
+    for index, port in enumerate(subgraph.inputs):
+        names: list[str] = []
+
+        def add(value: Any) -> None:
+            name = str(value or "")
+            if name and name not in names:
+                names.append(name)
+
+        add(port.name)
+        add(port.source_name)
+        if index < len(input_items):
+            item = input_items[index]
+            raw_name = str(item.get("name") or "")
+            add(raw_name)
+            add(_slugify_identifier(str(item.get("label") or "")))
+            if not raw_name and item.get("link") is not None:
+                add(f"_un{item.get('link')}")
+        out[index] = tuple(names)
+    return out
 
 
 def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
@@ -3084,10 +3256,86 @@ def _class_collision_suffix(class_type: str) -> str:
     return _safe_var(parts[0] if parts else class_type)
 
 
-def _assignment_target(var: str, output_vars: dict[int, str] | None) -> str:
+def _live_output_slots_for_function(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    output_var_names: dict[str, dict[int, str]],
+    *,
+    return_refs: tuple[tuple[str, int], ...] = (),
+    tail_lines: list[str] | None = None,
+) -> dict[str, set[int]]:
+    live: dict[str, set[int]] = {str(nid): set() for nid in output_var_names}
+
+    def mark(from_node: str, from_slot: int) -> None:
+        if from_node in live:
+            live[from_node].add(from_slot)
+
+    for edges in edges_in.values():
+        for edge in edges:
+            try:
+                mark(str(edge.from_node), int(edge.from_output))
+            except (TypeError, ValueError):
+                continue
+    for node in workflow_nodes.values():
+        for value in list(getattr(node, "inputs", {}).values()) + list(getattr(node, "widgets", {}).values()):
+            if _is_link(value):
+                mark(str(value[0]), int(value[1]))
+    for node_id, slot in return_refs:
+        mark(str(node_id), int(slot))
+
+    # The ready-template finalize tail may bind output_node to the first
+    # unpacked output variable of a terminal output node.
+    tail_text = "\n".join(tail_lines or ())
+    if "output_node=" in tail_text:
+        for node_id, slot_vars in output_var_names.items():
+            first_var = _first_output_var(slot_vars)
+            if first_var is not None and re.search(rf"\boutput_node\s*=\s*{re.escape(first_var)}\b", tail_text):
+                live[node_id].add(min(slot_vars))
+    return live
+
+
+def _edges_in_with_subgraph_external_refs(
+    prepared: dict[str, Any],
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+) -> dict[str, list[Any]]:
+    subgraphs: dict[str, _SubgraphDef] = prepared.get("subgraph_definitions") or {}
+    if not subgraphs:
+        return edges_in
+
+    from vibecomfy.workflow import VibeEdge
+
+    out = {str(node_id): list(edges) for node_id, edges in edges_in.items()}
+    for node_id, node in workflow_nodes.items():
+        subgraph = subgraphs.get(str(getattr(node, "class_type", "")))
+        if subgraph is None:
+            continue
+        for port in subgraph.inputs:
+            if port.external_ref is None:
+                continue
+            source_id, source_slot = port.external_ref
+            if str(source_id) not in workflow_nodes:
+                continue
+            out.setdefault(str(node_id), []).append(
+                VibeEdge(str(source_id), str(source_slot), str(node_id), port.name)
+            )
+    return out
+
+
+def _assignment_target(
+    var: str,
+    output_vars: dict[int, str] | None,
+    *,
+    live_slots: set[int] | None = None,
+) -> str | None:
     if not output_vars:
         return var
-    return ", ".join(output_vars[index] for index in sorted(output_vars))
+    ordered = sorted(output_vars)
+    if live_slots is None:
+        return ", ".join(output_vars[index] for index in ordered)
+    if not any(index in live_slots for index in ordered):
+        return None
+    return ", ".join(output_vars[index] if index in live_slots else "_" for index in ordered)
 
 
 def _first_output_var(output_vars: dict[int, str] | None) -> str | None:

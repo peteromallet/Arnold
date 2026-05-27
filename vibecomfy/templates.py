@@ -378,7 +378,11 @@ class InputSpec:
         # source-JSON IDs), fall back to searching ``namespace`` for a local
         # variable that resolves to a matching node — this is how the legacy
         # ``def PUBLIC_INPUTS(**nodes):`` factory bridged the gap.
-        if node_id not in wf.nodes and namespace:
+        node = wf.nodes.get(node_id)
+        node_missing_or_wrong_field = node is None or (
+            self.field not in node.inputs and self.field not in node.widgets
+        )
+        if node_missing_or_wrong_field and namespace:
             for value in namespace.values():
                 candidate = _node_id_from_binding(value)
                 if candidate is not None and candidate in wf.nodes:

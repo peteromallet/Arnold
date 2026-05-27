@@ -27,6 +27,7 @@ UI_ONLY = frozenset(
         "MarkdownNote",
         "Label (rgthree)",
         "PreviewAny",
+        "easy showAnything",
     }
 )
 

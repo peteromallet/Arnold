@@ -459,7 +459,8 @@ def test_subgraph_materialized_as_bare_function() -> None:
     body = text[text.index("def image_edit_flux2_klein_9b("):text.index("def image_edit_flux2_klein_9b_dual(")]
     assert "unet_name: str" in body
     assert "image," in body
-    assert "UNETLoader(unet_name=unet_name)" in body
+    assert "UNETLoader(" in body
+    assert "unet_name=unet_name" in body
     assert "return vaedecode" in body
 
 
@@ -732,8 +733,8 @@ def test_ready_template_build_spacing_for_multiline_and_packed_simple_calls() ->
 
     # Post-revert: emitted body sits at 4-space indent (flat `wf = new_workflow`
     # form) rather than 8-space (legacy `with new_workflow(...) as wf:` form).
-    assert "\n    # Inputs\n    image, mask = LoadImage(" in text
-    assert "\n    image_load, mask_load = LoadImage(" in text
+    assert "\n    # Inputs\n    LoadImage(" in text
+    assert "\n    LoadImage(\n        image='second_input_image" in text
     assert "cliptextencode = CLIPTextEncode(text='short positive')\n    cliptextencode_2 = CLIPTextEncode(text='short negative')" in text
     assert "\n\n    # Conditioning\n" in text
     assert "\n\n    return wf.finalize(PUBLIC_INPUT_METADATA" in text
@@ -1111,6 +1112,41 @@ def test_ready_template_emits_unpacking_for_typed_multi_output_node() -> None:
     assert "wanimagetovideo.out" not in text
 
 
+def test_ready_template_replaces_dead_unpacked_outputs_with_underscore() -> None:
+    wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    wf.nodes["1"] = VibeNode("1", "WanImageToVideo")
+    wf.nodes["1"].metadata["output_names"] = ["POSITIVE", "NEGATIVE", "LATENT"]
+    wf.nodes["2"] = VibeNode("2", "KSampler")
+    wf.connect("1.1", "2.negative")
+
+    text = emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "video/test", "capability": "video"},
+        ready_requirements={},
+        template_id="video/test",
+    )
+
+    assert "_, negative, _ = WanImageToVideo()" in text
+    assert "negative=negative" in text
+    assert "positive, negative, latent = WanImageToVideo()" not in text
+
+
+def test_ready_template_keeps_dead_multi_output_node_as_bare_call() -> None:
+    wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
+    wf.nodes["1"] = VibeNode("1", "SimpleCalculatorKJ", inputs={"expression": "1"})
+    wf.nodes["1"].metadata["output_names"] = ["FLOAT", "INT", "BOOLEAN"]
+
+    text = emit_ready_template_python(
+        wf,
+        ready_metadata={"ready_template": "video/test", "capability": "video"},
+        ready_requirements={},
+        template_id="video/test",
+    )
+
+    assert "SimpleCalculatorKJ(expression='1')" in text
+    assert " = SimpleCalculatorKJ(expression='1')" not in text
+
+
 def test_ready_template_unpacked_output_names_use_collision_suffix() -> None:
     wf = VibeWorkflow("test", WorkflowSource("test", provenance={"origin": "test"}))
     wf.nodes["1"] = VibeNode("1", "CLIPTextEncode", inputs={"text": "prompt"})
@@ -1129,7 +1165,7 @@ def test_ready_template_unpacked_output_names_use_collision_suffix() -> None:
     )
 
     assert "positive = CLIPTextEncode(text='prompt')" in text
-    assert "positive_wan, negative, latent = WanImageToVideo()" in text
+    assert "_, negative, latent = WanImageToVideo()" in text
     assert "negative=negative" in text
     assert "latent_image=latent" in text
 
@@ -1273,6 +1309,8 @@ def test_long_one_line_node_call_diagnostic() -> None:
             "image": "a_very_long_filename_that_pads_the_call_line_to_exceed_one_hundred_twenty_characters_total.png",
         },
     )
+    wf.nodes["2"] = VibeNode("2", "SaveImage")
+    wf.connect("1.0", "2.images")
 
     diags: list[EmissionDiagnostic] = []
     emit_ready_template_python(
