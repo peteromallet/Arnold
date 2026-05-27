@@ -36,6 +36,8 @@ from vibecomfy.porting.widget_aliases import resolve_widget_name
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
 
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

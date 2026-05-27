@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from vibecomfy.node_packs import CustomNodePack, KNOWN_NODE_PACKS, resolve_node_packs, unresolved_class_types
 from vibecomfy.node_packs_lockfile import LockEntry, upsert_lockfile_entry
 from vibecomfy.registry.pack_resolver import PackNotFoundError, PackRef, resolve_pack
+from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeWorkflow
 InstallStatus = Literal["installed", "refreshed", "skipped_dirty", "failed"]
 DEFAULT_INSTALL_ROOT = Path("custom_nodes"); """Canonical install root for custom node packs."""
@@ -215,6 +216,6 @@ def _known_schema_classes(path: Path = Path("node_index.json")) -> set[str]:
 def _resolve_node_index_path(path: Path) -> Path:
     if path.is_absolute() or path.exists() or path != Path("node_index.json"):
         return path
-    repo_index = Path(__file__).resolve().parents[1] / "node_index.json"
+    repo_index = find_repo_root() / "node_index.json"
     return repo_index if repo_index.exists() else path
 def _error_text(exc: BaseException) -> str | None: return next((text.strip() for value in (getattr(exc, "stderr", None), getattr(exc, "stdout", None)) if isinstance((text := value.decode(errors="replace") if isinstance(value, bytes) else value), str) and text.strip()), str(exc) or None)

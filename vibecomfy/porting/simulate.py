@@ -17,8 +17,9 @@ from vibecomfy.analysis.corpus import build_corpus_snapshot
 from vibecomfy.porting.convert import port_convert_workflow
 from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.schema import get_schema_provider
+from vibecomfy.utils import find_repo_root
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = find_repo_root()
 
 
 @dataclass

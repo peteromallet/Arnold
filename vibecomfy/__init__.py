@@ -18,6 +18,7 @@ from .ingest.loader import load_template, load_workflow_json
 from .ops import image, video
 from .registry.library import workflow_from_file, workflow_from_id
 from .registry.ready import ready_template_ids, workflow_from_ready
+from .utils import find_repo_root
 # Runtime exports are loaded lazily via PEP 562 module __getattr__ to keep
 # `import vibecomfy.testing` cheap: the dry-run runtime in
 # `vibecomfy.testing.dry_run` must not transitively load
@@ -65,6 +66,7 @@ __all__ = [
     "load_workflow_any",
     "load_workflow_json",
     "load_template",
+    "find_repo_root",
     "ensure_plugins_loaded",
     "image",
     "video",

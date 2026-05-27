@@ -29,6 +29,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from vibecomfy.utils import find_repo_root
+
 __all__ = [
     "FIXTURE_ROOT",
     "SMOKE_FIXTURES",
@@ -39,10 +41,8 @@ __all__ = [
 ]
 
 
-# Resolve the committed fixture root relative to this module. The package lives
-# at ``<repo>/vibecomfy/fixtures.py`` and the committed assets at
-# ``<repo>/workflow_corpus/input/``.
-FIXTURE_ROOT: Path = (Path(__file__).resolve().parent.parent / "workflow_corpus" / "input").resolve()
+# Resolve the committed fixture root relative to the repository checkout.
+FIXTURE_ROOT: Path = (find_repo_root() / "workflow_corpus" / "input").resolve()
 
 
 # Names of the committed video fixtures expected to carry an audio stream.

@@ -6,8 +6,32 @@ from __future__ import annotations
 
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+
+@lru_cache(maxsize=1)
+def find_repo_root() -> Path:
+    """Return the VibeComfy repository root."""
+    here = Path(__file__).resolve()
+    for candidate in (here, *here.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    raise RuntimeError("not inside vibecomfy repo")
+
+
+def repo_relative_path(path: str | Path) -> str:
+    """Return *path* relative to the repo root when possible.
+
+    Paths outside the checkout are returned as resolved absolute paths.
+    """
+    raw_path = Path(path)
+    resolved = (raw_path if raw_path.is_absolute() else find_repo_root() / raw_path).resolve()
+    try:
+        return resolved.relative_to(find_repo_root()).as_posix()
+    except ValueError:
+        return str(resolved)
 
 
 def atomic_write_json(path: str | Path, data: Any) -> Path:

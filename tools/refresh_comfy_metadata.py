@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPO_ROOT / "vibecomfy" / "comfy_metadata.json"
 

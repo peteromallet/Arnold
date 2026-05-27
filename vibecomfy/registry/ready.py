@@ -8,10 +8,11 @@ import warnings
 from typing import Any, Iterable
 
 from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeWorkflow
 
 
-READY_ROOT = Path(__file__).resolve().parents[2] / "ready_templates"
+READY_ROOT = find_repo_root() / "ready_templates"
 _WARNED_COLLISIONS: set[str] = set()
 
 

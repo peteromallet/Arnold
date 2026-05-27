@@ -9,6 +9,8 @@ from typing import Any
 from vibecomfy.porting.object_info import CACHE_DIR, get_class
 
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_PATH = ROOT / "vibecomfy" / "porting" / "cache" / "class_inventory.json"
 GENERATED_DIR = ROOT / "vibecomfy" / "nodes" / "_generated"

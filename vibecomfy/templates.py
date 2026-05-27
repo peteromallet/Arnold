@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from vibecomfy.handles import Handle
 from vibecomfy.registry.ready_template import apply_ready_template_policy, bind_input, bind_output, ready_node, ready_workflow
+from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeInput, VibeWorkflow
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
 from vibecomfy.workflow_context import _current_workflow_or_raise
@@ -787,7 +788,7 @@ def _model_asset_metadata(model: ModelAsset) -> dict[str, str]:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return find_repo_root()
 
 
 def _caller_source_path() -> Path | None:

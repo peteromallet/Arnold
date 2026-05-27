@@ -21,8 +21,9 @@ from vibecomfy.porting.readability_inventory import build_readability_inventory
 from vibecomfy.porting.report import PortIssue, PortReport
 from vibecomfy.porting.rules_registry import rules_by_category, to_json as rules_to_json
 from vibecomfy.analysis.corpus import build_corpus_snapshot
+from vibecomfy.utils import find_repo_root
 
-READY_ROOT = Path(__file__).resolve().parents[2] / "ready_templates"
+READY_ROOT = find_repo_root() / "ready_templates"
 
 from vibecomfy.porting.simulate import simulate_rule
 from vibecomfy.porting.strict_ready import (
@@ -1044,7 +1045,7 @@ def _cmd_port_lint(args: argparse.Namespace) -> int:
     json_mode = getattr(args, "json", False)
 
     if all_mode:
-        ready_root = Path(__file__).resolve().parents[2] / "ready_templates"
+        ready_root = find_repo_root() / "ready_templates"
         paths = list(ready_root.rglob("*.py"))
     else:
         wf_path = Path(args.workflow)
@@ -1052,7 +1053,7 @@ def _cmd_port_lint(args: argparse.Namespace) -> int:
             paths = [wf_path]
         else:
             # Try as ready template ID
-            ready_root = Path(__file__).resolve().parents[2] / "ready_templates"
+            ready_root = find_repo_root() / "ready_templates"
             candidate = ready_root / f"{args.workflow}.py"
             if candidate.is_file():
                 paths = [candidate]

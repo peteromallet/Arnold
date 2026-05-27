@@ -10,8 +10,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.utils import find_repo_root
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 
 
 def load_module_from_path(path: Path) -> Any:

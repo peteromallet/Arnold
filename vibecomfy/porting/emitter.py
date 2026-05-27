@@ -5,6 +5,7 @@ import hashlib
 import importlib
 import json
 import keyword
+import logging
 import pprint
 import re
 from collections import Counter
@@ -19,6 +20,7 @@ from vibecomfy.porting.widget_aliases import resolve_widget_key_with_provenance
 from vibecomfy.porting.object_info import class_defaults, class_has_list_output, class_output_count
 from vibecomfy.porting.object_info import output_names as class_output_names
 from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.utils import repo_relative_path
 
 # -- readability warning codes ------------------------------------------------
 READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT = "avoidable_positional_output"
@@ -48,6 +50,8 @@ READABILITY_WARNING_CODES: frozenset[str] = frozenset(
 )
 
 EmissionSeverity = Literal["error", "warning", "info"]
+logger = logging.getLogger(__name__)
+_PROVENANCE_PATH_KEYS: frozenset[str] = frozenset({"source_path", "source_workflow_path", "source_workflow"})
 
 
 @dataclass(slots=True)
@@ -1213,8 +1217,24 @@ def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
     }
     provenance = metadata.get("provenance")
     if isinstance(provenance, Mapping) and not _is_derivable_provenance(provenance):
-        extras["provenance"] = dict(provenance)
+        extras["provenance"] = _normalize_provenance_paths(provenance)
     return extras
+
+
+def _normalize_provenance_paths(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(provenance)
+    for key in _PROVENANCE_PATH_KEYS:
+        value = normalized.get(key)
+        if isinstance(value, str) and value:
+            normalized[key] = _repo_relative_provenance_path(value)
+    return normalized
+
+
+def _repo_relative_provenance_path(path: str) -> str:
+    normalized = repo_relative_path(path)
+    if Path(normalized).is_absolute():
+        logger.warning("provenance path is outside the repo; keeping absolute path: %s", normalized)
+    return normalized
 
 
 def _is_derivable_provenance(provenance: Mapping[str, Any]) -> bool:

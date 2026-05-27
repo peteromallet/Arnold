@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import importlib.util
+import logging
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -30,6 +31,7 @@ from vibecomfy.porting.strict_ready import (
     validate_strict_ready_workflow,
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.utils import repo_relative_path
 from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 
 # -- model-like value detection ----------------------------------------------
@@ -37,6 +39,8 @@ from vibecomfy.workflow import ValidationIssue, ValidationReport, VibeWorkflow
 _MODEL_LIKE_EXTENSIONS: frozenset[str] = frozenset(
     {".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf", ".onnx"}
 )
+_PROVENANCE_PATH_KEYS: frozenset[str] = frozenset({"source_path", "source_workflow_path", "source_workflow"})
+logger = logging.getLogger(__name__)
 
 
 PortConvertMode = Literal["scratchpad", "ready_template"]
@@ -518,12 +522,12 @@ def _validate_emitted_path(path: Path, *, schema_provider: Any | None) -> PortCo
 def _source_provenance(workflow: VibeWorkflow, *, source_path: str | None) -> dict[str, Any]:
     provenance = dict(workflow.source.provenance)
     if source_path is not None:
-        provenance.setdefault("source_path", source_path)
+        provenance.setdefault("source_path", _repo_relative_provenance_path(source_path))
     provenance.setdefault("source_id", workflow.source.id)
     provenance.setdefault("source_type", workflow.source.source_type)
     if workflow.source.path is not None:
-        provenance.setdefault("source_workflow_path", workflow.source.path)
-    return provenance
+        provenance.setdefault("source_workflow_path", _repo_relative_provenance_path(workflow.source.path))
+    return _normalize_provenance_paths(provenance)
 
 
 def _conversion_provenance(
@@ -565,10 +569,26 @@ def _ready_metadata(
     metadata = dict(workflow.metadata)
     metadata["ready_template"] = ready_id
     if source_path is not None:
-        metadata.setdefault("source_workflow", source_path)
+        metadata.setdefault("source_workflow", _repo_relative_provenance_path(source_path))
     if provenance:
-        metadata.setdefault("provenance", dict(provenance))
+        metadata.setdefault("provenance", _normalize_provenance_paths(provenance))
     return metadata
+
+
+def _normalize_provenance_paths(provenance: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(provenance)
+    for key in _PROVENANCE_PATH_KEYS:
+        value = normalized.get(key)
+        if isinstance(value, str) and value:
+            normalized[key] = _repo_relative_provenance_path(value)
+    return normalized
+
+
+def _repo_relative_provenance_path(path: str) -> str:
+    normalized = repo_relative_path(path)
+    if Path(normalized).is_absolute():
+        logger.warning("provenance path is outside the repo; keeping absolute path: %s", normalized)
+    return normalized
 
 
 def _ready_requirements(workflow: VibeWorkflow) -> dict[str, Any]:

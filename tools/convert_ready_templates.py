@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Any
 
 
+# TODO(repo-root): this bootstrap script computes the repo root before it
+# adjusts sys.path; migrate to vibecomfy.utils.find_repo_root() once startup is
+# package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 READY_ROOT = REPO_ROOT / "ready_templates"
 OUT_PREVIEW_ROOT = REPO_ROOT / "out" / "converted"

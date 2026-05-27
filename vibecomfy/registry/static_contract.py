@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 from vibecomfy.custom_node_refs import normalize_custom_node_requirements
+from vibecomfy.utils import find_repo_root
 
 from vibecomfy.metadata import (
     MODEL_KEYS,
@@ -841,7 +842,7 @@ def _metadata_with_static_derivations(metadata: dict[str, Any], path: Path, sour
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return find_repo_root()
 
 
 def _template_id_from_path(path: Path) -> str:

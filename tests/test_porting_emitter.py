@@ -19,6 +19,7 @@ from vibecomfy.porting.emitter import (
     emit_ready_template_python,
     emit_scratchpad_python,
 )
+from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 from tools.format_as_python import format_as_python
 
@@ -131,6 +132,29 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     # source-workflow IDs and the emitter's variable-ordering happen to align
     # (LoadImage gets '1', etc.) — see ``tools/convert_ready_templates.py`` and
     # the regenerated ``ready_templates/image/basic_image_upscale.py``.
+
+
+def test_ready_template_provenance_paths_are_repo_relative() -> None:
+    source_path = find_repo_root() / "workflow_corpus" / "source.json"
+    text = emit_ready_template_python(
+        _sample_workflow(),
+        ready_metadata={
+            "ready_template": "image/sample",
+            "capability": "image",
+            "provenance": {
+                "source_path": str(source_path),
+                "source_workflow_path": str(source_path),
+                "source_workflow": str(source_path),
+            },
+        },
+        ready_requirements={"models": [], "custom_nodes": []},
+        template_id="image/sample",
+    )
+
+    assert str(source_path) not in text
+    assert "'source_path': 'workflow_corpus/source.json'" in text
+    assert "'source_workflow_path': 'workflow_corpus/source.json'" in text
+    assert "'source_workflow': 'workflow_corpus/source.json'" in text
 
 
 def test_emit_ready_template_omits_empty_model_and_input_boilerplate() -> None:

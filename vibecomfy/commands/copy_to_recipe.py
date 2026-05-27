@@ -13,8 +13,9 @@ import re
 from pathlib import Path
 
 from vibecomfy.registry.ready import repo_ready_template_id_for_path, repo_ready_template_paths
+from vibecomfy.utils import find_repo_root
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = find_repo_root()
 READY_ROOT = REPO_ROOT / "ready_templates"
 
 _HEADER_RE = re.compile(

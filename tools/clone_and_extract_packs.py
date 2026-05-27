@@ -24,6 +24,8 @@ from typing import Any
 from vibecomfy.node_packs import KNOWN_NODE_PACKS, CustomNodePack
 
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 ROOT = Path(__file__).resolve().parents[1]
 CACHE_DIR = ROOT / "vibecomfy" / "porting" / "cache" / "object_info"
 INDEX_PATH = CACHE_DIR / "index.json"

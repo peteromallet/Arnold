@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol
 from vibecomfy.comfy_command import comfyui_command
 from vibecomfy.errors import ModelAssetError, QueueError, SchemaValidationError, VibeComfyError
 from vibecomfy.memory_profile import MemoryProfile, apply_memory_profile_overrides
-from vibecomfy.utils import atomic_write_json
+from vibecomfy.utils import atomic_write_json, find_repo_root
 from vibecomfy.workflow import VibeWorkflow
 
 from .attempt import build_attempt_bundle, build_shared_fields, write_attempt_json
@@ -710,7 +710,7 @@ def current_source_revision() -> str | None:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[2],
+            cwd=find_repo_root(),
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

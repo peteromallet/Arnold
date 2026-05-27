@@ -11,11 +11,12 @@ from vibecomfy.porting.strict_ready import (
     validate_strict_ready_workflow,
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeWorkflow
 
 
 CONTRACT_SHAPE = "workflow_runtime_contract.v1.public_descriptors.v2"
-TEMPLATE_INDEX_PATH = Path(__file__).resolve().parents[2] / "template_index.json"
+TEMPLATE_INDEX_PATH = find_repo_root() / "template_index.json"
 
 
 def build_contract_surface(

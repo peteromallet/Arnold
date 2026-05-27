@@ -33,6 +33,8 @@ import json
 import sys
 from pathlib import Path
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 REPO = Path(__file__).resolve().parents[1]
 
 PILOT_TEMPLATES: tuple[str, ...] = (

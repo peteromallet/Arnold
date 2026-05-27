@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from typing import Any, Iterable, Mapping
 
 from vibecomfy.porting.report import PortIssue
+from vibecomfy.utils import find_repo_root
 
 if TYPE_CHECKING:
     from vibecomfy.workflow import VibeWorkflow
@@ -46,7 +47,7 @@ STRICT_READY_VIOLATION_CODES: frozenset[str] = frozenset(
     }
 )
 
-DEFAULT_EXCEPTION_PATH = Path(__file__).resolve().parents[2] / "docs" / "strict_ready_exceptions.json"
+DEFAULT_EXCEPTION_PATH = find_repo_root() / "docs" / "strict_ready_exceptions.json"
 EXCEPTION_MATCH_KEYS: tuple[str, str, str] = ("ready_id", "violation_code", "target")
 ALLOWED_FINAL_CATEGORIES: frozenset[str] = frozenset(
     {"reference", "supplemental", "blocked", "scratchpad-only"}

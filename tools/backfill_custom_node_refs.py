@@ -17,6 +17,8 @@ from vibecomfy.registry.static_contract import extract_ready_template_contract
 
 from tools.refresh_template_index import DEFAULT_OUTPUT, _literal_value, build_template_index
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

@@ -42,6 +42,8 @@ from typing import Any
 from vibecomfy.templates import _derive_output_kind
 from vibecomfy.node_packs import KNOWN_NODE_PACKS
 
+# TODO(repo-root): legacy script keeps direct path math; migrate to
+# vibecomfy.utils.find_repo_root() only if this path is revived.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = REPO_ROOT / "out" / "cache"
 

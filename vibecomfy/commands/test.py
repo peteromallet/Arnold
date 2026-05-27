@@ -12,6 +12,8 @@ from difflib import unified_diff
 from pathlib import Path
 from typing import Any
 
+from vibecomfy.utils import find_repo_root
+
 
 def _emit(payload: dict, as_json: bool) -> None:
     if as_json:
@@ -22,7 +24,7 @@ def _stem_map() -> dict[str, str]:
     """Return the registered STEM_TO_READY_ID map from the regen script."""
     from importlib.util import module_from_spec, spec_from_file_location
 
-    regen = Path(__file__).resolve().parents[2] / "scripts" / "regenerate_snapshots.py"
+    regen = find_repo_root() / "scripts" / "regenerate_snapshots.py"
     if not regen.exists():
         return {}
     spec = spec_from_file_location("_regen_for_cli", regen)
@@ -65,7 +67,7 @@ def _cmd_test_snapshot(args: argparse.Namespace) -> int:
     )
 
     path = Path(args.path).resolve()
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = find_repo_root()
     stem_map = _stem_map()
     matched_stem = None
     for stem, ready_id in stem_map.items():
@@ -150,7 +152,7 @@ def _cmd_test_verify(args: argparse.Namespace) -> int:
         canonicalize_widget_values,
     )
 
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = find_repo_root()
     input_path = Path(args.path).resolve()
     stem_map = _stem_map()
     rows: list[dict[str, Any]] = []

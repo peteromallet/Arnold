@@ -8,6 +8,7 @@ from vibecomfy.cli_loader import load_workflow_any
 from vibecomfy.porting.lint import lint_ready_template
 from vibecomfy.porting.workbench import analyze_source
 from vibecomfy.schema import get_schema_provider
+from vibecomfy.utils import find_repo_root
 
 
 @dataclass(frozen=True)
@@ -188,5 +189,5 @@ def _resolve_path(workflow: str) -> Path | None:
     path = Path(workflow)
     if path.is_file():
         return path
-    candidate = Path(__file__).resolve().parents[2] / "ready_templates" / f"{workflow}.py"
+    candidate = find_repo_root() / "ready_templates" / f"{workflow}.py"
     return candidate if candidate.is_file() else None

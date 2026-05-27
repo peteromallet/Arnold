@@ -27,6 +27,8 @@ from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
 from vibecomfy.registry.models_loader import DEFAULT_REGISTRY_PATH, ModelEntry, load_registry
 from vibecomfy.registry.static_contract import extract_ready_template_contract
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSION = 1
 

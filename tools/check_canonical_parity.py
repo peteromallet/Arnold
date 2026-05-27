@@ -14,6 +14,8 @@ from vibecomfy.testing.canonical import canonical_form
 from vibecomfy.workflow import VibeWorkflow
 
 
+# TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
+# script-mode import path is package-import-safe.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 READY_ROOT = REPO_ROOT / "ready_templates"
 DEFAULT_BASELINE = REPO_ROOT / "tests" / "fixtures" / "canonical_parity_baseline.json"
