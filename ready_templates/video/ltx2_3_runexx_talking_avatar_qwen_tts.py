@@ -6,7 +6,8 @@ from __future__ import annotations
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, ModelSamplingSD3, PreviewAudio, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
-from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2_NAG, LTXVChunkFeedForward, LazySwitchKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VRAM_Debug
+from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2SamplingPreviewOverride, LTX2_NAG, LTXVChunkFeedForward, LazySwitchKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VRAM_Debug
+from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.qwentts import AILab_Qwen3TTSVoiceClone
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
@@ -66,7 +67,7 @@ def calculate_frames(
 
     audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '63e8c999:1864', _outputs=('duration_ms',), audio=audio)
 
-    _, calc_int_simple, _ = SimpleCalculatorKJ(
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         _id='63e8c999:1866',
         expression='ceil(a/1000)',
         **{'variables.a': audio_duration__mtb_.out('duration_ms')},
@@ -75,10 +76,10 @@ def calculate_frames(
     _, calc_int, _ = SimpleCalculatorKJ(
         _id='63e8c999:1651',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
-        **{'variables.a': calc_int_simple, 'variables.b': variables_b},
+        **{'variables.a': calc_int_2, 'variables.b': variables_b},
     )
 
-    _, _, calc_bool_simple_2 = SimpleCalculatorKJ(
+    _, _, calc_bool_3 = SimpleCalculatorKJ(
         _id='63e8c999:1899',
         expression='a<b ',
         **{'variables.a': variables_a, 'variables.b': calc_int},
@@ -86,7 +87,7 @@ def calculate_frames(
 
     lazyswitchkj = LazySwitchKJ(
         _id='63e8c999:1900',
-        switch=calc_bool_simple_2,
+        switch=calc_bool_3,
         on_false=on_false,
         on_true=calc_int,
     )
@@ -178,10 +179,13 @@ def build() -> VibeWorkflow:
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937', model=MEL_BAND_ROFORMER_NAME)
+    melbandroformermodelloader = MelBandRoFormerModelLoader(
+        model=MEL_BAND_ROFORMER_NAME,
+    )
+
     loadaudio = LoadAudio(audio='d1b26d5a32db420183fa17af9c699278.mp3')
 
-    image_image, _, _, _ = ImageResizeKJv2(
+    image_2, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
@@ -212,20 +216,20 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=image_image)
+    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=image_2)
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        input=image_image,
+        input=image_2,
     )
 
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '1936',
+    melbandroformersampler = MelBandRoFormerSampler(
         audio=trimaudioduration,
         model=melbandroformermodelloader.out(0),
     )
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
-    width_get, height_get, _ = GetImageSize(image=resizeimagemasknode)
+    width_2, height_2, _ = GetImageSize(image=resizeimagemasknode)
     prompt_enhancer_result = prompt_enhancer(
         clip=dualcliploader,
         image=resizeimagemasknode,
@@ -279,7 +283,10 @@ def build() -> VibeWorkflow:
         audio=audionormalizelufs.out(0),
     )
 
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '1858', model=model, vae=vaeloader_2)
+    ltx2samplingpreviewoverride = LTX2SamplingPreviewOverride(
+        model=model,
+        vae=vaeloader_2,
+    )
 
     ltxvaudiovaeencode = LTXVAudioVAEEncode(
         audio=audioenhancementnode.out(0),
@@ -295,8 +302,8 @@ def build() -> VibeWorkflow:
     previewaudio = PreviewAudio(audio=audioenhancementnode.out(0))
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        width=width_get,
-        height=height_get,
+        width=width_2,
+        height=height_2,
         length=calculate_frames_result,
     )
 
@@ -349,7 +356,7 @@ def build() -> VibeWorkflow:
         model=modelsamplingsd3_2,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -357,7 +364,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas_2,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output_sampler)
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output_2)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
         samples=video_latent,
@@ -366,7 +373,7 @@ def build() -> VibeWorkflow:
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
-        image=image_image,
+        image=image_2,
         latent=ltxvlatentupsampler,
         vae=vaeloader,
     )
@@ -384,18 +391,18 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(av_latent=output)
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output)
 
     # Decode
     vaedecodetiled = VAEDecodeTiled(
         temporal_size=4096,
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         vae=vaeloader,
     )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
         audio_vae=ltxvaudiovaeloader,
-        samples=audio_latent_ltxv,
+        samples=audio_latent_2,
     )
 
     _, image_pass, _, _, _ = VRAM_Debug(

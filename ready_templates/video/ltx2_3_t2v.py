@@ -178,7 +178,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoconditiononly,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -196,22 +196,19 @@ def build() -> VibeWorkflow:
         sigmas=ltxvscheduler,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-        av_latent=output_sampler,
-    )
-
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output_2)
     video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
     ltxvaudiovaedecode_2 = LTXVAudioVAEDecode(
         audio_vae=ltxvaudiovaeloader,
-        samples=audio_latent_ltxv,
+        samples=audio_latent_2,
     )
 
     ltxvtiledvaedecode = LTXVTiledVAEDecode(
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
-        latents=video_latent_ltxv,
+        latents=video_latent_2,
         vae=vae,
     )
 

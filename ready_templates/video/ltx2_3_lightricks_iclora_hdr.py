@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath, VAEDecodeTiled
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath_2, VAEDecodeTiled
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVHDRDecodePostprocess
 
 
@@ -80,7 +80,7 @@ def build() -> VibeWorkflow:
 
     images, audio, fps = GetVideoComponents(video=loadvideo)
 
-    model_ltxic_2, _ = LTXICLoRALoaderModelOnly(
+    model_3, _ = LTXICLoRALoaderModelOnly(
         lora_name=LORA_NAME_2,
         strength_model=GUIDE_STRENGTH_2,
         model=model,
@@ -92,12 +92,12 @@ def build() -> VibeWorkflow:
         positive=cliptextencode,
     )
 
-    model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
+    model_2, latent_downscale_factor = LTXICLoRALoaderModelOnly(
         lora_name=LORA_NAME,
-        model=model_ltxic_2,
+        model=model_3,
     )
 
-    math_int, _ = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, _ = SimpleMath_2(value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale to multiple',
@@ -114,7 +114,7 @@ def build() -> VibeWorkflow:
         length=batch_size,
     )
 
-    positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
+    positive_2, negative_2, latent = LTXAddVideoICLoRAGuide(
         crop=1,
         use_tiled_encode='disabled',
         image=resizeimagemasknode,
@@ -126,9 +126,9 @@ def build() -> VibeWorkflow:
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH,
-        model=model_ltxic,
-        negative=negative_ltx,
-        positive=positive_ltx,
+        model=model_2,
+        negative=negative_2,
+        positive=positive_2,
     )
 
     output, _ = SamplerCustomAdvanced(
@@ -139,10 +139,10 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    _, _, latent_ltxv = LTXVCropGuides(
+    _, _, latent_2 = LTXVCropGuides(
         latent=output,
-        negative=negative_ltx,
-        positive=positive_ltx,
+        negative=negative_2,
+        positive=positive_2,
     )
 
     # Decode
@@ -151,7 +151,7 @@ def build() -> VibeWorkflow:
         overlap=256,
         temporal_size=8,
         temporal_overlap=4,
-        samples=latent_ltxv,
+        samples=latent_2,
         vae=vae,
     )
 

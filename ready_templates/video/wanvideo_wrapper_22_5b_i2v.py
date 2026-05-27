@@ -72,7 +72,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image, width, height, _ = ImageResizeKJv2(
+    image_2, width, height, _ = ImageResizeKJv2(
         width=1024,
         height=1024,
         upscale_method='lanczos',
@@ -100,7 +100,7 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        image=image_image,
+        image=image_2,
         vae=wanvideovaeloader,
     )
 

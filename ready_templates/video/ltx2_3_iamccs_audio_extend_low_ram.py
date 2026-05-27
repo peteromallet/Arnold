@@ -424,7 +424,7 @@ def build() -> VibeWorkflow:
         video_latent=iamccs_startdirtovideolatent.out(0),
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -432,7 +432,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv, _ = LTXVSeparateAVLatent(av_latent=output_sampler)
+    video_latent_2, _ = LTXVSeparateAVLatent(av_latent=output_2)
 
     iamccs_vaedecodetodisk_2 = raw_call('IAMCCS_VAEDecodeToDisk', '61',
         widget_0='iamccs_vae_frames/30s_free_low_ram/seg1',
@@ -446,7 +446,7 @@ def build() -> VibeWorkflow:
         widget_7=64,
         widget_8=True,
         widget_9=IAMCCS_SEAM_DEBUG,
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         vae=vaeloaderkj,
     )
 
@@ -486,7 +486,7 @@ def build() -> VibeWorkflow:
         video_latent=iamccs_startdirtovideolatent_2.out(0),
     )
 
-    output_sampler_2, _ = SamplerCustomAdvanced(
+    output_3, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_3,
         noise=randomnoise_3,
@@ -494,7 +494,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv_2, _ = LTXVSeparateAVLatent(av_latent=output_sampler_2)
+    video_latent_3, _ = LTXVSeparateAVLatent(av_latent=output_3)
 
     iamccs_vaedecodetodisk_3 = raw_call('IAMCCS_VAEDecodeToDisk', '62',
         widget_0='iamccs_vae_frames/30s_free_low_ram/seg2',
@@ -508,7 +508,7 @@ def build() -> VibeWorkflow:
         widget_7=64,
         widget_8=True,
         widget_9=IAMCCS_SEAM_DEBUG,
-        samples=video_latent_ltxv_2,
+        samples=video_latent_3,
         vae=vaeloaderkj,
     )
 

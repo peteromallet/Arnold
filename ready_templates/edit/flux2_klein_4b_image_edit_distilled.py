@@ -274,7 +274,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     image, _ = LoadImage(image='handbag_white.png')
-    image_load, _ = LoadImage(image='comfy_logo_blue.png')
+    image_2, _ = LoadImage(image='comfy_logo_blue.png')
     edited = image_edit_flux2_klein_4b_distilled(
         unet_name='flux-2-klein-4b-fp8.safetensors',
         clip_name=image,
@@ -285,10 +285,10 @@ def build() -> VibeWorkflow:
     edited_dual = image_edit_flux2_klein_4b_distilled_dual(
         unet_name='flux-2-klein-4b-fp8.safetensors',
         clip_name=image,
-        vae_name=image_load,
+        vae_name=image_2,
         prompt='stylize the handbag in image1 with the colours and logo from image 2',
         reference_image1=image,
-        reference_image2=image_load,
+        reference_image2=image_2,
     )
     saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
     saveimage_2 = SaveImage(filename_prefix='Flux2-Klein', images=edited_dual)

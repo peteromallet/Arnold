@@ -65,7 +65,7 @@ def build() -> VibeWorkflow:
 
     # Inputs
     image, _ = LoadImage(image='example_start.png')
-    image_load, _ = LoadImage(image='example_end.png')
+    image_2, _ = LoadImage(image='example_end.png')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED)
 
@@ -108,7 +108,7 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
-        input=image_load,
+        input=image_2,
         **{'resize_type.crop': CENTER, 'resize_type.height': 480, 'resize_type.width': 832},
     )
 
@@ -134,7 +134,7 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_4 = ResizeImageMaskNode(
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
-        input=image_load,
+        input=image_2,
         **{'resize_type.crop': CENTER, 'resize_type.height': 480, 'resize_type.width': 832},
     )
 
@@ -157,7 +157,7 @@ def build() -> VibeWorkflow:
         height=height,
     )
 
-    positive_ltxv, negative_ltxv, latent = LTXVAddGuide(
+    positive_2, negative_2, latent = LTXVAddGuide(
         image=ltxvpreprocess_4,
         latent=emptyltxvlatentvideo,
         negative=negative,
@@ -165,25 +165,25 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    positive_ltxv_2, negative_ltxv_2, latent_ltxv = LTXVAddGuide(
+    positive_3, negative_3, latent_2 = LTXVAddGuide(
         frame_idx=-1,
         image=ltxvpreprocess_3,
         latent=latent,
-        negative=negative_ltxv,
-        positive=positive_ltxv,
+        negative=negative_2,
+        positive=positive_2,
         vae=vae,
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
         audio_latent=ltxvemptylatentaudio,
-        video_latent=latent_ltxv,
+        video_latent=latent_2,
     )
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH,
         model=ltx2memoryefficientsageattentionpatch,
-        negative=negative_ltxv_2,
-        positive=positive_ltxv_2,
+        negative=negative_3,
+        positive=positive_3,
     )
 
     _, denoised_output = SamplerCustomAdvanced(
@@ -207,42 +207,42 @@ def build() -> VibeWorkflow:
         any_input=ltxvlatentupsampler,
     )
 
-    positive_ltxv_3, negative_ltxv_3, latent_ltxv_2 = LTXVCropGuides(
+    positive_4, negative_4, latent_3 = LTXVCropGuides(
         latent=any_output,
-        negative=negative_ltxv_2,
-        positive=positive_ltxv_2,
+        negative=negative_3,
+        positive=positive_3,
     )
 
-    positive_ltxv_4, negative_ltxv_4, latent_ltxv_3 = LTXVAddGuide(
+    positive_5, negative_5, latent_4 = LTXVAddGuide(
         image=ltxvpreprocess_2,
-        latent=latent_ltxv_2,
-        negative=negative_ltxv_3,
-        positive=positive_ltxv_3,
+        latent=latent_3,
+        negative=negative_4,
+        positive=positive_4,
         vae=vae,
     )
 
-    positive_ltxv_5, negative_ltxv_5, latent_ltxv_4 = LTXVAddGuide(
+    positive_6, negative_6, latent_5 = LTXVAddGuide(
         frame_idx=-1,
         image=ltxvpreprocess,
-        latent=latent_ltxv_3,
-        negative=negative_ltxv_4,
-        positive=positive_ltxv_4,
+        latent=latent_4,
+        negative=negative_5,
+        positive=positive_5,
         vae=vae,
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
         audio_latent=audio_latent,
-        video_latent=latent_ltxv_4,
+        video_latent=latent_5,
     )
 
     cfgguider_2 = CFGGuider(
         cfg=GUIDE_STRENGTH,
         model=ltx2memoryefficientsageattentionpatch,
-        negative=negative_ltxv_5,
-        positive=positive_ltxv_5,
+        negative=negative_6,
+        positive=positive_6,
     )
 
-    _, denoised_output_sampler = SamplerCustomAdvanced(
+    _, denoised_output_2 = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -250,26 +250,24 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-        av_latent=denoised_output_sampler,
-    )
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=denoised_output_2)
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
         audio_vae=ltxvaudiovaeloader,
-        samples=audio_latent_ltxv,
+        samples=audio_latent_2,
     )
 
-    _, _, latent_ltxv_5 = LTXVCropGuides(
-        latent=video_latent_ltxv,
-        negative=negative_ltxv_5,
-        positive=positive_ltxv_5,
+    _, _, latent_6 = LTXVCropGuides(
+        latent=video_latent_2,
+        negative=negative_6,
+        positive=positive_6,
     )
 
     ltxvtiledvaedecode = LTXVTiledVAEDecode(
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
-        latents=latent_ltxv_5,
+        latents=latent_6,
         vae=vae,
     )
 

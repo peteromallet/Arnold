@@ -74,7 +74,7 @@ def build() -> VibeWorkflow:
         **{'choose video to upload': 'image'},
     )
 
-    image_image, _, _, _ = ImageResizeKJv2(
+    image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=STRETCH,
         device=CPU,
@@ -87,15 +87,12 @@ def build() -> VibeWorkflow:
         a=6.283185307179586,
         bg_threshold=0.1,
         resolution=512,
-        image=image_image,
+        image=image_2,
     )
 
-    getimagesfrombatchindexed = GetImagesFromBatchIndexed(
-        indexes='0',
-        images=image_image,
-    )
+    getimagesfrombatchindexed = GetImagesFromBatchIndexed(indexes='0', images=image_2)
 
-    image_image_2, _, _, _ = ImageResizeKJv2(
+    image_3, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=STRETCH,
         device=CPU,
@@ -118,7 +115,7 @@ def build() -> VibeWorkflow:
     previewimage = PreviewImage(images=getimagesfrombatchindexed)
 
     wanvideocontrolnet = WanVideoControlnet(
-        control_images=image_image_2,
+        control_images=image_3,
         controlnet=wanvideocontrolnetloader,
         model=wanvideomodelloader,
     )
@@ -130,7 +127,7 @@ def build() -> VibeWorkflow:
         extra_latents=wanvideoencode,
     )
 
-    previewanimation = PreviewAnimation(fps=DEFAULT_FPS, images=image_image_2)
+    previewanimation = PreviewAnimation(fps=DEFAULT_FPS, images=image_3)
 
     wanvideotextencode = WanVideoTextEncode(
         positive_prompt=DEFAULT_PROMPT,

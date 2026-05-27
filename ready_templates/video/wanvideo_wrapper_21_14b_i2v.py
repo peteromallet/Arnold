@@ -73,7 +73,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image, width, height, _ = ImageResizeKJv2(
+    image_2, width, height, _ = ImageResizeKJv2(
         width=624,
         height=624,
         upscale_method='lanczos',
@@ -98,7 +98,7 @@ def build() -> VibeWorkflow:
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
         ratio=0.20000000000000004,
         clip_vision=clipvisionloader,
-        image_1=image_image,
+        image_1=image_2,
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
@@ -112,7 +112,7 @@ def build() -> VibeWorkflow:
         width=width,
         height=height,
         clip_embeds=wanvideoclipvisionencode,
-        start_image=image_image,
+        start_image=image_2,
         vae=wanvideovaeloader,
     )
 

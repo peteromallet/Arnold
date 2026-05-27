@@ -70,7 +70,7 @@ def build() -> VibeWorkflow:
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
     wanvideoslg = WanVideoSLG(blocks='11', start_percent=0)
 
-    _, negative_text_embeds_wan, _ = WanVideoTextEncodeCached(
+    _, negative_text_embeds_2, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         negative_prompt=DEFAULT_NEGATIVE,
     )
@@ -90,10 +90,10 @@ def build() -> VibeWorkflow:
     wanvideoovicfg = WanVideoOviCFG(
         widget_0=3,
         original_text_embeds=text_embeds,
-        ovi_negative_text_embeds=negative_text_embeds_wan,
+        ovi_negative_text_embeds=negative_text_embeds_2,
     )
 
-    image_image, width, height, _ = ImageResizeKJv2(
+    image_2, width, height, _ = ImageResizeKJv2(
         width=704,
         height=704,
         upscale_method='lanczos',
@@ -114,7 +114,7 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        image=image_image,
+        image=image_2,
         vae=wanvideovaeloader,
     )
 

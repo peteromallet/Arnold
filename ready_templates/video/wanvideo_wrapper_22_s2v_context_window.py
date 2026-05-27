@@ -3,9 +3,11 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, LoadAudio, LoadImage
+from vibecomfy.nodes.gimm_vfi import DownloadAndLoadGIMMVFIModel, GIMMVFI_interpolate
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, ImageResizeKJv2, InsertLatentToIndexed
+from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.videohelpersuite import VHS_LoadAudio, VHS_SelectEveryNthImage, VHS_SplitImages, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import NormalizeAudioLoudness, WanVideoAddS2VEmbeds, WanVideoBlockSwap, WanVideoContextOptions, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoEncode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
@@ -73,12 +75,16 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image_load, _ = LoadImage(image='2b.jpg')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MEL_BAND_ROFORMER_NAME)
+    image_2, _ = LoadImage(image='2b.jpg')
+
+    melbandroformermodelloader = MelBandRoFormerModelLoader(
+        model=MEL_BAND_ROFORMER_NAME,
+    )
+
     wanvideocontextoptions = WanVideoContextOptions(context_schedule='uniform_standard')
     audio, _ = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
 
-    downloadandloadgimmvfimodel = raw_call('DownloadAndLoadGIMMVFIModel', '95',
+    downloadandloadgimmvfimodel = DownloadAndLoadGIMMVFIModel(
         widget_0=WIDGET__NAME,
         widget_1='fp16',
         widget_2=False,
@@ -92,24 +98,24 @@ def build() -> VibeWorkflow:
         compile_args=wanvideotorchcompilesettings,
     )
 
-    image_image, width_image, height_image, _ = ImageResizeKJv2(
+    image_3, width_2, height_2, _ = ImageResizeKJv2(
         width=960,
         height=640,
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
-        image=image_load,
+        image=image_2,
     )
 
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '82',
+    melbandroformersampler = MelBandRoFormerSampler(
         audio=audio,
         model=melbandroformermodelloader.out(0),
     )
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
         num_frames=DEFAULT_FRAMES,
-        width=width_image,
-        height=height_image,
+        width=width_2,
+        height=height_2,
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
@@ -123,7 +129,7 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        image=image_image,
+        image=image_3,
         vae=wanvideovaeloader,
     )
 
@@ -178,7 +184,7 @@ def build() -> VibeWorkflow:
     image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
     _, _, image_b, _ = VHS_SplitImages(split_index=3, images=image)
 
-    gimmvfi_interpolate = raw_call('GIMMVFI_interpolate', '96',
+    gimmvfi_interpolate = GIMMVFI_interpolate(
         widget_0=1,
         widget_1=3,
         widget_2=0,
@@ -203,7 +209,7 @@ def build() -> VibeWorkflow:
         images=image_b,
     )
 
-    image_select, _ = VHS_SelectEveryNthImage(
+    image_4, _ = VHS_SelectEveryNthImage(
         select_every_nth=2,
         images=gimmvfi_interpolate.out(0),
     )
@@ -219,7 +225,7 @@ def build() -> VibeWorkflow:
         trim_to_audio=False,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideo2_2_S2V_00013-audio.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 32, 'workflow': 'WanVideo2_2_S2V_00013.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideo2_2_S2V_00013-audio.mp4'}},
         audio=audio,
-        images=image_select,
+        images=image_4,
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_2_S2V')

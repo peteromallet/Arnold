@@ -129,7 +129,7 @@ def build() -> VibeWorkflow:
         text_embeds=text_embeds,
     )
 
-    samples_wan, _ = WanVideoSampler(
+    samples_2, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,
@@ -144,7 +144,7 @@ def build() -> VibeWorkflow:
 
     wanvideodecode = WanVideoDecode(
         normalization='default',
-        samples=samples_wan,
+        samples=samples_2,
         vae=wanvideovaeloader,
     )
 

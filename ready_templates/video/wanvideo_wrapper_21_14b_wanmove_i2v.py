@@ -73,7 +73,7 @@ def build() -> VibeWorkflow:
         t5=loadwanvideot5textencoder,
     )
 
-    image_image, width, height, _ = ImageResizeKJv2(
+    image_2, width, height, _ = ImageResizeKJv2(
         width=640,
         height=640,
         upscale_method='lanczos',
@@ -91,7 +91,7 @@ def build() -> VibeWorkflow:
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
         ratio=0.20000000000000004,
         clip_vision=clipvisionloader,
-        image_1=image_image,
+        image_1=image_2,
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
@@ -111,10 +111,10 @@ def build() -> VibeWorkflow:
         widget_2=640,
         widget_3=640,
         widget_4=81,
-        bg_image=image_image,
+        bg_image=image_2,
     )
 
-    repeatimagebatch = RepeatImageBatch(amount=81, widget_0=81, image=image_image)
+    repeatimagebatch = RepeatImageBatch(amount=81, widget_0=81, image=image_2)
 
     wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
         fun_or_fl2v_model=False,
@@ -123,7 +123,7 @@ def build() -> VibeWorkflow:
         height=height,
         num_frames=count,
         clip_embeds=wanvideoclipvisionencode,
-        start_image=image_image,
+        start_image=image_2,
         vae=wanvideovaeloader,
     )
 

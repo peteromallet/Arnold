@@ -217,7 +217,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     image, _ = LoadImage(image='robed_women.png')
-    image_load, _ = LoadImage(image='pink_tone_chair.png')
+    image_2, _ = LoadImage(image='pink_tone_chair.png')
     edited = image_edit_flux2_klein_4b(
         unet_name='flux-2-klein-base-4b-fp8.safetensors',
         clip_name=image,
@@ -228,10 +228,10 @@ def build() -> VibeWorkflow:
     edited_2 = image_edit_flux2_klein_9b(
         unet_name='flux-2-klein-base-4b-fp8.safetensors',
         clip_name=image,
-        vae_name=image_load,
+        vae_name=image_2,
         prompt="A stylish young woman with dark skin wearing a plush deep emerald green bathrobe, light pink towel turban, and red heart-shaped sunglasses, seated on a light-colored rattan chair with soft pink cushions, positioned in front of a textured dusty rose pink wall with an arched alcove, large tropical plants with broad dark green leaves framing both sides, woven straw baskets on the floor, remove any existing shoes from the background, only the woman's beige woven sandals visible in the foreground, soft natural lighting casting gentle shadows, warm bohemian chic aesthetic, professional fashion photography",
         reference_image1=image,
-        reference_image2=image_load,
+        reference_image2=image_2,
     )
     saveimage = SaveImage(filename_prefix='Flux2-Klein-4b-base', images=edited)
     saveimage_2 = SaveImage(filename_prefix='Flux2-Klein-4b-base', images=edited_2)

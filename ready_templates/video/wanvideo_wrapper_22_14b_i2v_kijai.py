@@ -105,7 +105,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
 
-    image_image, width, height, _ = ImageResizeKJv2(
+    image_2, width, height, _ = ImageResizeKJv2(
         width=720,
         height=720,
         upscale_method='lanczos',
@@ -151,7 +151,7 @@ def build() -> VibeWorkflow:
         fun_or_fl2v_model=False,
         width=width,
         height=height,
-        start_image=image_image,
+        start_image=image_2,
         vae=wanvideovaeloader,
     )
 
@@ -168,7 +168,7 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    samples_wan, _ = WanVideoSampler(
+    samples_2, _ = WanVideoSampler(
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,
@@ -184,11 +184,11 @@ def build() -> VibeWorkflow:
 
     wanvideodecode = WanVideoDecode(
         normalization='default',
-        samples=samples_wan,
+        samples=samples_2,
         vae=wanvideovaeloader,
     )
 
-    image_get, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_3, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
@@ -201,7 +201,7 @@ def build() -> VibeWorkflow:
         save_metadata=True,
         trim_to_audio=False,
         videopreview={'hidden': False, 'params': {'filename': 'WanVideo2_2_I2V_00006.mp4', 'format': 'video/h264-mp4', 'frame_rate': 16, 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideo2_2_I2V_00006.mp4', 'subfolder': '', 'type': 'temp', 'workflow': 'WanVideo2_2_I2V_00006.png'}, 'paused': False},
-        images=image_get,
+        images=image_3,
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_2_I2V')

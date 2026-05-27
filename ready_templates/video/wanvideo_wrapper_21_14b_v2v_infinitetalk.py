@@ -3,9 +3,10 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPVisionLoader, GetImageRangeFromBatch, LoadAudio
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageConcatMulti, ImageResizeKJv2
+from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import DownloadAndLoadWav2VecModel, MultiTalkModelLoader, MultiTalkWav2VecEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoEncode, WanVideoImageToVideoMultiTalk, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader, Wav2VecModelLoader
 
@@ -65,7 +66,11 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=640)
     intconstant_2 = INTConstant(value=640)
     intconstant_3 = INTConstant(value=1000)
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '303', model=MEL_BAND_ROFORMER_NAME)
+
+    melbandroformermodelloader = MelBandRoFormerModelLoader(
+        model=MEL_BAND_ROFORMER_NAME,
+    )
+
     wav2vecmodelloader = Wav2VecModelLoader(model=MODEL_NAME_3)
 
     wanvideomodelloader = WanVideoModelLoader(
@@ -86,7 +91,7 @@ def build() -> VibeWorkflow:
         **{'choose video to upload': 'image'},
     )
 
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '304',
+    melbandroformersampler = MelBandRoFormerSampler(
         audio=loadaudio,
         model=melbandroformermodelloader.out(0),
     )
@@ -103,7 +108,7 @@ def build() -> VibeWorkflow:
         wav2vec_model=downloadandloadwav2vecmodel,
     )
 
-    image_image, _, _, _ = ImageResizeKJv2(
+    image_2, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         divisible_by=16,
@@ -119,16 +124,16 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        image=image_image,
+        image=image_2,
         vae=wanvideovaeloader,
     )
 
-    image_get, _ = GetImageRangeFromBatch(images=image_image)
-    image_get_2, width_get, height_get, _ = GetImageSizeAndCount(image=image_get)
+    image_3, _ = GetImageRangeFromBatch(images=image_2)
+    image_4, width_2, height_2, _ = GetImageSizeAndCount(image=image_3)
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
         clip_vision=clipvisionloader,
-        image_1=image_get_2,
+        image_1=image_4,
     )
 
     image_embeds, _ = WanVideoImageToVideoMultiTalk(
@@ -141,10 +146,10 @@ def build() -> VibeWorkflow:
         widget_2=81,
         widget_7='infinitetalk',
         clip_embeds=wanvideoclipvisionencode,
-        height=height_get,
-        start_image=image_get_2,
+        height=height_2,
+        start_image=image_4,
         vae=wanvideovaeloader,
-        width=width_get,
+        width=width_2,
     )
 
     samples, _ = WanVideoSampler(
@@ -168,14 +173,14 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get_3, _, _, count_get = GetImageSizeAndCount(image=wanvideodecode)
-    image_get_4, _ = GetImageRangeFromBatch(num_frames=count_get, images=image_get_3)
+    image_5, _, _, count_2 = GetImageSizeAndCount(image=wanvideodecode)
+    image_6, _ = GetImageRangeFromBatch(num_frames=count_2, images=image_5)
 
     imageconcatmulti = ImageConcatMulti(
         direction='left',
         unused_3=None,
-        image_1=image_get_4,
-        image_2=image_image,
+        image_1=image_6,
+        image_2=image_2,
     )
 
     # Outputs

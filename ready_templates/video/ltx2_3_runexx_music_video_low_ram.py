@@ -3,10 +3,11 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, ModelSamplingSD3, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecode, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
-from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, LazySwitchKJ, LoadVideosFromFolder, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ, VRAM_Debug
+from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2SamplingPreviewOverride, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, LazySwitchKJ, LoadVideosFromFolder, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ, VRAM_Debug
+from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
@@ -310,14 +311,14 @@ def generate_video_c4106aee(
         sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
         _id='c4106aee:2298',
         av_latent=output,
     )
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
         _id='c4106aee:2297',
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         upscale_model=upscale_model,
         vae=vae,
     )
@@ -334,11 +335,11 @@ def generate_video_c4106aee(
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
         _id='c4106aee:2296',
-        audio_latent=audio_latent_ltxv,
+        audio_latent=audio_latent_2,
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         _id='c4106aee:2312',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
@@ -347,21 +348,17 @@ def generate_video_c4106aee(
         sigmas=sigmas,
     )
 
-    video_latent, _ = LTXVSeparateAVLatent(
-        _id='c4106aee:2239',
-        av_latent=output_sampler,
-    )
-
+    video_latent, _ = LTXVSeparateAVLatent(_id='c4106aee:2239', av_latent=output_2)
     vaedecode = VAEDecode(_id='c4106aee:2241', samples=video_latent, vae=vae_2)
     _, image_pass, _, _, _ = VRAM_Debug(_id='c4106aee:2108', image_pass=vaedecode)
     _, _, _, count = GetImageSizeAndCount(_id='c4106aee:4202', image=image_pass)
 
-    _, calc_int_simple, _ = SimpleCalculatorKJ(
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         _id='c4106aee:4201',
         **{'variables.a': frames_count, 'variables.b': count},
     )
 
-    return calc_int_simple, vaedecode, trimaudioduration_2
+    return calc_int_2, vaedecode, trimaudioduration_2
 
 
 def total_duration(
@@ -487,7 +484,7 @@ def generate_video(
         **{'values.a': frames_count, 'values.b': values_b},
     )
 
-    _, calc_int_simple, _ = SimpleCalculatorKJ(
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         _id='17238add:5041',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.a': window_seconds, 'variables.b': variables_b},
@@ -509,7 +506,7 @@ def generate_video(
         _id='17238add:5042',
         width=width,
         height=height,
-        length=calc_int_simple,
+        length=calc_int_2,
     )
 
     trimaudioduration = TrimAudioDuration(
@@ -626,7 +623,7 @@ def generate_video(
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         _id='17238add:5030',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
@@ -635,12 +632,8 @@ def generate_video(
         sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, _ = LTXVSeparateAVLatent(
-        _id='17238add:5028',
-        av_latent=output_sampler,
-    )
-
-    vaedecode = VAEDecode(_id='17238add:5046', samples=video_latent_ltxv, vae=vae_2)
+    video_latent_2, _ = LTXVSeparateAVLatent(_id='17238add:5028', av_latent=output_2)
+    vaedecode = VAEDecode(_id='17238add:5046', samples=video_latent_2, vae=vae_2)
     _, image_pass, _, _, _ = VRAM_Debug(_id='17238add:5037', image_pass=vaedecode)
     _, _, _, count = GetImageSizeAndCount(_id='17238add:5036', image=image_pass)
 
@@ -751,7 +744,7 @@ def generate_video_a3fb563d(
         **{'values.a': frames_count, 'values.b': values_b},
     )
 
-    _, calc_int_simple, _ = SimpleCalculatorKJ(
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         _id='a3fb563d:5116',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.a': window_seconds, 'variables.b': variables_b},
@@ -773,7 +766,7 @@ def generate_video_a3fb563d(
         _id='a3fb563d:5117',
         width=width,
         height=height,
-        length=calc_int_simple,
+        length=calc_int_2,
     )
 
     trimaudioduration = TrimAudioDuration(
@@ -890,7 +883,7 @@ def generate_video_a3fb563d(
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         _id='a3fb563d:5105',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
@@ -899,12 +892,8 @@ def generate_video_a3fb563d(
         sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, _ = LTXVSeparateAVLatent(
-        _id='a3fb563d:5103',
-        av_latent=output_sampler,
-    )
-
-    vaedecode = VAEDecode(_id='a3fb563d:5121', samples=video_latent_ltxv, vae=vae_2)
+    video_latent_2, _ = LTXVSeparateAVLatent(_id='a3fb563d:5103', av_latent=output_2)
+    vaedecode = VAEDecode(_id='a3fb563d:5121', samples=video_latent_2, vae=vae_2)
     _, image_pass, _, _, _ = VRAM_Debug(_id='a3fb563d:5112', image_pass=vaedecode)
     _, _, _, count = GetImageSizeAndCount(_id='a3fb563d:5111', image=image_pass)
 
@@ -1015,7 +1004,7 @@ def generate_video_4acc9924(
         **{'values.a': frames_count, 'values.b': values_b},
     )
 
-    _, calc_int_simple, _ = SimpleCalculatorKJ(
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         _id='4acc9924:5191',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.a': window_seconds, 'variables.b': variables_b},
@@ -1037,7 +1026,7 @@ def generate_video_4acc9924(
         _id='4acc9924:5192',
         width=width,
         height=height,
-        length=calc_int_simple,
+        length=calc_int_2,
     )
 
     trimaudioduration = TrimAudioDuration(
@@ -1154,7 +1143,7 @@ def generate_video_4acc9924(
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         _id='4acc9924:5180',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
@@ -1163,12 +1152,8 @@ def generate_video_4acc9924(
         sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, _ = LTXVSeparateAVLatent(
-        _id='4acc9924:5178',
-        av_latent=output_sampler,
-    )
-
-    vaedecode = VAEDecode(_id='4acc9924:5196', samples=video_latent_ltxv, vae=vae_2)
+    video_latent_2, _ = LTXVSeparateAVLatent(_id='4acc9924:5178', av_latent=output_2)
+    vaedecode = VAEDecode(_id='4acc9924:5196', samples=video_latent_2, vae=vae_2)
     _, image_pass, _, _, _ = VRAM_Debug(_id='4acc9924:5187', image_pass=vaedecode)
     _, _, _, count = GetImageSizeAndCount(_id='4acc9924:5186', image=image_pass)
 
@@ -1219,7 +1204,11 @@ def build() -> VibeWorkflow:
 
     intconstant_2 = INTConstant(value=480)
     loadaudio = LoadAudio(audio='ComfyUI_00152_.mp3')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1600', model=MEL_BAND_ROFORMER_NAME)
+
+    melbandroformermodelloader = MelBandRoFormerModelLoader(
+        model=MEL_BAND_ROFORMER_NAME,
+    )
+
     intconstant_3 = INTConstant(value=832)
 
     _, calc_int, _ = SimpleCalculatorKJ(
@@ -1259,12 +1248,12 @@ def build() -> VibeWorkflow:
         delimiter=VALUE,
     )
 
-    image_load, _ = LoadImage(image='download (1).png')
-    image_load_2, _ = LoadImage(image='download (6).png')
-    image_load_3, _ = LoadImage(image='download (2).png')
-    image_load_4, _ = LoadImage(image='download (12).png')
+    image_5, _ = LoadImage(image='download (1).png')
+    image_6, _ = LoadImage(image='download (6).png')
+    image_7, _ = LoadImage(image='download (2).png')
+    image_8, _ = LoadImage(image='download (12).png')
 
-    image_image, _, _, _ = ImageResizeKJv2(
+    image_2, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
@@ -1301,19 +1290,19 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '1599',
+    melbandroformersampler = MelBandRoFormerSampler(
         audio=trimaudioduration,
         model=melbandroformermodelloader.out(0),
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        input=image_image,
+        input=image_2,
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
         longer_edge=1536,
-        images=image_image,
+        images=image_2,
     )
 
     ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
@@ -1325,7 +1314,7 @@ def build() -> VibeWorkflow:
         on_true=melbandroformersampler.out(0),
     )
 
-    width_get, height_get, _ = GetImageSize(image=resizeimagemasknode)
+    width_2, height_2, _ = GetImageSize(image=resizeimagemasknode)
     prompt_enhancer_3bd4eeb9_result = prompt_enhancer_3bd4eeb9(
         clip=dualcliploader,
         image=resizeimagesbylongeredge,
@@ -1334,8 +1323,8 @@ def build() -> VibeWorkflow:
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        width=width_get,
-        height=height_get,
+        width=width_2,
+        height=height_2,
         length=calc_int,
     )
 
@@ -1371,7 +1360,11 @@ def build() -> VibeWorkflow:
     )
 
     setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '2188', model=model, vae=vaeloader_2)
+
+    ltx2samplingpreviewoverride = LTX2SamplingPreviewOverride(
+        model=model,
+        vae=vaeloader_2,
+    )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
         audio_latent=setlatentnoisemask,
@@ -1422,10 +1415,10 @@ def build() -> VibeWorkflow:
         model=modelsamplingsd3_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(av_latent=output)
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
     )
@@ -1438,11 +1431,11 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-        audio_latent=audio_latent_ltxv,
+        audio_latent=audio_latent_2,
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -1450,7 +1443,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent, _ = LTXVSeparateAVLatent(av_latent=output_sampler)
+    video_latent, _ = LTXVSeparateAVLatent(av_latent=output_2)
 
     # Decode
     vaedecode = VAEDecode(samples=video_latent, vae=vaeloader)
@@ -1471,13 +1464,13 @@ def build() -> VibeWorkflow:
         images=vaedecode,
     )
 
-    _, _, _, count_get = GetImageSizeAndCount(image=image_pass)
+    _, _, _, count_2 = GetImageSizeAndCount(image=image_pass)
     int_2, output_1_2, audio_2 = generate_video_c4106aee(
         noise_seed=1021,
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is walking through a romantic greenhouse with flowers and warm light, tracking camera as she walks towards the viewer.\n\nShe sings the lyrics: "I type a whisper, watch it bloom. In pixel fog and quiet rooms. A hundred frames begin to breathe. While melodies I couldn’t weave" \n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=10.0,
-        frames_count=count_get,
-        ref_image=image_load,
+        frames_count=count_2,
+        ref_image=image_5,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1488,8 +1481,8 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
         values_b=['1586', 0],
         variables_b=['1586', 0],
-        width=width_get,
-        height=height_get,
+        width=width_2,
+        height=height_2,
         audio=comfyswitchnode,
         vae_2=vaeloader,
         clip_2=dualcliploader,
@@ -1523,7 +1516,7 @@ def build() -> VibeWorkflow:
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is sitting down at the stage at an abandoned teather.  The camera slowly orbits around the woman, the woman is always looking at the viewer.\n\nShe sings the lyrics: "Now rise from weights, unchained and free.\nLike open doors for you and me.\nAnd every node connects the light. To hands that build without a figh.  No locked gates, just open skies.Where anyone can close their eyes…".\n\n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=18.0,
         frames_count=int_2,
-        ref_image=image_load_2,
+        ref_image=image_6,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1532,8 +1525,8 @@ def build() -> VibeWorkflow:
         negative=negative,
         values_b=['1586', 0],
         variables_b=['1586', 0],
-        width=width_get,
-        height=height_get,
+        width=width_2,
+        height=height_2,
         audio=comfyswitchnode,
         vae_2=vaeloader,
         clip_2=dualcliploader,
@@ -1569,7 +1562,7 @@ def build() -> VibeWorkflow:
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is sitting down at a piece of drift-wood at the beach, at dusk. Soft light from a cloudy sky. \n\n\nShe sings the lyrics: " … and dream. Oh, AceStep XL, you paint my dreams. ComfyUI, you stitch the seams. Of every film, each trembling tone. Where lonely sparks now feel at home".\n\nShe sings for a bit before she stands up and walks towards the viewer. \n\nThe camera slowly pulls in closer to the woman singing. \n\n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=15.0,
         frames_count=int,
-        ref_image=image_load_3,
+        ref_image=image_7,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1578,8 +1571,8 @@ def build() -> VibeWorkflow:
         negative=negative,
         values_b=['1586', 0],
         variables_b=['1586', 0],
-        width=width_get,
-        height=height_get,
+        width=width_2,
+        height=height_2,
         audio=comfyswitchnode,
         vae_2=vaeloader,
         clip_2=dualcliploader,
@@ -1615,7 +1608,7 @@ def build() -> VibeWorkflow:
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is standing on a rooftop balcony with the city behind her, at night. Camera slowly orbits around her, with her always looking towards the viewer as she sings. \n\nShe sings the lyrics: "Thank you, Kijai, for the quiet grace. That smoothed the path through digital space. We dream in code, we dream in blue. And every open door leads through.......". \n\nThe camera slowly pulls in closer to the woman singing. \n\n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=10.0,
         frames_count=int_3,
-        ref_image=image_load_4,
+        ref_image=image_8,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1624,8 +1617,8 @@ def build() -> VibeWorkflow:
         negative=negative,
         values_b=['1586', 0],
         variables_b=['1586', 0],
-        width=width_get,
-        height=height_get,
+        width=width_2,
+        height=height_2,
         audio=comfyswitchnode,
         vae_2=vaeloader,
         clip_2=dualcliploader,
@@ -1656,14 +1649,14 @@ def build() -> VibeWorkflow:
         images=output_1_4,
     )
 
-    _, calc_int_simple, _ = SimpleCalculatorKJ(
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         expression='a + 100',
         **{'variables.a': int_4},
     )
 
     loadvideosfromfolder = LoadVideosFromFolder(
         video=stringconcatenate_3,
-        frame_load_cap=calc_int_simple,
+        frame_load_cap=calc_int_2,
     )
 
     vhs_videocombine_2 = VHS_VideoCombine(

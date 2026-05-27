@@ -5,9 +5,11 @@ from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVPreprocess, LTXVSeparateAVLatent, LoadAudio, LoadImage, PreviewAudio, PreviewImage, RandomNoise, SamplerCustomAdvanced, SaveAudioMP3, SetLatentNoiseMask, SolidMask, TrimAudioDuration
+from vibecomfy.nodes.custom_scripts import MathExpression_pysssss, ShowText_pysssss
 from vibecomfy.nodes.gguf import UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import ImageResizeKJv2, VAELoaderKJ
 from vibecomfy.nodes.ltxvideo import LTXVGemmaCLIPModelLoader
+from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.rgthree import Seed_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
@@ -101,7 +103,11 @@ def build() -> VibeWorkflow:
 
     loadaudio_2 = LoadAudio(audio='man voice 2 LONG.mp3')
     loadaudio_3 = LoadAudio(audio='EdgarLetfall.mp3')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '377', model=MEL_BAND_ROFORMER_NAME)
+
+    melbandroformermodelloader = MelBandRoFormerModelLoader(
+        model=MEL_BAND_ROFORMER_NAME,
+    )
+
     cr_float_to_integer = raw_call('CR Float To Integer', '384', _float=25.0)
     load_whisper__mtb_ = raw_call('Load Whisper (mtb)', '405', widget_0=TINY, widget_1=True)
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
@@ -189,7 +195,7 @@ def build() -> VibeWorkflow:
     SamplerCustomAdvanced()
     randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=seed__rgthree_)
 
-    image_image, width, height, _ = ImageResizeKJv2(
+    image_2, width, height, _ = ImageResizeKJv2(
         width=720,
         height=1280,
         upscale_method='lanczos',
@@ -267,10 +273,10 @@ def build() -> VibeWorkflow:
         arg=iamccs_autolinkarguments.out(0),
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=image_image)
+    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=image_2)
 
     # Outputs
-    previewimage = PreviewImage(images=image_image)
+    previewimage = PreviewImage(images=image_2)
     saveaudiomp3 = SaveAudioMP3(audio=fl_chatterboxturbotts.out(0))
     solidmask = SolidMask(value=0, width=width, height=height)
     easy_cleangpuused = raw_call('easy cleanGpuUsed', '407', anything=audio_to_text__mtb_.out(0))
@@ -283,7 +289,7 @@ def build() -> VibeWorkflow:
         input_02=iamccs_modelwithlora_ltx2.out(0),
     )
 
-    showtext_pysssss_2 = raw_call('ShowText|pysssss', '373',
+    showtext_pysssss_2 = ShowText_pysssss(
         widget_0=' How are you? I am from metallurgia, Elfica, a fantasy tale from our dear. Welcome to our show. And sit down and listen carefully.',
         text=easy_cleangpuused.out(0),
     )
@@ -370,7 +376,7 @@ def build() -> VibeWorkflow:
         input=fb_qwen3ttsvoicecloneprompt.out(0),
     )
 
-    showtext_pysssss_3 = raw_call('ShowText|pysssss', '974', text=iamccs_hwsupporter.out(3))
+    showtext_pysssss_3 = ShowText_pysssss(text=iamccs_hwsupporter.out(3))
 
     positive, negative = LTXVConditioning(
         negative=cliptextencode,
@@ -417,12 +423,12 @@ def build() -> VibeWorkflow:
 
     audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '363', audio=iamccs_multiswitch.out(0))
 
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '365',
+    melbandroformersampler = MelBandRoFormerSampler(
         audio=iamccs_multiswitch.out(0),
         model=melbandroformermodelloader.out(0),
     )
 
-    mathexpression_pysssss = raw_call('MathExpression|pysssss', '364',
+    mathexpression_pysssss = MathExpression_pysssss(
         widget_0='((a*0.001)*b)',
         a=audio_duration__mtb_.out(0),
         b=cr_float_to_integer.out(0),
@@ -458,7 +464,7 @@ def build() -> VibeWorkflow:
         vae=iamccs_hwsupporter.out(2),
     )
 
-    showtext_pysssss = raw_call('ShowText|pysssss', '370',
+    showtext_pysssss = ShowText_pysssss(
         widget_0=" Hey, how are you? Well, I suppose you already know me, but wait a moment. Are human? I mean, I am not. So I've been thinking about it all day. Believe me.",
         text=easy_cleangpuused_2.out(0),
     )

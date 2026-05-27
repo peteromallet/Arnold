@@ -60,7 +60,7 @@ def build() -> VibeWorkflow:
 
     # Inputs
     image, _ = LoadImage(image='example_start.png')
-    image_load, _ = LoadImage(image='example_end.png')
+    image_2, _ = LoadImage(image='example_end.png')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
@@ -102,7 +102,7 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
-        input=image_load,
+        input=image_2,
         **{'resize_type.crop': CENTER, 'resize_type.height': 480, 'resize_type.width': 832},
     )
 
@@ -125,7 +125,7 @@ def build() -> VibeWorkflow:
         height=height,
     )
 
-    positive_ltxv, negative_ltxv, latent = LTXVAddGuide(
+    positive_2, negative_2, latent = LTXVAddGuide(
         image=ltxvpreprocess_2,
         latent=emptyltxvlatentvideo,
         negative=negative,
@@ -133,25 +133,25 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    positive_ltxv_2, negative_ltxv_2, latent_ltxv = LTXVAddGuide(
+    positive_3, negative_3, latent_2 = LTXVAddGuide(
         frame_idx=-1,
         image=ltxvpreprocess,
         latent=latent,
-        negative=negative_ltxv,
-        positive=positive_ltxv,
+        negative=negative_2,
+        positive=positive_2,
         vae=vae,
     )
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH,
         model=model,
-        negative=negative_ltxv_2,
-        positive=positive_ltxv_2,
+        negative=negative_3,
+        positive=positive_3,
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
         audio_latent=ltxvemptylatentaudio,
-        video_latent=latent_ltxv,
+        video_latent=latent_2,
     )
 
     _, denoised_output = SamplerCustomAdvanced(
@@ -164,10 +164,10 @@ def build() -> VibeWorkflow:
 
     video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
 
-    _, _, latent_ltxv_2 = LTXVCropGuides(
+    _, _, latent_3 = LTXVCropGuides(
         latent=video_latent,
-        negative=negative_ltxv_2,
-        positive=positive_ltxv_2,
+        negative=negative_3,
+        positive=positive_3,
     )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
@@ -180,7 +180,7 @@ def build() -> VibeWorkflow:
         tile_size=768,
         temporal_size=4096,
         temporal_overlap=64,
-        samples=latent_ltxv_2,
+        samples=latent_3,
         vae=vae,
     )
 

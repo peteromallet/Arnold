@@ -3,7 +3,8 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
+from vibecomfy.nodes.controlnet_aux import DWPreprocessor
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CLIPVisionEncode, CLIPVisionLoader, CreateVideo, GetVideoComponents, GrowMask, ImageFromBatch, ImageScale, KSampler, LoadImage, LoadVideo, LoraLoaderModelOnly, ModelSamplingSD3, PixelPerfectResolution, SaveVideo, TrimVideoLatent, UNETLoader, VAEDecode, VAELoader, WanAnimateToVideo
 from vibecomfy.nodes.kjnodes import BlockifyMask, DrawMaskOnImage, PointsEditor
 from vibecomfy.nodes.sam2 import DownloadAndLoadSAM2Model, Sam2Segmentation
@@ -118,7 +119,7 @@ def build() -> VibeWorkflow:
         image=images,
     )
 
-    dwpreprocessor = raw_call('DWPreprocessor', '100',
+    dwpreprocessor = DWPreprocessor(
         detect_hand='disable',
         detect_body='disable',
         detect_face='enable',
@@ -129,7 +130,7 @@ def build() -> VibeWorkflow:
         image=imagescale,
     )
 
-    dwpreprocessor_2 = raw_call('DWPreprocessor', '101',
+    dwpreprocessor_2 = DWPreprocessor(
         detect_hand='enable',
         detect_body='enable',
         detect_face='disable',

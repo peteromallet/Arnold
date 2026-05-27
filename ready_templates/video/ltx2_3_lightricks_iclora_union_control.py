@@ -3,8 +3,10 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
+from vibecomfy.nodes.controlnet_aux import CannyEdgePreprocessor, DWPreprocessor
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath_2
+from vibecomfy.nodes.depthanythingv2 import LoadVideoDepthAnythingModel, VideoDepthAnythingOutput, VideoDepthAnythingProcess
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode
 
 
@@ -77,7 +79,9 @@ def build() -> VibeWorkflow:
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    loadvideodepthanythingmodel = raw_call('LoadVideoDepthAnythingModel', '5060', widget_0=DEPTH_ANYTHING_NAME)
+    loadvideodepthanythingmodel = LoadVideoDepthAnythingModel(
+        widget_0=DEPTH_ANYTHING_NAME,
+    )
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=ltxavtextencoderloader)
@@ -103,7 +107,7 @@ def build() -> VibeWorkflow:
         positive=cliptextencode,
     )
 
-    model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
+    model_2, latent_downscale_factor = LTXICLoRALoaderModelOnly(
         lora_name=LORA_NAME,
         model=loraloadermodelonly,
     )
@@ -116,7 +120,7 @@ def build() -> VibeWorkflow:
 
     ltxfloattoint = LTXFloatToInt(rounding=0, a=fps)
 
-    dwpreprocessor = raw_call('DWPreprocessor', '4986',
+    dwpreprocessor = DWPreprocessor(
         detect_hand='enable',
         detect_body='enable',
         detect_face='enable',
@@ -126,10 +130,14 @@ def build() -> VibeWorkflow:
         image=resizeimagemasknode,
     )
 
-    cannyedgepreprocessor = raw_call('CannyEdgePreprocessor', '4991', low_threshold=92, image=resizeimagemasknode)
-    math_int, _ = SimpleMath(value='a*32', a=latent_downscale_factor)
+    cannyedgepreprocessor = CannyEdgePreprocessor(
+        low_threshold=92,
+        image=resizeimagemasknode,
+    )
 
-    videodepthanythingprocess = raw_call('VideoDepthAnythingProcess', '5061',
+    math_int, _ = SimpleMath_2(value='a*32', a=latent_downscale_factor)
+
+    videodepthanythingprocess = VideoDepthAnythingProcess(
         widget_0=518,
         widget_1=960,
         widget_2='fp32',
@@ -144,7 +152,7 @@ def build() -> VibeWorkflow:
         **{'resize_type.multiple': math_int},
     )
 
-    videodepthanythingoutput = raw_call('VideoDepthAnythingOutput', '5062',
+    videodepthanythingoutput = VideoDepthAnythingOutput(
         widget_0='gray',
         depths=videodepthanythingprocess.out(0),
     )
@@ -170,7 +178,7 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
+    positive_2, negative_2, latent = LTXAddVideoICLoRAGuide(
         crop=1,
         use_tiled_encode='disabled',
         image=resizeimagemasknode_2,
@@ -188,9 +196,9 @@ def build() -> VibeWorkflow:
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH,
-        model=model_ltxic,
-        negative=negative_ltx,
-        positive=positive_ltx,
+        model=model_2,
+        negative=negative_2,
+        positive=positive_2,
     )
 
     output, _ = SamplerCustomAdvanced(
@@ -208,17 +216,17 @@ def build() -> VibeWorkflow:
         samples=audio_latent,
     )
 
-    _, _, latent_ltxv = LTXVCropGuides(
+    _, _, latent_2 = LTXVCropGuides(
         latent=video_latent,
-        negative=negative_ltx,
-        positive=positive_ltx,
+        negative=negative_2,
+        positive=positive_2,
     )
 
     ltxvtiledvaedecode = LTXVTiledVAEDecode(
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
-        latents=latent_ltxv,
+        latents=latent_2,
         vae=vae,
     )
 

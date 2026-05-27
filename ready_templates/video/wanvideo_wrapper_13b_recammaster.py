@@ -3,8 +3,10 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, GetImageRangeFromBatch, PreviewImage
+from vibecomfy.nodes.custom_scripts import ShowText_pysssss
+from vibecomfy.nodes.florence2 import DownloadAndLoadFlorence2Model, Florence2Run
 from vibecomfy.nodes.kjnodes import AddLabel, GetImageSizeAndCount, ImageResizeKJ, WidgetToString
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, ReCamMasterPoseVisualizer, WanVideoBlockSwap, WanVideoDecode, WanVideoEncode, WanVideoExperimentalArgs, WanVideoModelLoader, WanVideoReCamMasterCameraEmbed, WanVideoReCamMasterDefaultCamera, WanVideoReCamMasterGenerateOrbitCamera, WanVideoSampler, WanVideoTeaCache, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader, WanVideoVRAMManagement
@@ -56,7 +58,7 @@ def build() -> VibeWorkflow:
         mode='e0',
     )
 
-    downloadandloadflorence2model = raw_call('DownloadAndLoadFlorence2Model', '124',
+    downloadandloadflorence2model = DownloadAndLoadFlorence2Model(
         widget_0='MiaoshouAI/Florence-2-base-PromptGen-v2.0',
         widget_1='fp16',
         widget_2='sdpa',
@@ -64,7 +66,7 @@ def build() -> VibeWorkflow:
 
     wanvideoexperimentalargs = WanVideoExperimentalArgs(cfg_zero_star=True)
 
-    image_load, _, _, _ = VHS_LoadVideo(
+    image_2, _, _, _ = VHS_LoadVideo(
         video='9.mp4',
         frame_load_cap=81,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': '9.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 81, 'skip_first_frames': 0, 'select_every_nth': 1}},
@@ -76,7 +78,7 @@ def build() -> VibeWorkflow:
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-    image_get, _, _, _ = GetImageSizeAndCount(image=image_load)
+    image_3, _, _, _ = GetImageSizeAndCount(image=image_2)
 
     wanvideotextembedbridge = WanVideoTextEmbedBridge(
         negative=cliptextencode_2,
@@ -89,7 +91,7 @@ def build() -> VibeWorkflow:
         upscale_method=False,
         keep_proportion=16,
         divisible_by='center',
-        image=image_get,
+        image=image_3,
     )
 
     wanvideoencode = WanVideoEncode(
@@ -102,9 +104,9 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get_2, _ = GetImageRangeFromBatch(images=image)
+    image_4, _ = GetImageRangeFromBatch(images=image)
 
-    florence2run = raw_call('Florence2Run', '123',
+    florence2run = Florence2Run(
         widget_0='',
         widget_1='detailed_caption',
         widget_2=True,
@@ -116,11 +118,11 @@ def build() -> VibeWorkflow:
         widget_8=1,
         widget_9='fixed',
         florence2_model=downloadandloadflorence2model.out(0),
-        image=image_get_2,
+        image=image_4,
     )
 
     # Outputs
-    previewimage = PreviewImage(images=image_get_2)
+    previewimage = PreviewImage(images=image_4)
 
     wanvideorecammasterdefaultcamera = WanVideoReCamMasterDefaultCamera(
         latents=wanvideoencode,
@@ -143,7 +145,7 @@ def build() -> VibeWorkflow:
         any_input=wanvideorecammasterdefaultcamera,
     )
 
-    showtext_pysssss = raw_call('ShowText|pysssss', '125',
+    showtext_pysssss = ShowText_pysssss(
         widget_0='A man in a suit and tie walking down a hallway. He has a friendly expression and is looking directly at the camera. The hallway has beige walls adorned with framed black and white photographs. There is a door on the left side of the hallway and a poster on the wall. The lighting is soft and natural. The image is high quality and has a watermark in the bottom right corner.',
         widget_1='A man in a suit and tie walking down a hallway. He has a friendly expression and is looking directly at the camera. The hallway has beige walls adorned with framed black and white photographs. There is a door on the left side of the hallway and a poster on the wall. The lighting is soft and natural. The image is high quality and has a watermark in the bottom right corner.',
         text=florence2run.out(2),

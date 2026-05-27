@@ -6,7 +6,8 @@ from __future__ import annotations
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
-from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2_NAG, LTXVChunkFeedForward, SimpleCalculatorKJ
+from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2SamplingPreviewOverride, LTX2_NAG, LTXVChunkFeedForward, SimpleCalculatorKJ
+from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
@@ -58,7 +59,7 @@ def build() -> VibeWorkflow:
     ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
 
     # Inputs
-    image_load, _ = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
+    image_2, _ = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
@@ -78,7 +79,7 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=10)
     intconstant_2 = INTConstant(value=1280)
     intconstant_3 = INTConstant(value=736)
-    _, calc_int_simple, _ = SimpleCalculatorKJ(expression='a', **{'variables.a': 24.0})
+    _, calc_int_2, _ = SimpleCalculatorKJ(expression='a', **{'variables.a': 24.0})
     unetloader = UNETLoader(unet_name=UNET_NAME)
     vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
     unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
@@ -95,7 +96,11 @@ def build() -> VibeWorkflow:
     )
 
     fast_groups_bypasser__rgthree_ = raw_call('Fast Groups Bypasser (rgthree)', '354')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '370', model=MEL_BAND_ROFORMER_NAME)
+
+    melbandroformermodelloader = MelBandRoFormerModelLoader(
+        model=MEL_BAND_ROFORMER_NAME,
+    )
+
     loadaudio = LoadAudio(audio='ComfyUI_00128_.mp3')
     manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
@@ -119,7 +124,7 @@ def build() -> VibeWorkflow:
         device='cpu',
         width=intconstant_2,
         height=intconstant_3,
-        image=image_load,
+        image=image_2,
     )
 
     _, calc_int, _ = SimpleCalculatorKJ(
@@ -137,7 +142,7 @@ def build() -> VibeWorkflow:
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
         frames_number=calc_int,
-        frame_rate=calc_int_simple,
+        frame_rate=calc_int_2,
         audio_vae=ltxvaudiovaeloader,
     )
 
@@ -151,12 +156,12 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    calc_float_simple_2, _, _ = SimpleCalculatorKJ(expression='a/b', b=24.0, a=calc_int)
+    calc_float_3, _, _ = SimpleCalculatorKJ(expression='a/b', b=24.0, a=calc_int)
     cliptextencode_2 = CLIPTextEncode(text=textgenerateltx2prompt, clip=dualcliploader)
     ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
     width, height, _ = GetImageSize(image=resizeimagemasknode)
     model, _ = Power_Lora_Loader_rgthree(model=ltxvchunkfeedforward)
-    trimaudioduration = TrimAudioDuration(duration=calc_float_simple_2, audio=loadaudio)
+    trimaudioduration = TrimAudioDuration(duration=calc_float_3, audio=loadaudio)
 
     positive, negative = LTXVConditioning(
         frame_rate=24.0,
@@ -170,9 +175,12 @@ def build() -> VibeWorkflow:
         length=calc_int,
     )
 
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '337', model=model, vae=vaeloader_2)
+    ltx2samplingpreviewoverride = LTX2SamplingPreviewOverride(
+        model=model,
+        vae=vaeloader_2,
+    )
 
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '371',
+    melbandroformersampler = MelBandRoFormerSampler(
         audio=trimaudioduration,
         model=melbandroformermodelloader.out(0),
     )
@@ -255,7 +263,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output_sampler, _ = SamplerCustomAdvanced(
+    output_2, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -263,20 +271,18 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-        av_latent=output_sampler,
-    )
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output_2)
 
     # Decode
     vaedecodetiled = VAEDecodeTiled(
         temporal_size=4096,
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         vae=vaeloader,
     )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
         audio_vae=ltxvaudiovaeloader,
-        samples=audio_latent_ltxv,
+        samples=audio_latent_2,
     )
 
     # Outputs

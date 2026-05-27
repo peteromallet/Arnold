@@ -87,9 +87,9 @@ def build() -> VibeWorkflow:
         merge_loras=False,
     )
 
-    image_load, _ = LoadImage(image='vace_end.png')
+    image_2, _ = LoadImage(image='vace_end.png')
 
-    image_load_2, _, _, _ = VHS_LoadVideo(
+    image_3, _, _, _ = VHS_LoadVideo(
         video='vace_control.mp4',
         force_rate=16,
         custom_width=832,
@@ -115,8 +115,8 @@ def build() -> VibeWorkflow:
     )
 
     images, masks = WanVideoVACEStartToEndFrame(
-        control_images=image_load_2,
-        end_image=image_load,
+        control_images=image_3,
+        end_image=image_2,
         start_image=image,
     )
 
@@ -160,7 +160,7 @@ def build() -> VibeWorkflow:
         text_embeds=text_embeds,
     )
 
-    samples_wan, _ = WanVideoSampler(
+    samples_2, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,
@@ -173,7 +173,7 @@ def build() -> VibeWorkflow:
         text_embeds=text_embeds,
     )
 
-    samples_wan_2, _ = WanVideoSampler(
+    samples_3, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,
@@ -181,13 +181,13 @@ def build() -> VibeWorkflow:
         start_step=4,
         image_embeds=wanvideovaceencode,
         model=wanvideosetblockswap_2,
-        samples=samples_wan,
+        samples=samples_2,
         text_embeds=text_embeds,
     )
 
     wanvideodecode = WanVideoDecode(
         normalization='default',
-        samples=samples_wan_2,
+        samples=samples_3,
         vae=wanvideovaeloader,
     )
 

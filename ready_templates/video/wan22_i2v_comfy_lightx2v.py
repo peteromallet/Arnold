@@ -3,8 +3,8 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, LoadImage, LoraLoaderModelOnly, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader, WanImageToVideo
+from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
+from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, KSamplerAdvanced, LoadImage, LoraLoaderModelOnly, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader, WanImageToVideo
 
 
 CLIP_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
@@ -116,7 +116,7 @@ def build() -> VibeWorkflow:
     )
 
     # Sampling
-    ksampleradvanced = raw_call('KSamplerAdvanced', '130:110',
+    ksampleradvanced = KSamplerAdvanced(
         add_noise='enable',
         noise_seed=0,
         steps=4,
@@ -130,7 +130,7 @@ def build() -> VibeWorkflow:
         positive=positive,
     )
 
-    ksampleradvanced_2 = raw_call('KSamplerAdvanced', '130:111',
+    ksampleradvanced_2 = KSamplerAdvanced(
         add_noise='disable',
         steps=4,
         cfg=GUIDE_STRENGTH_2,

@@ -65,7 +65,7 @@ def build() -> VibeWorkflow:
     image, _ = LoadImage(image='pasted/image (758).png', widget_2='')
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
-    image_load, _, _, _ = VHS_LoadVideo(
+    image_3, _, _, _ = VHS_LoadVideo(
         video='wolf_interpolated.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
@@ -88,14 +88,14 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image_2, _, _ = ImageResizeKJ(
+    image_4, _, _ = ImageResizeKJ(
         width=640,
         height='lanczos',
         upscale_method=False,
         keep_proportion=16,
         divisible_by=0,
         crop='disabled',
-        image=image_load,
+        image=image_3,
     )
 
     wanvideotextembedbridge = WanVideoTextEmbedBridge(
@@ -105,12 +105,10 @@ def build() -> VibeWorkflow:
 
     depthanything_v2 = DepthAnything_V2(
         da_model=downloadandloaddepthanythingv2model,
-        images=image_image_2,
+        images=image_4,
     )
 
-    image_get, width_get, height_get, count = GetImageSizeAndCount(
-        image=depthanything_v2,
-    )
+    image_5, width_3, height_3, count = GetImageSizeAndCount(image=depthanything_v2)
 
     # Outputs
     vhs_videocombine_2 = VHS_VideoCombine(
@@ -126,13 +124,13 @@ def build() -> VibeWorkflow:
         images=depthanything_v2,
     )
 
-    image_image, width, height = ImageResizeKJ(
+    image_2, width, height = ImageResizeKJ(
         upscale_method=False,
         keep_proportion=16,
         divisible_by=0,
         crop=CENTER,
-        width=width_get,
-        height=height_get,
+        width=width_3,
+        height=height_3,
         image=image,
     )
 
@@ -142,14 +140,14 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        image=image_get,
+        image=image_5,
         vae=wanvideovaeloader,
     )
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
         ratio=0.20000000000000004,
         clip_vision=clipvisionloader,
-        image_1=image_image,
+        image_1=image_2,
     )
 
     wanvideocontrolembeds = WanVideoControlEmbeds(latents=wanvideoencode)
@@ -162,13 +160,13 @@ def build() -> VibeWorkflow:
         num_frames=count,
         clip_embeds=wanvideoclipvisionencode,
         control_embeds=wanvideocontrolembeds,
-        start_image=image_image,
+        start_image=image_2,
         vae=wanvideovaeloader,
     )
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
-        width=width_get,
-        height=height_get,
+        width=width_3,
+        height=height_3,
         num_frames=count,
         control_embeds=wanvideocontrolembeds,
     )

@@ -88,7 +88,7 @@ def build() -> VibeWorkflow:
         end_percent=0.7000000000000002,
     )
 
-    image_load, _ = LoadImage(
+    image_3, _ = LoadImage(
         image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-3.webp',
     )
 
@@ -105,9 +105,9 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoexperimentalargs_2 = WanVideoExperimentalArgs(cfg_zero_star=True)
-    image_load_2, _ = LoadImage(image='hunhyuanwolf.png')
+    image_7, _ = LoadImage(image='hunhyuanwolf.png')
 
-    image_load_3, frame_count, _, _ = VHS_LoadVideo(
+    image_8, frame_count, _, _ = VHS_LoadVideo(
         video=WOLF_INTERPOLATED_MP4,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': IMAGE},
@@ -125,7 +125,7 @@ def build() -> VibeWorkflow:
 
     wanvideoexperimentalargs_3 = WanVideoExperimentalArgs(cfg_zero_star=True)
 
-    image_load_4, _, _, _ = VHS_LoadVideo(
+    image_10, _, _, _ = VHS_LoadVideo(
         video=WOLF_INTERPOLATED_MP4,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': IMAGE},
@@ -145,21 +145,21 @@ def build() -> VibeWorkflow:
         vace_model=wanvideovacemodelselect,
     )
 
-    images_image, _ = ImagePadKJ(
+    images_2, _ = ImagePadKJ(
         bottom=128,
         extra_padding=COLOR,
         pad_mode='255,255,255',
-        image=image_load_2,
+        image=image_7,
     )
 
-    image_image, _, _, _ = ImageResizeKJv2(
+    image_14, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
-        image=image_load_4,
+        image=image_10,
     )
 
-    image_image_2, width_image_2, height_image_2, _ = ImageResizeKJv2(
+    image_15, width_8, height_8, _ = ImageResizeKJv2(
         width=640,
         height=640,
         upscale_method=LANCZOS,
@@ -169,12 +169,12 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    image_image_4, width_image_4, height_image_4, _ = ImageResizeKJv2(
+    image_17, width_10, height_10, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
         divisible_by=16,
-        image=image_load_3,
+        image=image_8,
     )
 
     wanvideotextencode = WanVideoTextEncode(
@@ -193,7 +193,7 @@ def build() -> VibeWorkflow:
         label_color=FREEMONO_TTF,
         font='start_frame',
         text=UP,
-        image=image_image_2,
+        image=image_15,
     )
 
     wanvideotextencode_2 = WanVideoTextEncode(
@@ -205,7 +205,7 @@ def build() -> VibeWorkflow:
 
     depthanything_v2 = DepthAnything_V2(
         da_model=downloadandloaddepthanythingv2model,
-        images=image_image_4,
+        images=image_17,
     )
 
     wanvideotextencode_3 = WanVideoTextEncode(
@@ -215,48 +215,48 @@ def build() -> VibeWorkflow:
         t5=loadwanvideot5textencoder,
     )
 
-    images_image_2, masks_image_2 = ImagePadKJ(
+    images_3, masks_3 = ImagePadKJ(
         bottom=128,
         extra_padding=COLOR,
         pad_mode='127,127,127',
-        image=image_image,
+        image=image_14,
     )
 
-    image_image_3, _, _, _ = ImageResizeKJv2(
+    image_16, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
         divisible_by=16,
-        width=width_image_2,
-        height=height_image_2,
-        image=image_load,
+        width=width_8,
+        height=height_8,
+        image=image_3,
     )
 
-    image_image_5, _, _, _ = ImageResizeKJv2(
+    image_18, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=PAD,
         pad_color=V_255_255_255,
         divisible_by=16,
-        width=width_image_4,
-        height=height_image_4,
-        image=images_image,
+        width=width_10,
+        height=height_10,
+        image=images_2,
     )
 
-    image_image_6, _, _, _ = ImageResizeKJv2(
+    image_19, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=PAD,
         pad_color=V_255_255_255,
         divisible_by=16,
-        width=width_image_4,
-        height=height_image_4,
-        image=image_load_2,
+        width=width_10,
+        height=height_10,
+        image=image_7,
     )
 
     images, masks = WanVideoVACEStartToEndFrame(
         num_frames=DEFAULT_FRAMES_2,
         empty_frame_level=0.5000000000000001,
-        end_image=image_image_3,
-        start_image=image_image_2,
+        end_image=image_16,
+        start_image=image_15,
     )
 
     addlabel_2 = AddLabel(
@@ -268,7 +268,7 @@ def build() -> VibeWorkflow:
         label_color=FREEMONO_TTF,
         font='end_frame',
         text=UP,
-        image=image_image_3,
+        image=image_16,
     )
 
     addlabel_3 = AddLabel(
@@ -280,7 +280,7 @@ def build() -> VibeWorkflow:
         label_color=FREEMONO_TTF,
         font='reference image',
         text=UP,
-        image=image_image_5,
+        image=image_18,
     )
 
     addlabel_4 = AddLabel(
@@ -318,25 +318,22 @@ def build() -> VibeWorkflow:
         label_color=FREEMONO_TTF,
         font='input',
         text=UP,
-        image=images_image_2,
+        image=images_3,
     )
 
-    image_get_6, width_get_5, height_get_5, count_get_5 = GetImageSizeAndCount(
-        image=images_image_2,
-    )
+    image_11, width_6, height_6, count_6 = GetImageSizeAndCount(image=images_3)
+    image_12, _ = GetImageRangeFromBatch(images=images_3)
+    _, mask_5 = GetImageRangeFromBatch(masks=masks_3)
 
-    image_get_7, _ = GetImageRangeFromBatch(images=images_image_2)
-    _, mask_get_2 = GetImageRangeFromBatch(masks=masks_image_2)
-
-    images_wan, masks_wan = WanVideoVACEStartToEndFrame(
+    images_4, masks_4 = WanVideoVACEStartToEndFrame(
         empty_frame_level=0.5000000000000001,
         num_frames=frame_count,
         control_images=depthanything_v2,
-        start_image=image_image_6,
+        start_image=image_19,
     )
 
-    previewimage_4 = PreviewImage(images=image_image_5)
-    image_get, width, height, count = GetImageSizeAndCount(image=images)
+    previewimage_4 = PreviewImage(images=image_18)
+    image_2, width, height, count = GetImageSizeAndCount(image=images)
 
     imageconcatmulti_2 = ImageConcatMulti(
         direction=DOWN,
@@ -346,9 +343,7 @@ def build() -> VibeWorkflow:
         image_2=addlabel_2,
     )
 
-    image_get_3, width_get_2, height_get_2, count_get_2 = GetImageSizeAndCount(
-        image=images_wan,
-    )
+    image_5, width_3, height_3, count_3 = GetImageSizeAndCount(image=images_4)
 
     imageconcatmulti_4 = ImageConcatMulti(
         direction=DOWN,
@@ -362,19 +357,19 @@ def build() -> VibeWorkflow:
         strength=0,
         vace_start_percent=1,
         vace_end_percent=False,
-        width=width_get_5,
-        height=height_get_5,
-        num_frames=count_get_5,
-        input_frames=image_get_6,
-        input_masks=masks_image_2,
+        width=width_6,
+        height=height_6,
+        num_frames=count_6,
+        input_frames=image_11,
+        input_masks=masks_3,
         vae=wanvideovaeloader,
     )
 
-    previewimage_2 = PreviewImage(images=image_get_7)
-    previewimage_3 = PreviewImage(images=images_wan)
-    maskpreview = MaskPreview(mask=masks_wan)
+    previewimage_2 = PreviewImage(images=image_12)
+    previewimage_3 = PreviewImage(images=images_4)
+    maskpreview = MaskPreview(mask=masks_4)
     maskpreview_2 = MaskPreview(mask=masks)
-    maskpreview_3 = MaskPreview(mask=mask_get_2)
+    maskpreview_3 = MaskPreview(mask=mask_5)
 
     wanvideovaceencode = WanVideoVACEEncode(
         strength=0,
@@ -383,28 +378,28 @@ def build() -> VibeWorkflow:
         width=width,
         height=height,
         num_frames=count,
-        input_frames=image_get,
+        input_frames=image_2,
         input_masks=masks,
-        ref_images=image_image_2,
+        ref_images=image_15,
         vae=wanvideovaeloader,
     )
 
-    previewimage = PreviewImage(images=image_get)
+    previewimage = PreviewImage(images=image_2)
 
     wanvideovaceencode_2 = WanVideoVACEEncode(
         strength=0,
         vace_start_percent=1,
         vace_end_percent=False,
-        width=width_get_2,
-        height=height_get_2,
-        num_frames=count_get_2,
-        input_frames=image_get_3,
-        input_masks=masks_wan,
-        ref_images=image_image_5,
+        width=width_3,
+        height=height_3,
+        num_frames=count_3,
+        input_frames=image_5,
+        input_masks=masks_4,
+        ref_images=image_18,
         vae=wanvideovaeloader,
     )
 
-    samples_wan_2, _ = WanVideoSampler(
+    samples_3, _ = WanVideoSampler(
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -432,7 +427,7 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    samples_wan, _ = WanVideoSampler(
+    samples_2, _ = WanVideoSampler(
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -445,22 +440,22 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode_2,
     )
 
-    wanvideodecode_3 = WanVideoDecode(samples=samples_wan_2, vae=wanvideovaeloader)
+    wanvideodecode_3 = WanVideoDecode(samples=samples_3, vae=wanvideovaeloader)
     wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
-    wanvideodecode_2 = WanVideoDecode(samples=samples_wan, vae=wanvideovaeloader)
-    image_get_5, _, height_get_4, _ = GetImageSizeAndCount(image=wanvideodecode_3)
-    image_get_2, _, height_get, _ = GetImageSizeAndCount(image=wanvideodecode)
-    image_get_4, _, height_get_3, _ = GetImageSizeAndCount(image=wanvideodecode_2)
-    emptyimage_3 = EmptyImage(width=8, height=height_get_4)
-    emptyimage = EmptyImage(width=8, height=height_get)
-    emptyimage_2 = EmptyImage(width=8, height=height_get_3)
+    wanvideodecode_2 = WanVideoDecode(samples=samples_2, vae=wanvideovaeloader)
+    image_9, _, height_5, _ = GetImageSizeAndCount(image=wanvideodecode_3)
+    image_4, _, height_2, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_6, _, height_4, _ = GetImageSizeAndCount(image=wanvideodecode_2)
+    emptyimage_3 = EmptyImage(width=8, height=height_5)
+    emptyimage = EmptyImage(width=8, height=height_2)
+    emptyimage_2 = EmptyImage(width=8, height=height_4)
 
     imageconcatmulti_5 = ImageConcatMulti(
         inputcount=3,
         direction=LEFT,
         match_image_size=True,
         unused_3=None,
-        image_1=image_get_5,
+        image_1=image_9,
         image_2=emptyimage_3,
         image_3=addlabel_5,
     )
@@ -470,7 +465,7 @@ def build() -> VibeWorkflow:
         direction=LEFT,
         match_image_size=True,
         unused_3=None,
-        image_1=image_get_2,
+        image_1=image_4,
         image_2=emptyimage,
         image_3=imageconcatmulti_2,
     )
@@ -480,7 +475,7 @@ def build() -> VibeWorkflow:
         direction=LEFT,
         match_image_size=True,
         unused_3=None,
-        image_1=image_get_4,
+        image_1=image_6,
         image_2=emptyimage_2,
         image_3=imageconcatmulti_4,
     )

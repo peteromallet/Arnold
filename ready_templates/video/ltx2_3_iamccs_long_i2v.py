@@ -7,7 +7,7 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as 
 from vibecomfy.nodes.core import AudioConcat, CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, DualCLIPLoader, EmptyImage, EmptyLTXVLatentVideo, GetImageSize, ImageScaleBy, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, ManualSigmas, RandomNoise, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SaveVideo
 from vibecomfy.nodes.gguf import UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import VAELoaderKJ
-from vibecomfy.nodes.ltxvideo import LTXVGemmaCLIPModelLoader
+from vibecomfy.nodes.ltxvideo import LTXVGemmaCLIPModelLoader, LTXVSpatioTemporalTiledVAEDecode
 from vibecomfy.nodes.rgthree import Any_Switch_rgthree
 
 
@@ -188,7 +188,7 @@ def samplers(
         video_latent=ltxvimgtovideoinplace_2,
     )
 
-    _, denoised_output_sampler = SamplerCustomAdvanced(
+    _, denoised_output_2 = SamplerCustomAdvanced(
         _id='3eaa20c4:5107',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
@@ -197,14 +197,14 @@ def samplers(
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
         _id='3eaa20c4:5114',
-        av_latent=denoised_output_sampler,
+        av_latent=denoised_output_2,
     )
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
         _id='3eaa20c4:5255',
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         upscale_model=upscale_model,
         vae=vae,
     )
@@ -218,7 +218,7 @@ def samplers(
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
         _id='3eaa20c4:5112',
-        audio_latent=audio_latent_ltxv,
+        audio_latent=audio_latent_2,
         video_latent=ltxvimgtovideoinplace,
     )
 
@@ -242,7 +242,8 @@ def samplers(
         samples=audio_latent,
     )
 
-    ltxvspatiotemporaltiledvaedecode = raw_call('LTXVSpatioTemporalTiledVAEDecode', '3eaa20c4:5245',
+    ltxvspatiotemporaltiledvaedecode = LTXVSpatioTemporalTiledVAEDecode(
+        _id='3eaa20c4:5245',
         widget_0=4,
         widget_1=4,
         widget_2=16,
@@ -390,7 +391,7 @@ def samplers_8b36a85a(
         video_latent=ltxvimgtovideoinplace_2,
     )
 
-    _, denoised_output_sampler = SamplerCustomAdvanced(
+    _, denoised_output_2 = SamplerCustomAdvanced(
         _id='8b36a85a:5107',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
@@ -399,14 +400,14 @@ def samplers_8b36a85a(
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
         _id='8b36a85a:5114',
-        av_latent=denoised_output_sampler,
+        av_latent=denoised_output_2,
     )
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
         _id='8b36a85a:5255',
-        samples=video_latent_ltxv,
+        samples=video_latent_2,
         upscale_model=upscale_model,
         vae=vae,
     )
@@ -420,7 +421,7 @@ def samplers_8b36a85a(
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
         _id='8b36a85a:5112',
-        audio_latent=audio_latent_ltxv,
+        audio_latent=audio_latent_2,
         video_latent=ltxvimgtovideoinplace,
     )
 
@@ -444,7 +445,8 @@ def samplers_8b36a85a(
         samples=audio_latent,
     )
 
-    ltxvspatiotemporaltiledvaedecode = raw_call('LTXVSpatioTemporalTiledVAEDecode', '8b36a85a:5245',
+    ltxvspatiotemporaltiledvaedecode = LTXVSpatioTemporalTiledVAEDecode(
+        _id='8b36a85a:5245',
         widget_0=4,
         widget_1=4,
         widget_2=16,
@@ -621,7 +623,7 @@ def build() -> VibeWorkflow:
         positive=cliptextencode,
     )
 
-    positive_ltxv, negative_ltxv = LTXVConditioning(
+    positive_2, negative_2 = LTXVConditioning(
         frame_rate=iamccs_ltx2_frameratesync.out(1),
         negative=cliptextencode_2,
         positive=cliptextencode_2,
@@ -637,7 +639,7 @@ def build() -> VibeWorkflow:
         any_02=iamccs_gguf_accelerator_2.out(0),
     )
 
-    positive_ltxv_2, negative_ltxv_2 = LTXVConditioning(
+    positive_3, negative_3 = LTXVConditioning(
         frame_rate=iamccs_ltx2_frameratesync.out(1),
         negative=cliptextencode_3,
         positive=cliptextencode_3,
@@ -690,8 +692,8 @@ def build() -> VibeWorkflow:
         model_stage_1=any_switch__rgthree_,
         model_stage_2=any_switch__rgthree__5,
         upscale_model=latentupscalemodelloader,
-        positive=positive_ltxv,
-        negative=negative_ltxv,
+        positive=positive_2,
+        negative=negative_2,
         images=iamccs_ltx2_getimagefrombatch.out(0),
         vae=any_switch__rgthree__4,
         audio_vae=any_switch__rgthree__2,
@@ -742,8 +744,8 @@ def build() -> VibeWorkflow:
         model_stage_1=any_switch__rgthree_,
         model_stage_2=any_switch__rgthree__5,
         upscale_model=latentupscalemodelloader,
-        positive=positive_ltxv_2,
-        negative=negative_ltxv_2,
+        positive=positive_3,
+        negative=negative_3,
         images=iamccs_ltx2_extensionmodule.out(1),
         vae=any_switch__rgthree__4,
         audio_vae=any_switch__rgthree__2,

@@ -217,7 +217,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     image, _ = LoadImage(image='car_interior_white.jpeg')
-    image_load, _ = LoadImage(image='comfy_logo_blue.png')
+    image_2, _ = LoadImage(image='comfy_logo_blue.png')
     edited = image_edit_flux2_klein_9b(
         unet_name='flux-2-klein-base-9b-fp8.safetensors',
         clip_name=image,
@@ -228,10 +228,10 @@ def build() -> VibeWorkflow:
     edited_dual = image_edit_flux2_klein_9b_dual(
         unet_name='flux-2-klein-base-9b-fp8.safetensors',
         clip_name=image,
-        vae_name=image_load,
+        vae_name=image_2,
         prompt='Apply the yellow "C" logo to the center hub of the steering wheel, and change the steering wheel color to royal blue matching the logo background, while maintaining the same interior style, lighting, camera angle, and all other elements unchanged',
         reference_image1=image,
-        reference_image2=image_load,
+        reference_image2=image_2,
     )
     saveimage = SaveImage(filename_prefix='Flux2-Klein-4b-base', images=edited)
     saveimage_2 = SaveImage(filename_prefix='Flux2-Klein-4b-base', images=edited_dual)
