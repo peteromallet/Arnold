@@ -396,6 +396,14 @@ def handle_init(root: Path, args: argparse.Namespace) -> StepResponse:
         state["config"]["with_prep"] = True
     if getattr(args, "with_feedback", False):
         state["config"]["with_feedback"] = True
+    # Resolve prep_clarify: CLI > [defaults] > True.
+    # Only written to config when False to keep state lean (absent == True).
+    if not getattr(args, "prep_clarify", True):
+        state["config"]["prep_clarify"] = False
+    else:
+        from megaplan._core.user_config import default_prep_clarify
+        if not default_prep_clarify():
+            state["config"]["prep_clarify"] = False
     prep_direction_raw = getattr(args, "prep_direction", None)
     if prep_direction_raw is not None:
         prep_direction = str(prep_direction_raw).strip()

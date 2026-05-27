@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 import megaplan
 import megaplan._core
 import megaplan._core.io as io_module
@@ -436,3 +438,379 @@ def test_mocked_prep_orchestration_feeds_plan_prompt_without_changing_plan_artif
     assert plan_response["artifacts"] == ["plan_v1.md", "plan_v1.meta.json"]
     assert (plan_dir / "plan_v1.md").exists()
     assert (plan_dir / "plan_v1.meta.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# T12: Prep clarification gate tests (MOCK path, MEGAPLAN_MOCK=1)
+# ---------------------------------------------------------------------------
+
+def _mock_env(monkeypatch: Any) -> None:
+    """Set up MEGAPLAN_MOCK_WORKERS=1 and mock shutil.which for MOCK prep path."""
+    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+
+
+def _make_prep_worker(open_questions: list[dict[str, Any]] | None = None) -> WorkerResult:
+    """Build a deterministic prep worker payload with optional open_questions."""
+    payload: dict[str, Any] = {
+        "skip": False,
+        "task_summary": "Research complete.",
+        "key_evidence": [],
+        "relevant_code": [],
+        "test_expectations": [],
+        "constraints": [],
+        "suggested_approach": "Proceed as planned.",
+    }
+    if open_questions is not None:
+        payload["open_questions"] = open_questions
+    return WorkerResult(
+        payload=payload,
+        raw_output="{}",
+        duration_ms=5,
+        cost_usd=0.0,
+        session_id="prep-mock",
+    )
+
+
+# (a) blocking question + clarify enabled → AWAITING_HUMAN
+def test_prep_blocking_question_halts_at_awaiting_human(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+    _mock_env(monkeypatch)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    blocking = [
+        {
+            "severity": "blocking",
+            "question": "Which auth library should we use?",
+        },
+        {
+            "severity": "blocking",
+            "question": "Should the API be REST or GraphQL?",
+            "assumption": "REST is the safer default.",
+        },
+    ]
+    worker = _make_prep_worker(open_questions=blocking)
+
+    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+        response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
+
+    assert response["state"] == "awaiting_human_verify"
+    assert response["summary"].startswith("Prep halted:")
+    assert "2 blocking questions" in response["summary"]
+
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    clarification = state.get("clarification")
+    assert clarification is not None
+    assert clarification["source"] == "prep"
+    assert len(clarification["questions"]) == 2
+    assert "[blocking] Which auth library should we use?" in clarification["questions"]
+    assert "[blocking] Should the API be REST or GraphQL?" in clarification["questions"]
+    assert "resume-clarify" in clarification["intent_summary"]
+
+    # prep.json should still contain open_questions
+    prep = json.loads((plan_dir / "prep.json").read_text(encoding="utf-8"))
+    assert prep.get("open_questions") == blocking
+
+
+# (b) --no-prep-clarify → PREPPED, blocking question still in prep.json
+def test_prep_blocking_question_no_prep_clarify_proceeds_to_prepped(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+    _mock_env(monkeypatch)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    # disable prep_clarify
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    state["config"]["prep_clarify"] = False
+    megaplan._core.atomic_write_json(plan_dir / "state.json", state, _plan_dir=plan_dir)
+
+    blocking = [{"severity": "blocking", "question": "Which auth library should we use?"}]
+    worker = _make_prep_worker(open_questions=blocking)
+
+    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+        response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
+
+    assert response["state"] == "prepped"
+    assert "Prep complete" in response["summary"]
+
+    # blocking question must still be in prep.json
+    prep = json.loads((plan_dir / "prep.json").read_text(encoding="utf-8"))
+    assert prep.get("open_questions") == blocking
+
+    # clarification must NOT be set
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    assert "clarification" not in state
+
+
+# (c) assume_and_proceed never halts under either setting
+def test_prep_assume_and_proceed_never_halts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+    _mock_env(monkeypatch)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+
+    assume_items = [
+        {
+            "severity": "assume_and_proceed",
+            "question": "Which cache backend?",
+            "assumption": "Redis is fine for now.",
+        },
+        {
+            "severity": "assume_and_proceed",
+            "question": "Which serialization format?",
+            "assumption": "JSON is adequate.",
+        },
+    ]
+    worker = _make_prep_worker(open_questions=assume_items)
+
+    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+        response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
+
+    assert response["state"] == "prepped"
+    assert "Prep complete" in response["summary"]
+
+
+# (c-alt) assume_and_proceed + blocking mix only halts on blocking when clarify enabled
+def test_prep_mixed_severity_only_blocking_gates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+    _mock_env(monkeypatch)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    mixed = [
+        {"severity": "assume_and_proceed", "question": "Which cache backend?", "assumption": "Redis."},
+        {"severity": "blocking", "question": "Which auth library?"},
+    ]
+    worker = _make_prep_worker(open_questions=mixed)
+
+    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+        response = handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
+
+    assert response["state"] == "awaiting_human_verify"
+    clarification = megaplan._core.read_json(plan_dir / "state.json").get("clarification")
+    assert len(clarification["questions"]) == 1  # only blocking
+    assert "[blocking] Which auth library?" in clarification["questions"][0]
+
+
+# (f) resume-clarify from prep-sourced AWAITING_HUMAN succeeds
+def test_override_resume_clarify_from_prep_source_succeeds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+    _mock_env(monkeypatch)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    # Simulate a prep-sourced AWAITING_HUMAN state
+    blocking = [{"severity": "blocking", "question": "Which auth library?"}]
+    worker = _make_prep_worker(open_questions=blocking)
+
+    with patch("megaplan.handlers._run_worker", return_value=(worker, "claude", "ephemeral", True)):
+        handle_prep(root, _make_args(plan_name, project_dir, plan=plan_name))
+
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    assert state["current_state"] == "awaiting_human_verify"
+    assert state["clarification"]["source"] == "prep"
+
+    # Now resume via override resume-clarify
+    resume_response = megaplan.handle_override(
+        root,
+        _make_args(
+            plan_name,
+            project_dir,
+            plan=plan_name,
+            override_action="resume-clarify",
+        ),
+    )
+
+    assert resume_response["success"] is True
+    assert resume_response["state"] == "prepped"
+    assert "Prep clarification resolved" in resume_response["summary"]
+
+    # state.json should be back to prepped
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    assert state["current_state"] == "prepped"
+
+
+# (f-reject) resume-clarify rejected when source != 'prep'
+def test_override_resume_clarify_rejects_non_prep_source(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    # Manually set state to AWAITING_HUMAN with a non-prep clarification source
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    state["current_state"] = "awaiting_human_verify"
+    state["clarification"] = {
+        "intent_summary": "Criteria verification needed.",
+        "questions": ["Is the plan acceptable?"],
+        "source": "criteria",
+    }
+    megaplan._core.atomic_write_json(plan_dir / "state.json", state, _plan_dir=plan_dir)
+
+    with pytest.raises(megaplan.CliError, match="resume-clarify can only resume a prep-sourced"):
+        megaplan.handle_override(
+            root,
+            _make_args(
+                plan_name,
+                project_dir,
+                plan=plan_name,
+                override_action="resume-clarify",
+            ),
+        )
+
+
+# (f-reject2) resume-clarify rejected when not in AWAITING_HUMAN
+def test_override_resume_clarify_rejects_wrong_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+
+    # State is initialized — not awaiting_human
+    state = megaplan._core.read_json(plan_dir / "state.json")
+    assert state["current_state"] == "initialized"
+
+    with pytest.raises(megaplan.CliError, match="resume-clarify requires state"):
+        megaplan.handle_override(
+            root,
+            _make_args(
+                plan_name,
+                project_dir,
+                plan=plan_name,
+                override_action="resume-clarify",
+            ),
+        )
+
+
+# (h) [defaults] prep_clarify=false makes a fresh init disable clarify absent the CLI flag
+def test_init_prep_clarify_defaults_to_true_when_absent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Fresh init without --no-prep-clarify should leave prep_clarify absent (= True)."""
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+
+    init_response = megaplan.handle_init(root, _make_args(None, project_dir))
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+    state = megaplan._core.read_json(plan_dir / "state.json")
+
+    # prep_clarify should be absent (meaning True via .get("prep_clarify", True))
+    assert "prep_clarify" not in state["config"]
+
+
+def test_init_prep_clarify_false_via_no_prep_clarify_flag(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """--no-prep-clarify flag must write prep_clarify=False to config."""
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
+    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+
+    init_response = megaplan.handle_init(
+        root, _make_args(None, project_dir, prep_clarify=False)
+    )
+    plan_name = init_response["plan"]
+    plan_dir = megaplan.plans_root(root) / plan_name
+    state = megaplan._core.read_json(plan_dir / "state.json")
+
+    assert state["config"].get("prep_clarify") is False

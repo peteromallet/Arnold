@@ -161,6 +161,7 @@ class MilestoneSpec:
     deepseek_provider: str | None = None
     with_prep: bool = False
     with_feedback: bool = False
+    prep_clarify: bool = True
     prep_direction: str | None = None
     phase_model: list[str] = field(default_factory=list)
     bakeoff: dict[str, Any] | None = None
@@ -211,6 +212,13 @@ class MilestoneSpec:
         )
         with_prep = _optional_bool(raw, "with_prep", index=index)
         with_feedback = _optional_bool(raw, "with_feedback", index=index)
+        prep_clarify_raw = raw.get("prep_clarify")
+        if prep_clarify_raw is None:
+            prep_clarify = True
+        elif isinstance(prep_clarify_raw, bool):
+            prep_clarify = prep_clarify_raw
+        else:
+            raise CliError("invalid_spec", f"milestones[{index}].prep_clarify must be a boolean")
         prep_direction_raw = raw.get("prep_direction")
         if prep_direction_raw is None:
             prep_direction = None
@@ -252,6 +260,7 @@ class MilestoneSpec:
             deepseek_provider=deepseek_provider,
             with_prep=with_prep,
             with_feedback=with_feedback,
+            prep_clarify=prep_clarify,
             prep_direction=prep_direction,
             phase_model=phase_model,
             bakeoff=bakeoff,
@@ -1451,6 +1460,7 @@ def _init_plan(
     deepseek_provider: str | None = None,
     with_prep: bool = False,
     with_feedback: bool = False,
+    prep_clarify: bool = True,
     prep_direction: str | None = None,
     phase_model: list[str] | None = None,
     writer,
@@ -1480,6 +1490,8 @@ def _init_plan(
         args.append("--with-prep")
     if with_feedback:
         args.append("--with-feedback")
+    if not prep_clarify:
+        args.append("--no-prep-clarify")
     if prep_direction:
         args.extend(["--prep-direction", prep_direction])
     for override in phase_model or []:
@@ -1910,6 +1922,7 @@ def run_chain(
                 deepseek_provider=milestone.deepseek_provider,
                 with_prep=milestone.with_prep,
                 with_feedback=milestone.with_feedback,
+                prep_clarify=milestone.prep_clarify,
                 prep_direction=milestone.prep_direction,
                 phase_model=milestone.phase_model,
                 writer=writer,

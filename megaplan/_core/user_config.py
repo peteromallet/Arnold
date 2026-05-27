@@ -72,4 +72,20 @@ def default_vendor(home: Path | None = None) -> str:
     return "claude"
 
 
-__all__ = ["VALID_VENDORS", "default_vendor", "load_user_config_toml"]
+def default_prep_clarify(home: Path | None = None) -> bool:
+    """Return the configured default for prep_clarify, falling back to ``True``.
+
+    Reads ``[defaults].prep_clarify`` from the user's ``config.toml``.
+    Only boolean values are accepted; anything else falls back to ``True``.
+    """
+    data = load_user_config_toml(home)
+    defaults = data.get("defaults")
+    if not isinstance(defaults, dict):
+        return True
+    prep_clarify = defaults.get("prep_clarify")
+    if isinstance(prep_clarify, bool):
+        return prep_clarify
+    return True
+
+
+__all__ = ["VALID_VENDORS", "default_prep_clarify", "default_vendor", "load_user_config_toml"]

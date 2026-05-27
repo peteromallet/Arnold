@@ -8,6 +8,7 @@ from megaplan.types import (
     CliError,
     PlanState,
     STATE_ABORTED,
+    STATE_AWAITING_HUMAN,
     STATE_BLOCKED,
     STATE_CRITIQUED,
     STATE_DONE,
@@ -16,6 +17,7 @@ from megaplan.types import (
     STATE_FINALIZED,
     STATE_GATED,
     STATE_PLANNED,
+    STATE_PREPPED,
     STATE_REVIEWED,
     StepResponse,
     DEFAULT_AGENT_ROUTING,
@@ -781,6 +783,56 @@ def _infer_phase_agent(phase: str, state: PlanState, root: Path) -> str | None:
     return DEFAULT_AGENT_ROUTING.get(phase)
 
 
+def _override_resume_clarify(
+    root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
+) -> StepResponse:
+    if state["current_state"] != STATE_AWAITING_HUMAN:
+        raise CliError(
+            "invalid_transition",
+            f"resume-clarify requires state '{STATE_AWAITING_HUMAN}', got '{state['current_state']}'",
+            valid_next=infer_next_steps(state),
+        )
+    if state.get("clarification", {}).get("source") != "prep":
+        raise CliError(
+            "invalid_transition",
+            "resume-clarify can only resume a prep-sourced clarification halt; "
+            "use verify-human for criteria-verification awaiting_human states",
+            valid_next=infer_next_steps(state),
+        )
+    notes = state.get("meta", {}).get("notes") or []
+    user_notes = [n for n in notes if isinstance(n, dict) and n.get("source", "user") == "user"]
+    warnings: list[str] = []
+    if not user_notes:
+        warnings.append(
+            "No answers found in notes; consider adding answers via "
+            "'override add-note' before the plan phase."
+        )
+    state["current_state"] = STATE_PREPPED
+    _append_to_meta(
+        state,
+        "overrides",
+        {"action": "resume-clarify", "timestamp": now_utc()},
+    )
+    save_state_merge_meta(plan_dir, state)
+    try:
+        from megaplan.observability.events import emit, EventKind
+        emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "resume-clarify"})
+    except Exception:
+        pass
+    next_steps = infer_next_steps(state)
+    response: StepResponse = {
+        "success": True,
+        "step": "override",
+        "summary": "Prep clarification resolved; plan phase is now ready to run.",
+        "next_step": next_steps[0] if next_steps else None,
+        "state": STATE_PREPPED,
+    }
+    if warnings:
+        response["warnings"] = warnings
+    _attach_next_step_runtime(response)
+    return response
+
+
 _OVERRIDE_ACTIONS: dict[
     str, Callable[[Path, Path, PlanState, argparse.Namespace], StepResponse]
 ] = {
@@ -789,6 +841,7 @@ _OVERRIDE_ACTIONS: dict[
     "force-proceed": _override_force_proceed,
     "replan": _override_replan,
     "recover-blocked": _override_recover_blocked,
+    "resume-clarify": _override_resume_clarify,
     "set-robustness": _override_set_robustness,
     "set-profile": _override_set_profile,
     "set-model": _override_set_model,
