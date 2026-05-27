@@ -326,6 +326,30 @@ _MODEL_FIELD_PATTERNS: tuple[str, ...] = (
     "checkpoint", "model",
 )
 
+# LoadImage-family nodes whose 'image' field may carry a placeholder filename
+# from the source workflow's author (e.g. 'image (6).png').
+_LOAD_IMAGE_FAMILY: frozenset[str] = frozenset({
+    "LoadImage", "LoadImageMask", "LoadImagePath",
+})
+
+_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".webp"})
+
+
+def _looks_like_placeholder_filename(value: str) -> bool:
+    """Return True if *value* looks like a local placeholder, not an intentional path."""
+    if not value or "/" in value or "\\" in value:
+        # Has a path component — probably intentional (e.g. 'inputs/ref.png').
+        return False
+    # Case 1: contains parenthesized digits (e.g. 'image (6).png')
+    if re.search(r"\(\d+\)", value):
+        return True
+    # Case 2: short bare filename ending in an image extension
+    _, ext = (value.rsplit(".", 1) if "." in value else (value, ""))
+    if f".{ext}" in _IMAGE_EXTENSIONS and len(value) < 30:
+        return True
+    return False
+
+
 # --- constant hoisting -------------------------------------------------------
 
 
@@ -807,6 +831,33 @@ def _hoist_constants(
                 if node_val == value:
                     constant_map[(nid, field)] = name
 
+    # Prune constants whose ONLY references would be stripped by _is_schema_default
+    # (e.g. '0, 0, 0' hoisted as a repeated preset but stripped from every _node_kwargs call).
+    names_to_prune: set[str] = set()
+    for name in list(constant_defs.keys()):
+        ref_nodes = [(nid, field) for (nid, field), cname in constant_map.items() if cname == name]
+        if not ref_nodes:
+            names_to_prune.add(name)
+            continue
+        all_would_be_stripped = True
+        for nid, field in ref_nodes:
+            node = workflow_nodes.get(nid)
+            if node is None:
+                all_would_be_stripped = False
+                break
+            node_meta: dict[str, Any] = getattr(node, "metadata", None) or {}
+            val = constant_defs[name][0]  # emit_value
+            if not _is_schema_default(node.class_type, field, val, node_meta):
+                all_would_be_stripped = False
+                break
+        if all_would_be_stripped:
+            names_to_prune.add(name)
+
+    for name in names_to_prune:
+        del constant_defs[name]
+        for key in [k for k, v in constant_map.items() if v == name]:
+            del constant_map[key]
+
     # Build constant lines, sorted by name for determinism
     constant_lines: list[str] = []
     for name in sorted(constant_defs.keys()):
@@ -891,6 +942,16 @@ def _public_input_specs(
         default_expr = constant_map.get((str(binding.node_id), binding.field))
         if default_expr is None:
             default_expr = _format_value(default_value)
+        # Blank placeholder filenames for LoadImage-family public inputs
+        # (e.g. 'image (6).png' — the upstream workflow author's local file).
+        if (
+            binding.required
+            and binding.field == "image"
+            and str(node.class_type) in _LOAD_IMAGE_FAMILY
+            and isinstance(default_value, str)
+            and _looks_like_placeholder_filename(default_value)
+        ):
+            default_expr = "''"
         node_var = _first_output_var(output_var_names.get(str(binding.node_id))) or var_names.get(str(binding.node_id))
         node_ref = node_var if node_var is not None else repr(str(binding.node_id))
         metadata_node_ref = repr(str(binding.node_id))
@@ -1162,12 +1223,23 @@ def _is_derivable_provenance(provenance: Mapping[str, Any]) -> bool:
     return set(provenance).issubset({"source_workflow", "source_role"})
 
 
+_MODEL_PATH_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".gguf", ".onnx", ".bin")
+
+
+def _normalize_model_path(value: Any) -> Any:
+    if isinstance(value, str) and "\\" in value and value.lower().endswith(_MODEL_PATH_EXTS):
+        return value.replace("\\", "/")
+    return value
+
+
 def _requirements_expr_for_emit(requirements: Mapping[str, Any], *, has_models: bool) -> str | None:
     retained: dict[str, Any] = {}
     for key, value in dict(requirements).items():
         if key == "models" and has_models:
             continue
         if value:
+            if key == "models" and isinstance(value, (list, tuple)):
+                value = [_normalize_model_path(v) for v in value]
             retained[str(key)] = value
     if not retained:
         return None
@@ -1244,9 +1316,16 @@ def _format_ready_metadata_build(
     has_models: bool,
     has_public_inputs: bool,
     custom_node_packs: Mapping[str, Any] | None = None,
+    output_node_class_type: str | None = None,
 ) -> list[str]:
     template_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
-    capability = str(metadata.get("capability") or "unknown")
+    raw_capability = str(metadata.get("capability") or "unknown")
+    if raw_capability == "unknown" and output_node_class_type:
+        from vibecomfy.templates import _derive_output_kind  # local import to avoid circular import at module load
+        derived = _derive_output_kind(output_node_class_type)
+        if derived:
+            raw_capability = derived
+    capability = raw_capability
     output_prefix = str(metadata.get("output_prefix") or template_id)
     lines = [
         "READY_METADATA = ReadyMetadata.build(",
@@ -1373,6 +1452,10 @@ def emit_ready_template_python(
         out_lines.append("")
         out_lines.extend(public_input_metadata_lines)
         out_lines.append("")
+    output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
+    output_node_cls: str | None = (
+        str(workflow_nodes[output_node_ids[0]].class_type) if output_node_ids and output_node_ids[0] in workflow_nodes else None
+    )
     out_lines.extend(
         _format_ready_metadata_build(
             metadata,
@@ -1380,6 +1463,7 @@ def emit_ready_template_python(
             has_models=bool(model_assets),
             has_public_inputs=has_public_inputs,
             custom_node_packs=custom_node_packs,
+            output_node_class_type=output_node_cls,
         )
     )
     out_lines.append("")
@@ -3112,6 +3196,14 @@ def _topological_node_order(nodes: dict[str, Any], edges_in: dict[str, list[Any]
 
 
 def _format_value(value: Any) -> str:
+    # Normalize Windows-style backslash separators to forward slashes in model
+    # file paths (e.g. 'LTXVideo\\v2\\file.safetensors' → 'LTXVideo/v2/file.safetensors').
+    # ComfyUI model loaders accept either separator.
+    if isinstance(value, str) and "\\" in value:
+        if value.endswith(_MODEL_FILE_SUFFIXES) or any(
+            f"\\{ext[1:]}" in value for ext in _MODEL_FILE_SUFFIXES
+        ):
+            value = value.replace("\\", "/")
     return repr(value)
 
 

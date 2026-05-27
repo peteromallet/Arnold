@@ -20,6 +20,8 @@ OUTPUT_NODE_NAMES = {
     "SaveAudioMP3",
 }
 
+MODEL_FILE_EXTENSIONS = ('.safetensors', '.ckpt', '.pt', '.pth', '.gguf', '.onnx', '.bin')
+
 # Class-type allowlist for the universal `--prompt` override.
 #
 # Sourced by grepping the runtime-green image/edit corpus for nodes that pair
@@ -100,5 +102,6 @@ def _infer_requirements(workflow: VibeWorkflow) -> WorkflowRequirements:
             custom_nodes.append(node.class_type.split(".", 1)[0])
         for key, value in {**node.inputs, **node.widgets}.items():
             if key.endswith("_name") and isinstance(value, str):
-                models.append(value)
+                if value.lower().endswith(MODEL_FILE_EXTENSIONS):
+                    models.append(value)
     return WorkflowRequirements(models=sorted(set(models)), custom_nodes=sorted(set(custom_nodes)))

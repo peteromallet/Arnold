@@ -325,9 +325,9 @@ def test_model_constant_names_dedupe_path_prefixed_basenames() -> None:
 
     assert "CKPT_PROJECTION_NAME" not in text
     assert text.count("CLIP_PROJECTION_NAME =") == 1
-    assert "CLIP_PROJECTION_NAME = 'VIDEO\\\\LTX\\\\LTX-2\\\\ltx-2.3_text_projection_bf16.safetensors'" in text
+    assert "CLIP_PROJECTION_NAME = 'VIDEO/LTX/LTX-2/ltx-2.3_text_projection_bf16.safetensors'" in text
     assert text.count("VAE_TAESD_NAME =") == 1
-    assert "VAE_TAESD_NAME = 'vae_approx\\\\taeltx2_3.safetensors'" in text
+    assert "VAE_TAESD_NAME = 'vae_approx/taeltx2_3.safetensors'" in text
     assert "VAE_NAME = 'taeltx2_3.safetensors'" not in text
     assert "TEXT_ENCODER_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'" not in text
     assert "LTXV_PATH_NAME = 'ltx-2-19b-distilled.safetensors'" not in text
@@ -358,7 +358,7 @@ def test_model_constant_names_use_known_model_families() -> None:
         template_id="image/model_families",
     )
 
-    assert "MEL_BAND_ROFORMER_NAME = 'MelBandRoformer\\\\MelBandRoformer_fp16.safetensors'" in text
+    assert "MEL_BAND_ROFORMER_NAME = 'MelBandRoformer/MelBandRoformer_fp16.safetensors'" in text
     assert "SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'" in text
     assert "DEPTH_ANYTHING_NAME = 'depth_anything_vitl14.pth'" in text
     assert "MODEL_NAME =" not in text
