@@ -480,6 +480,13 @@ def generate_invocation_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+def _active_phase_name(active: Any) -> str:
+    if not isinstance(active, dict):
+        return "unknown"
+    phase = active.get("phase") or active.get("step")
+    return phase if isinstance(phase, str) and phase else "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Structural validation
 # ---------------------------------------------------------------------------
@@ -707,7 +714,7 @@ def phase_result_guard(plan_dir: Path):
                 )
                 if isinstance(invocation_id, str) and invocation_id:
                     result = PhaseResult(
-                        phase=raw.get("active_step", {}).get("step", "unknown"),
+                        phase=_active_phase_name(raw.get("active_step")),
                         invocation_id=invocation_id,
                         exit_kind=ek,
                         external_error=external_error,

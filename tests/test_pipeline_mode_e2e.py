@@ -27,7 +27,7 @@ from megaplan._pipeline import (
     Step,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.profile import Profile, empty_profile, load_profile
@@ -66,7 +66,7 @@ class GenericCritic:
         next_label = "to_revise" if iteration + 1 < self.max_iter else "to_done"
         return StepResult(
             outputs={"critique": out},
-            verdict=Verdict(score=0.8 - iteration * 0.1, flags=("auto",)),
+            verdict=PipelineVerdict(score=0.8 - iteration * 0.1, flags=("auto",)),
             next=next_label,
             state_patch={"iter": iteration + 1, "last_model": model},
         )

@@ -29,7 +29,7 @@ from pathlib import Path
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.resume import with_entry
 from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.human_gate import HumanGateStep
+from megaplan._pipeline.steps.human_gate import HumanDecisionStep
 from megaplan._pipeline.steps.panel import PanelReviewerStep
 from megaplan._pipeline.types import ParallelStage, Pipeline, Stage, StepContext
 from megaplan.pipelines.writing_panel_strict import build_pipeline
@@ -72,7 +72,7 @@ def _set_resume_choice(pipeline: Pipeline, stage_name: str, choice: str) -> None
     stage = pipeline.stages[stage_name]
     assert isinstance(stage, Stage)
     step = stage.step
-    assert isinstance(step, HumanGateStep)
+    assert isinstance(step, HumanDecisionStep)
     object.__setattr__(step, "_resume_choice", choice)
 
 

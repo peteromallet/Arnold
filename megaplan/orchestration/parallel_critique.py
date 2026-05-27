@@ -18,7 +18,7 @@ from megaplan.workers.hermes import (
     parse_agent_output,
 )
 from megaplan.prompts.critique import single_check_critique_prompt, write_single_check_template
-from megaplan.prompts.critique_joke import single_check_critique_joke_prompt
+from megaplan.pipelines.creative.prompts.critique_joke import single_check_critique_joke_prompt
 from megaplan.types import CliError, PlanState
 from megaplan.workers import STEP_SCHEMA_FILENAMES, WorkerResult
 

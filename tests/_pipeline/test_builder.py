@@ -8,7 +8,7 @@ Three contract assertions per the T6 brief:
 * ``.panel(... reviewers=[...])`` plumbs ``_panel_reviewer_order`` onto
   the downstream :class:`AgentStep` (private field, per T1.i decision).
 * ``.human_gate(... options=['continue','stop'], edges={'continue':
-  'panel_review', 'stop': 'done'})`` constructs a :class:`HumanGateStep`
+  'panel_review', 'stop': 'done'})`` constructs a :class:`HumanDecisionStep`
   with ``_choices=['continue','stop']`` and a :class:`Stage` carrying
   exactly ``Edge('continue','panel_review')`` and ``Edge('stop','done')``.
   The pipeline tolerates the loop edge from ``human_decide`` back to
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from megaplan._pipeline.builder import PipelineBuilder
 from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.human_gate import HumanGateStep
+from megaplan._pipeline.steps.human_gate import HumanDecisionStep
 from megaplan._pipeline.steps.panel import PanelReviewerStep
 from megaplan._pipeline.types import (
     Edge,
@@ -203,7 +203,7 @@ class TestHumanGateConstruction:
         hg_stage = pipeline.stages["human_decide"]
         assert isinstance(hg_stage, Stage)
         hg = hg_stage.step
-        assert isinstance(hg, HumanGateStep)
+        assert isinstance(hg, HumanDecisionStep)
         # callers-1 lock: _choices is a plain list of options in order.
         assert hg._choices == ["continue", "stop"]
         assert hg._artifact_stage == "revise"

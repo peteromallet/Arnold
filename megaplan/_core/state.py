@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal
 import fcntl
 
 from megaplan.types import (
-    ActiveStep,
+    ActivePhase,
     CANONICAL_PLAN_STATES,
     CliError,
     HistoryEntry,
@@ -110,15 +110,22 @@ def _parse_utc_timestamp(timestamp: str | None) -> datetime | None:
         return None
 
 
+def active_phase_name(active_step: dict[str, Any] | None) -> str | None:
+    if not isinstance(active_step, dict):
+        return None
+    phase = active_step.get("phase") or active_step.get("step")
+    return phase if isinstance(phase, str) and phase else None
+
+
 def active_step_is_stale(
-    active_step: ActiveStep | None,
+    active_step: ActivePhase | None,
     *,
     configured_timeout_seconds: int = DEFAULT_ACTIVE_STEP_STALE_SECONDS,
 ) -> bool:
     if not isinstance(active_step, dict):
         return False
-    step = active_step.get("step")
-    if not isinstance(step, str) or not step:
+    step = active_phase_name(active_step)
+    if not step:
         return False
     started_at = _parse_utc_timestamp(active_step.get("started_at"))
     if started_at is None:
@@ -180,7 +187,7 @@ def plan_lock(plan_dir: Path, *, step: str) -> Iterator[None]:
             if isinstance(active_step, dict):
                 message = (
                     f"Cannot run '{step}' because plan '{plan_dir.name}' already has an active "
-                    f"'{active_step.get('step')}' step via {active_step.get('agent')}."
+                    f"'{active_phase_name(active_step)}' step via {active_step.get('agent')}."
                 )
             else:
                 message = f"Cannot run '{step}' because plan '{plan_dir.name}' is locked by another process."
@@ -259,8 +266,28 @@ def _validate_plan_state_for_persist(state: dict[str, Any], *, plan_dir: Path) -
 def _read_state_for_write(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
         return {}
-    state = read_json(state_path)
-    return state if isinstance(state, dict) else {}
+    try:
+        state = read_json(state_path)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "corrupt_state_write",
+            f"M3B_HALT_CORRUPT_STATE_WRITE: failed to read plan state for write at {state_path}: {exc}",
+            extra={"path": str(state_path)},
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise CliError(
+            "corrupt_state_write",
+            f"M3B_HALT_CORRUPT_STATE_WRITE: failed to decode plan state for write at {state_path}: {exc}",
+            extra={"path": str(state_path)},
+        ) from exc
+    if not isinstance(state, dict):
+        raise CliError(
+            "invalid_state_shape",
+            "M3B_HALT_INVALID_STATE_SHAPE: "
+            f"plan state at {state_path} must be a JSON object, got {type(state).__name__}",
+            extra={"path": str(state_path), "root_type": type(state).__name__},
+        )
+    return state
 
 
 def _apply_legacy_state_migration(state: dict[str, Any]) -> bool:
@@ -663,8 +690,8 @@ def set_active_step(
         for entry in state.get("history", [])
         if isinstance(entry, dict) and entry.get("step") == step
     )
-    active_step: ActiveStep = {
-        "step": step,
+    active_step: ActivePhase = {
+        "phase": step,
         "agent": agent,
         "mode": mode,
         "run_id": resolved_run_id,

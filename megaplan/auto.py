@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from megaplan._core import find_plan_dir
+from megaplan._core import active_phase_name, find_plan_dir
 from megaplan._core.state import write_plan_state
 from megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from megaplan.runtime.process import kill_group, spawn
@@ -43,8 +43,9 @@ from megaplan.orchestration.phase_result import (
 from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
+    CliError,
     STATE_ABORTED,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_CANCELLED,
     STATE_DONE,
@@ -447,7 +448,7 @@ def _format_phase_heartbeat(
             if isinstance(current_state, str) and current_state:
                 bits.append(f"state={current_state}")
             if isinstance(active, dict):
-                step = active.get("step")
+                step = active_phase_name(active)
                 agent = active.get("agent")
                 mode = active.get("mode")
                 worker = "/".join(
@@ -494,7 +495,7 @@ def _phase_command(next_step: str) -> list[str]:
     if next_step == "execute":
         # --retry-blocked-tasks is safe to pass on every iteration. Within a
         # single auto session, tasks that report status=blocked terminate the
-        # auto loop via STATE_AWAITING_HUMAN (see eb4ac447), so re-dispatch
+        # auto loop via STATE_AWAITING_HUMAN_VERIFY (see eb4ac447), so re-dispatch
         # only happens on a *fresh* `megaplan auto` invocation — which is the
         # user's signal that any external prereq has been resolved and stale
         # blocked statuses should be retried instead of short-circuiting.
@@ -959,26 +960,33 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
             state_data = json.load(handle)
     except FileNotFoundError:
         return False
-    except json.JSONDecodeError:
-        _warn_read_fallback(
-            "M3A_WARN_ORPHAN_CLEAR_READ",
-            path=state_path,
-            reason="corrupt_json",
-        )
-        return False
-    except (OSError, UnicodeDecodeError, ValueError):
-        _warn_read_fallback(
-            "M3A_WARN_ORPHAN_CLEAR_READ",
-            path=state_path,
-            reason="unreadable",
-        )
-        return False
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "orphan_clear_read",
+            f"M3B_HALT_ORPHAN_CLEAR_READ: failed to parse {state_path}: {exc}",
+            extra={"path": str(state_path), "expected_step": expected_step},
+        ) from exc
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise CliError(
+            "orphan_clear_read",
+            f"M3B_HALT_ORPHAN_CLEAR_READ: failed to read {state_path}: {exc}",
+            extra={"path": str(state_path), "expected_step": expected_step},
+        ) from exc
     if not isinstance(state_data, dict):
-        return False
+        raise CliError(
+            "orphan_clear_read",
+            "M3B_HALT_ORPHAN_CLEAR_READ: "
+            f"{state_path} must contain a JSON object, got {type(state_data).__name__}",
+            extra={
+                "path": str(state_path),
+                "expected_step": expected_step,
+                "root_type": type(state_data).__name__,
+            },
+        )
     current_active = state_data.get("active_step")
     if not isinstance(current_active, dict):
         return False
-    recorded_step = current_active.get("step")
+    recorded_step = active_phase_name(current_active)
     if recorded_step != expected_step:
         return False
     quarantined = _quarantine_phase_outputs(plan_dir, expected_step)
@@ -1004,8 +1012,12 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
             mutation=_patch_orphan_recovery,
             validate_current_state=False,
         )
-    except OSError:
-        return False
+    except Exception as exc:
+        raise CliError(
+            "orphan_clear_write",
+            f"M3B_HALT_ORPHAN_CLEAR_WRITE: failed to clear orphaned active_step in {state_path}: {exc}",
+            extra={"path": str(state_path), "expected_step": expected_step},
+        ) from exc
     return True
 
 
@@ -1252,7 +1264,7 @@ def drive(
 
         # Terminal: plan reached a final state (or automation-terminal).
         if state in AUTOMATION_TERMINAL_STATES and not (state == STATE_BLOCKED and valid_next):
-            if state == STATE_AWAITING_HUMAN:
+            if state == STATE_AWAITING_HUMAN_VERIFY:
                 log("plan awaiting human verification — automation stopping")
                 return _outcome(
                     "awaiting_human",
@@ -1326,7 +1338,7 @@ def drive(
             isinstance(active_step, dict)
             and active_step.get("recommended_action") == "wait"
         ):
-            active_name = active_step.get("step") or next_step or "unknown"
+            active_name = active_phase_name(active_step) or next_step or "unknown"
             reason = active_step.get("recommended_action_reason") or "active step is still healthy"
             log(f"active step '{active_name}' still running — waiting: {reason}")
             if poll_sleep > 0:
@@ -1350,7 +1362,7 @@ def drive(
                 "terminate_idle_step",
             }
         ):
-            orphan_step = active_step.get("step") or next_step or "unknown"
+            orphan_step = active_phase_name(active_step) or next_step or "unknown"
             reason = (
                 active_step.get("recommended_action_reason")
                 or "active step is orphaned (worker dead or stale and unlocked)"

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from megaplan._pipeline.receipt import ReceiptDecorator
-from megaplan._pipeline.types import Step, StepContext, StepResult, Verdict
+from megaplan._pipeline.types import Step, StepContext, StepResult, PipelineVerdict
 
 
 @dataclass
@@ -25,7 +25,7 @@ class _Trivial:
         out.write_text("trivial output")
         return StepResult(
             outputs={"out": out},
-            verdict=Verdict(score=0.8, flags=("a", "b"), recommendation="proceed"),
+            verdict=PipelineVerdict(score=0.8, flags=("a", "b"), recommendation="proceed"),
             next="done",
             state_patch={"x": 1},
         )

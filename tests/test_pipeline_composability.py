@@ -4,7 +4,7 @@ Five specific claims the brief makes that need explicit tests:
 
 1. New workflow types reuse the same Step set, just register a new
    prompt under the same key.
-2. Critic output (Verdict / flags) flows into reviser input naturally
+2. Critic output (PipelineVerdict / flags) flows into reviser input naturally
    via state_patch, not via shared globals.
 3. The same primitives express the planning flow AND the doc-critique
    loop AND a fan-out flow — one parent abstraction.
@@ -31,7 +31,7 @@ from megaplan._pipeline import (
     Step,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.prompts import (
@@ -89,7 +89,7 @@ def test_critic_verdict_flags_reach_reviser_via_state_patch(tmp_path: Path) -> N
         slot = None
 
         def run(self, ctx: StepContext) -> StepResult:
-            verdict = Verdict(score=0.3, flags=("flag-a", "flag-b"))
+            verdict = PipelineVerdict(score=0.3, flags=("flag-a", "flag-b"))
             out = ctx.plan_dir / "crit.json"
             out.write_text(json.dumps({"flags": list(verdict.flags)}))
             return StepResult(
@@ -177,7 +177,7 @@ def test_five_iteration_loop_is_a_tiny_diff(tmp_path: Path) -> None:
             next_label = "to_revise" if iteration + 1 < self.max_iter else "to_done"
             return StepResult(
                 outputs={"crit": out},
-                verdict=Verdict(score=0.5),
+                verdict=PipelineVerdict(score=0.5),
                 next=next_label,
                 state_patch={"iter": iteration + 1},
             )

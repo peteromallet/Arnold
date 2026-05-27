@@ -611,7 +611,7 @@ class TestExternalError:
             json.dumps(
                 {
                     "meta": {"current_invocation_id": "inv"},
-                    "active_step": {"step": "execute"},
+                    "active_step": {"phase": "execute"},
                 }
             ),
             encoding="utf-8",
@@ -635,7 +635,7 @@ class TestExternalError:
             json.dumps(
                 {
                     "meta": {"current_invocation_id": "inv"},
-                    "active_step": {"step": "plan"},
+                    "active_step": {"phase": "plan"},
                 }
             ),
             encoding="utf-8",

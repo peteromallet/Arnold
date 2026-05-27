@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -70,6 +71,8 @@ from megaplan.types import (
 from megaplan.workers import WorkerResult
 
 log = logging.getLogger(__name__)
+
+_BATCH_ARTIFACT_RE = re.compile(r"execution_batch_(\d+)\.json$")
 
 
 def _resolve_tier_spec(
@@ -758,14 +761,13 @@ def _compute_execute_scope_drift(
                 )
     try:
         observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
-    except Exception:
-        log.warning(
-            "M3A_WARN_GIT_SNAPSHOT_FALLBACK execute scope drift snapshot fallback (project_dir=%s)",
-            project_dir,
-            exc_info=True,
-        )
-        observed_snapshot = {}
-        observed_error = "snapshot unavailable"
+    except Exception as exc:
+        raise CliError(
+            "scope_drift_snapshot",
+            "M3B_HALT_SCOPE_DRIFT_SNAPSHOT: "
+            f"failed to capture git status snapshot while evaluating execute scope drift for {project_dir}: {exc}",
+            extra={"project_dir": str(project_dir)},
+        ) from exc
     files_in_diff = set(observed_snapshot.keys()) if observed_error is None else set()
     loc_by_file = collect_loc_by_file(project_dir, files_in_diff)
     return compute_scope_drift(
@@ -786,6 +788,25 @@ def _append_scope_drift_blocker(
             f"scope_drift_severity=high: unclaimed files {sorted(drift.files_added)} "
             f"with {drift.loc_added_outside_claimed} LOC outside the claimed set"
         )
+
+
+def _compute_scope_drift_for_execute_surface(
+    *,
+    project_dir: Path,
+    aggregate_payload: dict[str, Any],
+    state: PlanState,
+    phase_context: str,
+) -> Any:
+    try:
+        return _compute_execute_scope_drift(project_dir, aggregate_payload, state)
+    except CliError as exc:
+        if exc.code != "scope_drift_snapshot":
+            raise
+        raise CliError(
+            exc.code,
+            f"{exc} ({phase_context})",
+            extra={**exc.extra, "phase_context": phase_context},
+        ) from exc
 
 
 def handle_execute_one_batch(
@@ -828,10 +849,20 @@ def handle_execute_one_batch(
     # see the most recent on-disk truth.
     batch_status_overlay: dict[str, str] = {}
     for batch_path in list_batch_artifacts(plan_dir):
+        match = _BATCH_ARTIFACT_RE.fullmatch(batch_path.name)
+        if match is None:
+            continue
+        if int(match.group(1)) >= batch_number:
+            continue
         try:
             batch_data = read_json(batch_path)
-        except Exception:
-            continue
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise CliError(
+                "corrupt_execution_batch",
+                "M3B_HALT_CORRUPT_EXECUTION_BATCH: "
+                f"failed to read prior execution batch artifact {batch_path}: {exc}",
+                extra={"artifact_path": str(batch_path), "batch_number": batch_number},
+            ) from exc
         for update in batch_data.get("task_updates", []) or []:
             if not isinstance(update, dict):
                 continue
@@ -999,7 +1030,12 @@ def handle_execute_one_batch(
         # _run_and_merge_batch already wrote execution_audit.json; this handler
         # only writes the aggregate execution.json after the batch returns.
         atomic_write_json(plan_dir / "execution.json", aggregate_payload)
-        drift = _compute_execute_scope_drift(project_dir, aggregate_payload, state)
+        drift = _compute_scope_drift_for_execute_surface(
+            project_dir=project_dir,
+            aggregate_payload=aggregate_payload,
+            state=state,
+            phase_context=f"final execute batch {batch_number}/{batches_total}",
+        )
         _append_scope_drift_blocker(blocking_reasons, state, drift)
 
     blocked = bool(blocking_reasons)
@@ -1669,7 +1705,12 @@ def handle_execute_auto_loop(
         )
     aggregate_payload["deviations"] = deviations
     atomic_write_json(plan_dir / "execution.json", aggregate_payload)
-    drift = _compute_execute_scope_drift(project_dir, aggregate_payload, state)
+    drift = _compute_scope_drift_for_execute_surface(
+        project_dir=project_dir,
+        aggregate_payload=aggregate_payload,
+        state=state,
+        phase_context=f"execute auto-loop aggregate after {len(batch_payloads)}/{total_batches} completed batches",
+    )
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     atomic_write_json(plan_dir / "finalize.json", finalize_data)
     atomic_write_text(

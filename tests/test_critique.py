@@ -137,7 +137,7 @@ def test_parallel_critique_sets_and_clears_active_step(
     state = load_state(plan_fixture.plan_dir)
 
     assert response["success"] is True
-    assert observed["step"] == "critique"
+    assert observed["phase"] == "critique"
     assert observed["agent"] == "hermes"
     assert observed["model"] == "fireworks:accounts/fireworks/models/kimi-k2p6"
     assert "active_step" not in state

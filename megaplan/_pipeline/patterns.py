@@ -49,7 +49,7 @@ from megaplan._pipeline.types import (
     Step,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 PromoteFn = Callable[[dict[str, Any]], GateRecommendation]
@@ -236,12 +236,12 @@ def subpipeline_call(
     Documentation-first primitive for future user pipelines. The
     executor's ``kind="subloop"`` dispatch runs the child as a nested
     pipeline; *promote* maps the child's terminal state ``dict`` to a
-    :data:`GateRecommendation` on the parent's :class:`Verdict`.
+    :data:`GateRecommendation` on the parent's :class:`PipelineVerdict`.
 
     Note: :class:`SubloopStep` copies the parent ``StepContext.state``
     into the child via ``dict(ctx.state)`` — the child's state patches
     do NOT propagate back to the parent state. Only the *promote*
-    callable's recommendation flows up via :class:`Verdict`.
+    callable's recommendation flows up via :class:`PipelineVerdict`.
     """
 
     return SubloopStep(
@@ -341,7 +341,7 @@ def escalate_if(
     stage's neighbour graph and append the produced *escape_edge*
     (``kind="gate"``, ``recommendation="escalate"``) as an outgoing edge.
     *condition* documents when the host Step should emit a
-    :class:`Verdict` whose ``recommendation == "escalate"``; the host
+    :class:`PipelineVerdict` whose ``recommendation == "escalate"``; the host
     Step's ``run()`` consults it against :attr:`StepContext.state`.
     """
 
@@ -372,7 +372,7 @@ def majority_vote(
       all also yield ``"tiebreaker"`` so the host stage routes to its
       tiebreaker edge.
     * The returned :class:`StepResult` carries a synthetic
-      :class:`Verdict` with the winning recommendation and
+      :class:`PipelineVerdict` with the winning recommendation and
       ``next=<recommendation>`` for label-fallback dispatch.
 
     *panel_output_key* is reserved for future per-key tallying (e.g.
@@ -398,7 +398,7 @@ def majority_vote(
                 chosen = "tiebreaker"
             else:
                 chosen = top[0][0]
-        verdict = Verdict(score=1.0, recommendation=chosen)
+        verdict = PipelineVerdict(score=1.0, recommendation=chosen)
         return StepResult(verdict=verdict, next=chosen)
 
     return _join
@@ -648,7 +648,7 @@ def weighted_vote(weights: Mapping[str, float]) -> JoinFn:
     wins. Ties (or panels whose reviewers produced no verdicts at all)
     resolve to ``'tiebreaker'`` for parity with :func:`majority_vote`.
     The returned :class:`StepResult` carries a synthetic
-    :class:`Verdict` whose ``recommendation`` matches the winning label
+    :class:`PipelineVerdict` whose ``recommendation`` matches the winning label
     and ``next=<recommendation>`` for label-fallback dispatch.
     """
 
@@ -682,7 +682,7 @@ def weighted_vote(weights: Mapping[str, float]) -> JoinFn:
             else:
                 chosen = ranked[0][0]
 
-        verdict = Verdict(score=1.0, recommendation=chosen)
+        verdict = PipelineVerdict(score=1.0, recommendation=chosen)
         return StepResult(verdict=verdict, next=chosen)
 
     return _join

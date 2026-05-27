@@ -8,7 +8,7 @@ import hashlib
 import re
 from pathlib import PurePosixPath
 from types import TracebackType
-from typing import Any, Literal, Mapping, Protocol, Sequence, TypeAlias, runtime_checkable
+from typing import Any, Mapping, Protocol, Sequence, TypeAlias, runtime_checkable
 
 from pydantic import Field
 
@@ -45,13 +45,12 @@ from megaplan.schemas import (
 from megaplan.schemas.arnold import (
     ChecklistSource,
     ChecklistStatus,
+    EpicSummary,
     SprintItemComplexity,
     SprintItemStatus,
 )
-from megaplan.schemas.base import NormalizedDict, utc_now
+from megaplan.schemas.base import Backend, NormalizedDict, utc_now
 from megaplan.schemas.sprint1 import ControlIntent
-
-Backend = Literal["file", "db"]
 JSONDict: TypeAlias = dict[str, Any]
 _IDEMPOTENCY_PART_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
 
@@ -119,13 +118,6 @@ class SprintItemInput(StorageModel):
     source_section: str | None = None
     position: int | None = Field(default=None, gt=0)
     created_at: datetime | None = None
-
-
-class EpicSummary(Epic):
-    snippet: str | None = None
-    rank: float | int | None = None
-    match_tier: int | None = None
-    backend: Backend | None = None
 
 
 class MessageSearchHit(Message):

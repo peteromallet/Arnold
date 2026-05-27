@@ -261,6 +261,43 @@ def _render_codex_review_prompt(
     )
 
 
+def test_gate_summary_prefers_recommendation_only_carry(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    atomic_write_json(
+        plan_dir / "gate_carry.json",
+        {
+            "version": 1,
+            "recommendation": "PROCEED",
+            "passed": True,
+            "settled_decisions": [],
+        },
+    )
+
+    gate = _gate_summary_or_skipped(plan_dir)
+
+    assert gate["recommendation"] == "PROCEED"
+    assert "verdict" not in gate
+
+
+def test_gate_summary_reads_legacy_verdict_only_carry(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    atomic_write_json(
+        plan_dir / "gate_carry.json",
+        {
+            "version": 1,
+            "verdict": "ITERATE",
+            "passed": False,
+            "settled_decisions": [],
+        },
+    )
+
+    gate = _gate_summary_or_skipped(plan_dir)
+
+    assert gate["recommendation"] == "ITERATE"
+
+
 def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")

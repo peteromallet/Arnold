@@ -36,6 +36,18 @@ def _assert_store_protocol_parity(store: Store) -> None:
         f"{type(store).__name__} is missing Store methods: {missing}. "
         f"Store protocol methods={protocol_names}; concrete public callables={concrete_names}"
     )
+    # Module-layout guard: mixin assembly must not change __module__.
+    _EXPECTED_MODULE: dict[type, str] = {
+        FileStore: "megaplan.store.file",
+        DBStore: "megaplan.store.db",
+        MultiStore: "megaplan.store.multi",
+    }
+    expected = _EXPECTED_MODULE.get(type(store))
+    if expected is not None:
+        assert type(store).__module__ == expected, (
+            f"{type(store).__name__}.__module__ is {type(store).__module__!r}, "
+            f"expected {expected!r}. Mixin assembly may have regressed."
+        )
 
 
 def _assert_codebase_signature_contract() -> None:

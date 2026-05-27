@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from megaplan.execute.core import (
-    handle_execute_auto_loop as dispatch_execute_auto_loop,
-    handle_execute_one_batch as dispatch_execute_one_batch,
+    handle_execute_auto_loop,
+    handle_execute_one_batch,
 )
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
     CliError,
     PlanState,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -159,7 +159,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         try:
             with phase_result_guard(plan_dir):
                 if getattr(args, "batch", None) is not None:
-                    response = dispatch_execute_one_batch(
+                    response = handle_execute_one_batch(
                         root=root,
                         plan_dir=plan_dir,
                         state=state,
@@ -175,7 +175,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                         tier_map=tier_map,
                     )
                 else:
-                    response = dispatch_execute_auto_loop(
+                    response = handle_execute_auto_loop(
                         root=root,
                         plan_dir=plan_dir,
                         state=state,
@@ -245,7 +245,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                     entry["evidence"] = f"{robustness.title()} robustness: auto-approved."
                 stub_criteria.append(entry)
 
-            next_state = STATE_AWAITING_HUMAN if has_deferred_must else STATE_DONE
+            next_state = STATE_AWAITING_HUMAN_VERIFY if has_deferred_must else STATE_DONE
 
             stub_review = {
                 "review_verdict": "approved",

@@ -19,6 +19,34 @@ def test_db_store_preflight_contract() -> None:
     run_dbstore_preflight_contract()
 
 
+def test_db_store_module_layout_guard() -> None:
+    """DBStore must remain defined in megaplan.store.db after decomposition."""
+    from megaplan.store import DBStore
+
+    assert DBStore.__module__ == "megaplan.store.db", (
+        f"DBStore.__module__ is {DBStore.__module__!r}; "
+        "mixin assembly may have changed the module"
+    )
+
+
+def test_db_store_non_protocol_methods_preserve_source_inspection() -> None:
+    """Non-protocol extension methods that may move to _db/ slices must
+    still be inspectable via inspect.getsource(DBStore.method)."""
+    import inspect
+
+    from megaplan.store import DBStore
+
+    # copy_plan_artifacts_idempotent and copy_rows_idempotent are DB-only
+    # non-protocol methods listed in SD3 that may move to _db/ slices.
+    source = inspect.getsource(DBStore.copy_plan_artifacts_idempotent)
+    assert len(source) > 40, "copy_plan_artifacts_idempotent source too short"
+    assert "def copy_plan_artifacts_idempotent" in source
+
+    source_rows = inspect.getsource(DBStore.copy_rows_idempotent)
+    assert len(source_rows) > 40, "copy_rows_idempotent source too short"
+    assert "def copy_rows_idempotent" in source_rows
+
+
 def test_db_idempotency_key_required_before_connection() -> None:
     from megaplan.store import DBStore
 

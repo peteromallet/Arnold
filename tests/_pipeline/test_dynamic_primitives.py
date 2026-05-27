@@ -28,7 +28,7 @@ from megaplan._pipeline.types import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 
@@ -69,7 +69,7 @@ class _GeneratorStep:
 
 @dataclass(frozen=True)
 class _ReviewerStep:
-    """Emits a Verdict with reviewer_id payload — feeds weighted_vote."""
+    """Emits a PipelineVerdict with reviewer_id payload — feeds weighted_vote."""
 
     name: str = "reviewer"
     kind: str = "judge"
@@ -80,7 +80,7 @@ class _ReviewerStep:
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
-            verdict=Verdict(
+            verdict=PipelineVerdict(
                 score=1.0,
                 recommendation=self.recommendation,
                 payload={"reviewer_id": self.reviewer_id},
@@ -93,7 +93,7 @@ class _ReviewerStep:
 class _AggregateStep:
     """Stateful stub for iterate_until_consensus tests.
 
-    Emits a Verdict whose ``per_reviewer_recommendations`` payload is
+    Emits a PipelineVerdict whose ``per_reviewer_recommendations`` payload is
     drawn from ``recs_per_call`` — one list per invocation. After the
     list is exhausted, the last entry is reused so trailing iterations
     have well-defined output.
@@ -115,7 +115,7 @@ class _AggregateStep:
         # primitive consults the ratio, not the aggregate label).
         top: GateRecommendation = recs[0] if recs else "proceed"
         return StepResult(
-            verdict=Verdict(
+            verdict=PipelineVerdict(
                 score=1.0,
                 recommendation=top,
                 payload={"per_reviewer_recommendations": list(recs)},

@@ -19,7 +19,7 @@ Contract notes (load-bearing for executor authors and Step authors):
     subloop kind and an escape-edge override kind without changing the
     frozen Protocol.
 
-(c) ``Verdict``, ``StepResult``, and ``StepContext`` instances are
+(c) ``PipelineVerdict``, ``StepResult``, and ``StepContext`` instances are
     conceptually immutable. Callers MUST NOT mutate ``payload``,
     ``state_patch``, ``inputs``, or ``outputs`` after construction. Because
     ``@dataclass(frozen=True)`` does not deeply freeze ``Mapping`` fields,
@@ -38,17 +38,17 @@ Contract notes (load-bearing for executor authors and Step authors):
     revision note lives in ``briefs/megaplan-decomposition.md`` under the
     ``## Revision notes`` heading (added in Sprint 1 T5).
 
-(e) Typed-gate dispatch (Sprint 4 Chunk A): ``Verdict.recommendation`` and
+(e) Typed-gate dispatch (Sprint 4 Chunk A): ``PipelineVerdict.recommendation`` and
     ``Edge.kind`` together replace the legacy ``"gate_<condition>:<next>"``
     label-string encoding for gate transitions. When a Step returns a
-    ``Verdict`` whose ``recommendation`` is set (one of the
+    ``PipelineVerdict`` whose ``recommendation`` is set (one of the
     ``GateRecommendation`` literals), the executor matches outgoing edges
     by ``(kind == "gate" and recommendation == verdict.recommendation)``
     in preference to label-string matching. ``kind == "normal"`` edges
     continue to dispatch on ``Edge.label == result.next``. ``kind ==
     "override"`` is reserved for Chunk D — the executor MUST NOT branch on
-    it in Chunk A. ``Verdict.override`` is added now (defaulted, additive)
-    so that Chunk D can wire override edges without re-freezing ``Verdict``;
+    it in Chunk A. ``PipelineVerdict.override`` is added now (defaulted, additive)
+    so that Chunk D can wire override edges without re-freezing ``PipelineVerdict``;
     it is not consumed by the Chunk-A executor.
 """
 
@@ -105,7 +105,7 @@ class Edge:
 
 
 @dataclass(frozen=True)
-class Verdict:
+class PipelineVerdict:
     """Structured output of a judge-kind Step.
 
     ``score`` is a float in ``[0.0, 1.0]`` by convention but is not
@@ -159,7 +159,7 @@ class StepResult:
     """
 
     outputs: Mapping[str, Path] = field(default_factory=dict)
-    verdict: "Verdict | None" = None
+    verdict: "PipelineVerdict | None" = None
     next: NextEdge = "halt"
     state_patch: Mapping[str, Any] = field(default_factory=dict)
 

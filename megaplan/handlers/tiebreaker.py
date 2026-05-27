@@ -7,7 +7,7 @@ from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_h
 from megaplan.types import (
     CliError,
     PlanState,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
@@ -127,7 +127,7 @@ def handle_tiebreaker_decide(root: Path, args: argparse.Namespace) -> StepRespon
             save_flag_registry(plan_dir, registry)
 
         if action == "escalate":
-            state["current_state"] = STATE_AWAITING_HUMAN
+            state["current_state"] = STATE_AWAITING_HUMAN_VERIFY
             next_step_val = "override add-note"
         elif action == "replan":
             state["current_state"] = STATE_PLANNED

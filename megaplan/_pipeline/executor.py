@@ -29,7 +29,7 @@ Contract notes:
     label, and path. The executor never copies, moves, or rewrites
     artifacts — Step authors own placement.
 
-(d) Immutability convention: :class:`StepResult`, :class:`Verdict`, and
+(d) Immutability convention: :class:`StepResult`, :class:`PipelineVerdict`, and
     :class:`StepContext` are conceptually immutable. State is applied
     via ``state.update(dict(result.state_patch))`` — a defensive copy so
     a Step returning a shared default dict cannot alias the executor's
@@ -39,7 +39,7 @@ Contract notes:
     stage's artifact directory (or anywhere else under ``ctx.plan_dir``).
     The executor verifies existence only, not directory layout.
 
-(f) Verdict-first edge dispatch on ``kind="gate"`` edges: when a Step
+(f) PipelineVerdict-first edge dispatch on ``kind="gate"`` edges: when a Step
     returns a :class:`StepResult` whose ``verdict.recommendation`` is
     set, the executor first searches ``node.edges`` for the edge whose
     ``kind == "gate"`` and ``recommendation == verdict.recommendation``.
@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from megaplan._core.state import write_plan_state
+from megaplan.types import CliError
 from megaplan._pipeline.types import (
     ParallelStage,
     Pipeline,
@@ -84,6 +85,16 @@ def _atomic_write_json(dest: Path, payload: Any) -> None:
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str))
     os.replace(tmp, dest)
+
+
+def _write_forensic_backup(source: Path) -> Path:
+    """Copy ``source`` to a sibling forensic backup via atomic replace."""
+
+    backup_path = source.with_name(f"{source.name}.corrupt-executor-backup")
+    tmp = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    tmp.write_bytes(source.read_bytes())
+    os.replace(tmp, backup_path)
+    return backup_path
 
 
 def _merge_state_to_disk(
@@ -108,12 +119,19 @@ def _merge_state_to_disk(
     (or no on-disk state exists), the executor's full state is
     written as the cold-start.
     """
-    write_plan_state(
-        plan_dir,
-        mode="executor-key-merge",
-        state=executor_state,
-        executor_owned_keys=executor_owned_keys,
-    )
+    try:
+        write_plan_state(
+            plan_dir,
+            mode="executor-key-merge",
+            state=executor_state,
+            executor_owned_keys=executor_owned_keys,
+        )
+    except CliError as exc:
+        state_path = plan_dir / "state.json"
+        if exc.code == "corrupt_state_write" and state_path.exists():
+            backup_path = _write_forensic_backup(state_path)
+            exc.extra.setdefault("forensic_backup_path", str(backup_path))
+        raise
 
 
 def _verify_outputs(stage_name: str, outputs: Mapping[str, Path]) -> None:
@@ -246,7 +264,7 @@ def run_pipeline(
                 return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
             return {"state": state, "final_stage": node.name}
 
-        # Verdict-first edge dispatch:
+        # PipelineVerdict-first edge dispatch:
         #  - If verdict.override is set (Chunk D), match a kind="override" edge.
         #  - Else if verdict.recommendation is set (Chunk A), match a
         #    kind="gate" edge by recommendation.

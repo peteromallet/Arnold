@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import megaplan.execute.core as execute_core
+from megaplan.types import CliError
 
 
 @pytest.fixture
@@ -111,10 +112,9 @@ def test_compute_scope_drift_without_state_is_safe(
     assert drift.severity == "high"
 
 
-def test_compute_scope_drift_logs_snapshot_fallback(
+def test_compute_scope_drift_halts_on_snapshot_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(
         execute_core,
@@ -127,8 +127,5 @@ def test_compute_scope_drift_logs_snapshot_fallback(
         lambda _project_dir, _paths: {},
     )
 
-    caplog.set_level("WARNING")
-    drift = execute_core._compute_execute_scope_drift(tmp_path, _empty_payload())
-
-    assert drift.files_added == []
-    assert any("M3A_WARN_GIT_SNAPSHOT_FALLBACK" in record.getMessage() for record in caplog.records)
+    with pytest.raises(CliError, match="M3B_HALT_SCOPE_DRIFT_SNAPSHOT"):
+        execute_core._compute_execute_scope_drift(tmp_path, _empty_payload())

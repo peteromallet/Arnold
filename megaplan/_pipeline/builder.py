@@ -53,7 +53,7 @@ from megaplan._pipeline.patterns import (
     panel_parallel,
 )
 from megaplan._pipeline.steps.agent import AgentStep
-from megaplan._pipeline.steps.human_gate import HumanGateStep
+from megaplan._pipeline.steps.human_gate import HumanDecisionStep
 from megaplan._pipeline.steps.panel import PanelReviewerStep
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
@@ -239,11 +239,11 @@ class PipelineBuilder:
         latest versioned output the human reviews; ``options`` are the
         choice labels; ``edges`` maps each option to a target stage.
 
-        Constructs a :class:`HumanGateStep` with the existing private
+        Constructs a :class:`HumanDecisionStep` with the existing private
         fields (``_choices`` / ``_artifact_stage`` / ``_pipeline_name``
         / ``_pipeline_version`` / ``_resume_choice``) and the enclosing
         :class:`Stage` with one outgoing :class:`Edge` per option."""
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name=stage_name,
             kind="decide",
             prompt_key=None,

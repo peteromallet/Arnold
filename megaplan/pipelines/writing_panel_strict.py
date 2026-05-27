@@ -15,7 +15,7 @@ Topology (identical to the legacy YAML — locks done-criterion #8):
   via ``panel_review.*``.
 * ``revise`` — single agent producing a revised draft from the
   original draft + the synthesised critique.
-* ``human_decide`` — :class:`HumanGateStep` with ``options=['continue',
+* ``human_decide`` — :class:`HumanDecisionStep` with ``options=['continue',
   'stop']``. ``continue`` loops back to ``panel_review`` (re-entry into
   the ParallelStage); ``stop`` exits via the executor's ``"halt"``
   terminator (the Python-composition equivalent of the YAML compiler's

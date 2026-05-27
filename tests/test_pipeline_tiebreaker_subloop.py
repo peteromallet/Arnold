@@ -2,7 +2,7 @@
 
 Pins the elegance commitment: the legacy two-state tiebreaker pair
 collapses into one Step that wraps a child Pipeline. From the outside,
-tiebreaker is now a single node with a typed Verdict — no more
+tiebreaker is now a single node with a typed PipelineVerdict — no more
 intermediate ``tiebreaker_pending`` / ``tiebreaker_ready`` state names
 the parent flow has to thread.
 """
@@ -40,7 +40,7 @@ def test_tiebreaker_is_one_node_not_two() -> None:
     """The post-collapse compiled view exposes tiebreaker as a single
     node. Compared to today's compiled planning pipeline which has
     two states (tiebreaker_pending, tiebreaker_ready), this Step is
-    one node with a typed Verdict — that's the elegance gain."""
+    one node with a typed PipelineVerdict — that's the elegance gain."""
     step = TiebreakerStep()
     # one Step, not two.
     assert isinstance(step, Step)
