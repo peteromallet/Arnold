@@ -38,64 +38,87 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(_id='3940', ckpt_name=CKPT_NAME)
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral')
-    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate='fixed')
+    ksamplerselect = KSamplerSelect(_id='4831', sampler_name='euler_ancestral')
+
+    randomnoise = RandomNoise(
+        _id='4832',
+        noise_seed=DEFAULT_SEED,
+        control_after_generate='fixed',
+    )
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
+        _id='5023',
         text_encoder=TEXT_ENCODER_NAME,
         ckpt_name=CKPT_NAME,
         device='default',
     )
 
     manualsigmas = ManualSigmas(
+        _id='5025',
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    loadvideo = LoadVideo(file='hdr_input_video (1).mp4')
+    loadvideo = LoadVideo(_id='5106', file='hdr_input_video (1).mp4')
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text='HDR footage', clip=ltxavtextencoderloader)
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
-    images, audio, fps = GetVideoComponents(video=loadvideo)
+    cliptextencode = CLIPTextEncode(
+        _id='2483',
+        text='HDR footage',
+        clip=ltxavtextencoderloader,
+    )
+
+    cliptextencode_2 = CLIPTextEncode(
+        _id='2612',
+        text=DEFAULT_PROMPT,
+        clip=ltxavtextencoderloader,
+    )
+
+    images, audio, fps = GetVideoComponents(_id='5105', video=loadvideo)
 
     model_3, _ = LTXICLoRALoaderModelOnly(
+        _id='5125',
         lora_name=LORA_NAME_2,
         strength_model=GUIDE_STRENGTH_2,
         model=model,
     )
 
     positive, negative = LTXVConditioning(
+        _id='1241',
         frame_rate=fps,
         negative=cliptextencode_2,
         positive=cliptextencode,
     )
 
     model_2, latent_downscale_factor = LTXICLoRALoaderModelOnly(
+        _id='5011',
         lora_name=LORA_NAME,
         model=model_3,
     )
 
-    math_int, _ = SimpleMath_2(value='a*32', a=latent_downscale_factor)
+    math_int, _ = SimpleMath_2(_id='5111', value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='5112',
         resize_type='scale to multiple',
         scale_method='lanczos',
         input=images,
         **{'resize_type.multiple': math_int},
     )
 
-    width, height, batch_size = GetImageSize(image=resizeimagemasknode)
+    width, height, batch_size = GetImageSize(_id='5029', image=resizeimagemasknode)
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='3059',
         width=width,
         height=height,
         length=batch_size,
     )
 
     positive_2, negative_2, latent = LTXAddVideoICLoRAGuide(
+        _id='5012',
         crop=1,
         use_tiled_encode='disabled',
         image=resizeimagemasknode,
@@ -106,6 +129,7 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider = CFGGuider(
+        _id='4828',
         cfg=GUIDE_STRENGTH,
         model=model_2,
         negative=negative_2,
@@ -113,6 +137,7 @@ def build() -> VibeWorkflow:
     )
 
     output, _ = SamplerCustomAdvanced(
+        _id='4829',
         guider=cfgguider,
         latent_image=latent,
         noise=randomnoise,
@@ -121,6 +146,7 @@ def build() -> VibeWorkflow:
     )
 
     _, _, latent_2 = LTXVCropGuides(
+        _id='5013',
         latent=output,
         negative=negative_2,
         positive=positive_2,
@@ -128,6 +154,7 @@ def build() -> VibeWorkflow:
 
     # Decode
     vaedecodetiled = VAEDecodeTiled(
+        _id='4851',
         tile_size=768,
         overlap=256,
         temporal_size=8,
@@ -137,16 +164,22 @@ def build() -> VibeWorkflow:
     )
 
     _, hdr_linear = LTXVHDRDecodePostprocess(
+        _id='5114',
         exposure=7.1,
         output_dir='output/hdr_exr3',
         save_exr=True,
         image=vaedecodetiled,
     )
 
-    createvideo = CreateVideo(fps=30, audio=audio, images=hdr_linear)
+    createvideo = CreateVideo(
+        _id='5108',
+        fps=30,
+        audio=audio,
+        images=hdr_linear,
+    )
 
     # Outputs
-    savevideo = SaveVideo(filename_prefix='output', video=createvideo)
+    savevideo = SaveVideo(_id='5109', filename_prefix='output', video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

@@ -38,28 +38,36 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
-    wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME)
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME,
+    )
+
+    wanvideomodelloader = WanVideoModelLoader(_id='22', model=MODEL_NAME)
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
 
     wanvideoteacache = WanVideoTeaCache(
+        _id='52',
         rel_l1_thresh=0.08000000000000002,
         use_coefficients='true',
     )
 
     image, _, _, _ = VHS_LoadVideo(
+        _id='71',
         video='wolf_interpolated.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
     )
 
     downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
+        _id='73',
         model=DEPTH_ANYTHING_NAME,
     )
 
-    wanvideoexperimentalargs = WanVideoExperimentalArgs(cfg_zero_star=True)
+    wanvideoexperimentalargs = WanVideoExperimentalArgs(_id='90', cfg_zero_star=True)
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='16',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         model_to_offload=wanvideomodelloader,
@@ -67,6 +75,7 @@ def build() -> VibeWorkflow:
     )
 
     image_2, _, _ = ImageResizeKJ(
+        _id='75',
         width=640,
         height='lanczos',
         upscale_method=False,
@@ -77,14 +86,19 @@ def build() -> VibeWorkflow:
     )
 
     depthanything_v2 = DepthAnything_V2(
+        _id='72',
         da_model=downloadandloaddepthanythingv2model,
         images=image_2,
     )
 
-    image_3, width_2, height_2, count = GetImageSizeAndCount(image=depthanything_v2)
+    image_3, width_2, height_2, count = GetImageSizeAndCount(
+        _id='76',
+        image=depthanything_v2,
+    )
 
     # Outputs
     vhs_videocombine_2 = VHS_VideoCombine(
+        _id='82',
         frame_rate=16,
         filename_prefix='control',
         format=VIDEO_H264_MP4,
@@ -98,6 +112,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoencode = WanVideoEncode(
+        _id='77',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -107,9 +122,10 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    wanvideocontrolembeds = WanVideoControlEmbeds(latents=wanvideoencode)
+    wanvideocontrolembeds = WanVideoControlEmbeds(_id='78', latents=wanvideoencode)
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        _id='69',
         width=width_2,
         height=height_2,
         num_frames=count,
@@ -117,6 +133,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='27',
         steps=25,
         seed=DEFAULT_SEED,
         batched_cfg='',
@@ -127,15 +144,17 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
+    wanvideodecode = WanVideoDecode(_id='28', samples=samples, vae=wanvideovaeloader)
 
     imageconcatmulti = ImageConcatMulti(
+        _id='87',
         unused_3=None,
         image_1=depthanything_v2,
         image_2=wanvideodecode,
     )
 
     vhs_videocombine = VHS_VideoCombine(
+        _id='30',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_FunControl',
         format=VIDEO_H264_MP4,

@@ -58,43 +58,53 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(_id='1', model_name=CLIP_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='2',
         model=MODEL_NAME,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
+    wanvideovaeloader = WanVideoVAELoader(_id='3', model_name=VAE_NAME)
+    wanvideoblockswap = WanVideoBlockSwap(_id='4', vace_blocks_to_swap=1)
 
     wanvideoloraselect = WanVideoLoraSelect(
+        _id='5',
         lora=LORA_NAME,
         strength=3,
         merge_loras=False,
     )
 
     # Inputs
-    image, _ = LoadImage(image='oldman_upscaled.png')
+    image, _ = LoadImage(_id='6', image='oldman_upscaled.png')
 
     wanvideomodelloader_2 = WanVideoModelLoader(
+        _id='7',
         model=MODEL_NAME_2,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
     )
 
-    intconstant = INTConstant(value=3)
-    intconstant_2 = INTConstant(value=6)
-    wanvideoloraselect_2 = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
+    intconstant = INTConstant(_id='8', value=3)
+    intconstant_2 = INTConstant(_id='9', value=6)
+
+    wanvideoloraselect_2 = WanVideoLoraSelect(
+        _id='10',
+        lora=LORA_NAME,
+        merge_loras=False,
+    )
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='11',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         t5=loadwanvideot5textencoder,
     )
 
     image_2, width, height, _ = ImageResizeKJv2(
+        _id='12',
         width=720,
         height=720,
         upscale_method='lanczos',
@@ -105,16 +115,19 @@ def build() -> VibeWorkflow:
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='13',
         block_swap_args=wanvideoblockswap,
         model=wanvideomodelloader,
     )
 
     wanvideosetblockswap_2 = WanVideoSetBlockSwap(
+        _id='14',
         block_swap_args=wanvideoblockswap,
         model=wanvideomodelloader_2,
     )
 
     createcfgschedulefloatlist = CreateCFGScheduleFloatList(
+        _id='15',
         cfg_scale_start=2,
         cfg_scale_end=2,
         end_percent=0.01,
@@ -122,16 +135,19 @@ def build() -> VibeWorkflow:
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
+        _id='16',
         lora=wanvideoloraselect_2,
         model=wanvideosetblockswap_2,
     )
 
     wanvideosetloras_2 = WanVideoSetLoRAs(
+        _id='17',
         lora=wanvideoloraselect,
         model=wanvideosetblockswap,
     )
 
     wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
+        _id='18',
         fun_or_fl2v_model=False,
         width=width,
         height=height,
@@ -140,6 +156,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='19',
         shift=8,
         seed=DEFAULT_SEED,
         scheduler=DPM_SDE,
@@ -153,6 +170,7 @@ def build() -> VibeWorkflow:
     )
 
     samples_2, _ = WanVideoSampler(
+        _id='20',
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,
@@ -167,15 +185,17 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='21',
         normalization='default',
         samples=samples_2,
         vae=wanvideovaeloader,
     )
 
-    image_3, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_3, _, _, _ = GetImageSizeAndCount(_id='22', image=wanvideodecode)
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='23',
         frame_rate=16,
         filename_prefix='WanVideo2_2_I2V',
         format='video/h264-mp4',

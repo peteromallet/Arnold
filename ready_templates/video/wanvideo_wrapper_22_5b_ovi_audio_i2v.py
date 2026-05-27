@@ -44,43 +44,51 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    wanvideoextramodelselect = WanVideoExtraModelSelect(extra_model=EXTRA_MODEL_NAME)
+    wanvideoextramodelselect = WanVideoExtraModelSelect(
+        _id='78',
+        extra_model=EXTRA_MODEL_NAME,
+    )
 
     wanvideoblockswap = WanVideoBlockSwap(
+        _id='83',
         blocks_to_swap=15,
         use_non_blocking=True,
         prefetch_blocks=1,
     )
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
+        _id='85',
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE_2,
         use_disk_cache=False,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    wanvideovaeloader = WanVideoVAELoader(_id='87', model_name=VAE_NAME)
 
     ovimmaudiovaeloader = OviMMAudioVAELoader(
+        _id='89',
         precision='fp32',
         vae=AUDIO_VAE_NAME,
         vocoder=VOCODER_NAME,
     )
 
-    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideoslg = WanVideoSLG(blocks='11', start_percent=0)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='91')
+    wanvideoslg = WanVideoSLG(_id='93', blocks='11', start_percent=0)
 
     _, negative_text_embeds_2, _ = WanVideoTextEncodeCached(
+        _id='96',
         model_name=CLIP_NAME,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
-    image, _ = LoadImage(image='oldman_upscaled.png')
-    wanvideoeasycache = WanVideoEasyCache()
-    wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents(length=157)
+    image, _ = LoadImage(_id='109', image='oldman_upscaled.png')
+    wanvideoeasycache = WanVideoEasyCache(_id='118')
+    wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents(_id='125', length=157)
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='12',
         model=MODEL_NAME,
         attention_mode='sageattn',
         compile_args=wanvideotorchcompilesettings,
@@ -88,11 +96,13 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoovicfg = WanVideoOviCFG(
+        _id='94',
         original_text_embeds=text_embeds,
         ovi_negative_text_embeds=negative_text_embeds_2,
     )
 
     image_2, width, height, _ = ImageResizeKJv2(
+        _id='110',
         width=704,
         height=704,
         upscale_method='lanczos',
@@ -103,11 +113,13 @@ def build() -> VibeWorkflow:
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='84',
         block_swap_args=wanvideoblockswap,
         model=wanvideomodelloader,
     )
 
     wanvideoencode = WanVideoEncode(
+        _id='111',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -118,6 +130,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        _id='81',
         num_frames=DEFAULT_FRAMES,
         width=width,
         height=height,
@@ -125,6 +138,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='80',
         steps=50,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -138,18 +152,21 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='86',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
     )
 
     wanvideodecodeoviaudio = WanVideoDecodeOviAudio(
+        _id='90',
         mmaudio_vae=ovimmaudiovaeloader,
         samples=samples,
     )
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='88',
         frame_rate=24,
         filename_prefix='WanVideo_Ovi',
         format='video/h264-mp4',
@@ -162,7 +179,7 @@ def build() -> VibeWorkflow:
         images=wanvideodecode,
     )
 
-    previewaudio = PreviewAudio(audio=wanvideodecodeoviaudio)
+    previewaudio = PreviewAudio(_id='108', audio=wanvideodecodeoviaudio)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo_Ovi')
 

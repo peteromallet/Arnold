@@ -40,36 +40,54 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    multitalkmodelloader = MultiTalkModelLoader(model=MODEL_NAME)
+    multitalkmodelloader = MultiTalkModelLoader(_id='120', model=MODEL_NAME)
 
     loadaudio = LoadAudio(
+        _id='125',
         audio='one-does-not-simply-walk-into-mordor-its-black-gates-are-guarded-by-more-than-just-orcs.mp3',
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoblockswap = WanVideoBlockSwap(use_non_blocking=True, prefetch_blocks=1)
-    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_3)
-    wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
+    wanvideovaeloader = WanVideoVAELoader(_id='129', model_name=VAE_NAME)
+
+    wanvideoblockswap = WanVideoBlockSwap(
+        _id='134',
+        use_non_blocking=True,
+        prefetch_blocks=1,
+    )
+
+    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(
+        _id='137',
+        model=MODEL_NAME_3,
+    )
+
+    wanvideoloraselect = WanVideoLoraSelect(
+        _id='138',
+        lora=LORA_NAME,
+        merge_loras=False,
+    )
 
     # Loaders
-    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME)
+    clipvisionloader = CLIPVisionLoader(_id='238', clip_name=CLIP_NAME)
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
+        _id='241',
         model_name=CLIP_NAME_2,
         positive_prompt='a woman is singing a lullaby',
         negative_prompt=DEFAULT_NEGATIVE,
         use_disk_cache=False,
     )
 
-    intconstant = INTConstant(value=640)
-    intconstant_2 = INTConstant(value=640)
-    intconstant_3 = INTConstant(value=1000)
+    intconstant = INTConstant(_id='245', value=640)
+    intconstant_2 = INTConstant(_id='246', value=640)
+    intconstant_3 = INTConstant(_id='270', value=1000)
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
+        _id='303',
         model=MEL_BAND_ROFORMER_NAME,
     )
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='122',
         model=MODEL_NAME_2,
         base_precision='fp16_fast',
         attention_mode='sageattn',
@@ -79,6 +97,7 @@ def build() -> VibeWorkflow:
     )
 
     image, _, _, _ = VHS_LoadVideo(
+        _id='228',
         video='10.mp4',
         format='Wan',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': '10.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': None, 'custom_height': 480, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
@@ -88,11 +107,13 @@ def build() -> VibeWorkflow:
     )
 
     melbandroformersampler = MelBandRoFormerSampler(
+        _id='304',
         audio=loadaudio,
         model=melbandroformermodelloader.out(0),
     )
 
     multitalk_embeds, _, _ = MultiTalkWav2VecEmbeds(
+        _id='194',
         widget_1=400,
         widget_2=25,
         widget_3=1.5,
@@ -104,6 +125,7 @@ def build() -> VibeWorkflow:
     )
 
     image_2, _, _, _ = ImageResizeKJv2(
+        _id='230',
         upscale_method='lanczos',
         keep_proportion='crop',
         divisible_by=16,
@@ -114,6 +136,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoencode = WanVideoEncode(
+        _id='229',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -123,15 +146,17 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_3, _ = GetImageRangeFromBatch(images=image_2)
-    image_4, width_2, height_2, _ = GetImageSizeAndCount(image=image_3)
+    image_3, _ = GetImageRangeFromBatch(_id='231', images=image_2)
+    image_4, width_2, height_2, _ = GetImageSizeAndCount(_id='291', image=image_3)
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
+        _id='237',
         clip_vision=clipvisionloader,
         image_1=image_4,
     )
 
     image_embeds, _ = WanVideoImageToVideoMultiTalk(
+        _id='192',
         colormatch=False,
         force_offload='disabled',
         frame_window_size=9,
@@ -145,6 +170,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='128',
         steps=4,
         cfg=GUIDE_STRENGTH,
         shift=11.000000000000002,
@@ -160,15 +186,17 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='130',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
     )
 
-    image_5, _, _, count_2 = GetImageSizeAndCount(image=wanvideodecode)
-    image_6, _ = GetImageRangeFromBatch(num_frames=count_2, images=image_5)
+    image_5, _, _, count_2 = GetImageSizeAndCount(_id='300', image=wanvideodecode)
+    image_6, _ = GetImageRangeFromBatch(_id='301', num_frames=count_2, images=image_5)
 
     imageconcatmulti = ImageConcatMulti(
+        _id='299',
         direction='left',
         unused_3=None,
         image_1=image_6,
@@ -177,6 +205,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='131',
         frame_rate=25,
         filename_prefix='WanVideo2_1_InfiniteTalk',
         format='video/h264-mp4',

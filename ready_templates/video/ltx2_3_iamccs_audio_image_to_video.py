@@ -54,13 +54,14 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='lcm')
+    ksamplerselect = KSamplerSelect(_id='154', sampler_name='lcm')
 
     # Inputs
-    image, _ = LoadImage(image='ComfyUI_00126_.png')
-    loadaudio = LoadAudio(audio='man voice 1.mp3')
+    image, _ = LoadImage(_id='240', image='ComfyUI_00126_.png')
+    loadaudio = LoadAudio(_id='243', audio='man voice 1.mp3')
 
     seed__rgthree_ = Seed_rgthree(
+        _id='290',
         seed=DEFAULT_SEED,
         widget_1='',
         widget_2='',
@@ -68,10 +69,11 @@ def build() -> VibeWorkflow:
     )
 
     text_multiline = raw_call('Text Multiline', '293', widget_0='video of a goblin talking to the camera')
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
+    unetloadergguf = UnetLoaderGGUF(_id='301', unet_name=UNET_NAME_GGUF)
 
     # Loaders
     dualcliploader = DualCLIPLoader(
+        _id='303',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_NAME_2,
         type_='ltxv',
@@ -79,12 +81,14 @@ def build() -> VibeWorkflow:
     )
 
     vaeloaderkj = VAELoaderKJ(
+        _id='305',
         vae_name=VIDEO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
     vaeloaderkj_2 = VAELoaderKJ(
+        _id='311',
         vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
@@ -99,26 +103,34 @@ def build() -> VibeWorkflow:
         widget_5=0,
     )
 
-    loadaudio_2 = LoadAudio(audio='man voice 2 LONG.mp3')
-    loadaudio_3 = LoadAudio(audio='EdgarLetfall.mp3')
+    loadaudio_2 = LoadAudio(_id='347', audio='man voice 2 LONG.mp3')
+    loadaudio_3 = LoadAudio(_id='376', audio='EdgarLetfall.mp3')
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
+        _id='377',
         model=MEL_BAND_ROFORMER_NAME,
     )
 
     cr_float_to_integer = raw_call('CR Float To Integer', '384', _float=25.0)
     load_whisper__mtb_ = raw_call('Load Whisper (mtb)', '405', widget_0='tiny', widget_1=True)
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='411', ckpt_name=CKPT_NAME)
 
     ltxvgemmaclipmodelloader = LTXVGemmaCLIPModelLoader(
+        _id='412',
         gemma_path=CLIP_NAME,
         ltxv_path=CKPT_NAME,
     )
 
-    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
-    randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=seed__rgthree_)
+    model, _, vae = CheckpointLoaderSimple(_id='413', ckpt_name=CKPT_NAME)
+
+    randomnoise = RandomNoise(
+        _id='178',
+        control_after_generate='fixed',
+        noise_seed=seed__rgthree_,
+    )
 
     image_2, width, height, _ = ImageResizeKJv2(
+        _id='241',
         width=720,
         height=1280,
         upscale_method='lanczos',
@@ -147,7 +159,7 @@ def build() -> VibeWorkflow:
         audio_prompt=loadaudio_2,
     )
 
-    trimaudioduration = TrimAudioDuration(duration=20, audio=loadaudio_3)
+    trimaudioduration = TrimAudioDuration(_id='366', duration=20, audio=loadaudio_3)
 
     audio_to_text__mtb_ = raw_call('Audio To Text (mtb)', '406',
         widget_0='auto',
@@ -190,12 +202,19 @@ def build() -> VibeWorkflow:
         input_02=dualcliploader,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=image_2)
+    ltxvpreprocess = LTXVPreprocess(_id='269', img_compression=33, image=image_2)
 
     # Outputs
-    previewimage = PreviewImage(images=image_2)
-    saveaudiomp3 = SaveAudioMP3(audio=fl_chatterboxturbotts.out(0))
-    solidmask = SolidMask(value=0, width=width, height=height)
+    previewimage = PreviewImage(_id='275', images=image_2)
+    saveaudiomp3 = SaveAudioMP3(_id='350', audio=fl_chatterboxturbotts.out(0))
+
+    solidmask = SolidMask(
+        _id='388',
+        value=0,
+        width=width,
+        height=height,
+    )
+
     easy_cleangpuused = raw_call('easy cleanGpuUsed', '407', anything=audio_to_text__mtb_.out(0))
 
     iamccs_multiswitch_2 = raw_call('IAMCCS_MultiSwitch', '451',
@@ -207,6 +226,7 @@ def build() -> VibeWorkflow:
     )
 
     showtext_pysssss = ShowText_pysssss(
+        _id='373',
         widget_0=' How are you? I am from metallurgia, Elfica, a fantasy tale from our dear. Welcome to our show. And sit down and listen carefully.',
         text=easy_cleangpuused.out(0),
     )
@@ -260,14 +280,20 @@ def build() -> VibeWorkflow:
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=iamccs_hwsupporter.out(1))
+    cliptextencode = CLIPTextEncode(
+        _id='165',
+        text=DEFAULT_PROMPT,
+        clip=iamccs_hwsupporter.out(1),
+    )
 
     cliptextencode_2 = CLIPTextEncode(
+        _id='169',
         text=text_multiline.out(0),
         clip=iamccs_hwsupporter.out(1),
     )
 
     basicscheduler = BasicScheduler(
+        _id='238',
         scheduler='simple',
         steps=8,
         model=iamccs_hwsupporter.out(0),
@@ -294,6 +320,7 @@ def build() -> VibeWorkflow:
     )
 
     positive, negative = LTXVConditioning(
+        _id='164',
         negative=cliptextencode,
         positive=cliptextencode_2,
     )
@@ -321,6 +348,7 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider = CFGGuider(
+        _id='153',
         cfg=GUIDE_STRENGTH,
         model=iamccs_hwsupporter.out(0),
         negative=negative,
@@ -339,32 +367,41 @@ def build() -> VibeWorkflow:
     audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '363', audio=iamccs_multiswitch.out(0))
 
     melbandroformersampler = MelBandRoFormerSampler(
+        _id='365',
         audio=iamccs_multiswitch.out(0),
         model=melbandroformermodelloader.out(0),
     )
 
     mathexpression_pysssss = MathExpression_pysssss(
+        _id='364',
         widget_0='((a*0.001)*b)',
         a=audio_duration__mtb_.out(0),
         b=cr_float_to_integer.out(0),
     )
 
-    previewaudio = PreviewAudio(audio=melbandroformersampler.out(0))
+    previewaudio = PreviewAudio(_id='380', audio=melbandroformersampler.out(0))
 
     ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='387',
         audio=melbandroformersampler.out(0),
         audio_vae=iamccs_multiswitch_3.out(0),
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='162',
         width=width,
         height=height,
         length=mathexpression_pysssss.out(0),
     )
 
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='389',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
+        _id='239',
         strength=0.8,
         image=ltxvpreprocess,
         latent=emptyltxvlatentvideo,
@@ -372,6 +409,7 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='166',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplace,
     )
@@ -387,6 +425,7 @@ def build() -> VibeWorkflow:
     )
 
     video_latent, _ = LTXVSeparateAVLatent(
+        _id='245',
         av_latent=iamccs_sampleradvancedversion1.out(0),
     )
 
@@ -407,6 +446,7 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine = VHS_VideoCombine(
+        _id='190',
         frame_rate=25,
         filename_prefix='IAMCCS/LTX2_AU+IMG2V',
         format='video/h264-mp4',

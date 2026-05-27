@@ -36,41 +36,50 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME,
+    )
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='22',
         model=MODEL_NAME,
         base_precision='fp16',
         quantization='fp8_e4m3fn_scaled',
     )
 
-    wanvideoemptyembeds = WanVideoEmptyEmbeds(width=832, height=480)
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoblockswap = WanVideoBlockSwap()
-    wanvideoenhanceavideo = WanVideoEnhanceAVideo()
+    wanvideoemptyembeds = WanVideoEmptyEmbeds(_id='37', width=832, height=480)
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
+    wanvideoblockswap = WanVideoBlockSwap(_id='39')
+    wanvideoenhanceavideo = WanVideoEnhanceAVideo(_id='55')
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
+        _id='60',
         lora_0=LORA__NAME,
         merge_loras=False,
     )
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='16',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         t5=loadwanvideot5textencoder,
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
+        _id='58',
         lora=wanvideoloraselectmulti,
         model=wanvideomodelloader,
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='56',
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras,
     )
 
     samples, _ = WanVideoSampler(
+        _id='27',
         steps=6,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -83,6 +92,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='28',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
@@ -90,6 +100,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='30',
         frame_rate=16,
         filename_prefix='WanVideo2_1_T2V',
         format='video/h264-mp4',

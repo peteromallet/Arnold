@@ -36,18 +36,17 @@ def text_to_image_flux2_klein_4b(
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
     """
 
-    ksamplerselect = KSamplerSelect(_id='7b34ab90:61', sampler_name='euler')
-    flux2scheduler = Flux2Scheduler(_id='7b34ab90:62')
-    emptyflux2latentimage = EmptyFlux2LatentImage(_id='7b34ab90:66')
-    unetloader = UNETLoader(_id='7b34ab90:70', unet_name=unet_name)
-    cliploader = CLIPLoader(_id='7b34ab90:71', type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(_id='7b34ab90:72', vae_name=vae_name)
-    randomnoise = RandomNoise(_id='7b34ab90:73', control_after_generate='randomize')
-    negative = CLIPTextEncode(_id='7b34ab90:67', text='', clip=cliploader)
-    positive = CLIPTextEncode(_id='7b34ab90:74', text=prompt, clip=cliploader)
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    flux2scheduler = Flux2Scheduler()
+    emptyflux2latentimage = EmptyFlux2LatentImage()
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
+    randomnoise = RandomNoise(control_after_generate='randomize')
+    negative = CLIPTextEncode(text='', clip=cliploader)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
 
     cfgguider = CFGGuider(
-        _id='7b34ab90:63',
         cfg=5,
         model=unetloader,
         negative=negative,
@@ -55,7 +54,6 @@ def text_to_image_flux2_klein_4b(
     )
 
     output, _ = SamplerCustomAdvanced(
-        _id='7b34ab90:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -63,7 +61,7 @@ def text_to_image_flux2_klein_4b(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(_id='7b34ab90:65', samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
 
@@ -84,24 +82,22 @@ def text_to_image_flux2_klein_4b_distilled(
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, RandomNoise, UNETLoader, CLIPLoader, VAELoader, CFGGuider, ConditioningZeroOut, CLIPTextEncode, Flux2Scheduler.
     """
 
-    ksamplerselect = KSamplerSelect(_id='a67caa28:61', sampler_name='euler')
-    flux2scheduler = Flux2Scheduler(_id='a67caa28:62', steps=4)
-    emptyflux2latentimage = EmptyFlux2LatentImage(_id='a67caa28:66')
-    unetloader = UNETLoader(_id='a67caa28:70', unet_name=unet_name)
-    cliploader = CLIPLoader(_id='a67caa28:71', type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(_id='a67caa28:72', vae_name=vae_name)
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    flux2scheduler = Flux2Scheduler(steps=4)
+    emptyflux2latentimage = EmptyFlux2LatentImage()
+    unetloader = UNETLoader(unet_name=unet_name)
+    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(vae_name=vae_name)
 
     randomnoise = RandomNoise(
-        _id='a67caa28:73',
         noise_seed=432262096973490,
         control_after_generate='randomize',
     )
 
-    positive = CLIPTextEncode(_id='a67caa28:74', text=prompt, clip=cliploader)
-    conditioningzeroout = ConditioningZeroOut(_id='a67caa28:76', conditioning=positive)
+    positive = CLIPTextEncode(text=prompt, clip=cliploader)
+    conditioningzeroout = ConditioningZeroOut(conditioning=positive)
 
     cfgguider = CFGGuider(
-        _id='a67caa28:63',
         cfg=1,
         model=unetloader,
         negative=conditioningzeroout,
@@ -109,7 +105,6 @@ def text_to_image_flux2_klein_4b_distilled(
     )
 
     output, _ = SamplerCustomAdvanced(
-        _id='a67caa28:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -117,7 +112,7 @@ def text_to_image_flux2_klein_4b_distilled(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(_id='a67caa28:65', samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(samples=output, vae=vaeloader)
 
     return vaedecode
 
@@ -141,8 +136,8 @@ def build() -> VibeWorkflow:
         vae_name='flux2-vae.safetensors',
         prompt='',
     )
-    saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
-    saveimage_2 = SaveImage(filename_prefix='Flux2-Klein', images=edited_2)
+    saveimage = SaveImage(_id='9', filename_prefix='Flux2-Klein', images=edited)
+    saveimage_2 = SaveImage(_id='78', filename_prefix='Flux2-Klein', images=edited_2)
 
     return wf.finalize({}, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

@@ -23,9 +23,15 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    emptyimage = EmptyImage(width=64, height=64, color=16711680)
+    emptyimage = EmptyImage(
+        _id='1',
+        width=64,
+        height=64,
+        color=16711680,
+    )
 
     saveimage = SaveImage(
+        _id='2',
         filename_prefix='vibecomfy_ready_smoke_red',
         images=emptyimage,
     )

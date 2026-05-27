@@ -36,11 +36,16 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
-    wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME)
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME,
+    )
+
+    wanvideomodelloader = WanVideoModelLoader(_id='22', model=MODEL_NAME)
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
 
     wanvideoteacache = WanVideoTeaCache(
+        _id='52',
         rel_l1_thresh=0.10000000000000002,
         start_step=6,
         use_coefficients='true',
@@ -48,23 +53,26 @@ def build() -> VibeWorkflow:
     )
 
     downloadandloadflorence2model = DownloadAndLoadFlorence2Model(
+        _id='124',
         widget_0='MiaoshouAI/Florence-2-base-PromptGen-v2.0',
         widget_1='fp16',
         widget_2='sdpa',
     )
 
-    wanvideoexperimentalargs = WanVideoExperimentalArgs(cfg_zero_star=True)
+    wanvideoexperimentalargs = WanVideoExperimentalArgs(_id='127', cfg_zero_star=True)
 
     image_2, _, _, _ = VHS_LoadVideo(
+        _id='128',
         video='9.mp4',
         frame_load_cap=81,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': '9.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 81, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
     )
 
-    image_3, _, _, _ = GetImageSizeAndCount(image=image_2)
+    image_3, _, _, _ = GetImageSizeAndCount(_id='129', image=image_2)
 
     image, _, _ = ImageResizeKJ(
+        _id='59',
         width=480,
         height='lanczos',
         upscale_method=False,
@@ -74,6 +82,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoencode = WanVideoEncode(
+        _id='58',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -83,9 +92,10 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_4, _ = GetImageRangeFromBatch(images=image)
+    image_4, _ = GetImageRangeFromBatch(_id='130', images=image)
 
     florence2run = Florence2Run(
+        _id='123',
         widget_0='',
         widget_1='detailed_caption',
         widget_2=True,
@@ -101,30 +111,35 @@ def build() -> VibeWorkflow:
     )
 
     # Outputs
-    previewimage = PreviewImage(images=image_4)
+    previewimage = PreviewImage(_id='131', images=image_4)
 
     wanvideorecammasterdefaultcamera = WanVideoReCamMasterDefaultCamera(
+        _id='205',
         latents=wanvideoencode,
     )
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='16',
         negative_prompt=DEFAULT_NEGATIVE,
         positive_prompt=florence2run.out(2),
         t5=loadwanvideot5textencoder,
     )
 
     camera_embeds, camera_poses = WanVideoReCamMasterCameraEmbed(
+        _id='56',
         camera_poses=wanvideorecammasterdefaultcamera,
         latents=wanvideoencode,
     )
 
     widgettostring = WidgetToString(
+        _id='74',
         widget_name='camera_type',
         node_title=2,
         any_input=wanvideorecammasterdefaultcamera,
     )
 
     recammasterposevisualizer = ReCamMasterPoseVisualizer(
+        _id='138',
         base_xval=0.20000000000000004,
         zval=0.4000000000000001,
         scale=0.5000000000000001,
@@ -132,6 +147,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='155',
         steps=20,
         seed=DEFAULT_SEED,
         cache_args=wanvideoteacache,
@@ -141,10 +157,11 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
-    previewimage_2 = PreviewImage(images=recammasterposevisualizer)
+    wanvideodecode = WanVideoDecode(_id='28', samples=samples, vae=wanvideovaeloader)
+    previewimage_2 = PreviewImage(_id='139', images=recammasterposevisualizer)
 
     addlabel = AddLabel(
+        _id='122',
         text_x=2,
         text_y=48,
         height=32,
@@ -157,6 +174,7 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine = VHS_VideoCombine(
+        _id='30',
         frame_rate=16,
         filename_prefix='WanVideo2_1_ReCamMaster',
         format='video/h264-mp4',

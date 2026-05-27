@@ -47,59 +47,80 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate=FIXED)
-    randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
+    randomnoise = RandomNoise(
+        _id='114',
+        noise_seed=DEFAULT_SEED,
+        control_after_generate=FIXED,
+    )
+
+    randomnoise_2 = RandomNoise(
+        _id='115',
+        noise_seed=DEFAULT_SEED_2,
+        control_after_generate=FIXED,
+    )
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
-    ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
+    ksamplerselect = KSamplerSelect(_id='137', sampler_name='euler_ancestral_cfg_pp')
+    ksamplerselect_2 = KSamplerSelect(_id='138', sampler_name='euler_cfg_pp')
 
     # Inputs
-    image_2, _ = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
+    image_2, _ = LoadImage(_id='167', image='liam-neeson-in-retribution-ra.jpg')
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
+    vaeloader = VAELoader(_id='184', vae_name=VIDEO_VAE_NAME)
 
     latentupscalemodelloader = LatentUpscaleModelLoader(
+        _id='189',
         model_name=SPATIAL_UPSCALER_NAME,
     )
 
     dualcliploader = DualCLIPLoader(
+        _id='190',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )
 
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
-    intconstant = INTConstant(value=10)
-    intconstant_2 = INTConstant(value=1280)
-    intconstant_3 = INTConstant(value=736)
-    _, calc_int_2, _ = SimpleCalculatorKJ(expression='a', **{'variables.a': 24.0})
-    unetloader = UNETLoader(unet_name=UNET_NAME)
-    vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='196', ckpt_name=AUDIO_VAE_NAME)
+    intconstant = INTConstant(_id='291', value=10)
+    intconstant_2 = INTConstant(_id='292', value=1280)
+    intconstant_3 = INTConstant(_id='293', value=736)
+
+    _, calc_int_2, _ = SimpleCalculatorKJ(
+        _id='311',
+        expression='a',
+        **{'variables.a': 24.0},
+    )
+
+    unetloader = UNETLoader(_id='329', unet_name=UNET_NAME)
+    vaeloader_2 = VAELoader(_id='330', vae_name=VAE_TAESD_NAME)
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
+        _id='370',
         model=MEL_BAND_ROFORMER_NAME,
     )
 
-    loadaudio = LoadAudio(audio='ComfyUI_00128_.mp3')
-    manualsigmas = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
+    loadaudio = LoadAudio(_id='372', audio='ComfyUI_00128_.mp3')
+    manualsigmas = ManualSigmas(_id='380', sigmas='0.85, 0.7250, 0.4219, 0.0')
 
     manualsigmas_2 = ManualSigmas(
+        _id='381',
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
+    cliptextencode = CLIPTextEncode(_id='110', text=DEFAULT_PROMPT, clip=dualcliploader)
 
     loraloadermodelonly = LoraLoaderModelOnly(
+        _id='134',
         lora_name=LORA_NAME,
         strength_model=GUIDE_STRENGTH_2,
         model=unetloader,
     )
 
     image, _, _, _ = ImageResizeKJv2(
+        _id='165',
         upscale_method='nearest-exact',
         keep_proportion='crop',
         divisible_by=32,
@@ -110,82 +131,125 @@ def build() -> VibeWorkflow:
     )
 
     _, calc_int, _ = SimpleCalculatorKJ(
+        _id='287',
         expression='1+ 8*(round(a*b)/8)',
         b=24.0,
         a=intconstant,
     )
 
-    solidmask = SolidMask(value=0, width=intconstant_2, height=intconstant_3)
+    solidmask = SolidMask(
+        _id='362',
+        value=0,
+        width=intconstant_2,
+        height=intconstant_3,
+    )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='164',
         resize_type='scale by multiplier',
         input=image,
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
+        _id='199',
         frames_number=calc_int,
         frame_rate=calc_int_2,
         audio_vae=ltxvaudiovaeloader,
     )
 
-    resizeimagesbylongeredge = ResizeImagesByLongerEdge(longer_edge=1536, images=image)
-    ltxvchunkfeedforward = LTXVChunkFeedForward(model=loraloadermodelonly)
+    resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        _id='246',
+        longer_edge=1536,
+        images=image,
+    )
+
+    ltxvchunkfeedforward = LTXVChunkFeedForward(_id='332', model=loraloadermodelonly)
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='349',
         prompt=DEFAULT_PROMPT_2,
         sampling_mode='off',
         clip=dualcliploader,
         image=image,
     )
 
-    calc_float_3, _, _ = SimpleCalculatorKJ(expression='a/b', b=24.0, a=calc_int)
-    cliptextencode_2 = CLIPTextEncode(text=textgenerateltx2prompt, clip=dualcliploader)
-    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
-    width, height, _ = GetImageSize(image=resizeimagemasknode)
-    model, _ = Power_Lora_Loader_rgthree(model=ltxvchunkfeedforward)
-    trimaudioduration = TrimAudioDuration(duration=calc_float_3, audio=loadaudio)
+    calc_float_3, _, _ = SimpleCalculatorKJ(
+        _id='367',
+        expression='a/b',
+        b=24.0,
+        a=calc_int,
+    )
+
+    cliptextencode_2 = CLIPTextEncode(
+        _id='121',
+        text=textgenerateltx2prompt,
+        clip=dualcliploader,
+    )
+
+    ltxvpreprocess = LTXVPreprocess(
+        _id='162',
+        img_compression=33,
+        image=resizeimagesbylongeredge,
+    )
+
+    width, height, _ = GetImageSize(_id='163', image=resizeimagemasknode)
+    model, _ = Power_Lora_Loader_rgthree(_id='301', model=ltxvchunkfeedforward)
+
+    trimaudioduration = TrimAudioDuration(
+        _id='373',
+        duration=calc_float_3,
+        audio=loadaudio,
+    )
 
     positive, negative = LTXVConditioning(
+        _id='107',
         frame_rate=24.0,
         negative=cliptextencode,
         positive=cliptextencode_2,
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='108',
         width=width,
         height=height,
         length=calc_int,
     )
 
     ltx2samplingpreviewoverride = LTX2SamplingPreviewOverride(
+        _id='337',
         model=model,
         vae=vaeloader_2,
     )
 
     melbandroformersampler = MelBandRoFormerSampler(
+        _id='371',
         audio=trimaudioduration,
         model=melbandroformermodelloader.out(0),
     )
 
     ltxvimgtovideoinplace_2 = LTXVImgToVideoInplace(
+        _id='161',
         image=ltxvpreprocess,
         latent=emptyltxvlatentvideo,
         vae=vaeloader,
     )
 
     ltx2_nag = LTX2_NAG(
+        _id='342',
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=negative,
         nag_cond_video=negative,
     )
 
     comfyswitchnode_2 = ComfySwitchNode(
+        _id='382',
         switch=False,
         on_false=trimaudioduration,
         on_true=melbandroformersampler.out(0),
     )
 
     cfgguider = CFGGuider(
+        _id='103',
         cfg=GUIDE_STRENGTH,
         model=ltx2_nag,
         negative=negative,
@@ -193,6 +257,7 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider_2 = CFGGuider(
+        _id='129',
         cfg=GUIDE_STRENGTH,
         model=ltx2_nag,
         negative=negative,
@@ -200,24 +265,32 @@ def build() -> VibeWorkflow:
     )
 
     ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='364',
         audio=comfyswitchnode_2,
         audio_vae=ltxvaudiovaeloader,
     )
 
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='363',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
 
     comfyswitchnode = ComfySwitchNode(
+        _id='376',
         switch=True,
         on_false=ltxvemptylatentaudio,
         on_true=setlatentnoisemask,
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='109',
         audio_latent=comfyswitchnode,
         video_latent=ltxvimgtovideoinplace_2,
     )
 
     output, _ = SamplerCustomAdvanced(
+        _id='113',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -225,26 +298,30 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas_2,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
+    video_latent, audio_latent = LTXVSeparateAVLatent(_id='116', av_latent=output)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
+        _id='118',
         samples=video_latent,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
+        _id='160',
         image=resizeimagesbylongeredge,
         latent=ltxvlatentupsampler,
         vae=vaeloader,
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        _id='117',
         audio_latent=audio_latent,
         video_latent=ltxvimgtovideoinplace,
     )
 
     output_2, _ = SamplerCustomAdvanced(
+        _id='119',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -252,10 +329,11 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_2, _ = LTXVSeparateAVLatent(av_latent=output_2)
+    video_latent_2, _ = LTXVSeparateAVLatent(_id='125', av_latent=output_2)
 
     # Decode
     vaedecodetiled = VAEDecodeTiled(
+        _id='127',
         temporal_size=4096,
         samples=video_latent_2,
         vae=vaeloader,
@@ -263,6 +341,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='140',
         frame_rate=24.0,
         filename_prefix='LTX-2',
         format='video/h264-mp4',

@@ -33,33 +33,51 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoteacache = WanVideoTeaCache(rel_l1_thresh=0.1, use_coefficients='true')
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME,
+    )
+
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
+
+    wanvideoteacache = WanVideoTeaCache(
+        _id='52',
+        rel_l1_thresh=0.1,
+        use_coefficients='true',
+    )
 
     image, _, _, _ = VHS_LoadVideo(
+        _id='97',
         video='wolf_interpolated.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
     )
 
-    wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME)
+    wanvideoloraselect = WanVideoLoraSelect(_id='98', lora=LORA_NAME)
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='16',
         positive_prompt='video of a wolf',
         negative_prompt=DEFAULT_NEGATIVE,
         t5=loadwanvideot5textencoder,
     )
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='22',
         model=MODEL_NAME,
         base_precision='fp16',
         lora=wanvideoloraselect,
     )
 
-    imageblur = ImageBlur(widget_0=4, widget_1=1, image=image)
+    imageblur = ImageBlur(
+        _id='104',
+        widget_0=4,
+        widget_1=1,
+        image=image,
+    )
 
     wanvideoencode = WanVideoEncode(
+        _id='95',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -70,11 +88,13 @@ def build() -> VibeWorkflow:
     )
 
     wanvideocontrolembeds = WanVideoControlEmbeds(
+        _id='96',
         end_percent=0.7,
         latents=wanvideoencode,
     )
 
     samples, _ = WanVideoSampler(
+        _id='27',
         seed=0,
         batched_cfg='',
         cache_args=wanvideoteacache,
@@ -83,9 +103,10 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
+    wanvideodecode = WanVideoDecode(_id='28', samples=samples, vae=wanvideovaeloader)
 
     imageconcatmulti = ImageConcatMulti(
+        _id='103',
         unused_3=None,
         image_1=imageblur,
         image_2=wanvideodecode,
@@ -93,6 +114,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='30',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_I2V',
         format='video/h264-mp4',

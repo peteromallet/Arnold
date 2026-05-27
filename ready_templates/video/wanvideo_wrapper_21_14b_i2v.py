@@ -40,22 +40,33 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME_2)
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=10, use_non_blocking=True)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
+        _id='11',
+        model_name=CLIP_NAME_2,
+    )
+
+    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
+
+    wanvideoblockswap = WanVideoBlockSwap(
+        _id='39',
+        blocks_to_swap=10,
+        use_non_blocking=True,
+    )
 
     # Inputs
-    image, _ = LoadImage(image='oldman_upscaled.png')
+    image, _ = LoadImage(_id='58', image='oldman_upscaled.png')
 
     # Loaders
-    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME)
+    clipvisionloader = CLIPVisionLoader(_id='59', clip_name=CLIP_NAME)
 
     wanvideoloraselect = WanVideoLoraSelect(
+        _id='69',
         lora=LORA_NAME,
         merge_loras="<details><summary><b>Metadata</b></summary><table border='0' cellpadding='3'><tr><td colspan='2'><b>Metadata</b></td></tr><tr><td>No metadata found</td></tr></table></details>",
     )
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='22',
         model=MODEL_NAME,
         base_precision='fp16',
         quantization='fp8_e4m3fn',
@@ -63,6 +74,7 @@ def build() -> VibeWorkflow:
     )
 
     image_2, width, height, _ = ImageResizeKJv2(
+        _id='68',
         width=624,
         height=624,
         upscale_method='lanczos',
@@ -73,6 +85,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='16',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         model_to_offload=wanvideomodelloader,
@@ -80,17 +93,20 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
+        _id='65',
         ratio=0.20000000000000004,
         clip_vision=clipvisionloader,
         image_1=image_2,
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='70',
         block_swap_args=wanvideoblockswap,
         model=wanvideomodelloader,
     )
 
     wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
+        _id='63',
         noise_aug_strength=0.030000000000000006,
         fun_or_fl2v_model=False,
         width=width,
@@ -101,6 +117,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='27',
         steps=4,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -112,6 +129,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='28',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
@@ -119,6 +137,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='30',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_I2V',
         format='video/h264-mp4',

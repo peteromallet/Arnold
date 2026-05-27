@@ -64,41 +64,46 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, _ = LoadImage(image='example_start.png')
-    image_2, _ = LoadImage(image='example_end.png')
-    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
-    randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED)
+    image, _ = LoadImage(_id='1', image='example_start.png')
+    image_2, _ = LoadImage(_id='2', image='example_end.png')
+    randomnoise = RandomNoise(_id='3', noise_seed=DEFAULT_SEED)
+    randomnoise_2 = RandomNoise(_id='4', noise_seed=DEFAULT_SEED)
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
+        _id='5',
         text_encoder=TEXT_ENCODER_NAME,
         ckpt_name=CKPT_NAME,
         device='default',
     )
 
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
-    model, _, vae = LowVRAMCheckpointLoader(ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='6', ckpt_name=CKPT_NAME)
+    model, _, vae = LowVRAMCheckpointLoader(_id='7', ckpt_name=CKPT_NAME)
 
     latentupscalemodelloader = LatentUpscaleModelLoader(
+        _id='8',
         model_name=SPATIAL_UPSCALER_NAME,
     )
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+    ksamplerselect = KSamplerSelect(_id='9', sampler_name='euler_ancestral_cfg_pp')
 
     manualsigmas = ManualSigmas(
+        _id='10',
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
-    manualsigmas_2 = ManualSigmas(sigmas='0.909375, 0.725, 0.421875, 0.0')
+    ksamplerselect_2 = KSamplerSelect(_id='11', sampler_name='euler_cfg_pp')
+    manualsigmas_2 = ManualSigmas(_id='12', sigmas='0.909375, 0.725, 0.421875, 0.0')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(
+        _id='13',
         text='blurry, distorted, low quality',
         clip=ltxavtextencoderloader,
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='14',
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
         input=image,
@@ -106,19 +111,26 @@ def build() -> VibeWorkflow:
     )
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
+        _id='15',
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
         input=image_2,
         **{'resize_type.crop': CENTER, 'resize_type.height': 480, 'resize_type.width': 832},
     )
 
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
+    cliptextencode_2 = CLIPTextEncode(
+        _id='16',
+        text=DEFAULT_PROMPT,
+        clip=ltxavtextencoderloader,
+    )
 
     ltx2memoryefficientsageattentionpatch = LTX2MemoryEfficientSageAttentionPatch(
+        _id='17',
         model=model,
     )
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
+        _id='18',
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
         input=image,
@@ -126,32 +138,55 @@ def build() -> VibeWorkflow:
     )
 
     resizeimagemasknode_4 = ResizeImageMaskNode(
+        _id='19',
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
         input=image_2,
         **{'resize_type.crop': CENTER, 'resize_type.height': 480, 'resize_type.width': 832},
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_2)
-    ltxvpreprocess_2 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode)
+    ltxvpreprocess = LTXVPreprocess(
+        _id='20',
+        img_compression=25,
+        image=resizeimagemasknode_2,
+    )
+
+    ltxvpreprocess_2 = LTXVPreprocess(
+        _id='21',
+        img_compression=25,
+        image=resizeimagemasknode,
+    )
 
     positive, negative = LTXVConditioning(
+        _id='22',
         frame_rate=16.0,
         negative=cliptextencode,
         positive=cliptextencode_2,
     )
 
-    width, height, _ = GetImageSize(image=resizeimagemasknode_3)
-    ltxvpreprocess_3 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_4)
-    ltxvpreprocess_4 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_3)
+    width, height, _ = GetImageSize(_id='23', image=resizeimagemasknode_3)
+
+    ltxvpreprocess_3 = LTXVPreprocess(
+        _id='24',
+        img_compression=25,
+        image=resizeimagemasknode_4,
+    )
+
+    ltxvpreprocess_4 = LTXVPreprocess(
+        _id='25',
+        img_compression=25,
+        image=resizeimagemasknode_3,
+    )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='26',
         length=DEFAULT_FRAMES,
         width=width,
         height=height,
     )
 
     positive_2, negative_2, latent = LTXVAddGuide(
+        _id='27',
         image=ltxvpreprocess_4,
         latent=emptyltxvlatentvideo,
         negative=negative,
@@ -160,6 +195,7 @@ def build() -> VibeWorkflow:
     )
 
     positive_3, negative_3, latent_2 = LTXVAddGuide(
+        _id='28',
         frame_idx=-1,
         image=ltxvpreprocess_3,
         latent=latent,
@@ -168,9 +204,10 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    ltxvconcatavlatent = LTXVConcatAVLatent(video_latent=latent_2)
+    ltxvconcatavlatent = LTXVConcatAVLatent(_id='29', video_latent=latent_2)
 
     cfgguider = CFGGuider(
+        _id='30',
         cfg=GUIDE_STRENGTH,
         model=ltx2memoryefficientsageattentionpatch,
         negative=negative_3,
@@ -178,6 +215,7 @@ def build() -> VibeWorkflow:
     )
 
     _, denoised_output = SamplerCustomAdvanced(
+        _id='31',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -185,26 +223,30 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent, _ = LTXVSeparateAVLatent(av_latent=denoised_output)
+    video_latent, _ = LTXVSeparateAVLatent(_id='32', av_latent=denoised_output)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
+        _id='33',
         samples=video_latent,
         upscale_model=latentupscalemodelloader,
         vae=vae,
     )
 
     any_output, _, _, _, _ = VRAM_Debug(
+        _id='34',
         unload_all_models=True,
         any_input=ltxvlatentupsampler,
     )
 
     positive_4, negative_4, latent_3 = LTXVCropGuides(
+        _id='35',
         latent=any_output,
         negative=negative_3,
         positive=positive_3,
     )
 
     positive_5, negative_5, latent_4 = LTXVAddGuide(
+        _id='36',
         image=ltxvpreprocess_2,
         latent=latent_3,
         negative=negative_4,
@@ -213,6 +255,7 @@ def build() -> VibeWorkflow:
     )
 
     positive_6, negative_6, latent_5 = LTXVAddGuide(
+        _id='37',
         frame_idx=-1,
         image=ltxvpreprocess,
         latent=latent_4,
@@ -221,9 +264,10 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    ltxvconcatavlatent_2 = LTXVConcatAVLatent(video_latent=latent_5)
+    ltxvconcatavlatent_2 = LTXVConcatAVLatent(_id='38', video_latent=latent_5)
 
     cfgguider_2 = CFGGuider(
+        _id='39',
         cfg=GUIDE_STRENGTH,
         model=ltx2memoryefficientsageattentionpatch,
         negative=negative_6,
@@ -231,6 +275,7 @@ def build() -> VibeWorkflow:
     )
 
     _, denoised_output_2 = SamplerCustomAdvanced(
+        _id='40',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -238,20 +283,26 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas_2,
     )
 
-    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=denoised_output_2)
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
+        _id='41',
+        av_latent=denoised_output_2,
+    )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
+        _id='42',
         audio_vae=ltxvaudiovaeloader,
         samples=audio_latent_2,
     )
 
     _, _, latent_6 = LTXVCropGuides(
+        _id='43',
         latent=video_latent_2,
         negative=negative_6,
         positive=positive_6,
     )
 
     ltxvtiledvaedecode = LTXVTiledVAEDecode(
+        _id='44',
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
@@ -260,13 +311,14 @@ def build() -> VibeWorkflow:
     )
 
     createvideo = CreateVideo(
+        _id='45',
         fps=DEFAULT_FPS,
         audio=ltxvaudiovaedecode,
         images=ltxvtiledvaedecode,
     )
 
     # Outputs
-    savevideo = SaveVideo(filename_prefix='output', video=createvideo)
+    savevideo = SaveVideo(_id='46', filename_prefix='output', video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

@@ -63,14 +63,9 @@ def prompt_enhancer(
     Inner nodes: StringConcatenate, ComfySwitchNode, TextGenerateLTX2Prompt.
     """
 
-    stringconcatenate = StringConcatenate(
-        _id='8fa4f93a:482',
-        string_a='',
-        string_b=prompt,
-    )
+    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
-        _id='8fa4f93a:485',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -101,19 +96,16 @@ def frames_split_view(
     """
 
     resizeimagemasknode = ResizeImageMaskNode(
-        _id='19e3f7e8:2092',
         resize_type='scale by multiplier',
         input=input,
     )
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
-        _id='19e3f7e8:2099',
         resize_type='scale by multiplier',
         input=input_2,
     )
 
     image, _ = ImagePadForOutpaint(
-        _id='19e3f7e8:2098',
         left=16,
         top=16,
         right=16,
@@ -123,7 +115,6 @@ def frames_split_view(
     )
 
     image_2, _ = ImagePadForOutpaint(
-        _id='19e3f7e8:2100',
         left=16,
         top=16,
         right=16,
@@ -132,7 +123,7 @@ def frames_split_view(
         image=resizeimagemasknode_2,
     )
 
-    imagestitch = ImageStitch(_id='19e3f7e8:2085', image1=image_2, image2=image)
+    imagestitch = ImageStitch(image1=image_2, image2=image)
 
     return imagestitch
 

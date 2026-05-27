@@ -41,93 +41,120 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, _ = LoadImage(image='example.png')
+    image, _ = LoadImage(_id='2004', image='example.png')
 
     # Loaders
-    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(_id='3940', ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='4010', ckpt_name=CKPT_NAME)
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
-    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate='fixed')
-    loadvideo = LoadVideo(file='buildings.mp4')
+    ksamplerselect = KSamplerSelect(_id='4831', sampler_name='euler_ancestral_cfg_pp')
+
+    randomnoise = RandomNoise(
+        _id='4832',
+        noise_seed=DEFAULT_SEED,
+        control_after_generate='fixed',
+    )
+
+    loadvideo = LoadVideo(_id='5001', file='buildings.mp4')
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
+        _id='5023',
         text_encoder=TEXT_ENCODER_NAME,
         ckpt_name=CKPT_NAME,
         device='default',
     )
 
     manualsigmas = ManualSigmas(
+        _id='5025',
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=ltxavtextencoderloader)
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
+    cliptextencode = CLIPTextEncode(
+        _id='2483',
+        text=DEFAULT_PROMPT_2,
+        clip=ltxavtextencoderloader,
+    )
+
+    cliptextencode_2 = CLIPTextEncode(
+        _id='2612',
+        text=DEFAULT_PROMPT,
+        clip=ltxavtextencoderloader,
+    )
 
     loraloadermodelonly = LoraLoaderModelOnly(
+        _id='4922',
         lora_name=LORA_NAME_2,
         strength_model=GUIDE_STRENGTH_2,
         model=model,
     )
 
-    images, _, fps = GetVideoComponents(video=loadvideo)
+    images, _, fps = GetVideoComponents(_id='5000', video=loadvideo)
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
+        _id='5035',
         resize_type='scale longer dimension',
         scale_method=LANCZOS,
         input=image,
     )
 
     positive, negative = LTXVConditioning(
+        _id='1241',
         frame_rate=fps,
         negative=cliptextencode_2,
         positive=cliptextencode,
     )
 
     model_2, latent_downscale_factor = LTXICLoRALoaderModelOnly(
+        _id='5011',
         lora_name=LORA_NAME,
         model=loraloadermodelonly,
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='5026',
         resize_type='scale shorter dimension',
         scale_method=LANCZOS,
         input=images,
     )
 
-    ltxfloattoint = LTXFloatToInt(rounding=0, a=fps)
+    ltxfloattoint = LTXFloatToInt(_id='5066', rounding=0, a=fps)
 
     cannyedgepreprocessor = CannyEdgePreprocessor(
+        _id='4991',
         low_threshold=92,
         image=resizeimagemasknode,
     )
 
-    math_int, _ = SimpleMath_2(value='a*32', a=latent_downscale_factor)
+    math_int, _ = SimpleMath_2(_id='5034', value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
+        _id='5028',
         resize_type='scale to multiple',
         scale_method=LANCZOS,
         input=cannyedgepreprocessor,
         **{'resize_type.multiple': math_int},
     )
 
-    width, height, batch_size = GetImageSize(image=resizeimagemasknode_2)
+    width, height, batch_size = GetImageSize(_id='5029', image=resizeimagemasknode_2)
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='3059',
         width=width,
         height=height,
         length=batch_size,
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
+        _id='3980',
         frames_number=batch_size,
         frame_rate=ltxfloattoint,
         audio_vae=ltxvaudiovaeloader,
     )
 
     ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
+        _id='3159',
         bypass=True,
         image=resizeimagemasknode_3,
         latent=emptyltxvlatentvideo,
@@ -135,6 +162,7 @@ def build() -> VibeWorkflow:
     )
 
     positive_2, negative_2, latent = LTXAddVideoICLoRAGuide(
+        _id='5012',
         crop=1,
         use_tiled_encode='disabled',
         image=resizeimagemasknode_2,
@@ -146,11 +174,13 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='4528',
         audio_latent=ltxvemptylatentaudio,
         video_latent=latent,
     )
 
     cfgguider = CFGGuider(
+        _id='4828',
         cfg=GUIDE_STRENGTH,
         model=model_2,
         negative=negative_2,
@@ -158,6 +188,7 @@ def build() -> VibeWorkflow:
     )
 
     output, _ = SamplerCustomAdvanced(
+        _id='4829',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -165,20 +196,23 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
+    video_latent, audio_latent = LTXVSeparateAVLatent(_id='4845', av_latent=output)
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
+        _id='4848',
         audio_vae=ltxvaudiovaeloader,
         samples=audio_latent,
     )
 
     _, _, latent_2 = LTXVCropGuides(
+        _id='5013',
         latent=video_latent,
         negative=negative_2,
         positive=positive_2,
     )
 
     ltxvtiledvaedecode = LTXVTiledVAEDecode(
+        _id='5065',
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
@@ -187,13 +221,14 @@ def build() -> VibeWorkflow:
     )
 
     createvideo = CreateVideo(
+        _id='4849',
         fps=fps,
         audio=ltxvaudiovaedecode,
         images=ltxvtiledvaedecode,
     )
 
     # Outputs
-    savevideo = SaveVideo(filename_prefix='output', video=createvideo)
+    savevideo = SaveVideo(_id='4852', filename_prefix='output', video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 
