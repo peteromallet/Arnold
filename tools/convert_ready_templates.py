@@ -29,6 +29,9 @@ OUT_PREVIEW_ROOT = REPO_ROOT / "out" / "converted"
 SNAPSHOT_ROOT = REPO_ROOT / "tests" / "snapshots"
 VENDOR_COMFY = REPO_ROOT / "vendor" / "ComfyUI"
 
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 # Shared safety gates from the porting package (Sprint 1).
 from vibecomfy.porting.convert import _check_manual_refusal, ManualTemplateRefusal  # noqa: E402
 
@@ -337,6 +340,18 @@ def _convert_template(
     row.shape = shape
     if shape_note:
         row.note = "; ".join(part for part in (row.note, shape_note) if part)
+
+    if regen_from_source:
+        emitted, regen_note = _emit_from_source_json(path, template_id)
+        if emitted is not None:
+            row.parse = "skip-source"
+            row.build = "ok"
+            row.validate = "skip-broken-original"
+            row.roundtrip = "skip-broken-original"
+            row.note = "; ".join(part for part in (row.note, "regenerated_from_source_json") if part)
+            return (row, emitted, None)
+        if regen_note:
+            row.note = "; ".join(part for part in (row.note, regen_note) if part)
 
     # Already-converted templates are skipped (no emission work needed).
     if shape == "converted":
@@ -656,6 +671,7 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true")
     group.add_argument("--template", type=str, help="template id (e.g. image/z_image)")
+    group.add_argument("--select", nargs="+", help="one or more template ids or ready_templates/*.py paths")
     group.add_argument("--category", type=str, choices=("image", "video", "edit", "audio"))
     group.add_argument("--regenerate-snapshots", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -686,11 +702,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    _bootstrap_comfy_runtime()
-
     if args.regenerate_snapshots:
+        _bootstrap_comfy_runtime()
         _regenerate_snapshots()
         return 0
+
+    if not args.regen_from_source:
+        _bootstrap_comfy_runtime()
 
     paths: list[Path] = []
     if args.template:
@@ -699,6 +717,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"not found: {candidate}", file=sys.stderr)
             return 2
         paths.append(candidate)
+    elif args.select:
+        for selected in args.select:
+            raw = Path(selected)
+            if raw.suffix == ".py":
+                candidate = raw if raw.is_absolute() else (REPO_ROOT / raw)
+            else:
+                candidate = READY_ROOT / f"{selected}.py"
+            candidate = candidate.resolve()
+            if not candidate.exists():
+                print(f"not found: {candidate}", file=sys.stderr)
+                return 2
+            if READY_ROOT.resolve() not in candidate.parents:
+                print(f"not a ready template: {candidate}", file=sys.stderr)
+                return 2
+            paths.append(candidate)
     elif args.category:
         cat_dir = READY_ROOT / args.category
         paths = [

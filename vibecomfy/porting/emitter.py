@@ -167,13 +167,15 @@ LTX2_3_TAIL_PATCHES: tuple[str, ...] = (
 
 
 _WRAPPER_CLASS_TO_MODULE: dict[str, str] | None = None
+_WRAPPER_CLASS_TO_SYMBOL: dict[str, str] | None = None
 
 
 def _wrapper_class_to_module() -> dict[str, str]:
-    global _WRAPPER_CLASS_TO_MODULE
+    global _WRAPPER_CLASS_TO_MODULE, _WRAPPER_CLASS_TO_SYMBOL
     if _WRAPPER_CLASS_TO_MODULE is not None:
         return _WRAPPER_CLASS_TO_MODULE
-    mapping: dict[str, str] = {}
+    module_mapping: dict[str, str] = {}
+    symbol_mapping: dict[str, str] = {}
     for module_name in _WRAPPER_MODULES:
         try:
             module = importlib.import_module(f"vibecomfy.nodes._generated.{module_name}")
@@ -182,9 +184,31 @@ def _wrapper_class_to_module() -> dict[str, str]:
         exported = getattr(module, "__all__", ())
         for name in exported:
             if isinstance(name, str):
-                mapping.setdefault(name, module_name)
-    _WRAPPER_CLASS_TO_MODULE = mapping
-    return mapping
+                class_type = _wrapper_class_type_for_symbol(module, name)
+                module_mapping.setdefault(class_type, module_name)
+                symbol_mapping.setdefault(class_type, name)
+    _WRAPPER_CLASS_TO_MODULE = module_mapping
+    _WRAPPER_CLASS_TO_SYMBOL = symbol_mapping
+    return module_mapping
+
+
+def _wrapper_class_type_for_symbol(module: Any, symbol_name: str) -> str:
+    func = getattr(module, symbol_name, None)
+    if callable(func):
+        code = getattr(func, "__code__", None)
+        for value in getattr(code, "co_consts", ()):
+            if isinstance(value, str) and value != symbol_name and _wrapper_class_name_candidate(value):
+                return value
+    return symbol_name
+
+
+def _wrapper_class_name_candidate(value: str) -> bool:
+    return (
+        bool(value)
+        and "\n" not in value
+        and not value.endswith("() takes at most 1 positional argument, got ")
+        and any(ch.isupper() or ch in " ()-" for ch in value)
+    )
 
 
 def _wrapper_module_for_class(class_type: str) -> str | None:
@@ -193,13 +217,19 @@ def _wrapper_module_for_class(class_type: str) -> str | None:
     return _wrapper_class_to_module().get(class_type)
 
 
+def _wrapper_symbol_for_class(class_type: str) -> str | None:
+    _wrapper_class_to_module()
+    return (_WRAPPER_CLASS_TO_SYMBOL or {}).get(class_type)
+
+
 def _wrapper_imports_for_nodes(workflow_nodes: dict[str, Any]) -> dict[str, list[str]]:
     imports: dict[str, set[str]] = {}
     for node in workflow_nodes.values():
         class_type = str(getattr(node, "class_type", ""))
         module_name = _wrapper_module_for_class(class_type)
+        symbol_name = _wrapper_symbol_for_class(class_type)
         if module_name is not None:
-            imports.setdefault(module_name, set()).add(class_type)
+            imports.setdefault(module_name, set()).add(symbol_name or class_type)
     return {module: sorted(names) for module, names in imports.items()}
 
 # -- node role classification for section comments ---------------------------
@@ -578,6 +608,8 @@ def _translate_widget_for_key(
     class_type: str,
 ) -> str | None:
     """Translate a widget_N key to its named field, or None if it should be dropped."""
+    if key.startswith("unused_widget_"):
+        return None
     if not key.startswith("widget_"):
         return key
     try:
@@ -1935,7 +1967,7 @@ def _emit_build_function(
                 # raw_call (UUID fallback, no schema) needs explicit _outputs.
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))
-                call_name = str(node.class_type)
+                call_name = _wrapper_symbol_for_class(str(node.class_type)) or str(node.class_type)
                 assignment_target = _assignment_target(var, output_var_names.get(str(nid)))
             else:
                 all_args = []
@@ -2839,7 +2871,11 @@ def _node_kwargs(
     for edge in edges_in.get(node.id, []):
         incoming[edge.to_input] = (edge.from_node, int(edge.from_output))
 
-    def _translate_widget(key: str) -> str | None:
+    def _translate_widget(key: str, value: Any = None) -> str | None:
+        if key.startswith("unused_widget_"):
+            return None
+        if cls == "Power Lora Loader (rgthree)":
+            return _translate_power_lora_loader_widget(key, value)
         if not key.startswith("widget_"):
             return key
         return resolve_widget_key_with_provenance(cls, key, input_aliases=input_aliases).name
@@ -2847,26 +2883,26 @@ def _node_kwargs(
     raw_inputs: dict[str, Any] = {}
     for key, value in node.inputs.items():
         if _is_any_link(value) and str(value[0]) == "-10":
-            translated_link = _translate_widget(key)
+            translated_link = _translate_widget(key, value)
             if translated_link is not None:
                 expr = external_refs.get((str(getattr(node, "id", "")), translated_link))
                 if expr is not None:
                     incoming_exprs[translated_link] = expr
         elif _is_link(value):
-            translated_link = _translate_widget(key)
+            translated_link = _translate_widget(key, value)
             if translated_link is not None:
                 incoming.setdefault(translated_link, (str(value[0]), int(value[1])))
         else:
             raw_inputs[key] = value
     for key, value in node.widgets.items():
         if _is_any_link(value) and str(value[0]) == "-10":
-            translated_link = _translate_widget(key)
+            translated_link = _translate_widget(key, value)
             if translated_link is not None:
                 expr = external_refs.get((str(getattr(node, "id", "")), translated_link))
                 if expr is not None:
                     incoming_exprs[translated_link] = expr
         elif _is_link(value):
-            translated_link = _translate_widget(key)
+            translated_link = _translate_widget(key, value)
             if translated_link is not None:
                 incoming.setdefault(translated_link, (str(value[0]), int(value[1])))
         elif key not in raw_inputs:
@@ -2874,7 +2910,7 @@ def _node_kwargs(
 
     static_inputs: dict[str, Any] = {}
     for key, value in raw_inputs.items():
-        translated = _translate_widget(key)
+        translated = _translate_widget(key, value)
         if translated is None:
             continue
         if translated != key and translated not in raw_inputs and translated not in static_inputs and translated not in incoming:
@@ -2981,6 +3017,43 @@ def _node_kwargs(
         extras_repr = "{" + ", ".join(f"{key!r}: {value}" for key, value in extras) + "}"
         out.append(("_extras", extras_repr))
     return out
+
+
+def _translate_power_lora_loader_widget(key: str, value: Any) -> str | None:
+    """Map rgthree Power Lora dynamic widget slots to stable kwargs.
+
+    rgthree stores decorative header/separator widgets beside an open-ended
+    list of LoRA option dictionaries. The committed object_info snapshot only
+    exposes model/clip sockets, so normal widget aliasing cannot name these
+    UI-saved values.
+    """
+    if key.startswith("unused_widget_"):
+        return None
+    if not key.startswith("widget_"):
+        return key
+    index = _power_lora_widget_index(key)
+    if index is None:
+        return key
+    if not _is_power_lora_config(value):
+        return None
+    return f"lora_{max(1, index - 3)}"
+
+
+def _power_lora_widget_index(key: str) -> int | None:
+    if key.startswith("widget_"):
+        suffix = key.removeprefix("widget_")
+    elif key.startswith("unused_widget_"):
+        suffix = key.removeprefix("unused_widget_")
+    else:
+        return None
+    try:
+        return int(suffix)
+    except ValueError:
+        return None
+
+
+def _is_power_lora_config(value: Any) -> bool:
+    return isinstance(value, dict) and {"on", "lora", "strength"}.issubset(value)
 
 
 def _collect_emission_diagnostics(
