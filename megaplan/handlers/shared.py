@@ -344,6 +344,39 @@ def _snapshot_cli_provenance(state: PlanState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _emit_receipt(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    args: argparse.Namespace,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    phase: str,
+    output_file: str,
+    artifact_hash: str,
+    verdict: Any = None,
+) -> None:
+    """Emit a receipt for *phase*, best-effort (warns on failure)."""
+    try:
+        project_dir = Path(state["config"]["project_dir"])
+        receipt = build_receipt(
+            phase=phase,
+            state=state,
+            plan_dir=plan_dir,
+            args=args,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            output_file=output_file,
+            artifact_hash=artifact_hash,
+            verdict=verdict,
+        )
+        write_receipt(plan_dir, receipt, project_dir=project_dir)
+    except Exception:
+        log.warning("Receipt emission failed for step %s", phase, exc_info=True)
+
+
 def _finish_step(
     plan_dir: Path,
     state: PlanState,
@@ -386,23 +419,18 @@ def _finish_step(
         ),
     )
     if step not in {"execute", "review"}:
-        project_dir = Path(state["config"]["project_dir"])
-        try:
-            receipt = build_receipt(
-                phase=step,
-                state=state,
-                plan_dir=plan_dir,
-                args=args,
-                worker=worker,
-                agent=agent,
-                mode=mode,
-                output_file=output_file,
-                artifact_hash=artifact_hash,
-                verdict=(history_fields or {}).get("verdict"),
-            )
-            write_receipt(plan_dir, receipt, project_dir=project_dir)
-        except Exception:
-            log.warning("Receipt emission failed for step %s", step, exc_info=True)
+        _emit_receipt(
+            plan_dir=plan_dir,
+            state=state,
+            args=args,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            phase=step,
+            output_file=output_file,
+            artifact_hash=artifact_hash,
+            verdict=(history_fields or {}).get("verdict"),
+        )
     save_state_merge_meta(plan_dir, state)
     resolved_next = next_step
     if resolved_next is _AUTO_NEXT_STEP:
@@ -453,6 +481,11 @@ def _raise_step_validation_error(
 def _write_json_artifact(plan_dir: Path, filename: str, payload: dict[str, Any]) -> str:
     atomic_write_json(plan_dir / filename, payload, _plan_dir=plan_dir)
     return sha256_file(plan_dir / filename)
+
+
+def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
+    """Write gate.json through _write_json_artifact and return the hash."""
+    return _write_json_artifact(plan_dir, "gate.json", payload)
 
 
 def _write_plan_version(

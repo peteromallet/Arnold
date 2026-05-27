@@ -51,7 +51,7 @@ from megaplan.orchestration.evaluation import (
 )
 from megaplan.orchestration.phase_result import read_phase_result
 
-from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure
+from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
@@ -302,7 +302,7 @@ def _override_force_proceed(
         override_forced=True,
         orchestrator_guidance="Force-proceed override applied. Proceed to finalize.",
     )
-    atomic_write_json(plan_dir / "gate.json", gate)
+    _write_gate_json(plan_dir, gate)
     flag_registry = load_flag_registry(plan_dir)
     unresolved_flags = unresolved_significant_flags(flag_registry)
     debt_registry = load_debt_registry(root)
