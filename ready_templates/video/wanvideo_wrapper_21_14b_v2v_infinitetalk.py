@@ -60,7 +60,7 @@ def build() -> VibeWorkflow:
     # Loaders
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME)
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME_2,
         positive_prompt='a woman is singing a lullaby',
         negative_prompt=DEFAULT_NEGATIVE,
@@ -82,7 +82,7 @@ def build() -> VibeWorkflow:
         multitalk_model=multitalkmodelloader,
     )
 
-    image, frame_count, audio_load, video_info = VHS_LoadVideo(
+    image, _, _, _ = VHS_LoadVideo(
         video='10.mp4',
         format='Wan',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': '10.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': None, 'custom_height': 480, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
@@ -96,7 +96,7 @@ def build() -> VibeWorkflow:
         model=melbandroformermodelloader.out(0),
     )
 
-    multitalk_embeds, audio, num_frames = MultiTalkWav2VecEmbeds(
+    multitalk_embeds, _, _ = MultiTalkWav2VecEmbeds(
         widget_0=True,
         widget_1=400,
         widget_2=25,
@@ -108,7 +108,7 @@ def build() -> VibeWorkflow:
         wav2vec_model=downloadandloadwav2vecmodel,
     )
 
-    image_image, width, height, mask = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         divisible_by=16,
@@ -128,15 +128,15 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get, mask_get = GetImageRangeFromBatch(images=image_image)
-    image_get_2, width_get, height_get, count = GetImageSizeAndCount(image=image_get)
+    image_get, _ = GetImageRangeFromBatch(images=image_image)
+    image_get_2, width_get, height_get, _ = GetImageSizeAndCount(image=image_get)
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
         clip_vision=clipvisionloader,
         image_1=image_get_2,
     )
 
-    image_embeds, output_path = WanVideoImageToVideoMultiTalk(
+    image_embeds, _ = WanVideoImageToVideoMultiTalk(
         colormatch=False,
         force_offload='disabled',
         frame_window_size=9,
@@ -152,7 +152,7 @@ def build() -> VibeWorkflow:
         width=width_get,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=4,
         cfg=GUIDE_STRENGTH,
         shift=11.000000000000002,
@@ -173,14 +173,8 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get_3, width_get_2, height_get_2, count_get = GetImageSizeAndCount(
-        image=wanvideodecode,
-    )
-
-    image_get_4, mask_get_2 = GetImageRangeFromBatch(
-        num_frames=count_get,
-        images=image_get_3,
-    )
+    image_get_3, _, _, count_get = GetImageSizeAndCount(image=wanvideodecode)
+    image_get_4, _ = GetImageRangeFromBatch(num_frames=count_get, images=image_get_3)
 
     imageconcatmulti = ImageConcatMulti(
         direction='left',

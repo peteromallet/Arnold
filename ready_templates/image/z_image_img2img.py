@@ -45,7 +45,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='image_z_image_img2img_input.png')
+    image, _ = LoadImage(image='image_z_image_img2img_input.png')
 
     # Loaders
     unetloader = UNETLoader(unet_name=UNET_NAME)

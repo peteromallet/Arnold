@@ -44,7 +44,7 @@ def build() -> VibeWorkflow:
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
     # Inputs
-    image, mask = LoadImage(image='image_to_video_wan_start_image.png')
+    image, _ = LoadImage(image='image_to_video_wan_start_image.png')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)

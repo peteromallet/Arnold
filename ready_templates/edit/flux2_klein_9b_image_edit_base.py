@@ -34,38 +34,96 @@ def image_edit_flux2_klein_9b(
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, CLIPTextEncodex2, VAELoader, EmptyFlux2LatentImage, ImageScaleToTotalPixels, GetImageSize, ReferenceLatentx2, VAEEncode.
     """
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
+    ksamplerselect = KSamplerSelect(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:61',
+        sampler_name='euler',
+    )
+
+    unetloader = UNETLoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:70',
+        unet_name=unet_name,
+    )
+
+    cliploader = CLIPLoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:71',
+        type_='flux2',
+        clip_name=clip_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:72',
+        vae_name=vae_name,
+    )
 
     randomnoise = RandomNoise(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:73',
         noise_seed=192774551144773,
         control_after_generate='randomize',
     )
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:80',
         upscale_method='lanczos',
         image=image,
     )
 
-    negative = CLIPTextEncode(text='', clip=cliploader)
-    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
-    width, height, batch_size = GetImageSize(image=imagescaletototalpixels)
-    vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-    flux2scheduler = Flux2Scheduler(width=width, height=height)
-    emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
-    referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
-    referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
+    negative = CLIPTextEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:67',
+        text='',
+        clip=cliploader,
+    )
+
+    cliptextencode = CLIPTextEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:74',
+        text=prompt,
+        clip=cliploader,
+    )
+
+    width, height, _ = GetImageSize(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:100',
+        image=imagescaletototalpixels,
+    )
+
+    vaeencode = VAEEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:123',
+        pixels=imagescaletototalpixels,
+        vae=vaeloader,
+    )
+
+    flux2scheduler = Flux2Scheduler(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:62',
+        width=width,
+        height=height,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:66',
+        width=width,
+        height=height,
+    )
+
+    referencelatent = ReferenceLatent(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:122',
+        conditioning=negative,
+        latent=vaeencode,
+    )
+
+    referencelatent_2 = ReferenceLatent(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:124',
+        conditioning=cliptextencode,
+        latent=vaeencode,
+    )
 
     cfgguider = CFGGuider(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:63',
         cfg=5,
         model=unetloader,
         negative=referencelatent,
         positive=referencelatent_2,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -73,7 +131,11 @@ def image_edit_flux2_klein_9b(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:65',
+        samples=output,
+        vae=vaeloader,
+    )
 
     return vaedecode
 
@@ -95,54 +157,119 @@ def image_edit_flux2_klein_9b_dual(
     """
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:85',
         upscale_method='lanczos',
         image=reference_image2,
     )
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    ksamplerselect = KSamplerSelect(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:102',
+        sampler_name='euler',
+    )
 
     randomnoise = RandomNoise(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:105',
         noise_seed=86928255107192,
         control_after_generate='randomize',
     )
 
-    unetloader = UNETLoader(unet_name=unet_name)
-    vaeloader = VAELoader(vae_name=vae_name)
+    unetloader = UNETLoader(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:106',
+        unet_name=unet_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:107',
+        vae_name=vae_name,
+    )
 
     imagescaletototalpixels_2 = ImageScaleToTotalPixels(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:110',
         upscale_method='lanczos',
         image=reference_image1,
     )
 
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    negative = CLIPTextEncode(text='', clip=cliploader)
-    width, height, batch_size = GetImageSize(image=imagescaletototalpixels_2)
-    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
-    vaeencode = VAEEncode(pixels=imagescaletototalpixels_2, vae=vaeloader)
-    vaeencode_2 = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-    emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
-    flux2scheduler = Flux2Scheduler(width=width, height=height)
-    referencelatent = ReferenceLatent(conditioning=negative, latent=vaeencode)
-    referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
+    cliploader = CLIPLoader(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:111',
+        type_='flux2',
+        clip_name=clip_name,
+    )
+
+    negative = CLIPTextEncode(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:87',
+        text='',
+        clip=cliploader,
+    )
+
+    width, height, _ = GetImageSize(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:108',
+        image=imagescaletototalpixels_2,
+    )
+
+    cliptextencode = CLIPTextEncode(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:113',
+        text=prompt,
+        clip=cliploader,
+    )
+
+    vaeencode = VAEEncode(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:126',
+        pixels=imagescaletototalpixels_2,
+        vae=vaeloader,
+    )
+
+    vaeencode_2 = VAEEncode(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:129',
+        pixels=imagescaletototalpixels,
+        vae=vaeloader,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:109',
+        width=width,
+        height=height,
+    )
+
+    flux2scheduler = Flux2Scheduler(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:115',
+        width=width,
+        height=height,
+    )
+
+    referencelatent = ReferenceLatent(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:125',
+        conditioning=negative,
+        latent=vaeencode,
+    )
+
+    referencelatent_2 = ReferenceLatent(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:127',
+        conditioning=cliptextencode,
+        latent=vaeencode,
+    )
 
     referencelatent_3 = ReferenceLatent(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:128',
         conditioning=referencelatent,
         latent=vaeencode_2,
     )
 
     referencelatent_4 = ReferenceLatent(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:130',
         conditioning=referencelatent_2,
         latent=vaeencode_2,
     )
 
     cfgguider = CFGGuider(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:114',
         cfg=5,
         model=unetloader,
         negative=referencelatent_3,
         positive=referencelatent_4,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:103',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -150,7 +277,11 @@ def image_edit_flux2_klein_9b_dual(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='65c22b29-59aa-496b-89c6-55a603658670:104',
+        samples=output,
+        vae=vaeloader,
+    )
 
     return vaedecode
 
@@ -158,19 +289,19 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    image, mask = LoadImage(image='car_interior_white.jpeg')
-    image_load, mask_load = LoadImage(image='comfy_logo_blue.png')
+    image, _ = LoadImage(image='car_interior_white.jpeg')
+    image_load, _ = LoadImage(image='comfy_logo_blue.png')
     edited = image_edit_flux2_klein_9b(
         unet_name='flux-2-klein-base-9b-fp8.safetensors',
-        clip_name='qwen_3_8b_fp8mixed.safetensors',
+        clip_name=image,
         vae_name='full_encoder_small_decoder.safetensors',
         prompt="Change the camera angle to a first-person driver's perspective looking through the steering wheel at the dashboard and windshield, maintaining the same white minimalist interior style and lighting\n",
         image=image,
     )
     edited_dual = image_edit_flux2_klein_9b_dual(
         unet_name='flux-2-klein-base-9b-fp8.safetensors',
-        clip_name='qwen_3_8b_fp8mixed.safetensors',
-        vae_name='full_encoder_small_decoder.safetensors',
+        clip_name=image,
+        vae_name=image_load,
         prompt='Apply the yellow "C" logo to the center hub of the steering wheel, and change the steering wheel color to royal blue matching the logo background, while maintaining the same interior style, lighting, camera angle, and all other elements unchanged',
         reference_image1=image,
         reference_image2=image_load,

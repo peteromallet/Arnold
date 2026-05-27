@@ -41,11 +41,11 @@ YUV420P = 'yuv420p'
 
 PUBLIC_INPUT_METADATA = {
     'image_strength': InputSpec(node='2183', field='strength', default=0.7),
-    'window_sec_02': InputSpec(node='2329', field='_2', default=10.0),
-    'enhance_prompt': InputSpec(node='2109', field='_un3705', default=False),
-    'window_sec_03': InputSpec(node='5073', field='_2', default=18.0),
-    'window_sec_04': InputSpec(node='5148', field='_2', default=15.0),
-    'window_sec_05': InputSpec(node='5223', field='_2', default=10.0),
+    'window_sec_02': InputSpec(node='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2324', field='variables.a', default=10.0),
+    'enhance_prompt': InputSpec(node='3bd4eeb9-31fa-461a-8c04-2b24dd0aabaf:1928', field='switch', default=False),
+    'window_sec_03': InputSpec(node='17238add-9973-482f-8fa3-248d4ed29886:5041', field='variables.a', default=18.0),
+    'window_sec_04': InputSpec(node='a3fb563d-4711-4225-9210-fbe61b1bd79d:5116', field='variables.a', default=15.0),
+    'window_sec_05': InputSpec(node='4acc9924-c0bd-470a-b000-46c75e61d004:5191', field='variables.a', default=10.0),
     'image': InputSpec(node='444', field='image', default='download (8).png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='2169', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'prompt': InputSpec(node='1626', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
@@ -75,9 +75,14 @@ def prompt_enhancer_3bd4eeb9(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='3bd4eeb9-31fa-461a-8c04-2b24dd0aabaf:1618',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='3bd4eeb9-31fa-461a-8c04-2b24dd0aabaf:1623',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -86,6 +91,7 @@ def prompt_enhancer_3bd4eeb9(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='3bd4eeb9-31fa-461a-8c04-2b24dd0aabaf:1928',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -108,9 +114,14 @@ def prompt_enhancer(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='2413a8aa-1f77-466f-8508-ed07fa6ac302:2120',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='2413a8aa-1f77-466f-8508-ed07fa6ac302:2117',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -119,6 +130,7 @@ def prompt_enhancer(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='2413a8aa-1f77-466f-8508-ed07fa6ac302:2119',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -134,133 +146,255 @@ def generate_video_c4106aee(
     window_seconds,
     frames_count,
     ref_image,
+    upscale_model,
+    vae,
+    clip,
+    audio_vae,
+    model,
+    negative,
+    sampler,
+    sigmas,
+    values_b,
+    variables_b,
+    width,
+    height,
+    audio,
+    vae_2,
+    clip_2,
+    un3912,
+    audio_2,
+    vae_3,
+    num_images_strength_1,
+    vae_4,
+    num_images_strength_1_2,
+    model_2,
+    negative_2,
+    sampler_2,
+    sigmas_2,
 ):
     """Generate Video - single-image variant.
 
     Materialized from subgraph c4106aee-ad7a-4925-972b-6f5b3d34db6e in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
-    # vibecomfy source hash: sha256:835e9cc398dd58f5811126fb59afb84a637247621593ea83f3513e392d60806f
-    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SamplerCustomAdvancedx2, easy showAnything, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 2413a8aa-1f77-466f-8508-ed07fa6ac302, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2.
+    # vibecomfy source hash: sha256:cbf37f5017a5530871597dcd4b5d008c9ea29dde34de0757fec85749b6b65546
+    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SamplerCustomAdvancedx2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 2413a8aa-1f77-466f-8508-ed07fa6ac302, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2.
     """
 
-    comfy_float, comfy_int = ComfyMathExpression(
+    comfy_float, _ = ComfyMathExpression(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2210',
         expression='a /  b ',
-        **{'values.a': frames_count},
+        **{'values.a': frames_count, 'values.b': values_b},
     )
 
-    randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=noise_seed)
-    solidmask = SolidMask(value=0)
+    randomnoise = RandomNoise(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2244',
+        control_after_generate='fixed',
+        noise_seed=noise_seed,
+    )
+
+    solidmask = SolidMask(_id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2289', value=0)
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2292',
         longer_edge=1536,
         images=ref_image,
     )
 
-    randomnoise_2 = RandomNoise(noise_seed=405, control_after_generate='fixed')
+    randomnoise_2 = RandomNoise(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2299',
+        noise_seed=405,
+        control_after_generate='fixed',
+    )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2324',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
-        **{'variables.a': window_seconds},
+        **{'variables.a': window_seconds, 'variables.b': variables_b},
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2327',
         resize_type='scale by multiplier',
         input=ref_image,
     )
 
     trimaudioduration = TrimAudioDuration(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2223',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio,
     )
 
-    easy_showanything = raw_call('easy showAnything', '2256', _outputs=('output',), anything=comfy_float)
-    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
+    ltxvpreprocess = LTXVPreprocess(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2265',
+        img_compression=18,
+        image=resizeimagesbylongeredge,
+    )
+
     prompt_enhancer_result = prompt_enhancer(
-        clip=None,
+        clip=['-10', 19],
         image=resizeimagemasknode,
-        enable=None,
+        enable=['-10', 20],
         prompt=['-10', 1],
     )
-    emptyltxvlatentvideo = EmptyLTXVLatentVideo(length=calc_int)
 
-    trimaudioduration_2 = TrimAudioDuration(
-        start_index=comfy_float,
-        duration=window_seconds,
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2322',
+        width=width,
+        height=height,
+        length=calc_int,
     )
 
-    ltxvaudiovaeencode = LTXVAudioVAEEncode(audio=trimaudioduration)
-    positive = CLIPTextEncode(text=prompt_enhancer_result)
+    trimaudioduration_2 = TrimAudioDuration(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:4747',
+        start_index=comfy_float,
+        duration=window_seconds,
+        audio=audio_2,
+    )
+
+    ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2224',
+        audio=trimaudioduration,
+        audio_vae=audio_vae,
+    )
+
+    positive = CLIPTextEncode(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2278',
+        text=prompt_enhancer_result,
+        clip=clip,
+    )
 
     ltxvimgtovideoinplacekj = LTXVImgToVideoInplaceKJ(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:4998',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=emptyltxvlatentvideo,
-        **{'num_images.image_1': ltxvpreprocess},
+        vae=vae_3,
+        **{'num_images.image_1': ltxvpreprocess, 'num_images.strength_1': num_images_strength_1},
     )
 
-    cfgguider = CFGGuider(cfg=1, positive=positive)
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-    cfgguider_2 = CFGGuider(cfg=1, positive=positive)
+    cfgguider = CFGGuider(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2227',
+        cfg=1,
+        model=model,
+        negative=negative,
+        positive=positive,
+    )
+
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2287',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
+
+    cfgguider_2 = CFGGuider(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2307',
+        cfg=1,
+        model=model_2,
+        negative=negative_2,
+        positive=positive,
+    )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2205',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2249',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
+        sampler=sampler_2,
+        sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(av_latent=output)
-    ltxvlatentupsampler = LTXVLatentUpsampler(samples=video_latent_ltxv)
+    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2298',
+        av_latent=output,
+    )
+
+    ltxvlatentupsampler = LTXVLatentUpsampler(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2297',
+        samples=video_latent_ltxv,
+        upscale_model=upscale_model,
+        vae=vae,
+    )
 
     ltxvimgtovideoinplacekj_2 = LTXVImgToVideoInplaceKJ(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:4999',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=ltxvlatentupsampler,
-        **{'num_images.image_1': resizeimagesbylongeredge},
+        vae=vae_4,
+        **{'num_images.image_1': resizeimagesbylongeredge, 'num_images.strength_1': num_images_strength_1_2},
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2296',
         audio_latent=audio_latent_ltxv,
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2312',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
+        sampler=sampler,
+        sigmas=sigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output_sampler)
-    vaedecode = VAEDecode(samples=video_latent)
+    video_latent, _ = LTXVSeparateAVLatent(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2239',
+        av_latent=output_sampler,
+    )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    vaedecode = VAEDecode(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2241',
+        samples=video_latent,
+        vae=vae_2,
+    )
+
+    _, image_pass, _, _, _ = VRAM_Debug(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:2108',
         image_pass=vaedecode,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=image_pass)
+    _, _, _, count = GetImageSizeAndCount(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:4202',
+        image=image_pass,
+    )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
+        _id='c4106aee-ad7a-4925-972b-6f5b3d34db6e:4201',
         **{'variables.a': frames_count, 'variables.b': count},
     )
 
     return calc_int_simple, vaedecode, trimaudioduration_2
 
 
-def total_duration():
+def total_duration(
+    *,
+    variables_a,
+    variables_b,
+    variables_c,
+    variables_d,
+    variables_e,
+):
     """Total duration.
 
     Materialized from subgraph 5e410bb1-405a-4d3d-808b-8f5f29426943 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
-    # vibecomfy source hash: sha256:bba7be5fb14ab0c81d77583bcc6a8e3e8ee0f9c335fbcbb62620263e23c4e25c
+    # vibecomfy source hash: sha256:499d1097b28fe35bbf263370c1665c25ad008f551cb2fc33f04b8e0c5df2c383
     Inner nodes: SimpleCalculatorKJ.
     """
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    calc_float, _, _ = SimpleCalculatorKJ(
+        _id='5e410bb1-405a-4d3d-808b-8f5f29426943:3721',
         expression='a + b + c + d + e + 2\n',
+        **{'variables.a': variables_a, 'variables.b': variables_b, 'variables.c': variables_c, 'variables.d': variables_d, 'variables.e': variables_e},
     )
 
     return calc_float
@@ -280,9 +414,14 @@ def prompt_enhancer_97b9884d(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='97b9884d-4a32-4b0d-ad19-be662c1c2002:5063',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='97b9884d-4a32-4b0d-ad19-be662c1c2002:5058',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -291,6 +430,7 @@ def prompt_enhancer_97b9884d(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='97b9884d-4a32-4b0d-ad19-be662c1c2002:5059',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -306,120 +446,230 @@ def generate_video(
     window_seconds,
     frames_count,
     ref_image,
+    upscale_model,
+    vae,
+    clip,
+    audio_vae,
+    model,
+    negative,
+    values_b,
+    variables_b,
+    width,
+    height,
+    audio,
+    vae_2,
+    clip_2,
+    un3912,
+    audio_2,
+    vae_3,
+    num_images_strength_1,
+    vae_4,
+    num_images_strength_1_2,
+    model_2,
+    negative_2,
+    sampler,
+    sigmas,
+    sampler_2,
+    sigmas_2,
 ):
     """Generate Video - single-image variant.
 
     Materialized from subgraph 17238add-9973-482f-8fa3-248d4ed29886 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
-    # vibecomfy source hash: sha256:c309a6567ea9360c71eb9d74f137dce3a395dba1214b1e4cf4770d32473f08ed
-    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, easy showAnything, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 97b9884d-4a32-4b0d-ad19-be662c1c2002, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
+    # vibecomfy source hash: sha256:28643b6c64068643a90cd88b40ab7b216aa3728cbc287a2d0c67a24484f18244
+    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 97b9884d-4a32-4b0d-ad19-be662c1c2002, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
     """
 
-    solidmask = SolidMask(value=0)
-    randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=noise_seed)
-    randomnoise_2 = RandomNoise(noise_seed=405, control_after_generate='fixed')
+    solidmask = SolidMask(_id='17238add-9973-482f-8fa3-248d4ed29886:5003', value=0)
 
-    comfy_float, comfy_int = ComfyMathExpression(
-        expression='a /  b ',
-        **{'values.a': frames_count},
+    randomnoise = RandomNoise(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5026',
+        control_after_generate='fixed',
+        noise_seed=noise_seed,
     )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    randomnoise_2 = RandomNoise(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5027',
+        noise_seed=405,
+        control_after_generate='fixed',
+    )
+
+    comfy_float, _ = ComfyMathExpression(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5038',
+        expression='a /  b ',
+        **{'values.a': frames_count, 'values.b': values_b},
+    )
+
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5041',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
-        **{'variables.a': window_seconds},
+        **{'variables.a': window_seconds, 'variables.b': variables_b},
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5047',
         resize_type='scale by multiplier',
         input=ref_image,
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5053',
         longer_edge=1536,
         images=ref_image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '5031', _outputs=('output',), anything=comfy_float)
-    emptyltxvlatentvideo = EmptyLTXVLatentVideo(length=calc_int_simple)
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5042',
+        width=width,
+        height=height,
+        length=calc_int_simple,
+    )
 
     trimaudioduration = TrimAudioDuration(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5044',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio,
     )
 
     prompt_enhancer_97b9884d_result = prompt_enhancer_97b9884d(
-        clip=None,
+        clip=['-10', 17],
         image=resizeimagemasknode,
-        enable=None,
+        enable=['-10', 18],
         prompt=['-10', 1],
     )
 
     trimaudioduration_2 = TrimAudioDuration(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5051',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio_2,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
-    positive = CLIPTextEncode(text=prompt_enhancer_97b9884d_result)
-    ltxvaudiovaeencode = LTXVAudioVAEEncode(audio=trimaudioduration)
+    ltxvpreprocess = LTXVPreprocess(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5052',
+        img_compression=18,
+        image=resizeimagesbylongeredge,
+    )
+
+    positive = CLIPTextEncode(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5012',
+        text=prompt_enhancer_97b9884d_result,
+        clip=clip,
+    )
+
+    ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5019',
+        audio=trimaudioduration,
+        audio_vae=audio_vae,
+    )
 
     ltxvimgtovideoinplacekj = LTXVImgToVideoInplaceKJ(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5054',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=emptyltxvlatentvideo,
-        **{'num_images.image_1': ltxvpreprocess},
+        vae=vae_3,
+        **{'num_images.image_1': ltxvpreprocess, 'num_images.strength_1': num_images_strength_1},
     )
 
-    cfgguider = CFGGuider(cfg=1, positive=positive)
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-    cfgguider_2 = CFGGuider(cfg=1, positive=positive)
+    cfgguider = CFGGuider(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5023',
+        cfg=1,
+        model=model,
+        negative=negative,
+        positive=positive,
+    )
+
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5024',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
+
+    cfgguider_2 = CFGGuider(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5057',
+        cfg=1,
+        model=model_2,
+        negative=negative_2,
+        positive=positive,
+    )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5025',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5029',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
+        sampler=sampler,
+        sigmas=sigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
-    ltxvlatentupsampler = LTXVLatentUpsampler(samples=video_latent)
+    video_latent, audio_latent = LTXVSeparateAVLatent(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5010',
+        av_latent=output,
+    )
+
+    ltxvlatentupsampler = LTXVLatentUpsampler(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5011',
+        samples=video_latent,
+        upscale_model=upscale_model,
+        vae=vae,
+    )
 
     ltxvimgtovideoinplacekj_2 = LTXVImgToVideoInplaceKJ(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5055',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=ltxvlatentupsampler,
-        **{'num_images.image_1': resizeimagesbylongeredge},
+        vae=vae_4,
+        **{'num_images.image_1': resizeimagesbylongeredge, 'num_images.strength_1': num_images_strength_1_2},
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5056',
         audio_latent=audio_latent,
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5030',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
+        sampler=sampler_2,
+        sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+    video_latent_ltxv, _ = LTXVSeparateAVLatent(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5028',
         av_latent=output_sampler,
     )
 
-    vaedecode = VAEDecode(samples=video_latent_ltxv)
+    vaedecode = VAEDecode(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5046',
+        samples=video_latent_ltxv,
+        vae=vae_2,
+    )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    _, image_pass, _, _, _ = VRAM_Debug(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5037',
         image_pass=vaedecode,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=image_pass)
+    _, _, _, count = GetImageSizeAndCount(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5036',
+        image=image_pass,
+    )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
+        _id='17238add-9973-482f-8fa3-248d4ed29886:5035',
         **{'variables.a': frames_count, 'variables.b': count},
     )
 
@@ -440,9 +690,14 @@ def prompt_enhancer_cc5ea718(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='cc5ea718-db6a-47c7-83cf-7d9a8442ba99:5138',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='cc5ea718-db6a-47c7-83cf-7d9a8442ba99:5133',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -451,6 +706,7 @@ def prompt_enhancer_cc5ea718(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='cc5ea718-db6a-47c7-83cf-7d9a8442ba99:5134',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -466,120 +722,230 @@ def generate_video_a3fb563d(
     window_seconds,
     frames_count,
     ref_image,
+    upscale_model,
+    vae,
+    clip,
+    audio_vae,
+    model,
+    negative,
+    values_b,
+    variables_b,
+    width,
+    height,
+    audio,
+    vae_2,
+    clip_2,
+    un3912,
+    audio_2,
+    vae_3,
+    num_images_strength_1,
+    vae_4,
+    num_images_strength_1_2,
+    model_2,
+    negative_2,
+    sampler,
+    sigmas,
+    sampler_2,
+    sigmas_2,
 ):
     """Generate Video - single-image variant.
 
     Materialized from subgraph a3fb563d-4711-4225-9210-fbe61b1bd79d in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
-    # vibecomfy source hash: sha256:4d6093a77179044dbcee0b5db08a7841683d1b1c3ccc361e61489c097d2a9813
-    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, easy showAnything, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, cc5ea718-db6a-47c7-83cf-7d9a8442ba99, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
+    # vibecomfy source hash: sha256:238dc4a8d04df1c8b62437cb86819e13f8c09a55b0c565dbd9a2982b277aa858
+    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, cc5ea718-db6a-47c7-83cf-7d9a8442ba99, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
     """
 
-    solidmask = SolidMask(value=0)
-    randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=noise_seed)
-    randomnoise_2 = RandomNoise(noise_seed=405, control_after_generate='fixed')
+    solidmask = SolidMask(_id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5078', value=0)
 
-    comfy_float, comfy_int = ComfyMathExpression(
-        expression='a /  b ',
-        **{'values.a': frames_count},
+    randomnoise = RandomNoise(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5101',
+        control_after_generate='fixed',
+        noise_seed=noise_seed,
     )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    randomnoise_2 = RandomNoise(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5102',
+        noise_seed=405,
+        control_after_generate='fixed',
+    )
+
+    comfy_float, _ = ComfyMathExpression(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5113',
+        expression='a /  b ',
+        **{'values.a': frames_count, 'values.b': values_b},
+    )
+
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5116',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
-        **{'variables.a': window_seconds},
+        **{'variables.a': window_seconds, 'variables.b': variables_b},
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5122',
         resize_type='scale by multiplier',
         input=ref_image,
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5128',
         longer_edge=1536,
         images=ref_image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '5106', _outputs=('output',), anything=comfy_float)
-    emptyltxvlatentvideo = EmptyLTXVLatentVideo(length=calc_int_simple)
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5117',
+        width=width,
+        height=height,
+        length=calc_int_simple,
+    )
 
     trimaudioduration = TrimAudioDuration(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5119',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio,
     )
 
     prompt_enhancer_cc5ea718_result = prompt_enhancer_cc5ea718(
-        clip=None,
+        clip=['-10', 17],
         image=resizeimagemasknode,
-        enable=None,
+        enable=['-10', 18],
         prompt=['-10', 1],
     )
 
     trimaudioduration_2 = TrimAudioDuration(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5126',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio_2,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
-    positive = CLIPTextEncode(text=prompt_enhancer_cc5ea718_result)
-    ltxvaudiovaeencode = LTXVAudioVAEEncode(audio=trimaudioduration)
+    ltxvpreprocess = LTXVPreprocess(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5127',
+        img_compression=18,
+        image=resizeimagesbylongeredge,
+    )
+
+    positive = CLIPTextEncode(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5087',
+        text=prompt_enhancer_cc5ea718_result,
+        clip=clip,
+    )
+
+    ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5094',
+        audio=trimaudioduration,
+        audio_vae=audio_vae,
+    )
 
     ltxvimgtovideoinplacekj = LTXVImgToVideoInplaceKJ(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5129',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=emptyltxvlatentvideo,
-        **{'num_images.image_1': ltxvpreprocess},
+        vae=vae_3,
+        **{'num_images.image_1': ltxvpreprocess, 'num_images.strength_1': num_images_strength_1},
     )
 
-    cfgguider = CFGGuider(cfg=1, positive=positive)
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-    cfgguider_2 = CFGGuider(cfg=1, positive=positive)
+    cfgguider = CFGGuider(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5098',
+        cfg=1,
+        model=model,
+        negative=negative,
+        positive=positive,
+    )
+
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5099',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
+
+    cfgguider_2 = CFGGuider(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5132',
+        cfg=1,
+        model=model_2,
+        negative=negative_2,
+        positive=positive,
+    )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5100',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5104',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
+        sampler=sampler,
+        sigmas=sigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
-    ltxvlatentupsampler = LTXVLatentUpsampler(samples=video_latent)
+    video_latent, audio_latent = LTXVSeparateAVLatent(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5085',
+        av_latent=output,
+    )
+
+    ltxvlatentupsampler = LTXVLatentUpsampler(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5086',
+        samples=video_latent,
+        upscale_model=upscale_model,
+        vae=vae,
+    )
 
     ltxvimgtovideoinplacekj_2 = LTXVImgToVideoInplaceKJ(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5130',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=ltxvlatentupsampler,
-        **{'num_images.image_1': resizeimagesbylongeredge},
+        vae=vae_4,
+        **{'num_images.image_1': resizeimagesbylongeredge, 'num_images.strength_1': num_images_strength_1_2},
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5131',
         audio_latent=audio_latent,
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5105',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
+        sampler=sampler_2,
+        sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+    video_latent_ltxv, _ = LTXVSeparateAVLatent(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5103',
         av_latent=output_sampler,
     )
 
-    vaedecode = VAEDecode(samples=video_latent_ltxv)
+    vaedecode = VAEDecode(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5121',
+        samples=video_latent_ltxv,
+        vae=vae_2,
+    )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    _, image_pass, _, _, _ = VRAM_Debug(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5112',
         image_pass=vaedecode,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=image_pass)
+    _, _, _, count = GetImageSizeAndCount(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5111',
+        image=image_pass,
+    )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
+        _id='a3fb563d-4711-4225-9210-fbe61b1bd79d:5110',
         **{'variables.a': frames_count, 'variables.b': count},
     )
 
@@ -600,9 +966,14 @@ def prompt_enhancer_50a3ed96(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='50a3ed96-aa61-4734-97cb-28cb47d171be:5213',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='50a3ed96-aa61-4734-97cb-28cb47d171be:5208',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -611,6 +982,7 @@ def prompt_enhancer_50a3ed96(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='50a3ed96-aa61-4734-97cb-28cb47d171be:5209',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -626,120 +998,230 @@ def generate_video_4acc9924(
     window_seconds,
     frames_count,
     ref_image,
+    upscale_model,
+    vae,
+    clip,
+    audio_vae,
+    model,
+    negative,
+    values_b,
+    variables_b,
+    width,
+    height,
+    audio,
+    vae_2,
+    clip_2,
+    un3912,
+    audio_2,
+    vae_3,
+    num_images_strength_1,
+    vae_4,
+    num_images_strength_1_2,
+    model_2,
+    negative_2,
+    sampler,
+    sigmas,
+    sampler_2,
+    sigmas_2,
 ):
     """Generate Video - single-image variant.
 
     Materialized from subgraph 4acc9924-c0bd-470a-b000-46c75e61d004 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json.
-    # vibecomfy source hash: sha256:30bbfa4e061b6ca2d043b7d5452ab5b30793bd37b4afdb53cc558cd4ba146e26
-    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, easy showAnything, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 50a3ed96-aa61-4734-97cb-28cb47d171be, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
+    # vibecomfy source hash: sha256:15e1174c0eeb3e4b46f8553675deed8c2ed2828151886bf61a1a1df15272cabf
+    Inner nodes: SolidMask, LTXVSeparateAVLatentx2, LTXVLatentUpsampler, CLIPTextEncode, LTXVAudioVAEEncode, CFGGuiderx2, SetLatentNoiseMask, LTXVConcatAVLatentx2, RandomNoisex2, SimpleCalculatorKJx2, GetImageSizeAndCount, VRAM_Debug, ComfyMathExpression, EmptyLTXVLatentVideo, TrimAudioDurationx2, VAEDecode, ResizeImageMaskNode, 50a3ed96-aa61-4734-97cb-28cb47d171be, LTXVPreprocess, ResizeImagesByLongerEdge, LTXVImgToVideoInplaceKJx2, SamplerCustomAdvancedx2.
     """
 
-    solidmask = SolidMask(value=0)
-    randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=noise_seed)
-    randomnoise_2 = RandomNoise(noise_seed=405, control_after_generate='fixed')
+    solidmask = SolidMask(_id='4acc9924-c0bd-470a-b000-46c75e61d004:5153', value=0)
 
-    comfy_float, comfy_int = ComfyMathExpression(
-        expression='a /  b ',
-        **{'values.a': frames_count},
+    randomnoise = RandomNoise(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5176',
+        control_after_generate='fixed',
+        noise_seed=noise_seed,
     )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    randomnoise_2 = RandomNoise(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5177',
+        noise_seed=405,
+        control_after_generate='fixed',
+    )
+
+    comfy_float, _ = ComfyMathExpression(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5188',
+        expression='a /  b ',
+        **{'values.a': frames_count, 'values.b': values_b},
+    )
+
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5191',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
-        **{'variables.a': window_seconds},
+        **{'variables.a': window_seconds, 'variables.b': variables_b},
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5197',
         resize_type='scale by multiplier',
         input=ref_image,
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5203',
         longer_edge=1536,
         images=ref_image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '5181', _outputs=('output',), anything=comfy_float)
-    emptyltxvlatentvideo = EmptyLTXVLatentVideo(length=calc_int_simple)
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5192',
+        width=width,
+        height=height,
+        length=calc_int_simple,
+    )
 
     trimaudioduration = TrimAudioDuration(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5194',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio,
     )
 
     prompt_enhancer_50a3ed96_result = prompt_enhancer_50a3ed96(
-        clip=None,
+        clip=['-10', 17],
         image=resizeimagemasknode,
-        enable=None,
+        enable=['-10', 18],
         prompt=['-10', 1],
     )
 
     trimaudioduration_2 = TrimAudioDuration(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5201',
         start_index=comfy_float,
         duration=window_seconds,
+        audio=audio_2,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
-    positive = CLIPTextEncode(text=prompt_enhancer_50a3ed96_result)
-    ltxvaudiovaeencode = LTXVAudioVAEEncode(audio=trimaudioduration)
+    ltxvpreprocess = LTXVPreprocess(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5202',
+        img_compression=18,
+        image=resizeimagesbylongeredge,
+    )
+
+    positive = CLIPTextEncode(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5162',
+        text=prompt_enhancer_50a3ed96_result,
+        clip=clip,
+    )
+
+    ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5169',
+        audio=trimaudioduration,
+        audio_vae=audio_vae,
+    )
 
     ltxvimgtovideoinplacekj = LTXVImgToVideoInplaceKJ(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5204',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=emptyltxvlatentvideo,
-        **{'num_images.image_1': ltxvpreprocess},
+        vae=vae_3,
+        **{'num_images.image_1': ltxvpreprocess, 'num_images.strength_1': num_images_strength_1},
     )
 
-    cfgguider = CFGGuider(cfg=1, positive=positive)
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-    cfgguider_2 = CFGGuider(cfg=1, positive=positive)
+    cfgguider = CFGGuider(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5173',
+        cfg=1,
+        model=model,
+        negative=negative,
+        positive=positive,
+    )
+
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5174',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
+
+    cfgguider_2 = CFGGuider(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5207',
+        cfg=1,
+        model=model_2,
+        negative=negative_2,
+        positive=positive,
+    )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5175',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5179',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
+        sampler=sampler,
+        sigmas=sigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
-    ltxvlatentupsampler = LTXVLatentUpsampler(samples=video_latent)
+    video_latent, audio_latent = LTXVSeparateAVLatent(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5160',
+        av_latent=output,
+    )
+
+    ltxvlatentupsampler = LTXVLatentUpsampler(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5161',
+        samples=video_latent,
+        upscale_model=upscale_model,
+        vae=vae,
+    )
 
     ltxvimgtovideoinplacekj_2 = LTXVImgToVideoInplaceKJ(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5205',
         num_images='1',
         strength_1=1,
         index_1=0,
         latent=ltxvlatentupsampler,
-        **{'num_images.image_1': resizeimagesbylongeredge},
+        vae=vae_4,
+        **{'num_images.image_1': resizeimagesbylongeredge, 'num_images.strength_1': num_images_strength_1_2},
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5206',
         audio_latent=audio_latent,
         video_latent=ltxvimgtovideoinplacekj_2,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5180',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
+        sampler=sampler_2,
+        sigmas=sigmas_2,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+    video_latent_ltxv, _ = LTXVSeparateAVLatent(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5178',
         av_latent=output_sampler,
     )
 
-    vaedecode = VAEDecode(samples=video_latent_ltxv)
+    vaedecode = VAEDecode(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5196',
+        samples=video_latent_ltxv,
+        vae=vae_2,
+    )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    _, image_pass, _, _, _ = VRAM_Debug(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5187',
         image_pass=vaedecode,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=image_pass)
+    _, _, _, count = GetImageSizeAndCount(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5186',
+        image=image_pass,
+    )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
+        _id='4acc9924-c0bd-470a-b000-46c75e61d004:5185',
         **{'variables.a': frames_count, 'variables.b': count},
     )
 
@@ -750,7 +1232,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='download (8).png')
+    image, _ = LoadImage(image='download (8).png')
     intconstant = INTConstant(value=1000)
 
     # Loaders
@@ -788,7 +1270,7 @@ def build() -> VibeWorkflow:
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1600', model=MEL_BAND_ROFORMER_NAME)
     intconstant_3 = INTConstant(value=832)
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.a': 11.0, 'variables.b': 25.0},
     )
@@ -805,7 +1287,13 @@ def build() -> VibeWorkflow:
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    total_duration_result = total_duration()
+    total_duration_result = total_duration(
+        variables_a=['2012', 0],
+        variables_b=['1997', 0],
+        variables_c=['5071', 0],
+        variables_d=['5146', 0],
+        variables_e=['5221', 0],
+    )
 
     stringconcatenate = StringConcatenate(
         string_a='MusicVideo',
@@ -819,12 +1307,12 @@ def build() -> VibeWorkflow:
         delimiter=VALUE,
     )
 
-    image_load, mask_load = LoadImage(image='download (1).png')
-    image_load_2, mask_load_2 = LoadImage(image='download (6).png')
-    image_load_3, mask_load_3 = LoadImage(image='download (2).png')
-    image_load_4, mask_load_4 = LoadImage(image='download (12).png')
+    image_load, _ = LoadImage(image='download (1).png')
+    image_load_2, _ = LoadImage(image='download (6).png')
+    image_load_3, _ = LoadImage(image='download (2).png')
+    image_load_4, _ = LoadImage(image='download (12).png')
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
@@ -838,8 +1326,6 @@ def build() -> VibeWorkflow:
         strength_model=GUIDE_STRENGTH,
         model=unetloader,
     )
-
-    easy_showanything = raw_call('easy showAnything', '1596', anything=total_duration_result)
 
     trimaudioduration = TrimAudioDuration(
         start_index=11,
@@ -878,7 +1364,6 @@ def build() -> VibeWorkflow:
         images=image_image,
     )
 
-    easy_showanything_3 = raw_call('easy showAnything', '4744', anything=stringconcatenate_2)
     ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
     ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
 
@@ -888,11 +1373,11 @@ def build() -> VibeWorkflow:
         on_true=melbandroformersampler.out(0),
     )
 
-    width_get, height_get, batch_size = GetImageSize(image=resizeimagemasknode)
+    width_get, height_get, _ = GetImageSize(image=resizeimagemasknode)
     prompt_enhancer_3bd4eeb9_result = prompt_enhancer_3bd4eeb9(
         clip=dualcliploader,
         image=resizeimagesbylongeredge,
-        enable=None,
+        enable=False,
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is walking through a mystical dreamy forrest, tracking camera as she walks towards the viewer. \nThe camera pulls away slowly keeping same distance to the woman. \n\nCinematic, volumetric lights, shadow play. \n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
     )
 
@@ -910,7 +1395,6 @@ def build() -> VibeWorkflow:
     )
 
     trimaudioduration_2 = TrimAudioDuration(duration=11.0, audio=comfyswitchnode)
-    easy_showanything_2 = raw_call('easy showAnything', '2112', anything=prompt_enhancer_3bd4eeb9_result)
 
     positive, negative = LTXVConditioning(
         negative=cliptextencode_2,
@@ -922,7 +1406,7 @@ def build() -> VibeWorkflow:
         audio_vae=vaeloaderkj,
     )
 
-    model, clip = Power_Lora_Loader_rgthree(
+    model, _ = Power_Lora_Loader_rgthree(
         lora_1={'on': False, 'lora': 'LTX\\LTX-2\\LTX-2-Image2Vid-Adapter.safetensors', 'strength': 0.3, 'strengthTwo': None},
         lora_2={'on': False, 'lora': 'LTX\\v2\\ltx-2-19b-lora-camera-control-dolly-out.safetensors', 'strength': 0.3, 'strengthTwo': None},
         model=ltx2attentiontunerpatch,
@@ -972,7 +1456,7 @@ def build() -> VibeWorkflow:
         model=modelsamplingsd3,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -1006,7 +1490,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -1014,15 +1498,12 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output_sampler)
+    video_latent, _ = LTXVSeparateAVLatent(av_latent=output_sampler)
 
     # Decode
     vaedecode = VAEDecode(samples=video_latent, vae=vaeloader)
-    image_get, width_get_2, height_get_2, count = GetImageSizeAndCount(image=vaedecode)
-
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
-        image_pass=vaedecode,
-    )
+    GetImageSizeAndCount(image=vaedecode)
+    _, image_pass, _, _, _ = VRAM_Debug(image_pass=vaedecode)
 
     # Outputs
     vhs_videocombine_3 = VHS_VideoCombine(
@@ -1038,16 +1519,38 @@ def build() -> VibeWorkflow:
         images=vaedecode,
     )
 
-    image_get_2, width_get_3, height_get_3, count_get = GetImageSizeAndCount(
-        image=image_pass,
-    )
-
+    _, _, _, count_get = GetImageSizeAndCount(image=image_pass)
     int_2, output_1_2, audio_2 = generate_video_c4106aee(
         noise_seed=1021,
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is walking through a romantic greenhouse with flowers and warm light, tracking camera as she walks towards the viewer.\n\nShe sings the lyrics: "I type a whisper, watch it bloom. In pixel fog and quiet rooms. A hundred frames begin to breathe. While melodies I couldn’t weave" \n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=10.0,
         frames_count=count_get,
         ref_image=image_load,
+        upscale_model=latentupscalemodelloader,
+        vae=vaeloader,
+        clip=dualcliploader,
+        audio_vae=vaeloaderkj,
+        model=ltx2_nag,
+        negative=negative,
+        sampler=ksamplerselect,
+        sigmas=manualsigmas,
+        values_b=['1586', 0],
+        variables_b=['1586', 0],
+        width=width_get,
+        height=height_get,
+        audio=comfyswitchnode,
+        vae_2=vaeloader,
+        clip_2=dualcliploader,
+        un3912=['2116', 0],
+        audio_2=trimaudioduration,
+        vae_3=vaeloader,
+        num_images_strength_1=['1722', 0],
+        vae_4=vaeloader,
+        num_images_strength_1_2=['1722', 0],
+        model_2=ltx2_nag,
+        negative_2=negative,
+        sampler_2=ksamplerselect_2,
+        sigmas_2=manualsigmas_2,
     )
 
     vhs_videocombine = VHS_VideoCombine(
@@ -1069,6 +1572,31 @@ def build() -> VibeWorkflow:
         window_seconds=18.0,
         frames_count=int_2,
         ref_image=image_load_2,
+        upscale_model=latentupscalemodelloader,
+        vae=vaeloader,
+        clip=dualcliploader,
+        audio_vae=vaeloaderkj,
+        model=ltx2_nag,
+        negative=negative,
+        values_b=['1586', 0],
+        variables_b=['1586', 0],
+        width=width_get,
+        height=height_get,
+        audio=comfyswitchnode,
+        vae_2=vaeloader,
+        clip_2=dualcliploader,
+        un3912=['2116', 0],
+        audio_2=trimaudioduration,
+        vae_3=vaeloader,
+        num_images_strength_1=['1722', 0],
+        vae_4=vaeloader,
+        num_images_strength_1_2=['1722', 0],
+        model_2=ltx2_nag,
+        negative_2=negative,
+        sampler=ksamplerselect_2,
+        sigmas=manualsigmas_2,
+        sampler_2=ksamplerselect,
+        sigmas_2=manualsigmas,
     )
 
     vhs_videocombine_4 = VHS_VideoCombine(
@@ -1090,6 +1618,31 @@ def build() -> VibeWorkflow:
         window_seconds=15.0,
         frames_count=int,
         ref_image=image_load_3,
+        upscale_model=latentupscalemodelloader,
+        vae=vaeloader,
+        clip=dualcliploader,
+        audio_vae=vaeloaderkj,
+        model=ltx2_nag,
+        negative=negative,
+        values_b=['1586', 0],
+        variables_b=['1586', 0],
+        width=width_get,
+        height=height_get,
+        audio=comfyswitchnode,
+        vae_2=vaeloader,
+        clip_2=dualcliploader,
+        un3912=['2116', 0],
+        audio_2=trimaudioduration,
+        vae_3=vaeloader,
+        num_images_strength_1=['1722', 0],
+        vae_4=vaeloader,
+        num_images_strength_1_2=['1722', 0],
+        model_2=ltx2_nag,
+        negative_2=negative,
+        sampler=ksamplerselect_2,
+        sigmas=manualsigmas_2,
+        sampler_2=ksamplerselect,
+        sigmas_2=manualsigmas,
     )
 
     vhs_videocombine_5 = VHS_VideoCombine(
@@ -1111,6 +1664,31 @@ def build() -> VibeWorkflow:
         window_seconds=10.0,
         frames_count=int_3,
         ref_image=image_load_4,
+        upscale_model=latentupscalemodelloader,
+        vae=vaeloader,
+        clip=dualcliploader,
+        audio_vae=vaeloaderkj,
+        model=ltx2_nag,
+        negative=negative,
+        values_b=['1586', 0],
+        variables_b=['1586', 0],
+        width=width_get,
+        height=height_get,
+        audio=comfyswitchnode,
+        vae_2=vaeloader,
+        clip_2=dualcliploader,
+        un3912=['2116', 0],
+        audio_2=trimaudioduration,
+        vae_3=vaeloader,
+        num_images_strength_1=['1722', 0],
+        vae_4=vaeloader,
+        num_images_strength_1_2=['1722', 0],
+        model_2=ltx2_nag,
+        negative_2=negative,
+        sampler=ksamplerselect_2,
+        sigmas=manualsigmas_2,
+        sampler_2=ksamplerselect,
+        sigmas_2=manualsigmas,
     )
 
     vhs_videocombine_6 = VHS_VideoCombine(
@@ -1126,7 +1704,7 @@ def build() -> VibeWorkflow:
         images=output_1_4,
     )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
         expression='a + 100',
         **{'variables.a': int_4},
     )

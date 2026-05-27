@@ -36,24 +36,60 @@ def text_to_image_flux2_klein_4b(
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
     """
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
-    flux2scheduler = Flux2Scheduler()
-    emptyflux2latentimage = EmptyFlux2LatentImage()
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
-    randomnoise = RandomNoise(control_after_generate='randomize')
-    negative = CLIPTextEncode(text='', clip=cliploader)
-    positive = CLIPTextEncode(text=prompt, clip=cliploader)
+    ksamplerselect = KSamplerSelect(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:61',
+        sampler_name='euler',
+    )
+
+    flux2scheduler = Flux2Scheduler(_id='7b34ab90-36f9-45ba-a665-71d418f0df18:62')
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:66',
+    )
+
+    unetloader = UNETLoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:70',
+        unet_name=unet_name,
+    )
+
+    cliploader = CLIPLoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:71',
+        type_='flux2',
+        clip_name=clip_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:72',
+        vae_name=vae_name,
+    )
+
+    randomnoise = RandomNoise(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:73',
+        control_after_generate='randomize',
+    )
+
+    negative = CLIPTextEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:67',
+        text='',
+        clip=cliploader,
+    )
+
+    positive = CLIPTextEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:74',
+        text=prompt,
+        clip=cliploader,
+    )
 
     cfgguider = CFGGuider(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:63',
         cfg=5,
         model=unetloader,
         negative=negative,
         positive=positive,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -61,7 +97,11 @@ def text_to_image_flux2_klein_4b(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:65',
+        samples=output,
+        vae=vaeloader,
+    )
 
     return vaedecode
 
@@ -82,29 +122,63 @@ def text_to_image_flux2_klein_4b_distilled(
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, RandomNoise, UNETLoader, CLIPLoader, VAELoader, CFGGuider, ConditioningZeroOut, CLIPTextEncode, Flux2Scheduler.
     """
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
-    flux2scheduler = Flux2Scheduler(steps=4)
-    emptyflux2latentimage = EmptyFlux2LatentImage()
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
+    ksamplerselect = KSamplerSelect(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:61',
+        sampler_name='euler',
+    )
+
+    flux2scheduler = Flux2Scheduler(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:62',
+        steps=4,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:66',
+    )
+
+    unetloader = UNETLoader(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:70',
+        unet_name=unet_name,
+    )
+
+    cliploader = CLIPLoader(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:71',
+        type_='flux2',
+        clip_name=clip_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:72',
+        vae_name=vae_name,
+    )
 
     randomnoise = RandomNoise(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:73',
         noise_seed=432262096973490,
         control_after_generate='randomize',
     )
 
-    positive = CLIPTextEncode(text=prompt, clip=cliploader)
-    conditioningzeroout = ConditioningZeroOut(conditioning=positive)
+    positive = CLIPTextEncode(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:74',
+        text=prompt,
+        clip=cliploader,
+    )
+
+    conditioningzeroout = ConditioningZeroOut(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:76',
+        conditioning=positive,
+    )
 
     cfgguider = CFGGuider(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:63',
         cfg=1,
         model=unetloader,
         negative=conditioningzeroout,
         positive=positive,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -112,7 +186,11 @@ def text_to_image_flux2_klein_4b_distilled(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='a67caa28-5f85-4917-8396-36004960dd30:65',
+        samples=output,
+        vae=vaeloader,
+    )
 
     return vaedecode
 
@@ -121,7 +199,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     edited = text_to_image_flux2_klein_4b(
-        value=None,
+        value='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
         value_1=None,
         unet_name='flux-2-klein-base-4b.safetensors',
         clip_name='qwen_3_4b.safetensors',
@@ -129,7 +207,7 @@ def build() -> VibeWorkflow:
         prompt='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
     )
     edited_2 = text_to_image_flux2_klein_4b_distilled(
-        value=None,
+        value='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
         value_1=None,
         unet_name='flux-2-klein-4b.safetensors',
         clip_name='qwen_3_4b.safetensors',

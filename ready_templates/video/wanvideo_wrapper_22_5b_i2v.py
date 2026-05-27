@@ -54,7 +54,7 @@ def build() -> VibeWorkflow:
     cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
 
     # Inputs
-    image, mask = LoadImage(image='image (658).png')
+    image, _ = LoadImage(image='image (658).png')
 
     wanvideoexperimentalargs = WanVideoExperimentalArgs(
         cfg_zero_star=True,
@@ -75,7 +75,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, width, height, _ = ImageResizeKJv2(
         width=1024,
         height=1024,
         upscale_method='lanczos',
@@ -114,7 +114,7 @@ def build() -> VibeWorkflow:
         extra_latents=wanvideoencode,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,

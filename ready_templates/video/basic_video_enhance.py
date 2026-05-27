@@ -20,10 +20,7 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    image, frame_count, audio, video_info = VHS_LoadVideo(
-        video='video_enhance_input.mp4',
-    )
-
+    image, _, audio, _ = VHS_LoadVideo(video='video_enhance_input.mp4')
     imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
 
     vhs_videocombine = VHS_VideoCombine(

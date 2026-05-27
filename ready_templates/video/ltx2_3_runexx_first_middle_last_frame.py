@@ -37,7 +37,7 @@ V_0_0_0 = '0, 0, 0'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='2070', field='_un3681', default=True),
+    'enhance_prompt': InputSpec(node='8fa4f93a-67ee-463f-ba43-249580c0bfb1:2002', field='switch', default=True),
     'middleframe_strength': InputSpec(node='2221', field='num_guides.strength_2', default=0.3),
     'seed': InputSpec(node='14', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'image': InputSpec(node='45', field='image', default='sodacan_01.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
@@ -65,12 +65,17 @@ def prompt_enhancer(
 
     Materialized from subgraph 8fa4f93a-67ee-463f-ba43-249580c0bfb1 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json.
     # vibecomfy source hash: sha256:f7decba5226c83eccee67a82fbe95fe22ddddfe9389c6c8c8517bb991d181343
-    Inner nodes: StringConcatenate, ComfySwitchNode, easy showAnything, TextGenerateLTX2Prompt.
+    Inner nodes: StringConcatenate, ComfySwitchNode, TextGenerateLTX2Prompt.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:482',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:485',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -78,9 +83,8 @@ def prompt_enhancer(
         image=image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '486', _outputs=('output',), anything=textgenerateltx2prompt)
-
     comfyswitchnode = ComfySwitchNode(
+        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:2002',
         switch=enabled,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -89,19 +93,38 @@ def prompt_enhancer(
     return comfyswitchnode
 
 
-def frames_split_view():
+def frames_split_view(
+    *,
+    input,
+    input_2,
+    input_3,
+):
     """Frames split view.
 
     Materialized from subgraph 19e3f7e8-881c-4a61-a360-1c463734043a in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FML2V_First_Middle_Last_Frame_guider.json.
-    # vibecomfy source hash: sha256:e8f801460bc6a136143dc6602bd74dfd0225b835445ecb780ffcd3096970bbad
+    # vibecomfy source hash: sha256:ebeead8835c000544cea05b6274b184a0df126dcb6673c1779942713de402561
     Inner nodes: ResizeImageMaskNodex3, ImagePadForOutpaintx2, ImageStitchx2.
     """
 
-    resizeimagemasknode = ResizeImageMaskNode(resize_type='scale by multiplier')
-    resizeimagemasknode_2 = ResizeImageMaskNode(resize_type='scale by multiplier')
-    resizeimagemasknode_3 = ResizeImageMaskNode(resize_type='scale by multiplier')
+    resizeimagemasknode = ResizeImageMaskNode(
+        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2092',
+        resize_type='scale by multiplier',
+        input=input,
+    )
 
-    imagepadforoutpaint = raw_call('ImagePadForOutpaint', '2098',
+    resizeimagemasknode_2 = ResizeImageMaskNode(
+        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2099',
+        resize_type='scale by multiplier',
+        input=input_2,
+    )
+
+    resizeimagemasknode_3 = ResizeImageMaskNode(
+        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2179',
+        resize_type='scale by multiplier',
+        input=input_3,
+    )
+
+    imagepadforoutpaint = raw_call('ImagePadForOutpaint', '19e3f7e8-881c-4a61-a360-1c463734043a:2098',
         _outputs=('IMAGE', 'MASK'),
         left=16,
         top=16,
@@ -111,7 +134,7 @@ def frames_split_view():
         image=resizeimagemasknode,
     )
 
-    imagepadforoutpaint_2 = raw_call('ImagePadForOutpaint', '2100',
+    imagepadforoutpaint_2 = raw_call('ImagePadForOutpaint', '19e3f7e8-881c-4a61-a360-1c463734043a:2100',
         _outputs=('IMAGE', 'MASK'),
         left=16,
         top=16,
@@ -121,12 +144,15 @@ def frames_split_view():
         image=resizeimagemasknode_2,
     )
 
-    imagestitch = raw_call('ImageStitch', '2085',
+    imagestitch = raw_call('ImageStitch', '19e3f7e8-881c-4a61-a360-1c463734043a:2085',
         image1=imagepadforoutpaint_2.out('IMAGE'),
         image2=imagepadforoutpaint.out('IMAGE'),
     )
 
-    imagestitch_2 = raw_call('ImageStitch', '2178', image1=imagestitch, image2=resizeimagemasknode_3)
+    imagestitch_2 = raw_call('ImageStitch', '19e3f7e8-881c-4a61-a360-1c463734043a:2178',
+        image1=imagestitch,
+        image2=resizeimagemasknode_3,
+    )
 
     return imagestitch_2
 
@@ -142,9 +168,9 @@ def build() -> VibeWorkflow:
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image_load, mask_load = LoadImage(image='sodacan_01.png')
-    image_load_2, mask_load_2 = LoadImage(image='image (11).png')
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(expression='a', a=24.0)
+    image_load, _ = LoadImage(image='sodacan_01.png')
+    image_load_2, _ = LoadImage(image='image (11).png')
+    _, calc_int, _ = SimpleCalculatorKJ(expression='a', a=24.0)
 
     vaeloaderkj = VAELoaderKJ(
         vae_name=AUDIO_VAE_NAME,
@@ -185,13 +211,12 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=15)
     intconstant_2 = INTConstant(value=720)
     intconstant_3 = INTConstant(value=1280)
-    frames_split_view_result = frames_split_view()
-    image_load_3, mask_load_3 = LoadImage(image='image (12).png')
+    image_load_3, _ = LoadImage(image='image (12).png')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
 
-    image, width, height, mask = ImageResizeKJv2(
+    image, width, height, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         divisible_by=32,
@@ -207,25 +232,15 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    prompt_enhancer_result = prompt_enhancer(
-        clip=dualcliploader,
-        image=frames_split_view_result,
-        enabled=None,
-        prompt='Make this come alive with cinematic motion, smooth animation. \n\nThe scene starts with a close up of an LTX soda can with ic cubes around it. \n\nAll of a suddent an arm comes into frame and grabs the soda can, and lifts the soda can up. \n\nCamera pans up smoothly to show a woman holding the soda can. She talks with a soft British voice, and she says :" An LTX a day, keeps the doctor away". Then she laghts, and finally she drinks from the soda can. ',
-    )
-
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         b=24.0,
         a=intconstant,
     )
 
-    comfy_float, comfy_int = ComfyMathExpression(
-        expression='a/2',
-        **{'values.a': intconstant_3},
-    )
+    _, comfy_int = ComfyMathExpression(expression='a/2', **{'values.a': intconstant_3})
 
-    comfy_float_comfy, comfy_int_comfy = ComfyMathExpression(
+    _, comfy_int_comfy = ComfyMathExpression(
         expression='a/2',
         **{'values.a': intconstant_2},
     )
@@ -236,15 +251,13 @@ def build() -> VibeWorkflow:
         audio_vae=vaeloaderkj,
     )
 
-    cliptextencode_2 = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
-
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
         width=comfy_int,
         height=comfy_int_comfy,
         length=calc_int_simple,
     )
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, width_image, height_image, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         divisible_by=32,
@@ -264,15 +277,9 @@ def build() -> VibeWorkflow:
         images=image,
     )
 
-    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
+    _, calc_int_simple_2, _ = SimpleCalculatorKJ(
         expression=A_2,
         **{'variables.a': calc_int_simple},
-    )
-
-    positive, negative = LTXVConditioning(
-        frame_rate=24.0,
-        negative=cliptextencode,
-        positive=cliptextencode_2,
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
@@ -289,7 +296,7 @@ def build() -> VibeWorkflow:
         image=resizeimagesbylongeredge_2,
     )
 
-    image_image_2, width_image_2, height_image_2, mask_image_2 = ImageResizeKJv2(
+    image_image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         divisible_by=32,
@@ -319,7 +326,32 @@ def build() -> VibeWorkflow:
     )
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(model=ltxvchunkfeedforward)
-    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
+    frames_split_view_result = frames_split_view(
+        input=resizeimagesbylongeredge_3,
+        input_2=resizeimagesbylongeredge_2,
+        input_3=resizeimagesbylongeredge_2,
+    )
+    prompt_enhancer_result = prompt_enhancer(
+        clip=dualcliploader,
+        image=frames_split_view_result,
+        enabled=True,
+        prompt='Make this come alive with cinematic motion, smooth animation. \n\nThe scene starts with a close up of an LTX soda can with ic cubes around it. \n\nAll of a suddent an arm comes into frame and grabs the soda can, and lifts the soda can up. \n\nCamera pans up smoothly to show a woman holding the soda can. She talks with a soft British voice, and she says :" An LTX a day, keeps the doctor away". Then she laghts, and finally she drinks from the soda can. ',
+    )
+    model, _ = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
+    cliptextencode_2 = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198', model=model, vae=vaeloader)
+
+    positive, negative = LTXVConditioning(
+        frame_rate=24.0,
+        negative=cliptextencode,
+        positive=cliptextencode_2,
+    )
+
+    ltx2_nag = LTX2_NAG(
+        model=ltx2samplingpreviewoverride,
+        nag_cond_audio=cliptextencode,
+        nag_cond_video=cliptextencode,
+    )
 
     positive_ltxv_3, negative_ltxv_3, latent_ltxv_2 = LTXVAddGuideMulti(
         widget_0='3',
@@ -341,15 +373,6 @@ def build() -> VibeWorkflow:
         video_latent=latent_ltxv_2,
     )
 
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198', model=model, vae=vaeloader)
-    ltxvscheduler = LTXVScheduler(steps=8, latent=ltxvconcatavlatent)
-
-    ltx2_nag = LTX2_NAG(
-        model=ltx2samplingpreviewoverride,
-        nag_cond_audio=cliptextencode,
-        nag_cond_video=cliptextencode,
-    )
-
     cfgguider_2 = CFGGuider(
         cfg=GUIDE_STRENGTH_2,
         model=ltx2_nag,
@@ -357,7 +380,9 @@ def build() -> VibeWorkflow:
         positive=positive_ltxv_3,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    ltxvscheduler = LTXVScheduler(steps=8, latent=ltxvconcatavlatent)
+
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -404,7 +429,7 @@ def build() -> VibeWorkflow:
         video_latent=latent_ltxv,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -421,7 +446,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv, negative_ltxv, latent = LTXVCropGuides(
+    _, _, latent = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=negative_ltxv_2,
         positive=positive_ltxv_2,

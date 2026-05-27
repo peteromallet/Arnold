@@ -67,17 +67,17 @@ def build() -> VibeWorkflow:
         audio='NieR_ Automata - _Weight of the World_ ENG VER. by Lizz Robinett [CyOSTbel3AM].mp3',
     )
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
-    image_load, mask = LoadImage(image='2b.jpg')
+    image_load, _ = LoadImage(image='2b.jpg')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MEL_BAND_ROFORMER_NAME)
     wanvideocontextoptions = WanVideoContextOptions(context_schedule='uniform_standard')
-    audio, duration = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
+    audio, _ = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
 
     downloadandloadgimmvfimodel = raw_call('DownloadAndLoadGIMMVFIModel', '95',
         widget_0=WIDGET__NAME,
@@ -93,7 +93,7 @@ def build() -> VibeWorkflow:
         compile_args=wanvideotorchcompilesettings,
     )
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, width_image, height_image, _ = ImageResizeKJv2(
         width=960,
         height=640,
         upscale_method='lanczos',
@@ -140,7 +140,7 @@ def build() -> VibeWorkflow:
         audio_encoder=audioencoderloader,
     )
 
-    image_embeds, audio_frame_count = WanVideoAddS2VEmbeds(
+    image_embeds, _ = WanVideoAddS2VEmbeds(
         audio_scale=0,
         frame_window_size=201,
         pose_end_percent=False,
@@ -152,7 +152,7 @@ def build() -> VibeWorkflow:
         ref_latent=wanvideoencode,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=4,
         cfg=GUIDE_STRENGTH,
         shift=4,
@@ -176,8 +176,8 @@ def build() -> VibeWorkflow:
         source=wanvideoencode,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=wanvideodecode)
-    image_a, a_count, image_b, b_count = VHS_SplitImages(split_index=3, images=image)
+    image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    _, _, image_b, _ = VHS_SplitImages(split_index=3, images=image)
 
     gimmvfi_interpolate = raw_call('GIMMVFI_interpolate', '96',
         widget_0=1,
@@ -204,7 +204,7 @@ def build() -> VibeWorkflow:
         images=image_b,
     )
 
-    image_select, count_select = VHS_SelectEveryNthImage(
+    image_select, _ = VHS_SelectEveryNthImage(
         select_every_nth=2,
         images=gimmvfi_interpolate.out(0),
     )

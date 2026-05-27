@@ -66,10 +66,10 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='pasted/image (758).png', widget_2='')
+    image, _ = LoadImage(image='pasted/image (758).png', widget_2='')
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
-    image_load, frame_count, audio, video_info = VHS_LoadVideo(
+    image_load, _, _, _ = VHS_LoadVideo(
         video='wolf_interpolated.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
@@ -92,7 +92,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image_2, width_image, height_image = ImageResizeKJ(
+    image_image_2, _, _ = ImageResizeKJ(
         width=640,
         height='lanczos',
         upscale_method=False,
@@ -177,7 +177,7 @@ def build() -> VibeWorkflow:
         control_embeds=wanvideocontrolembeds,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=25,
         seed=DEFAULT_SEED,
         batched_cfg='',

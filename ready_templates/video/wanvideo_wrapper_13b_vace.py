@@ -89,10 +89,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(
-        image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-0.webp',
-    )
-
+    image, _ = LoadImage(image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-0.webp')
     wanvideoexperimentalargs = WanVideoExperimentalArgs(cfg_zero_star=True)
 
     wanvideoslg = WanVideoSLG(
@@ -101,7 +98,7 @@ def build() -> VibeWorkflow:
         end_percent=0.7000000000000002,
     )
 
-    image_load, mask_load = LoadImage(
+    image_load, _ = LoadImage(
         image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-3.webp',
     )
 
@@ -118,9 +115,9 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoexperimentalargs_2 = WanVideoExperimentalArgs(cfg_zero_star=True)
-    image_load_2, mask_load_2 = LoadImage(image='hunhyuanwolf.png')
+    image_load_2, _ = LoadImage(image='hunhyuanwolf.png')
 
-    image_load_3, frame_count, audio, video_info = VHS_LoadVideo(
+    image_load_3, frame_count, _, _ = VHS_LoadVideo(
         video=WOLF_INTERPOLATED_MP4,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': IMAGE},
@@ -138,7 +135,7 @@ def build() -> VibeWorkflow:
 
     wanvideoexperimentalargs_3 = WanVideoExperimentalArgs(cfg_zero_star=True)
 
-    image_load_4, frame_count_load, audio_load, video_info_load = VHS_LoadVideo(
+    image_load_4, _, _, _ = VHS_LoadVideo(
         video=WOLF_INTERPOLATED_MP4,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': IMAGE},
@@ -158,21 +155,21 @@ def build() -> VibeWorkflow:
         vace_model=wanvideovacemodelselect,
     )
 
-    images_image, masks_image = ImagePadKJ(
+    images_image, _ = ImagePadKJ(
         bottom=128,
         extra_padding=COLOR,
         pad_mode='255,255,255',
         image=image_load_2,
     )
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
         image=image_load_4,
     )
 
-    image_image_2, width_image_2, height_image_2, mask_image_2 = ImageResizeKJv2(
+    image_image_2, width_image_2, height_image_2, _ = ImageResizeKJv2(
         width=640,
         height=640,
         upscale_method=LANCZOS,
@@ -182,7 +179,7 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    image_image_4, width_image_4, height_image_4, mask_image_4 = ImageResizeKJv2(
+    image_image_4, width_image_4, height_image_4, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
@@ -235,7 +232,7 @@ def build() -> VibeWorkflow:
         image=image_image,
     )
 
-    image_image_3, width_image_3, height_image_3, mask_image_3 = ImageResizeKJv2(
+    image_image_3, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
@@ -245,7 +242,7 @@ def build() -> VibeWorkflow:
         image=image_load,
     )
 
-    image_image_5, width_image_5, height_image_5, mask_image_5 = ImageResizeKJv2(
+    image_image_5, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=PAD,
         pad_color=V_255_255_255,
@@ -255,7 +252,7 @@ def build() -> VibeWorkflow:
         image=images_image,
     )
 
-    image_image_6, width_image_6, height_image_6, mask_image_6 = ImageResizeKJv2(
+    image_image_6, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=PAD,
         pad_color=V_255_255_255,
@@ -338,8 +335,8 @@ def build() -> VibeWorkflow:
         image=images_image_2,
     )
 
-    image_get_7, mask_get = GetImageRangeFromBatch(images=images_image_2)
-    image_get_8, mask_get_2 = GetImageRangeFromBatch(masks=masks_image_2)
+    image_get_7, _ = GetImageRangeFromBatch(images=images_image_2)
+    _, mask_get_2 = GetImageRangeFromBatch(masks=masks_image_2)
 
     images_wan, masks_wan = WanVideoVACEStartToEndFrame(
         empty_frame_level=0.5000000000000001,
@@ -417,7 +414,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    samples_wan_2, denoised_samples_wan_2 = WanVideoSampler(
+    samples_wan_2, _ = WanVideoSampler(
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -431,7 +428,7 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode_3,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -445,7 +442,7 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    samples_wan, denoised_samples_wan = WanVideoSampler(
+    samples_wan, _ = WanVideoSampler(
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -461,19 +458,9 @@ def build() -> VibeWorkflow:
     wanvideodecode_3 = WanVideoDecode(samples=samples_wan_2, vae=wanvideovaeloader)
     wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
     wanvideodecode_2 = WanVideoDecode(samples=samples_wan, vae=wanvideovaeloader)
-
-    image_get_5, width_get_4, height_get_4, count_get_4 = GetImageSizeAndCount(
-        image=wanvideodecode_3,
-    )
-
-    image_get_2, width_get, height_get, count_get = GetImageSizeAndCount(
-        image=wanvideodecode,
-    )
-
-    image_get_4, width_get_3, height_get_3, count_get_3 = GetImageSizeAndCount(
-        image=wanvideodecode_2,
-    )
-
+    image_get_5, _, height_get_4, _ = GetImageSizeAndCount(image=wanvideodecode_3)
+    image_get_2, _, height_get, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_get_4, _, height_get_3, _ = GetImageSizeAndCount(image=wanvideodecode_2)
     emptyimage_3 = EmptyImage(width=8, height=height_get_4)
     emptyimage = EmptyImage(width=8, height=height_get)
     emptyimage_2 = EmptyImage(width=8, height=height_get_3)

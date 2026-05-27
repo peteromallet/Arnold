@@ -68,9 +68,9 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png')
+    image, _ = LoadImage(image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png')
 
-    audio, duration = VHS_LoadAudioUpload(
+    audio, _ = VHS_LoadAudioUpload(
         audio='It’s only Rock and roll.mp3',
         audiopreview={'params': {'start_time': 38, 'duration': 28, 'filename': 'It’s only Rock and roll.mp3', 'type': 'input'}},
         duration=28,
@@ -313,7 +313,7 @@ def build() -> VibeWorkflow:
         cursor_frames_in=iamccs_audiotimelinegate_2.out(3),
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -361,7 +361,7 @@ def build() -> VibeWorkflow:
         remaining_frames_after=iamccs_audioextensionmath_3.out(7),
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
+    video_latent, _ = LTXVSeparateAVLatent(av_latent=output)
 
     ltxvaudiovaeencode_3 = LTXVAudioVAEEncode(
         audio=iamccs_audioextender_3.out(0),
@@ -424,7 +424,7 @@ def build() -> VibeWorkflow:
         video_latent=iamccs_startdirtovideolatent.out(0),
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -432,9 +432,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-        av_latent=output_sampler,
-    )
+    video_latent_ltxv, _ = LTXVSeparateAVLatent(av_latent=output_sampler)
 
     iamccs_vaedecodetodisk_2 = raw_call('IAMCCS_VAEDecodeToDisk', '61',
         widget_0='iamccs_vae_frames/30s_free_low_ram/seg1',
@@ -488,7 +486,7 @@ def build() -> VibeWorkflow:
         video_latent=iamccs_startdirtovideolatent_2.out(0),
     )
 
-    output_sampler_2, denoised_output_sampler_2 = SamplerCustomAdvanced(
+    output_sampler_2, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_3,
         noise=randomnoise_3,
@@ -496,9 +494,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent_ltxv_2, audio_latent_ltxv_2 = LTXVSeparateAVLatent(
-        av_latent=output_sampler_2,
-    )
+    video_latent_ltxv_2, _ = LTXVSeparateAVLatent(av_latent=output_sampler_2)
 
     iamccs_vaedecodetodisk_3 = raw_call('IAMCCS_VAEDecodeToDisk', '62',
         widget_0='iamccs_vae_frames/30s_free_low_ram/seg2',

@@ -83,9 +83,9 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='refer.jpeg')
+    image, _ = LoadImage(image='refer.jpeg')
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
@@ -127,7 +127,7 @@ def build() -> VibeWorkflow:
         compile_args=wanvideotorchcompilesettings,
     )
 
-    image_load, frame_count, audio, video_info = VHS_LoadVideo(
+    image_load, frame_count, audio, _ = VHS_LoadVideo(
         video='raw.mp4',
         force_rate=16,
         videopreview={'hidden': False, 'params': {'custom_height': 544, 'custom_width': 960, 'filename': 'raw.mp4', 'force_rate': 16, 'format': 'video/mp4', 'frame_load_cap': 0, 'select_every_nth': 1, 'skip_first_frames': 0, 'type': 'input'}, 'paused': False},
@@ -136,7 +136,7 @@ def build() -> VibeWorkflow:
         **{'choose video to upload': 'image'},
     )
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='pad_edge_pixel',
         crop_position='top',
@@ -159,14 +159,14 @@ def build() -> VibeWorkflow:
         image_1=image_image,
     )
 
-    image_get, width_get, height_get, count = GetImageSizeAndCount(image=image_load)
+    image_get, width_get, height_get, _ = GetImageSizeAndCount(image=image_load)
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras,
     )
 
-    pose_data, face_images, key_frame_body_points, bboxes, face_bboxes = PoseAndFaceDetection(
+    pose_data, face_images, _, bboxes, _ = PoseAndFaceDetection(
         widget_0=832,
         widget_1=480,
         width=width_get,
@@ -268,7 +268,7 @@ def build() -> VibeWorkflow:
         images=drawmaskonimage,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=4,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -285,9 +285,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get_2, width_get_2, height_get_2, count_get = GetImageSizeAndCount(
-        image=wanvideodecode,
-    )
+    image_get_2, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
 
     imageconcatmulti_2 = ImageConcatMulti(
         direction='left',

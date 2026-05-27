@@ -55,7 +55,7 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
@@ -117,7 +117,7 @@ def build() -> VibeWorkflow:
         model=wanvideosetloras_2,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -129,7 +129,7 @@ def build() -> VibeWorkflow:
         text_embeds=text_embeds,
     )
 
-    samples_wan, denoised_samples_wan = WanVideoSampler(
+    samples_wan, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,

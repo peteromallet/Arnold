@@ -46,7 +46,7 @@ def build() -> VibeWorkflow:
     wanvideoteacache = WanVideoTeaCache(rel_l1_thresh=0.1, use_coefficients='true')
     wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
 
-    image, frame_count, audio, video_info = VHS_LoadVideo(
+    image, _, _, _ = VHS_LoadVideo(
         video='wolf_interpolated.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
@@ -83,7 +83,7 @@ def build() -> VibeWorkflow:
         latents=wanvideoencode,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         seed=DEFAULT_SEED,
         batched_cfg='',
         cache_args=wanvideoteacache,

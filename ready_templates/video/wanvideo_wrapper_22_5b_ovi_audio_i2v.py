@@ -56,7 +56,7 @@ def build() -> VibeWorkflow:
         prefetch_blocks=1,
     )
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE_2,
@@ -74,13 +74,13 @@ def build() -> VibeWorkflow:
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
     wanvideoslg = WanVideoSLG(blocks='11', start_percent=0)
 
-    text_embeds_wan, negative_text_embeds_wan, positive_prompt_wan = WanVideoTextEncodeCached(
+    _, negative_text_embeds_wan, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
-    image, mask = LoadImage(image='oldman_upscaled.png')
+    image, _ = LoadImage(image='oldman_upscaled.png')
     wanvideoeasycache = WanVideoEasyCache()
     wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents(length=DEFAULT_FRAMES_2)
 
@@ -97,7 +97,7 @@ def build() -> VibeWorkflow:
         ovi_negative_text_embeds=negative_text_embeds_wan,
     )
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, width, height, _ = ImageResizeKJv2(
         width=704,
         height=704,
         upscale_method='lanczos',
@@ -129,7 +129,7 @@ def build() -> VibeWorkflow:
         extra_latents=wanvideoencode,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=50,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,

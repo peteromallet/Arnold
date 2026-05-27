@@ -82,15 +82,9 @@ def build() -> VibeWorkflow:
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image, mask = LoadImage(image='image (6).png')
-    image_load, mask_load = LoadImage(image='0 (13).webp')
-
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
-        expression=A,
-        variables='a',
-        a=24.0,
-    )
-
+    image, _ = LoadImage(image='image (6).png')
+    image_load, _ = LoadImage(image='0 (13).webp')
+    _, calc_int, _ = SimpleCalculatorKJ(expression=A, variables='a', a=24.0)
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
@@ -129,7 +123,7 @@ def build() -> VibeWorkflow:
     negative = CLIPTextEncode(text='', clip=dualcliploader)
     negative_2 = CLIPTextEncode(text='', clip=dualcliploader)
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, width, height, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -145,7 +139,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
         expression=A,
         variables='a,b',
         b=24.0,
@@ -153,7 +147,7 @@ def build() -> VibeWorkflow:
         a=intconstant,
     )
 
-    images, audio, fps = GetVideoComponents(video=loadvideo)
+    images, _, _ = GetVideoComponents(video=loadvideo)
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
         frames_number=calc_int_simple,
@@ -169,7 +163,7 @@ def build() -> VibeWorkflow:
 
     imagescaleby = ImageScaleBy(upscale_method=LANCZOS, scale_by=0.5, image=image_image)
 
-    image_image_2, width_image, height_image, mask_image_2 = ImageResizeKJv2(
+    image_image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -189,7 +183,7 @@ def build() -> VibeWorkflow:
         images=image_image,
     )
 
-    image_image_3, width_image_2, height_image_2, mask_image_3 = ImageResizeKJv2(
+    image_image_3, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion='stretch',
         divisible_by=32,
@@ -199,7 +193,7 @@ def build() -> VibeWorkflow:
         image=images,
     )
 
-    width_get, height_get, batch_size = GetImageSize(image=imagescaleby)
+    width_get, height_get, _ = GetImageSize(image=imagescaleby)
 
     resizeimagesbylongeredge_2 = ResizeImagesByLongerEdge(
         longer_edge=1536,
@@ -241,7 +235,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    model, clip = Power_Lora_Loader_rgthree(model=ltx2memoryefficientsageattentionpatch)
+    model, _ = Power_Lora_Loader_rgthree(model=ltx2memoryefficientsageattentionpatch)
     ltxvscheduler = LTXVScheduler(steps=1, latent=ltxvconcatavlatent)
 
     ltx2_nag = LTX2_NAG(
@@ -257,7 +251,7 @@ def build() -> VibeWorkflow:
         positive=positive,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -273,7 +267,7 @@ def build() -> VibeWorkflow:
         vae=vaeloader_2,
     )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    any_output, _, _, _, _ = VRAM_Debug(
         unload_all_models=True,
         any_input=ltxvlatentupsampler,
     )
@@ -311,7 +305,7 @@ def build() -> VibeWorkflow:
         positive=vibecomfystripconditioningkeys.out('POSITIVE'),
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -328,7 +322,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv_2, negative_ltxv_3, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=vibecomfystripconditioningkeys.out('NEGATIVE'),
         positive=vibecomfystripconditioningkeys.out('POSITIVE'),

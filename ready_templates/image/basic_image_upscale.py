@@ -23,7 +23,7 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    image, mask = LoadImage(image='image_upscale_input.png')
+    image, _ = LoadImage(image='image_upscale_input.png')
     imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
     saveimage = SaveImage(filename_prefix='image-upscale', images=imagescaleby)
 

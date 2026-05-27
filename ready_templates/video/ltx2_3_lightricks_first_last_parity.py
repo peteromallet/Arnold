@@ -59,8 +59,8 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example_start.png')
-    image_load, mask_load = LoadImage(image='example_end.png')
+    image, _ = LoadImage(image='example_start.png')
+    image_load, _ = LoadImage(image='example_end.png')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
@@ -78,7 +78,7 @@ def build() -> VibeWorkflow:
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
 
     # Loaders
-    model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
         frames_number=81,
@@ -116,7 +116,7 @@ def build() -> VibeWorkflow:
         positive=cliptextencode_2,
     )
 
-    width, height, batch_size = GetImageSize(image=resizeimagemasknode)
+    width, height, _ = GetImageSize(image=resizeimagemasknode)
 
     # Sampling
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
@@ -154,7 +154,7 @@ def build() -> VibeWorkflow:
         video_latent=latent_ltxv,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    _, denoised_output = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -164,7 +164,7 @@ def build() -> VibeWorkflow:
 
     video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
 
-    positive_ltxv_3, negative_ltxv_3, latent_ltxv_2 = LTXVCropGuides(
+    _, _, latent_ltxv_2 = LTXVCropGuides(
         latent=video_latent,
         negative=negative_ltxv_2,
         positive=positive_ltxv_2,

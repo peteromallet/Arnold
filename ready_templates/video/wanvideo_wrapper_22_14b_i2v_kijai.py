@@ -83,7 +83,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='oldman_upscaled.png')
+    image, _ = LoadImage(image='oldman_upscaled.png')
 
     wanvideomodelloader_2 = WanVideoModelLoader(
         model=MODEL_NAME_2,
@@ -105,7 +105,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, width, height, _ = ImageResizeKJv2(
         width=720,
         height=720,
         upscale_method='lanczos',
@@ -155,7 +155,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         shift=8,
         seed=DEFAULT_SEED,
         scheduler=DPM_SDE,
@@ -168,7 +168,7 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    samples_wan, denoised_samples_wan = WanVideoSampler(
+    samples_wan, _ = WanVideoSampler(
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,
@@ -188,7 +188,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get, width_get, height_get, count = GetImageSizeAndCount(image=wanvideodecode)
+    image_get, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(

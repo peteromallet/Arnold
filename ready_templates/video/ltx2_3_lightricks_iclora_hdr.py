@@ -40,7 +40,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
 
     # Sampling
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral')
@@ -81,7 +81,7 @@ def build() -> VibeWorkflow:
 
     images, audio, fps = GetVideoComponents(video=loadvideo)
 
-    model_ltxic_2, latent_downscale_factor_ltxic = LTXICLoRALoaderModelOnly(
+    model_ltxic_2, _ = LTXICLoRALoaderModelOnly(
         lora_name=LORA_NAME_2,
         strength_model=GUIDE_STRENGTH_2,
         model=model,
@@ -98,7 +98,7 @@ def build() -> VibeWorkflow:
         model=model_ltxic_2,
     )
 
-    math_int, math_float = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, _ = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale to multiple',
@@ -132,7 +132,7 @@ def build() -> VibeWorkflow:
         positive=positive_ltx,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=latent,
         noise=randomnoise,
@@ -140,7 +140,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    positive_ltxv, negative_ltxv, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=output,
         negative=negative_ltx,
         positive=positive_ltx,
@@ -156,7 +156,7 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    tonemapped, hdr_linear = LTXVHDRDecodePostprocess(
+    _, hdr_linear = LTXVHDRDecodePostprocess(
         exposure=7.1,
         output_dir='output/hdr_exr3',
         save_exr=True,

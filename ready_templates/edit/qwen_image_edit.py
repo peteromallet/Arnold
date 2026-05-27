@@ -36,13 +36,34 @@ def qwen_image_edit(
     Inner nodes: VAELoader, TextEncodeQwenImageEditx2, CFGNorm, ModelSamplingAuraFlow, VAEDecode, CLIPLoader, VAEEncode, LoraLoaderModelOnly, UNETLoader, KSampler, ComfySwitchNodex3.
     """
 
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='qwen_image', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
-    comfyswitchnode_2 = ComfySwitchNode(switch=False)
-    comfyswitchnode_3 = ComfySwitchNode(switch=False)
+    unetloader = UNETLoader(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:37',
+        unet_name=unet_name,
+    )
+
+    cliploader = CLIPLoader(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:38',
+        type_='qwen_image',
+        clip_name=clip_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:39',
+        vae_name=vae_name,
+    )
+
+    comfyswitchnode_2 = ComfySwitchNode(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:109',
+        switch=False,
+    )
+
+    comfyswitchnode_3 = ComfySwitchNode(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:110',
+        switch=False,
+    )
 
     textencodeqwenimageedit = TextEncodeQwenImageEdit(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:76',
         prompt=prompt,
         clip=cliploader,
         image=image,
@@ -50,25 +71,46 @@ def qwen_image_edit(
     )
 
     textencodeqwenimageedit_2 = TextEncodeQwenImageEdit(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:77',
         prompt='',
         clip=cliploader,
         image=image,
         vae=vaeloader,
     )
 
-    vaeencode = VAEEncode(pixels=image, vae=vaeloader)
-    loraloadermodelonly = LoraLoaderModelOnly(lora_name=lora_name, model=unetloader)
+    vaeencode = VAEEncode(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:88',
+        pixels=image,
+        vae=vaeloader,
+    )
+
+    loraloadermodelonly = LoraLoaderModelOnly(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:89',
+        lora_name=lora_name,
+        model=unetloader,
+    )
 
     comfyswitchnode = ComfySwitchNode(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:108',
         switch=False,
         on_false=unetloader,
         on_true=loraloadermodelonly,
     )
 
-    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=comfyswitchnode)
-    cfgnorm = CFGNorm(widget_0=1, model=modelsamplingauraflow)
+    modelsamplingauraflow = ModelSamplingAuraFlow(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:66',
+        shift=3,
+        model=comfyswitchnode,
+    )
+
+    cfgnorm = CFGNorm(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:75',
+        widget_0=1,
+        model=modelsamplingauraflow,
+    )
 
     ksampler = KSampler(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:3',
         seed=344147753686358,
         sampler_name='euler',
         steps=comfyswitchnode_3,
@@ -79,7 +121,11 @@ def qwen_image_edit(
         positive=textencodeqwenimageedit,
     )
 
-    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='74a8e1e2-9cb8-4112-978e-06ce1b5793f1:8',
+        samples=ksampler,
+        vae=vaeloader,
+    )
 
     return vaedecode
 
@@ -87,7 +133,7 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    image, mask = LoadImage(image='image_qwen_image_edit_input_image.png')
+    image, _ = LoadImage(image='image_qwen_image_edit_input_image.png')
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
         upscale_method='lanczos',

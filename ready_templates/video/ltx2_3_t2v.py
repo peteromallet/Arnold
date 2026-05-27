@@ -53,7 +53,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example.png')
+    image, _ = LoadImage(image='example.png')
 
     # Sampling
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
@@ -63,7 +63,7 @@ def build() -> VibeWorkflow:
     )
 
     # Loaders
-    model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate=FIXED)
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
@@ -179,7 +179,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoconditiononly,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -189,7 +189,7 @@ def build() -> VibeWorkflow:
 
     ltxvscheduler = LTXVScheduler(steps=15, latent=ltxvconcatavlatent)
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=multimodalguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,

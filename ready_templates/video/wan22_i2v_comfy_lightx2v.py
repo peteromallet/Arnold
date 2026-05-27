@@ -73,7 +73,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png')
+    image, _ = LoadImage(image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png')
 
     # Loaders
     cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')

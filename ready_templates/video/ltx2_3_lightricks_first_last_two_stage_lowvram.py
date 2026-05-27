@@ -64,8 +64,8 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example_start.png')
-    image_load, mask_load = LoadImage(image='example_end.png')
+    image, _ = LoadImage(image='example_start.png')
+    image_load, _ = LoadImage(image='example_end.png')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED)
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED)
 
@@ -76,7 +76,7 @@ def build() -> VibeWorkflow:
     )
 
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
-    model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=CKPT_NAME)
+    model, _, vae = LowVRAMCheckpointLoader(ckpt_name=CKPT_NAME)
 
     latentupscalemodelloader = LatentUpscaleModelLoader(
         model_name=SPATIAL_UPSCALER_NAME,
@@ -147,7 +147,7 @@ def build() -> VibeWorkflow:
         positive=cliptextencode_2,
     )
 
-    width, height, batch_size = GetImageSize(image=resizeimagemasknode_3)
+    width, height, _ = GetImageSize(image=resizeimagemasknode_3)
     ltxvpreprocess_3 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_4)
     ltxvpreprocess_4 = LTXVPreprocess(img_compression=25, image=resizeimagemasknode_3)
 
@@ -186,7 +186,7 @@ def build() -> VibeWorkflow:
         positive=positive_ltxv_2,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    _, denoised_output = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -202,7 +202,7 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    any_output, _, _, _, _ = VRAM_Debug(
         unload_all_models=True,
         any_input=ltxvlatentupsampler,
     )
@@ -242,7 +242,7 @@ def build() -> VibeWorkflow:
         positive=positive_ltxv_5,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    _, denoised_output_sampler = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -259,7 +259,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv_6, negative_ltxv_6, latent_ltxv_5 = LTXVCropGuides(
+    _, _, latent_ltxv_5 = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=negative_ltxv_5,
         positive=positive_ltxv_5,

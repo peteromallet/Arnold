@@ -66,9 +66,9 @@ def build() -> VibeWorkflow:
     loadwanvideocliptextencoder = LoadWanVideoClipTextEncoder(model_name=CLIP_NAME_3)
 
     # Inputs
-    image, mask = LoadImage(image='pasted/image (853).png')
+    image, _ = LoadImage(image='pasted/image (853).png')
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_4)
-    image_load, mask_load = LoadImage(image='pasted/image (852).png')
+    image_load, _ = LoadImage(image='pasted/image (852).png')
     wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME, strength=1.2000000000000002)
 
     wanvideomodelloader = WanVideoModelLoader(
@@ -85,7 +85,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, width_image, height_image, _ = ImageResizeKJv2(
         width=640,
         height=640,
         upscale_method=LANCZOS,
@@ -119,7 +119,7 @@ def build() -> VibeWorkflow:
         image=image_image,
     )
 
-    image_image_2, width_image_2, height_image_2, mask_image_2 = ImageResizeKJv2(
+    image_image_2, width_image_2, height_image_2, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         divisible_by=16,
@@ -167,7 +167,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH,
         shift=5.000000000000001,
@@ -185,7 +185,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get, width, height, count = GetImageSizeAndCount(image=wanvideodecode)
+    image_get, _, height, _ = GetImageSizeAndCount(image=wanvideodecode)
     emptyimage = EmptyImage(width=8, height=height)
 
     imageconcatmulti_2 = ImageConcatMulti(

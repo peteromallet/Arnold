@@ -29,29 +29,61 @@ def text_to_image_flux2_klein_9b(
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
     """
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
-    flux2scheduler = Flux2Scheduler()
-    emptyflux2latentimage = EmptyFlux2LatentImage()
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
+    ksamplerselect = KSamplerSelect(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:61',
+        sampler_name='euler',
+    )
+
+    flux2scheduler = Flux2Scheduler(_id='7b34ab90-36f9-45ba-a665-71d418f0df18:62')
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:66',
+    )
+
+    unetloader = UNETLoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:70',
+        unet_name=unet_name,
+    )
+
+    cliploader = CLIPLoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:71',
+        type_='flux2',
+        clip_name=clip_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:72',
+        vae_name=vae_name,
+    )
 
     randomnoise = RandomNoise(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:73',
         noise_seed=653844576367526,
         control_after_generate='randomize',
     )
 
-    negative = CLIPTextEncode(text='', clip=cliploader)
-    positive = CLIPTextEncode(text=prompt, clip=cliploader)
+    negative = CLIPTextEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:67',
+        text='',
+        clip=cliploader,
+    )
+
+    positive = CLIPTextEncode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:74',
+        text=prompt,
+        clip=cliploader,
+    )
 
     cfgguider = CFGGuider(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:63',
         cfg=5,
         model=unetloader,
         negative=negative,
         positive=positive,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -59,7 +91,11 @@ def text_to_image_flux2_klein_9b(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='7b34ab90-36f9-45ba-a665-71d418f0df18:65',
+        samples=output,
+        vae=vaeloader,
+    )
 
     return vaedecode
 

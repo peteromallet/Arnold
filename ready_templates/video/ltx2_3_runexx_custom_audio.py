@@ -58,7 +58,7 @@ def build() -> VibeWorkflow:
     ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
 
     # Inputs
-    image_load, mask_load = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
+    image_load, _ = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
@@ -78,12 +78,7 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=10)
     intconstant_2 = INTConstant(value=1280)
     intconstant_3 = INTConstant(value=736)
-
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
-        expression='a',
-        **{'variables.a': 24.0},
-    )
-
+    _, calc_int_simple, _ = SimpleCalculatorKJ(expression='a', **{'variables.a': 24.0})
     unetloader = UNETLoader(unet_name=UNET_NAME)
     vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
     unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
@@ -117,7 +112,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    image, width_image, height_image, mask = ImageResizeKJv2(
+    image, _, _, _ = ImageResizeKJv2(
         upscale_method='nearest-exact',
         keep_proportion='crop',
         divisible_by=32,
@@ -127,7 +122,7 @@ def build() -> VibeWorkflow:
         image=image_load,
     )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
         expression='1+ 8*(round(a*b)/8)',
         b=24.0,
         a=intconstant,
@@ -156,17 +151,11 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
-        expression='a/b',
-        b=24.0,
-        a=calc_int,
-    )
-
+    calc_float_simple_2, _, _ = SimpleCalculatorKJ(expression='a/b', b=24.0, a=calc_int)
     cliptextencode_2 = CLIPTextEncode(text=textgenerateltx2prompt, clip=dualcliploader)
     ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
-    width, height, batch_size = GetImageSize(image=resizeimagemasknode)
-    model, clip = Power_Lora_Loader_rgthree(model=ltxvchunkfeedforward)
-    easy_showanything = raw_call('easy showAnything', '351', anything=textgenerateltx2prompt)
+    width, height, _ = GetImageSize(image=resizeimagemasknode)
+    model, _ = Power_Lora_Loader_rgthree(model=ltxvchunkfeedforward)
     trimaudioduration = TrimAudioDuration(duration=calc_float_simple_2, audio=loadaudio)
 
     positive, negative = LTXVConditioning(
@@ -238,7 +227,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace_2,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -266,7 +255,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,

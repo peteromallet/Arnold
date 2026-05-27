@@ -58,7 +58,7 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
@@ -75,7 +75,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='vace_start.png')
+    image, _ = LoadImage(image='vace_start.png')
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
         lora_0=LORA__NAME,
@@ -87,9 +87,9 @@ def build() -> VibeWorkflow:
         merge_loras=False,
     )
 
-    image_load, mask_load = LoadImage(image='vace_end.png')
+    image_load, _ = LoadImage(image='vace_end.png')
 
-    image_load_2, frame_count, audio, video_info = VHS_LoadVideo(
+    image_load_2, _, _, _ = VHS_LoadVideo(
         video='vace_control.mp4',
         force_rate=16,
         custom_width=832,
@@ -149,7 +149,7 @@ def build() -> VibeWorkflow:
         model=wanvideosetloras_2,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -160,7 +160,7 @@ def build() -> VibeWorkflow:
         text_embeds=text_embeds,
     )
 
-    samples_wan, denoised_samples_wan = WanVideoSampler(
+    samples_wan, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,
@@ -173,7 +173,7 @@ def build() -> VibeWorkflow:
         text_embeds=text_embeds,
     )
 
-    samples_wan_2, denoised_samples_wan_2 = WanVideoSampler(
+    samples_wan_2, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,

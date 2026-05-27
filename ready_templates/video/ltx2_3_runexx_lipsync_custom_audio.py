@@ -38,7 +38,7 @@ VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enable_promptenhance': InputSpec(node='784', field='switch', default=False),
+    'enable_promptenhance': InputSpec(node='e428c881-c48b-4849-9158-8311b4df27c7:878', field='switch', default=False),
     'last_latent_strength': InputSpec(node='799', field='strength', default=1.0),
     'seed': InputSpec(node='115', field='noise_seed', default=DEFAULT_SEED_2, type='INT'),
     'prompt': InputSpec(node='110', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
@@ -69,9 +69,14 @@ def prompt_enhancer(
     Inner nodes: TextGenerateLTX2Prompt, ComfySwitchNode, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='e428c881-c48b-4849-9158-8311b4df27c7:779',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='e428c881-c48b-4849-9158-8311b4df27c7:782',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -80,6 +85,7 @@ def prompt_enhancer(
     )
 
     comfyswitchnode = ComfySwitchNode(
+        _id='e428c881-c48b-4849-9158-8311b4df27c7:878',
         switch=switch,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -143,7 +149,7 @@ def build() -> VibeWorkflow:
 
     intconstant_2 = INTConstant(value=650)
     fast_groups_bypasser__rgthree_ = raw_call('Fast Groups Bypasser (rgthree)', '515')
-    comfy_float, comfy_int = ComfyMathExpression(expression='a', **{'values.a': 24.0})
+    _, comfy_int = ComfyMathExpression(expression='a', **{'values.a': 24.0})
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
         text_encoder=CLIP_NAME,
@@ -151,7 +157,7 @@ def build() -> VibeWorkflow:
         device=DEFAULT,
     )
 
-    image_load, mask_load, audio, video_info = VHS_LoadVideoFFmpeg(
+    image_load, _, _, video_info = VHS_LoadVideoFFmpeg(
         force_rate=24.0,
         format='LTXV',
         video='450x_auto__ (2).mp4',
@@ -172,7 +178,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    source_fps_, source_frame_count_, source_duration_, source_width_, source_height_, loaded_fps_, loaded_frame_count_, loaded_duration_, loaded_width_, loaded_height_ = VHS_VideoInfo(
+    _, _, _, _, _, _, loaded_frame_count_, _, loaded_width_, loaded_height_ = VHS_VideoInfo(
         video_info=video_info,
     )
 
@@ -183,7 +189,7 @@ def build() -> VibeWorkflow:
 
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, _, calc_bool = SimpleCalculatorKJ(
         expression='(a > c) or (b > c) ',
         **{'variables.a': loaded_width_, 'variables.b': loaded_height_, 'variables.c': intconstant_2},
     )
@@ -193,7 +199,7 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    calc_float_simple, _, _ = SimpleCalculatorKJ(
         expression='(a/b)+c',
         **{'variables.b': 24.0, 'variables.a': loaded_frame_count_, 'variables.c': intconstant},
     )
@@ -208,10 +214,8 @@ def build() -> VibeWorkflow:
         model=pathchsageattentionkj,
     )
 
-    easy_showanything = raw_call('easy showAnything', '857', anything=calc_float_simple)
     trimaudioduration = TrimAudioDuration(duration=calc_float_simple, audio=loadaudio)
-    easy_showanything_2 = raw_call('easy showAnything', '875', anything=calc_float_simple)
-    image_get, width, height, count = GetImageSizeAndCount(image=lazyswitchkj)
+    image_get, width, height, _ = GetImageSizeAndCount(image=lazyswitchkj)
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(
         model=ltx2memoryefficientsageattentionpatch,
@@ -222,7 +226,7 @@ def build() -> VibeWorkflow:
         model=melbandroformermodelloader.out(0),
     )
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method='nearest-exact',
         keep_proportion='crop',
         divisible_by=64,
@@ -245,12 +249,9 @@ def build() -> VibeWorkflow:
         input=image_image,
     )
 
-    image, mask = GetImageRangeFromBatch(images=image_image)
-    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
-
-    image_get_2, width_get, height_get, count_get = GetImageSizeAndCount(
-        image=image_image,
-    )
+    image, _ = GetImageRangeFromBatch(images=image_image)
+    model, _ = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
+    _, width_get, height_get, count_get = GetImageSizeAndCount(image=image_image)
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type=SCALE_BY_MULTIPLIER,
@@ -278,12 +279,12 @@ def build() -> VibeWorkflow:
         audio_vae=vaeloaderkj,
     )
 
-    comfy_float_comfy, comfy_int_comfy = ComfyMathExpression(
+    comfy_float_comfy, _ = ComfyMathExpression(
         expression='a/b',
         **{'values.b': 24.0, 'values.a': count_get},
     )
 
-    image_get_3, mask_get = GetImageRangeFromBatch(images=resizeimagemasknode_3)
+    image_get_3, _ = GetImageRangeFromBatch(images=resizeimagemasknode_3)
 
     facesegment = raw_call('FaceSegment', '761',
         skin=True,
@@ -310,11 +311,7 @@ def build() -> VibeWorkflow:
         images=resizeimagemasknode_3,
     )
 
-    image_get_5, mask_get_3 = GetImageRangeFromBatch(
-        start_index=-1,
-        images=resizeimagemasknode,
-    )
-
+    image_get_5, _ = GetImageRangeFromBatch(start_index=-1, images=resizeimagemasknode)
     solidmask = SolidMask(value=0, width=width_get, height=height_get)
     ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
     modelsamplingsd3 = ModelSamplingSD3(shift=13, model=ltx2samplingpreviewoverride)
@@ -325,7 +322,7 @@ def build() -> VibeWorkflow:
         nag_cond_video=negative,
     )
 
-    comfy_float_comfy_2, comfy_int_comfy_2 = ComfyMathExpression(
+    comfy_float_comfy_2, _ = ComfyMathExpression(
         expression='a+b',
         **{'values.a': comfy_float_comfy, 'values.b': intconstant},
     )
@@ -333,7 +330,7 @@ def build() -> VibeWorkflow:
     prompt_enhancer_result = prompt_enhancer(
         clip=ltxavtextencoderloader,
         image=resizeimagesbylongeredge,
-        prompt=None,
+        prompt='Cinematic video woman wearing colorful make-up, with colorful  light creating a creative scene. \n\nShe talks with perfect lip-sync movements to the attached audio. Her mouth and lips moves as she talks. \n \nThe camera slowly moves away from the woman, showing her full body. She is standing at a  colorful theatre scene doing a victorian era play. ',
         switch=False,
     )
     blockifymask = BlockifyMask(block_size=12, masks=facesegment.out(1))
@@ -376,7 +373,7 @@ def build() -> VibeWorkflow:
         vae=vaeloader,
     )
 
-    image_get_4, mask_get_2 = GetImageRangeFromBatch(images=masktoimage)
+    image_get_4, _ = GetImageRangeFromBatch(images=masktoimage)
 
     # Outputs
     previewimage = PreviewImage(images=image_get_4)
@@ -431,7 +428,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace_2,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -441,7 +438,7 @@ def build() -> VibeWorkflow:
 
     video_latent_ltxv_2, audio_latent_ltxv_2 = LTXVSeparateAVLatent(av_latent=output)
 
-    positive_ltxv_3, negative_ltxv_3, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=video_latent_ltxv_2,
         negative=negative_ltxv_2,
         positive=positive_ltxv_2,
@@ -464,7 +461,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -475,7 +472,7 @@ def build() -> VibeWorkflow:
     video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output_sampler)
     ltxvaudiovaedecode = LTXVAudioVAEDecode(audio_vae=vaeloaderkj, samples=audio_latent)
 
-    positive_ltxv_4, negative_ltxv_4, latent_ltxv_2 = LTXVCropGuides(
+    _, _, latent_ltxv_2 = LTXVCropGuides(
         latent=video_latent,
         negative=negative_ltxv_2,
         positive=positive_ltxv_2,

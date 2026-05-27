@@ -70,7 +70,7 @@ def build() -> VibeWorkflow:
 
     wanvideoexperimentalargs = WanVideoExperimentalArgs(cfg_zero_star=True)
 
-    image_load, frame_count, audio, video_info = VHS_LoadVideo(
+    image_load, _, _, _ = VHS_LoadVideo(
         video='9.mp4',
         frame_load_cap=81,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': '9.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 81, 'skip_first_frames': 0, 'select_every_nth': 1}},
@@ -82,14 +82,14 @@ def build() -> VibeWorkflow:
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-    image_get, width_get, height_get, count = GetImageSizeAndCount(image=image_load)
+    image_get, _, _, _ = GetImageSizeAndCount(image=image_load)
 
     wanvideotextembedbridge = WanVideoTextEmbedBridge(
         negative=cliptextencode_2,
         positive=cliptextencode,
     )
 
-    image, width, height = ImageResizeKJ(
+    image, _, _ = ImageResizeKJ(
         width=480,
         height='lanczos',
         upscale_method=False,
@@ -108,7 +108,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_get_2, mask = GetImageRangeFromBatch(images=image)
+    image_get_2, _ = GetImageRangeFromBatch(images=image)
 
     florence2run = raw_call('Florence2Run', '123',
         widget_0='',
@@ -162,7 +162,7 @@ def build() -> VibeWorkflow:
         camera_poses=camera_poses,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=20,
         seed=DEFAULT_SEED,
         cache_args=wanvideoteacache,

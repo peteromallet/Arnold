@@ -90,7 +90,7 @@ def build() -> VibeWorkflow:
         model=wanvideosetloras,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,

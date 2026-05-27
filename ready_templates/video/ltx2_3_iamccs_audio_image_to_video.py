@@ -57,7 +57,7 @@ def build() -> VibeWorkflow:
     ksamplerselect = KSamplerSelect(sampler_name='lcm')
 
     # Inputs
-    image, mask = LoadImage(image='ComfyUI_00126_.png')
+    image, _ = LoadImage(image='ComfyUI_00126_.png')
     loadaudio = LoadAudio(audio='man voice 1.mp3')
 
     seed__rgthree_ = Seed_rgthree(
@@ -111,7 +111,7 @@ def build() -> VibeWorkflow:
         ltxv_path=CKPT_NAME,
     )
 
-    model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
     load_whisper__mtb__2 = raw_call('Load Whisper (mtb)', '433', widget_0=TINY, widget_1=True)
 
     iamccs_bus_group = raw_call('IAMCCS_bus_group', '448',
@@ -186,10 +186,10 @@ def build() -> VibeWorkflow:
         widget_9=True,
     )
 
-    output, denoised_output = SamplerCustomAdvanced()
+    SamplerCustomAdvanced()
     randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=seed__rgthree_)
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, width, height, _ = ImageResizeKJv2(
         width=720,
         height=1280,
         upscale_method='lanczos',
@@ -478,7 +478,7 @@ def build() -> VibeWorkflow:
         sigmas=basicscheduler,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(
+    video_latent, _ = LTXVSeparateAVLatent(
         av_latent=iamccs_sampleradvancedversion1.out(0),
     )
 

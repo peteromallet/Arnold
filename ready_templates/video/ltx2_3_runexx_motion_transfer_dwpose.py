@@ -46,7 +46,7 @@ YUV420P = 'yuv420p'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='5237', field='_un13773', default=False),
+    'enhance_prompt': InputSpec(node='94e8f3a0-557f-4580-93a0-f762c7b0d076:1928', field='switch', default=False),
     'ref_strength': InputSpec(node='5012', field='strength', default=0.7),
     'image': InputSpec(node='2004', field='image', default='fjf1oxsjnnrgphxxrnzx6dh4k9-nano-banana-gemini-3-pro-image-ultra-realistic-black-and-white-cinematic-fullbody-portrait-of-muhammad-ali-standing-side-lighting-strong-contrast-intense-mysterious-expression-sharp.jpg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
@@ -77,9 +77,14 @@ def prompt_enhancer(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='94e8f3a0-557f-4580-93a0-f762c7b0d076:1618',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='94e8f3a0-557f-4580-93a0-f762c7b0d076:1623',
         sampling_mode='off',
         prompt=stringconcatenate,
         clip=clip,
@@ -87,6 +92,7 @@ def prompt_enhancer(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='94e8f3a0-557f-4580-93a0-f762c7b0d076:1928',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -99,7 +105,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(
+    image, _ = LoadImage(
         image='fjf1oxsjnnrgphxxrnzx6dh4k9-nano-banana-gemini-3-pro-image-ultra-realistic-black-and-white-cinematic-fullbody-portrait-of-muhammad-ali-standing-side-lighting-strong-contrast-intense-mysterious-expression-sharp.jpg',
     )
 
@@ -149,12 +155,7 @@ def build() -> VibeWorkflow:
     )
 
     unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
-
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
-        expression='a',
-        **{'variables.a': 24.0},
-    )
-
+    _, calc_int_simple, _ = SimpleCalculatorKJ(expression='a', **{'variables.a': 24.0})
     loadaudio = LoadAudio(audio='(Verse).mp3')
 
     # Decode
@@ -179,7 +180,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.b': 24.0, 'variables.a': intconstant},
     )
@@ -192,7 +193,7 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    image_load, mask_load, audio, video_info = VHS_LoadVideoFFmpeg(
+    image_load, _, audio, _ = VHS_LoadVideoFFmpeg(
         force_rate=24.0,
         video='m2-res_1890p.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'm2-res_1890p.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'start_time': 0}},
@@ -204,9 +205,9 @@ def build() -> VibeWorkflow:
         input=resizeimagemasknode_2,
     )
 
-    math_int, math_float = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, _ = SimpleMath(value='a*32', a=latent_downscale_factor)
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         device=CPU,
@@ -219,7 +220,7 @@ def build() -> VibeWorkflow:
     prompt_enhancer_result = prompt_enhancer(
         clip=dualcliploader,
         image=resizeimagemasknode_4,
-        enable=None,
+        enable=False,
         prompt='highly detailed, monochrime colors. Make this image come alive with fluid motion. \n\nA make boxer. \n\nHe is dancing in sync to the music ',
     )
     cliptextencode = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
@@ -230,7 +231,6 @@ def build() -> VibeWorkflow:
     )
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
-    easy_showanything = raw_call('easy showAnything', '5238', anything=prompt_enhancer_result)
 
     positive, negative = LTXVConditioning(
         frame_rate=24.0,
@@ -244,7 +244,7 @@ def build() -> VibeWorkflow:
         input=resizeimagemasknode_3,
     )
 
-    width_get, height_get, batch_size_get = GetImageSize(image=resizeimagemasknode_3)
+    width_get, height_get, _ = GetImageSize(image=resizeimagemasknode_3)
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(model=ltxvchunkfeedforward)
 
     dwpreprocessor = raw_call('DWPreprocessor', '4986',
@@ -263,7 +263,7 @@ def build() -> VibeWorkflow:
         image=resizeimagemasknode,
     )
 
-    model_power, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
+    model_power, _ = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
 
     imageblend = ImageBlend(
         blend_mode='multiply',
@@ -292,7 +292,7 @@ def build() -> VibeWorkflow:
         positive=positive,
     )
 
-    image_image_2, width_image_2, height_image_2, mask_image_2 = ImageResizeKJv2(
+    image_image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         device=CPU,
@@ -331,12 +331,12 @@ def build() -> VibeWorkflow:
         audio_vae=vaeloaderkj,
     )
 
-    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
+    calc_float_simple_2, _, _ = SimpleCalculatorKJ(
         expression='a / b ',
         **{'variables.b': 24.0, 'variables.a': batch_size},
     )
 
-    calc_float_simple_3, calc_int_simple_3, calc_bool_simple_3 = SimpleCalculatorKJ(
+    calc_float_simple_3, _, _ = SimpleCalculatorKJ(
         expression='a / b',
         **{'variables.b': 24.0, 'variables.a': batch_size},
     )
@@ -395,7 +395,7 @@ def build() -> VibeWorkflow:
         video_latent=latent,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -405,7 +405,7 @@ def build() -> VibeWorkflow:
 
     video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
-    positive_ltxv, negative_ltxv, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=video_latent,
         negative=negative_ltx,
         positive=positive_ltx,
@@ -429,7 +429,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise_2,
@@ -446,7 +446,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv_2, negative_ltxv_2, latent_ltxv_2 = LTXVCropGuides(
+    _, _, latent_ltxv_2 = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=negative,
         positive=positive,

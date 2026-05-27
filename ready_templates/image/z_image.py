@@ -36,15 +36,48 @@ def text_to_image_z_image_base(
     Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
     """
 
-    cliploader = CLIPLoader(type_='lumina2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
-    unetloader = UNETLoader(unet_name=unet_name)
-    emptysd3latentimage = EmptySD3LatentImage(width=width, height=height)
-    positive = CLIPTextEncode(text=prompt, clip=cliploader)
-    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
-    negative = CLIPTextEncode(text='', clip=cliploader)
+    cliploader = CLIPLoader(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:62',
+        type_='lumina2',
+        clip_name=clip_name,
+    )
+
+    vaeloader = VAELoader(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:63',
+        vae_name=vae_name,
+    )
+
+    unetloader = UNETLoader(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:66',
+        unet_name=unet_name,
+    )
+
+    emptysd3latentimage = EmptySD3LatentImage(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:68',
+        width=width,
+        height=height,
+    )
+
+    positive = CLIPTextEncode(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:67',
+        text=prompt,
+        clip=cliploader,
+    )
+
+    modelsamplingauraflow = ModelSamplingAuraFlow(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:70',
+        shift=3,
+        model=unetloader,
+    )
+
+    negative = CLIPTextEncode(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:71',
+        text='',
+        clip=cliploader,
+    )
 
     ksampler = KSampler(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:69',
         seed=770044821593082,
         sampler_name='res_multistep',
         steps=steps,
@@ -55,7 +88,11 @@ def text_to_image_z_image_base(
         positive=positive,
     )
 
-    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+    vaedecode = VAEDecode(
+        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:65',
+        samples=ksampler,
+        vae=vaeloader,
+    )
 
     return vaedecode
 
@@ -64,7 +101,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     edited = text_to_image_z_image_base(
-        width=1024,
+        width='A fashion photography work full of surreal romanticism, using a low-angle upward shooting composition, with a clear light blue sky as the background, and the visual focus concentrated on the fantasy blue vegetation and the model walking through it.\n\nThe vegetation in the picture is processed into varying shades of blue, from light ice blue to deep cobalt blue. The textures of the leaves and branches are delicate and realistic. The warm brown tree trunks form a sharp contrast with the cool blue leaves, resembling a dreamy forest from another world. An African-American model wearing a yellow and white vertical striped long dress walks slowly on the sand. The warm tones of the dress echo with the surrounding cool blue vegetation. The noon sun casts clear shadows on the sand, enhancing the sense of space and reality in the picture.\n\nThe entire scene, with its clean and transparent colors and fantasy settings, not only exudes the vastness of the natural wilderness but also presents a quiet and poetic high-fashion sense due to the surreal vegetation.',
         height=1024,
         unet_name='z_image_bf16.safetensors',
         clip_name='qwen_3_4b.safetensors',

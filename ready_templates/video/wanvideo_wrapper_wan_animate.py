@@ -59,9 +59,9 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image_load, mask = LoadImage(image='refer.jpeg')
+    image_load, _ = LoadImage(image='refer.jpeg')
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME_2,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
@@ -99,7 +99,7 @@ def build() -> VibeWorkflow:
         compile_args=wanvideotorchcompilesettings,
     )
 
-    image_load_2, frame_count, audio, video_info = VHS_LoadVideo(
+    image_load_2, frame_count, audio, _ = VHS_LoadVideo(
         video='raw.mp4',
         force_rate=16,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'raw.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 16, 'custom_width': 960, 'custom_height': 544, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
@@ -108,7 +108,7 @@ def build() -> VibeWorkflow:
         **{'choose video to upload': 'image'},
     )
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='pad_edge_pixel',
         crop_position='top',
@@ -129,7 +129,7 @@ def build() -> VibeWorkflow:
         image_1=image_image,
     )
 
-    positive_coords, negative_coords, bbox, bbox_mask, cropped_image = PointsEditor(
+    positive_coords, _, _, _, _ = PointsEditor(
         points_store='{"positive":[{"x":483.34844284815,"y":333.283583335728},{"x":479.85856239437277,"y":158.78956064686517}],"negative":[{"x":0,"y":0}]}',
         coordinates='[{"x":483.34844284815,"y":333.283583335728},{"x":479.85856239437277,"y":158.78956064686517}]',
         neg_coordinates='[{"x":0,"y":0}]',
@@ -243,7 +243,7 @@ def build() -> VibeWorkflow:
         images=drawmaskonimage,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=6,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -260,7 +260,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=wanvideodecode)
+    image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
 
     imageconcatmulti = ImageConcatMulti(
         direction='left',

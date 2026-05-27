@@ -34,7 +34,7 @@ VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='1926', field='_un3491', default=True),
+    'enhance_prompt': InputSpec(node='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1928', field='switch', default=True),
     'image': InputSpec(node='444', field='image', default='17745317855d08.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='1832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'prompt': InputSpec(node='1626', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
@@ -53,32 +53,46 @@ READY_METADATA = ReadyMetadata.build(
 def calculate_frames(
     *,
     audio,
+    variables_b,
+    variables_a,
+    on_false,
 ):
     """Calculate Frames.
 
     Materialized from subgraph 63e8c999-0a69-4f62-af3f-8b77f0095971 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json.
-    # vibecomfy source hash: sha256:014978879e8c31d5f5008fa123d298ac383b594f03e1d8d75c11ceabc1cd6d0b
+    # vibecomfy source hash: sha256:2ef41fed9231dadf96fb5ca61e4e350fff3cc114bfba0cdf2ecd0558c7845d29
     Inner nodes: Audio Duration (mtb), SimpleCalculatorKJx3, LazySwitchKJ.
     """
 
-    audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '1864', _outputs=('duration_ms',), audio=audio)
+    audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '63e8c999-0a69-4f62-af3f-8b77f0095971:1864',
+        _outputs=('duration_ms',),
+        audio=audio,
+    )
 
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
+        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1866',
         expression='ceil(a/1000)',
         **{'variables.a': audio_duration__mtb_.out('duration_ms')},
     )
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
+        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1651',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
-        **{'variables.a': calc_int_simple},
+        **{'variables.a': calc_int_simple, 'variables.b': variables_b},
     )
 
-    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
+    _, _, calc_bool_simple_2 = SimpleCalculatorKJ(
+        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1899',
         expression='a<b ',
-        **{'variables.b': calc_int},
+        **{'variables.a': variables_a, 'variables.b': calc_int},
     )
 
-    lazyswitchkj = LazySwitchKJ(switch=calc_bool_simple_2, on_true=calc_int)
+    lazyswitchkj = LazySwitchKJ(
+        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1900',
+        switch=calc_bool_simple_2,
+        on_false=on_false,
+        on_true=calc_int,
+    )
 
     return lazyswitchkj
 
@@ -97,9 +111,14 @@ def prompt_enhancer(
     Inner nodes: TextGenerateLTX2Prompt, LazySwitchKJ, StringConcatenate.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1618',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1623',
         sampling_mode='off',
         prompt=stringconcatenate,
         clip=clip,
@@ -107,6 +126,7 @@ def prompt_enhancer(
     )
 
     lazyswitchkj = LazySwitchKJ(
+        _id='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1928',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -119,7 +139,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='17745317855d08.png')
+    image, _ = LoadImage(image='17745317855d08.png')
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
@@ -164,7 +184,7 @@ def build() -> VibeWorkflow:
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937', model=MEL_BAND_ROFORMER_NAME)
     loadaudio = LoadAudio(audio='d1b26d5a32db420183fa17af9c699278.mp3')
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
@@ -183,7 +203,7 @@ def build() -> VibeWorkflow:
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
     solidmask = SolidMask(value=0, width=intconstant_3, height=intconstant_2)
 
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+    _, calc_int, _ = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.b': 24.0, 'variables.a': intconstant},
     )
@@ -208,11 +228,11 @@ def build() -> VibeWorkflow:
     )
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
-    width_get, height_get, batch_size = GetImageSize(image=resizeimagemasknode)
+    width_get, height_get, _ = GetImageSize(image=resizeimagemasknode)
     prompt_enhancer_result = prompt_enhancer(
         clip=dualcliploader,
         image=resizeimagemasknode,
-        enable=None,
+        enable=True,
         prompt="A video from a TV broadcast with a male and a female news achor. They both stay in frame all the time.\n\nThe dialog from the male and female is as follows:\n\nSpaker_1 is the woman, and Speaker_2 is the man.\n\n[speaker_1][confused]: This is awkward! I guess the prompter ran out of ideas, and put us in this odd situation.\n[speaker_2][embarrassed] : But hey,  just because we are here, in a new video, doesn't mean our voices change. \n[speaker_1][excited]: Aber ich möchte mit dir schlafen.\n[speaker_2][happy]: I still have no idea what she said! Might be for the best [laughing]\n\nThe dialog with perfect lip-sync to the audio\n\n\nThey both smile at the end.\n\n\n",
     )
 
@@ -227,7 +247,6 @@ def build() -> VibeWorkflow:
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(model=ltxvchunkfeedforward)
     cliptextencode = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
-    easy_showanything = raw_call('easy showAnything', '1625', anything=prompt_enhancer_result)
 
     audionormalizelufs = raw_call('AudioNormalizeLUFS', '1916',
         target_lufs=-20,
@@ -243,7 +262,7 @@ def build() -> VibeWorkflow:
         positive=cliptextencode,
     )
 
-    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
+    model, _ = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
 
     audioenhancementnode = raw_call('AudioEnhancementNode', '1904',
         enhancement_mode='manual',
@@ -270,7 +289,12 @@ def build() -> VibeWorkflow:
         audio_vae=ltxvaudiovaeloader,
     )
 
-    calculate_frames_result = calculate_frames(audio=audioenhancementnode.out(0))
+    calculate_frames_result = calculate_frames(
+        audio=audioenhancementnode.out(0),
+        variables_b=['1586', 0],
+        variables_a=calc_int,
+        on_false=calc_int,
+    )
     previewaudio = PreviewAudio(audio=audioenhancementnode.out(0))
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
@@ -328,7 +352,7 @@ def build() -> VibeWorkflow:
         model=modelsamplingsd3_2,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -355,7 +379,7 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplace,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -377,7 +401,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    any_output, image_pass, model_pass, freemem_before, freemem_after = VRAM_Debug(
+    _, image_pass, _, _, _ = VRAM_Debug(
         unload_all_models=True,
         image_pass=vaedecodetiled,
     )

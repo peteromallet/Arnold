@@ -57,7 +57,7 @@ def build() -> VibeWorkflow:
     cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
 
     # Inputs
-    image, mask = LoadImage(image='oldman_upscaled.png')
+    image, _ = LoadImage(image='oldman_upscaled.png')
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
     wanvideoloraselect = WanVideoLoraSelect(
@@ -76,7 +76,7 @@ def build() -> VibeWorkflow:
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, width, height, _ = ImageResizeKJv2(
         width=624,
         height=624,
         upscale_method='lanczos',
@@ -119,7 +119,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=4,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,

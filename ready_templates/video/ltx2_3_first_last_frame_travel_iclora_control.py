@@ -82,8 +82,8 @@ def build() -> VibeWorkflow:
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image, mask = LoadImage(image='example.png')
-    image_load, mask_load = LoadImage(image='egyptian_queen.png')
+    image, _ = LoadImage(image='example.png')
+    image_load, _ = LoadImage(image='egyptian_queen.png')
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
@@ -125,7 +125,7 @@ def build() -> VibeWorkflow:
         length=intconstant,
     )
 
-    image_image, width, height, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -135,7 +135,7 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    image_image_2, width_image, height_image, mask_image_2 = ImageResizeKJv2(
+    image_image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -152,7 +152,7 @@ def build() -> VibeWorkflow:
     )
 
     ltx2_nag = LTX2_NAG(model=unetloader)
-    images, audio, fps = GetVideoComponents(video=loadvideo)
+    images, _, _ = GetVideoComponents(video=loadvideo)
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
         frames_number=intconstant,
@@ -175,7 +175,7 @@ def build() -> VibeWorkflow:
 
     ltxvpreprocess_2 = LTXVPreprocess(img_compression=18, image=image_image)
 
-    image_image_3, width_image_2, height_image_2, mask_image_3 = ImageResizeKJv2(
+    image_image_3, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=STRETCH,
         divisible_by=32,
@@ -223,7 +223,7 @@ def build() -> VibeWorkflow:
         images=image_image_3,
     )
 
-    image_image_4, width_image_3, height_image_3, mask_image_4 = ImageResizeKJv2(
+    ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=STRETCH,
         divisible_by=32,
@@ -238,7 +238,7 @@ def build() -> VibeWorkflow:
         model=ltxvchunkfeedforward,
     )
 
-    image_image_5, width_image_4, height_image_4, mask_image_5 = ImageResizeKJv2(
+    image_image_5, _, _, _ = ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=STRETCH,
         divisible_by=32,
@@ -248,7 +248,7 @@ def build() -> VibeWorkflow:
         image=cannyedgepreprocessor,
     )
 
-    image_image_6, width_image_5, height_image_5, mask_image_6 = ImageResizeKJv2(
+    ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=STRETCH,
         divisible_by=32,
@@ -258,7 +258,7 @@ def build() -> VibeWorkflow:
         image=dwpreprocessor,
     )
 
-    image_image_7, width_image_6, height_image_6, mask_image_7 = ImageResizeKJv2(
+    ImageResizeKJv2(
         upscale_method=LANCZOS,
         keep_proportion=STRETCH,
         divisible_by=32,
@@ -298,7 +298,7 @@ def build() -> VibeWorkflow:
         video_latent=latent,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -313,7 +313,7 @@ def build() -> VibeWorkflow:
         video_latent=video_latent,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -330,7 +330,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv, negative_ltxv, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=negative_ltx,
         positive=positive_ltx,

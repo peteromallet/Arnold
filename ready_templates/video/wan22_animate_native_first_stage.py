@@ -72,7 +72,7 @@ def build() -> VibeWorkflow:
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
     # Inputs
-    image, mask = LoadImage(image='reference_image.png')
+    image, _ = LoadImage(image='reference_image.png')
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     downloadandloadsam2model = DownloadAndLoadSAM2Model(
@@ -97,7 +97,7 @@ def build() -> VibeWorkflow:
 
     loraloadermodelonly = LoraLoaderModelOnly(lora_name=LORA_NAME, model=unetloader)
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
-    images, audio, fps = GetVideoComponents(video=loadvideo)
+    images, audio, _ = GetVideoComponents(video=loadvideo)
 
     loraloadermodelonly_2 = LoraLoaderModelOnly(
         lora_name=LORA_NAME_2,
@@ -142,7 +142,7 @@ def build() -> VibeWorkflow:
 
     modelsamplingsd3 = ModelSamplingSD3(shift=8, model=loraloadermodelonly_2)
 
-    positive_coords, negative_coords, bbox, bbox_mask, cropped_image = PointsEditor(
+    positive_coords, _, _, _, _ = PointsEditor(
         points_store='[{}]',
         coordinates='[{"x":320,"y":320}]',
         neg_coordinates='[]',
@@ -165,7 +165,7 @@ def build() -> VibeWorkflow:
     blockifymask = BlockifyMask(masks=growmask)
     drawmaskonimage = DrawMaskOnImage(image=imagescale, mask=blockifymask)
 
-    positive, negative, latent, trim_latent, trim_image, video_frame_offset = WanAnimateToVideo(
+    positive, negative, latent, trim_latent, trim_image, _ = WanAnimateToVideo(
         length=DEFAULT_FRAMES,
         background_video=drawmaskonimage,
         character_mask=blockifymask,

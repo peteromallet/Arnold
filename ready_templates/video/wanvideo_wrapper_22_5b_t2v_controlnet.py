@@ -70,7 +70,7 @@ def build() -> VibeWorkflow:
         compile_args=wanvideotorchcompilesettings,
     )
 
-    image, frame_count, audio, video_info = VHS_LoadVideo(
+    image, _, _, _ = VHS_LoadVideo(
         video='bubble.mp4',
         format='Wan',
         videopreview={'hidden': False, 'paused': False, 'params': {'frame_load_cap': 81, 'skip_first_frames': 0, 'force_rate': 0, 'filename': 'bubble.mp4', 'type': 'input', 'format': 'video/mp4', 'select_every_nth': 1}, 'muted': False},
@@ -80,7 +80,7 @@ def build() -> VibeWorkflow:
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(width=intconstant_3, height=intconstant_2)
 
-    image_image, width, height, mask = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=STRETCH,
         device=CPU,
@@ -96,7 +96,7 @@ def build() -> VibeWorkflow:
         image=image_image,
     )
 
-    image_image_2, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=STRETCH,
         device=CPU,
@@ -120,7 +120,7 @@ def build() -> VibeWorkflow:
         t5=loadwanvideot5textencoder,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,

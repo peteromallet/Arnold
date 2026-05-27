@@ -43,10 +43,10 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example.png')
+    image, _ = LoadImage(image='example.png')
 
     # Loaders
-    model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
 
     # Sampling
@@ -89,7 +89,7 @@ def build() -> VibeWorkflow:
         model=model,
     )
 
-    images, audio, fps = GetVideoComponents(video=loadvideo)
+    images, _, fps = GetVideoComponents(video=loadvideo)
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type='scale longer dimension',
@@ -127,7 +127,7 @@ def build() -> VibeWorkflow:
     )
 
     cannyedgepreprocessor = raw_call('CannyEdgePreprocessor', '4991', low_threshold=92, image=resizeimagemasknode)
-    math_int, math_float = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, _ = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     videodepthanythingprocess = raw_call('VideoDepthAnythingProcess', '5061',
         widget_0=518,
@@ -193,7 +193,7 @@ def build() -> VibeWorkflow:
         positive=positive_ltx,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -208,7 +208,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent,
     )
 
-    positive_ltxv, negative_ltxv, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=video_latent,
         negative=negative_ltx,
         positive=positive_ltx,

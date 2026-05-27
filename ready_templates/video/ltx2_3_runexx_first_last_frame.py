@@ -36,7 +36,7 @@ V_0_0_0 = '0, 0, 0'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='2070', field='_un3681', default=True),
+    'enhance_prompt': InputSpec(node='8fa4f93a-67ee-463f-ba43-249580c0bfb1:2002', field='switch', default=True),
     'lastframe_strength': InputSpec(node='2152', field='strength', default=1.0),
     'firstframe_strength': InputSpec(node='2105', field='num_images.strength_1', default=0.5),
     'seed': InputSpec(node='14', field='noise_seed', default=DEFAULT_SEED, type='INT'),
@@ -65,12 +65,17 @@ def prompt_enhancer(
 
     Materialized from subgraph 8fa4f93a-67ee-463f-ba43-249580c0bfb1 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json.
     # vibecomfy source hash: sha256:0f8159ebf8aa4a4c3a5e6b80f1b2ee0f64d219acd682c3d5e21076202df94076
-    Inner nodes: StringConcatenate, ComfySwitchNode, easy showAnything, TextGenerateLTX2Prompt.
+    Inner nodes: StringConcatenate, ComfySwitchNode, TextGenerateLTX2Prompt.
     """
 
-    stringconcatenate = StringConcatenate(string_a='', string_b=prompt)
+    stringconcatenate = StringConcatenate(
+        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:482',
+        string_a='',
+        string_b=prompt,
+    )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
+        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:485',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -78,9 +83,8 @@ def prompt_enhancer(
         image=image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '486', _outputs=('output',), anything=textgenerateltx2prompt)
-
     comfyswitchnode = ComfySwitchNode(
+        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:2002',
         switch=enabled,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -89,18 +93,31 @@ def prompt_enhancer(
     return comfyswitchnode
 
 
-def frames_split_view():
+def frames_split_view(
+    *,
+    input,
+    input_2,
+):
     """Frames split view.
 
     Materialized from subgraph 19e3f7e8-881c-4a61-a360-1c463734043a in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_FLF2V_First_Last_Frame.json.
-    # vibecomfy source hash: sha256:a4d60856efd1ce434648446187af66f3a319d0e453e9fb84ce71c56ccace6386
+    # vibecomfy source hash: sha256:0be36a8fa15cc208b8fd3aef62fc7f9487e01520636775ef7158656ed4f367c0
     Inner nodes: ResizeImageMaskNodex2, ImagePadForOutpaintx2, ImageStitch.
     """
 
-    resizeimagemasknode = ResizeImageMaskNode(resize_type='scale by multiplier')
-    resizeimagemasknode_2 = ResizeImageMaskNode(resize_type='scale by multiplier')
+    resizeimagemasknode = ResizeImageMaskNode(
+        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2092',
+        resize_type='scale by multiplier',
+        input=input,
+    )
 
-    imagepadforoutpaint = raw_call('ImagePadForOutpaint', '2098',
+    resizeimagemasknode_2 = ResizeImageMaskNode(
+        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2099',
+        resize_type='scale by multiplier',
+        input=input_2,
+    )
+
+    imagepadforoutpaint = raw_call('ImagePadForOutpaint', '19e3f7e8-881c-4a61-a360-1c463734043a:2098',
         _outputs=('IMAGE', 'MASK'),
         left=16,
         top=16,
@@ -110,7 +127,7 @@ def frames_split_view():
         image=resizeimagemasknode,
     )
 
-    imagepadforoutpaint_2 = raw_call('ImagePadForOutpaint', '2100',
+    imagepadforoutpaint_2 = raw_call('ImagePadForOutpaint', '19e3f7e8-881c-4a61-a360-1c463734043a:2100',
         _outputs=('IMAGE', 'MASK'),
         left=16,
         top=16,
@@ -120,7 +137,7 @@ def frames_split_view():
         image=resizeimagemasknode_2,
     )
 
-    imagestitch = raw_call('ImageStitch', '2085',
+    imagestitch = raw_call('ImageStitch', '19e3f7e8-881c-4a61-a360-1c463734043a:2085',
         image1=imagepadforoutpaint_2.out('IMAGE'),
         image2=imagepadforoutpaint.out('IMAGE'),
     )
@@ -139,9 +156,9 @@ def build() -> VibeWorkflow:
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image_load, mask_load = LoadImage(image='image (6).png')
-    image_load_2, mask_load_2 = LoadImage(image='0 (13).webp')
-    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(expression='a', a=24.0)
+    image_load, _ = LoadImage(image='image (6).png')
+    image_load_2, _ = LoadImage(image='0 (13).webp')
+    _, calc_int, _ = SimpleCalculatorKJ(expression='a', a=24.0)
 
     vaeloaderkj = VAELoaderKJ(
         vae_name=AUDIO_VAE_NAME,
@@ -182,12 +199,11 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=10)
     intconstant_2 = INTConstant(value=720)
     intconstant_3 = INTConstant(value=1280)
-    frames_split_view_result = frames_split_view()
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
 
-    image, width_image, height_image, mask = ImageResizeKJv2(
+    image, width_image, height_image, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -203,14 +219,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    prompt_enhancer_result = prompt_enhancer(
-        clip=dualcliploader,
-        image=frames_split_view_result,
-        enabled=None,
-        prompt="Make this image come alive with cinematic motion, smooth animation. \n\nA foggy night in in 1700's Amsterdam. The fog is thick and swirling, illuminating by streetlights. we see a bridge over a canal, cobblestone streets, canal buildings lining the canal The vibe is uneasy, moody, slightly dangerous.\n\nThe camera crane down high angle to a low angle ending with a close up of a vampire's hand with leather gloves on holding a walking cane.  Single continuous camera shot ",
-    )
-
-    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
+    _, calc_int_simple, _ = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         b=24.0,
         a=intconstant,
@@ -222,10 +231,9 @@ def build() -> VibeWorkflow:
         audio_vae=vaeloaderkj,
     )
 
-    cliptextencode_2 = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
     imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=0.5, image=image)
 
-    image_image, width_image_2, height_image_2, mask_image = ImageResizeKJv2(
+    image_image, _, _, _ = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -245,13 +253,7 @@ def build() -> VibeWorkflow:
         images=image,
     )
 
-    positive, negative = LTXVConditioning(
-        frame_rate=24.0,
-        negative=cliptextencode,
-        positive=cliptextencode_2,
-    )
-
-    width, height, batch_size = GetImageSize(image=imagescaleby)
+    width, height, _ = GetImageSize(image=imagescaleby)
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
         longer_edge=1536,
@@ -279,6 +281,11 @@ def build() -> VibeWorkflow:
         model=ltx2memoryefficientsageattentionpatch,
     )
 
+    frames_split_view_result = frames_split_view(
+        input=resizeimagesbylongeredge,
+        input_2=resizeimagesbylongeredge_2,
+    )
+
     ltxvimgtovideoinplacekj = LTXVImgToVideoInplaceKJ(
         num_images='2',
         strength_1=0.7,
@@ -291,14 +298,28 @@ def build() -> VibeWorkflow:
     )
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(model=ltxvchunkfeedforward)
+    prompt_enhancer_result = prompt_enhancer(
+        clip=dualcliploader,
+        image=frames_split_view_result,
+        enabled=True,
+        prompt="Make this image come alive with cinematic motion, smooth animation. \n\nA foggy night in in 1700's Amsterdam. The fog is thick and swirling, illuminating by streetlights. we see a bridge over a canal, cobblestone streets, canal buildings lining the canal The vibe is uneasy, moody, slightly dangerous.\n\nThe camera crane down high angle to a low angle ending with a close up of a vampire's hand with leather gloves on holding a walking cane.  Single continuous camera shot ",
+    )
+    cliptextencode_2 = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
         audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
+    model, _ = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
     ltxvscheduler = LTXVScheduler(steps=8, latent=ltxvconcatavlatent)
+
+    positive, negative = LTXVConditioning(
+        frame_rate=24.0,
+        negative=cliptextencode,
+        positive=cliptextencode_2,
+    )
+
     ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198', model=model, vae=vaeloader)
 
     ltx2_nag = LTX2_NAG(
@@ -321,7 +342,7 @@ def build() -> VibeWorkflow:
         positive=positive,
     )
 
-    output, denoised_output = SamplerCustomAdvanced(
+    output, _ = SamplerCustomAdvanced(
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -361,7 +382,7 @@ def build() -> VibeWorkflow:
         video_latent=latent,
     )
 
-    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+    output_sampler, _ = SamplerCustomAdvanced(
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -378,7 +399,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv_2, negative_ltxv_2, latent_ltxv = LTXVCropGuides(
+    _, _, latent_ltxv = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=negative_ltxv,
         positive=positive_ltxv,

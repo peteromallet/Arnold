@@ -71,16 +71,16 @@ def build() -> VibeWorkflow:
     audioencoderloader = AudioEncoderLoader(audio_encoder_name=AUDIO_ENCODER_NAME)
     loadaudio = LoadAudio(audio='0321. Alphaville - Big In Japan.mp3')
 
-    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+    text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
-    image_load, mask = LoadImage(image='2b.jpg')
+    image_load, _ = LoadImage(image='2b.jpg')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MEL_BAND_ROFORMER_NAME)
-    audio, duration = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
+    VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
     intconstant = INTConstant(value=640)
     intconstant_2 = INTConstant(value=640)
 
@@ -92,7 +92,7 @@ def build() -> VibeWorkflow:
         compile_args=wanvideotorchcompilesettings,
     )
 
-    image_image, width_image, height_image, mask_image = ImageResizeKJv2(
+    image_image, width_image, height_image, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion=CROP,
         divisible_by=16,
@@ -102,7 +102,7 @@ def build() -> VibeWorkflow:
         image=image_load,
     )
 
-    image_load_2, frame_count, audio_load, video_info = VHS_LoadVideo(
+    _, _, audio_load, _ = VHS_LoadVideo(
         video='weightoftheworld2.mp4',
         force_rate=16,
         frame_load_cap=501,
@@ -113,7 +113,7 @@ def build() -> VibeWorkflow:
         **{'choose video to upload': IMAGE},
     )
 
-    image_load_3, frame_count_load, audio_load_2, video_info_load = VHS_LoadVideo(
+    image_load_3, _, _, _ = VHS_LoadVideo(
         video='weight-world-bones_00003-audio.mp4',
         force_rate=16,
         frame_load_cap=501,
@@ -150,7 +150,7 @@ def build() -> VibeWorkflow:
         model=melbandroformermodelloader.out(0),
     )
 
-    image_image_2, width_image_2, height_image_2, mask_image_2 = ImageResizeKJv2(
+    image_image_2, _, _, _ = ImageResizeKJv2(
         upscale_method=BILINEAR,
         keep_proportion=CROP,
         divisible_by=16,
@@ -182,7 +182,7 @@ def build() -> VibeWorkflow:
         audio_encoder=audioencoderloader,
     )
 
-    image_image_3, width_image_3, height_image_3, mask_image_3 = ImageResizeKJv2(
+    image_image_3, _, _, _ = ImageResizeKJv2(
         width=640,
         height=640,
         upscale_method=BILINEAR,
@@ -202,7 +202,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image_embeds, audio_frame_count = WanVideoAddS2VEmbeds(
+    image_embeds, _ = WanVideoAddS2VEmbeds(
         audio_scale=0,
         frame_window_size=1,
         pose_start_percent=1,
@@ -214,7 +214,7 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    samples, denoised_samples = WanVideoSampler(
+    samples, _ = WanVideoSampler(
         steps=4,
         cfg=GUIDE_STRENGTH,
         shift=4,
@@ -231,12 +231,8 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    image, width, height, count = GetImageSizeAndCount(image=wanvideodecode)
-
-    image_get, mask_get = GetImageRangeFromBatch(
-        num_frames=DEFAULT_FRAMES,
-        images=image,
-    )
+    image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_get, _ = GetImageRangeFromBatch(num_frames=DEFAULT_FRAMES, images=image)
 
     colormatch = ColorMatch(
         widget_0='mkl',
