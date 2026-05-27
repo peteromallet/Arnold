@@ -39,7 +39,7 @@ WIDGET__NAME_2 = 'ltx-2-19b-lora-camera-control-dolly-right.safetensors'
 
 PUBLIC_INPUT_METADATA = {
     'image': InputSpec(node='5180', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'seed': InputSpec(node='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5111', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'seed': InputSpec(node='3eaa20c4:5111', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'width': InputSpec(node='10955', field='width', default=1332, type='INT'),
     'height': InputSpec(node='10955', field='height', default=720, type='INT'),
     'prompt': InputSpec(node='5174', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
@@ -79,64 +79,54 @@ def samplers(
     """
 
     imagescaleby = ImageScaleBy(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5075',
+        _id='3eaa20c4:5075',
         upscale_method='bicubic',
         scale_by=0.5,
         image=empty_latent_image,
     )
 
     randomnoise = RandomNoise(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5097',
+        _id='3eaa20c4:5097',
         noise_seed=420,
         control_after_generate='fixed',
     )
 
-    ksamplerselect = KSamplerSelect(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5099',
-        sampler_name='euler',
-    )
-
-    ksamplerselect_2 = KSamplerSelect(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5109',
-        sampler_name='euler',
-    )
+    ksamplerselect = KSamplerSelect(_id='3eaa20c4:5099', sampler_name='euler')
+    ksamplerselect_2 = KSamplerSelect(_id='3eaa20c4:5109', sampler_name='euler')
 
     randomnoise_2 = RandomNoise(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5111',
+        _id='3eaa20c4:5111',
         control_after_generate='fixed',
         noise_seed=noise_seed,
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5152',
+        _id='3eaa20c4:5152',
         frames_number=length,
         frame_rate=frame_rate,
         audio_vae=audio_vae,
     )
 
     manualsigmas = ManualSigmas(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5232',
+        _id='3eaa20c4:5232',
         sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
     manualsigmas_2 = ManualSigmas(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5233',
+        _id='3eaa20c4:5233',
         sigmas='0.909375, 0.725, 0.421875, 0.0',
     )
 
-    impactexecutionordercontroller = raw_call('ImpactExecutionOrderController', '3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5239',
+    impactexecutionordercontroller = raw_call('ImpactExecutionOrderController', '3eaa20c4:5239',
         _outputs=('signal', 'value'),
         signal=positive,
         value=images,
     )
 
-    width, height, _ = GetImageSize(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5069',
-        image=imagescaleby,
-    )
+    width, height, _ = GetImageSize(_id='3eaa20c4:5069', image=imagescaleby)
 
     cfgguider = CFGGuider(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5098',
+        _id='3eaa20c4:5098',
         cfg=1,
         model=model_stage_2,
         negative=negative,
@@ -144,7 +134,7 @@ def samplers(
     )
 
     cfgguider_2 = CFGGuider(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5110',
+        _id='3eaa20c4:5110',
         cfg=1,
         model=model_stage_1,
         negative=negative,
@@ -152,32 +142,32 @@ def samplers(
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5244',
+        _id='3eaa20c4:5244',
         longer_edge=1536,
         images=impactexecutionordercontroller.out('value'),
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5138',
+        _id='3eaa20c4:5138',
         width=width,
         height=height,
         length=length,
     )
 
     ltxvpreprocess = LTXVPreprocess(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5240',
+        _id='3eaa20c4:5240',
         img_compression=33,
         image=resizeimagesbylongeredge,
     )
 
-    iamccs_ltx2_ensureframes8nplus1 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:10658',
+    iamccs_ltx2_ensureframes8nplus1 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '3eaa20c4:10658',
         _outputs=('images', 'frames', 'report'),
         widget_0='pad_repeat_last',
         widget_1='up',
         images=resizeimagesbylongeredge,
     )
 
-    iamccs_ltx2_ensureframes8nplus1_2 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:10659',
+    iamccs_ltx2_ensureframes8nplus1_2 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '3eaa20c4:10659',
         _outputs=('images', 'frames', 'report'),
         widget_0='pad_repeat_last',
         widget_1='up',
@@ -185,7 +175,7 @@ def samplers(
     )
 
     ltxvimgtovideoinplace_2 = LTXVImgToVideoInplace(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5254',
+        _id='3eaa20c4:5254',
         strength=image_strength,
         image=iamccs_ltx2_ensureframes8nplus1_2.out('images'),
         latent=emptyltxvlatentvideo,
@@ -193,13 +183,13 @@ def samplers(
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5108',
+        _id='3eaa20c4:5108',
         audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoinplace_2,
     )
 
     _, denoised_output_sampler = SamplerCustomAdvanced(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5107',
+        _id='3eaa20c4:5107',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -208,32 +198,32 @@ def samplers(
     )
 
     video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5114',
+        _id='3eaa20c4:5114',
         av_latent=denoised_output_sampler,
     )
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5255',
+        _id='3eaa20c4:5255',
         samples=video_latent_ltxv,
         upscale_model=upscale_model,
         vae=vae,
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5251',
+        _id='3eaa20c4:5251',
         image=iamccs_ltx2_ensureframes8nplus1.out('images'),
         latent=ltxvlatentupsampler,
         vae=vae,
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5112',
+        _id='3eaa20c4:5112',
         audio_latent=audio_latent_ltxv,
         video_latent=ltxvimgtovideoinplace,
     )
 
     _, denoised_output = SamplerCustomAdvanced(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5100',
+        _id='3eaa20c4:5100',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -242,17 +232,17 @@ def samplers(
     )
 
     video_latent, audio_latent = LTXVSeparateAVLatent(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5104',
+        _id='3eaa20c4:5104',
         av_latent=denoised_output,
     )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
-        _id='3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5103',
+        _id='3eaa20c4:5103',
         audio_vae=audio_vae,
         samples=audio_latent,
     )
 
-    ltxvspatiotemporaltiledvaedecode = raw_call('LTXVSpatioTemporalTiledVAEDecode', '3eaa20c4-5842-4fe4-87df-c0a7e83a6a78:5245',
+    ltxvspatiotemporaltiledvaedecode = raw_call('LTXVSpatioTemporalTiledVAEDecode', '3eaa20c4:5245',
         widget_0=4,
         widget_1=4,
         widget_2=16,
@@ -291,64 +281,54 @@ def samplers_8b36a85a(
     """
 
     imagescaleby = ImageScaleBy(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5075',
+        _id='8b36a85a:5075',
         upscale_method='bicubic',
         scale_by=0.5,
         image=empty_latent_image,
     )
 
     randomnoise = RandomNoise(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5097',
+        _id='8b36a85a:5097',
         noise_seed=420,
         control_after_generate='fixed',
     )
 
-    ksamplerselect = KSamplerSelect(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5099',
-        sampler_name='euler',
-    )
-
-    ksamplerselect_2 = KSamplerSelect(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5109',
-        sampler_name='euler',
-    )
+    ksamplerselect = KSamplerSelect(_id='8b36a85a:5099', sampler_name='euler')
+    ksamplerselect_2 = KSamplerSelect(_id='8b36a85a:5109', sampler_name='euler')
 
     randomnoise_2 = RandomNoise(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5111',
+        _id='8b36a85a:5111',
         control_after_generate='fixed',
         noise_seed=noise_seed,
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5152',
+        _id='8b36a85a:5152',
         frames_number=length,
         frame_rate=frame_rate,
         audio_vae=audio_vae,
     )
 
     manualsigmas = ManualSigmas(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5232',
+        _id='8b36a85a:5232',
         sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
     manualsigmas_2 = ManualSigmas(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5233',
+        _id='8b36a85a:5233',
         sigmas='0.909375, 0.725, 0.421875, 0.0',
     )
 
-    impactexecutionordercontroller = raw_call('ImpactExecutionOrderController', '8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5239',
+    impactexecutionordercontroller = raw_call('ImpactExecutionOrderController', '8b36a85a:5239',
         _outputs=('signal', 'value'),
         signal=positive,
         value=images,
     )
 
-    width, height, _ = GetImageSize(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5069',
-        image=imagescaleby,
-    )
+    width, height, _ = GetImageSize(_id='8b36a85a:5069', image=imagescaleby)
 
     cfgguider = CFGGuider(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5098',
+        _id='8b36a85a:5098',
         cfg=1,
         model=model_stage_2,
         negative=negative,
@@ -356,7 +336,7 @@ def samplers_8b36a85a(
     )
 
     cfgguider_2 = CFGGuider(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5110',
+        _id='8b36a85a:5110',
         cfg=1,
         model=model_stage_1,
         negative=negative,
@@ -364,32 +344,32 @@ def samplers_8b36a85a(
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5244',
+        _id='8b36a85a:5244',
         longer_edge=1536,
         images=impactexecutionordercontroller.out('value'),
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5138',
+        _id='8b36a85a:5138',
         width=width,
         height=height,
         length=length,
     )
 
     ltxvpreprocess = LTXVPreprocess(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5240',
+        _id='8b36a85a:5240',
         img_compression=33,
         image=resizeimagesbylongeredge,
     )
 
-    iamccs_ltx2_ensureframes8nplus1 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:10660',
+    iamccs_ltx2_ensureframes8nplus1 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '8b36a85a:10660',
         _outputs=('images', 'frames', 'report'),
         widget_0='pad_repeat_last',
         widget_1='up',
         images=resizeimagesbylongeredge,
     )
 
-    iamccs_ltx2_ensureframes8nplus1_2 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:10661',
+    iamccs_ltx2_ensureframes8nplus1_2 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '8b36a85a:10661',
         _outputs=('images', 'frames', 'report'),
         widget_0='pad_repeat_last',
         widget_1='up',
@@ -397,7 +377,7 @@ def samplers_8b36a85a(
     )
 
     ltxvimgtovideoinplace_2 = LTXVImgToVideoInplace(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5254',
+        _id='8b36a85a:5254',
         strength=image_strength,
         image=iamccs_ltx2_ensureframes8nplus1_2.out('images'),
         latent=emptyltxvlatentvideo,
@@ -405,13 +385,13 @@ def samplers_8b36a85a(
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5108',
+        _id='8b36a85a:5108',
         audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoinplace_2,
     )
 
     _, denoised_output_sampler = SamplerCustomAdvanced(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5107',
+        _id='8b36a85a:5107',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -420,32 +400,32 @@ def samplers_8b36a85a(
     )
 
     video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5114',
+        _id='8b36a85a:5114',
         av_latent=denoised_output_sampler,
     )
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5255',
+        _id='8b36a85a:5255',
         samples=video_latent_ltxv,
         upscale_model=upscale_model,
         vae=vae,
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5251',
+        _id='8b36a85a:5251',
         image=iamccs_ltx2_ensureframes8nplus1.out('images'),
         latent=ltxvlatentupsampler,
         vae=vae,
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5112',
+        _id='8b36a85a:5112',
         audio_latent=audio_latent_ltxv,
         video_latent=ltxvimgtovideoinplace,
     )
 
     _, denoised_output = SamplerCustomAdvanced(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5100',
+        _id='8b36a85a:5100',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -454,17 +434,17 @@ def samplers_8b36a85a(
     )
 
     video_latent, audio_latent = LTXVSeparateAVLatent(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5104',
+        _id='8b36a85a:5104',
         av_latent=denoised_output,
     )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
-        _id='8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5103',
+        _id='8b36a85a:5103',
         audio_vae=audio_vae,
         samples=audio_latent,
     )
 
-    ltxvspatiotemporaltiledvaedecode = raw_call('LTXVSpatioTemporalTiledVAEDecode', '8b36a85a-087e-4ee5-85ca-cccc69c5c5d0:5245',
+    ltxvspatiotemporaltiledvaedecode = raw_call('LTXVSpatioTemporalTiledVAEDecode', '8b36a85a:5245',
         widget_0=4,
         widget_1=4,
         widget_2=16,

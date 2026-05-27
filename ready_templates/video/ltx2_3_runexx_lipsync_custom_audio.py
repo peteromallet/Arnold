@@ -37,7 +37,7 @@ VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enable_promptenhance': InputSpec(node='e428c881-c48b-4849-9158-8311b4df27c7:878', field='switch', default=False),
+    'enable_promptenhance': InputSpec(node='e428c881:878', field='switch', default=False),
     'last_latent_strength': InputSpec(node='799', field='strength', default=1.0),
     'seed': InputSpec(node='115', field='noise_seed', default=DEFAULT_SEED_2, type='INT'),
     'prompt': InputSpec(node='110', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
@@ -69,13 +69,13 @@ def prompt_enhancer(
     """
 
     stringconcatenate = StringConcatenate(
-        _id='e428c881-c48b-4849-9158-8311b4df27c7:779',
+        _id='e428c881:779',
         string_a='',
         string_b=prompt,
     )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
-        _id='e428c881-c48b-4849-9158-8311b4df27c7:782',
+        _id='e428c881:782',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -84,7 +84,7 @@ def prompt_enhancer(
     )
 
     comfyswitchnode = ComfySwitchNode(
-        _id='e428c881-c48b-4849-9158-8311b4df27c7:878',
+        _id='e428c881:878',
         switch=switch,
         on_false=prompt,
         on_true=textgenerateltx2prompt,

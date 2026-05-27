@@ -34,7 +34,7 @@ VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1928', field='switch', default=True),
+    'enhance_prompt': InputSpec(node='a8d7fd9f:1928', field='switch', default=True),
     'image': InputSpec(node='444', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='1832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'prompt': InputSpec(node='1626', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
@@ -64,31 +64,28 @@ def calculate_frames(
     Inner nodes: Audio Duration (mtb), SimpleCalculatorKJx3, LazySwitchKJ.
     """
 
-    audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '63e8c999-0a69-4f62-af3f-8b77f0095971:1864',
-        _outputs=('duration_ms',),
-        audio=audio,
-    )
+    audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '63e8c999:1864', _outputs=('duration_ms',), audio=audio)
 
     _, calc_int_simple, _ = SimpleCalculatorKJ(
-        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1866',
+        _id='63e8c999:1866',
         expression='ceil(a/1000)',
         **{'variables.a': audio_duration__mtb_.out('duration_ms')},
     )
 
     _, calc_int, _ = SimpleCalculatorKJ(
-        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1651',
+        _id='63e8c999:1651',
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.a': calc_int_simple, 'variables.b': variables_b},
     )
 
     _, _, calc_bool_simple_2 = SimpleCalculatorKJ(
-        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1899',
+        _id='63e8c999:1899',
         expression='a<b ',
         **{'variables.a': variables_a, 'variables.b': calc_int},
     )
 
     lazyswitchkj = LazySwitchKJ(
-        _id='63e8c999-0a69-4f62-af3f-8b77f0095971:1900',
+        _id='63e8c999:1900',
         switch=calc_bool_simple_2,
         on_false=on_false,
         on_true=calc_int,
@@ -112,13 +109,13 @@ def prompt_enhancer(
     """
 
     stringconcatenate = StringConcatenate(
-        _id='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1618',
+        _id='a8d7fd9f:1618',
         string_a='',
         string_b=prompt,
     )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
-        _id='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1623',
+        _id='a8d7fd9f:1623',
         sampling_mode='off',
         prompt=stringconcatenate,
         clip=clip,
@@ -126,7 +123,7 @@ def prompt_enhancer(
     )
 
     lazyswitchkj = LazySwitchKJ(
-        _id='a8d7fd9f-52aa-447a-9766-53cb91c0ef18:1928',
+        _id='a8d7fd9f:1928',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,

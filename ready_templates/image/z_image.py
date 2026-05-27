@@ -36,48 +36,28 @@ def text_to_image_z_image_base(
     Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
     """
 
-    cliploader = CLIPLoader(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:62',
-        type_='lumina2',
-        clip_name=clip_name,
-    )
-
-    vaeloader = VAELoader(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:63',
-        vae_name=vae_name,
-    )
-
-    unetloader = UNETLoader(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:66',
-        unet_name=unet_name,
-    )
+    cliploader = CLIPLoader(_id='9b9009e4:62', type_='lumina2', clip_name=clip_name)
+    vaeloader = VAELoader(_id='9b9009e4:63', vae_name=vae_name)
+    unetloader = UNETLoader(_id='9b9009e4:66', unet_name=unet_name)
 
     emptysd3latentimage = EmptySD3LatentImage(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:68',
+        _id='9b9009e4:68',
         width=width,
         height=height,
     )
 
-    positive = CLIPTextEncode(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:67',
-        text=prompt,
-        clip=cliploader,
-    )
+    positive = CLIPTextEncode(_id='9b9009e4:67', text=prompt, clip=cliploader)
 
     modelsamplingauraflow = ModelSamplingAuraFlow(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:70',
+        _id='9b9009e4:70',
         shift=3,
         model=unetloader,
     )
 
-    negative = CLIPTextEncode(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:71',
-        text='',
-        clip=cliploader,
-    )
+    negative = CLIPTextEncode(_id='9b9009e4:71', text='', clip=cliploader)
 
     ksampler = KSampler(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:69',
+        _id='9b9009e4:69',
         seed=770044821593082,
         sampler_name='res_multistep',
         steps=steps,
@@ -88,11 +68,7 @@ def text_to_image_z_image_base(
         positive=positive,
     )
 
-    vaedecode = VAEDecode(
-        _id='9b9009e4-2d3d-445f-9be5-6063f465757e:65',
-        samples=ksampler,
-        vae=vaeloader,
-    )
+    vaedecode = VAEDecode(_id='9b9009e4:65', samples=ksampler, vae=vaeloader)
 
     return vaedecode
 

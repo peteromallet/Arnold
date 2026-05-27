@@ -43,7 +43,7 @@ YUV420P = 'yuv420p'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='94e8f3a0-557f-4580-93a0-f762c7b0d076:1928', field='switch', default=False),
+    'enhance_prompt': InputSpec(node='94e8f3a0:1928', field='switch', default=False),
     'ref_strength': InputSpec(node='5012', field='strength', default=0.7),
     'image': InputSpec(node='2004', field='image', default='fjf1oxsjnnrgphxxrnzx6dh4k9-nano-banana-gemini-3-pro-image-ultra-realistic-black-and-white-cinematic-fullbody-portrait-of-muhammad-ali-standing-side-lighting-strong-contrast-intense-mysterious-expression-sharp.jpg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
@@ -75,13 +75,13 @@ def prompt_enhancer(
     """
 
     stringconcatenate = StringConcatenate(
-        _id='94e8f3a0-557f-4580-93a0-f762c7b0d076:1618',
+        _id='94e8f3a0:1618',
         string_a='',
         string_b=prompt,
     )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
-        _id='94e8f3a0-557f-4580-93a0-f762c7b0d076:1623',
+        _id='94e8f3a0:1623',
         sampling_mode='off',
         prompt=stringconcatenate,
         clip=clip,
@@ -89,7 +89,7 @@ def prompt_enhancer(
     )
 
     lazyswitchkj = LazySwitchKJ(
-        _id='94e8f3a0-557f-4580-93a0-f762c7b0d076:1928',
+        _id='94e8f3a0:1928',
         switch=enable,
         on_false=prompt,
         on_true=textgenerateltx2prompt,

@@ -36,7 +36,7 @@ YUV420P = 'yuv420p'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enable_promptenhance': InputSpec(node='6002fb3c-ab34-4ad8-894e-fccaa60fd8c9:593', field='switch', default=True),
+    'enable_promptenhance': InputSpec(node='6002fb3c:593', field='switch', default=True),
     'seed': InputSpec(node='115', field='noise_seed', default=DEFAULT_SEED_2, type='INT'),
     'prompt': InputSpec(node='110', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
     'negative_prompt': InputSpec(node='626', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
@@ -67,13 +67,13 @@ def prompt_enhancer(
     """
 
     stringconcatenate = StringConcatenate(
-        _id='6002fb3c-ab34-4ad8-894e-fccaa60fd8c9:482',
+        _id='6002fb3c:482',
         string_a='',
         string_b=prompt,
     )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
-        _id='6002fb3c-ab34-4ad8-894e-fccaa60fd8c9:485',
+        _id='6002fb3c:485',
         sampling_mode='off',
         prompt=stringconcatenate,
         clip=clip,
@@ -81,7 +81,7 @@ def prompt_enhancer(
     )
 
     lazyswitchkj = LazySwitchKJ(
-        _id='6002fb3c-ab34-4ad8-894e-fccaa60fd8c9:593',
+        _id='6002fb3c:593',
         switch=enabled,
         on_false=prompt,
         on_true=textgenerateltx2prompt,

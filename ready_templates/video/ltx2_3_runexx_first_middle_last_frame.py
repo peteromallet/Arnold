@@ -35,7 +35,7 @@ VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
-    'enhance_prompt': InputSpec(node='8fa4f93a-67ee-463f-ba43-249580c0bfb1:2002', field='switch', default=True),
+    'enhance_prompt': InputSpec(node='8fa4f93a:2002', field='switch', default=True),
     'middleframe_strength': InputSpec(node='2221', field='num_guides.strength_2', default=0.3),
     'seed': InputSpec(node='14', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'image': InputSpec(node='45', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
@@ -67,13 +67,13 @@ def prompt_enhancer(
     """
 
     stringconcatenate = StringConcatenate(
-        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:482',
+        _id='8fa4f93a:482',
         string_a='',
         string_b=prompt,
     )
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
-        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:485',
+        _id='8fa4f93a:485',
         sampling_mode='off',
         thinking=True,
         prompt=stringconcatenate,
@@ -82,7 +82,7 @@ def prompt_enhancer(
     )
 
     comfyswitchnode = ComfySwitchNode(
-        _id='8fa4f93a-67ee-463f-ba43-249580c0bfb1:2002',
+        _id='8fa4f93a:2002',
         switch=enabled,
         on_false=prompt,
         on_true=textgenerateltx2prompt,
@@ -105,24 +105,24 @@ def frames_split_view(
     """
 
     resizeimagemasknode = ResizeImageMaskNode(
-        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2092',
+        _id='19e3f7e8:2092',
         resize_type='scale by multiplier',
         input=input,
     )
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
-        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2099',
+        _id='19e3f7e8:2099',
         resize_type='scale by multiplier',
         input=input_2,
     )
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
-        _id='19e3f7e8-881c-4a61-a360-1c463734043a:2179',
+        _id='19e3f7e8:2179',
         resize_type='scale by multiplier',
         input=input_3,
     )
 
-    imagepadforoutpaint = raw_call('ImagePadForOutpaint', '19e3f7e8-881c-4a61-a360-1c463734043a:2098',
+    imagepadforoutpaint = raw_call('ImagePadForOutpaint', '19e3f7e8:2098',
         _outputs=('IMAGE', 'MASK'),
         left=16,
         top=16,
@@ -132,7 +132,7 @@ def frames_split_view(
         image=resizeimagemasknode,
     )
 
-    imagepadforoutpaint_2 = raw_call('ImagePadForOutpaint', '19e3f7e8-881c-4a61-a360-1c463734043a:2100',
+    imagepadforoutpaint_2 = raw_call('ImagePadForOutpaint', '19e3f7e8:2100',
         _outputs=('IMAGE', 'MASK'),
         left=16,
         top=16,
@@ -142,15 +142,12 @@ def frames_split_view(
         image=resizeimagemasknode_2,
     )
 
-    imagestitch = raw_call('ImageStitch', '19e3f7e8-881c-4a61-a360-1c463734043a:2085',
+    imagestitch = raw_call('ImageStitch', '19e3f7e8:2085',
         image1=imagepadforoutpaint_2.out('IMAGE'),
         image2=imagepadforoutpaint.out('IMAGE'),
     )
 
-    imagestitch_2 = raw_call('ImageStitch', '19e3f7e8-881c-4a61-a360-1c463734043a:2178',
-        image1=imagestitch,
-        image2=resizeimagemasknode_3,
-    )
+    imagestitch_2 = raw_call('ImageStitch', '19e3f7e8:2178', image1=imagestitch, image2=resizeimagemasknode_3)
 
     return imagestitch_2
 
