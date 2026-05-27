@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CFGNorm, CLIPLoader, ComfySwitchNode, ImageScaleToTotalPixels, KSampler, LoadImage, LoraLoaderModelOnly, ModelSamplingAuraFlow, SaveImage, TextEncodeQwenImageEdit, UNETLoader, VAEDecode, VAEEncode, VAELoader
+from vibecomfy.nodes.core import CFGNorm, CLIPLoader, ComfySwitchNode, KSampler, LoadImage, LoraLoaderModelOnly, ModelSamplingAuraFlow, SaveImage, TextEncodeQwenImageEdit, UNETLoader, VAEDecode, VAEEncode, VAELoader
 
 
 PUBLIC_INPUT_METADATA = {
@@ -102,13 +102,6 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     image, _ = LoadImage(image='image_qwen_image_edit_input_image.png')
-
-    imagescaletototalpixels = ImageScaleToTotalPixels(
-        upscale_method='lanczos',
-        megapixels=1.5,
-        image=image,
-    )
-
     qwen_image_edit_result = qwen_image_edit(
         image=image,
         prompt='Remove all UI text elements from the image. Keep the feeling that the characters and scene are in water. Also, remove the green UI elements at the bottom.',
