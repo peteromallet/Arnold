@@ -12,15 +12,6 @@ PUBLIC_INPUT_METADATA = {
     'height': InputSpec(node='1', field='height', default=64),
 }
 
-
-def PUBLIC_INPUTS(**nodes):
-    emptyimage = nodes['emptyimage']
-    emptyimage = nodes['emptyimage']
-    return {
-    'width': InputSpec(node=emptyimage, field='width', default=64),
-    'height': InputSpec(node=emptyimage, field='height', default=64),
-    }
-
 READY_METADATA = ReadyMetadata.build(
     capability='runtime_smoke',
     inputs=PUBLIC_INPUT_METADATA,
@@ -30,14 +21,14 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        emptyimage = EmptyImage(width=64, height=64, color=16711680)
+    emptyimage = EmptyImage(width=64, height=64, color=16711680)
 
-        saveimage = SaveImage(
-            filename_prefix='vibecomfy_ready_smoke_red',
-            images=emptyimage,
-        )
+    saveimage = SaveImage(
+        filename_prefix='vibecomfy_ready_smoke_red',
+        images=emptyimage,
+    )
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='vibecomfy_ready_smoke_red')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='vibecomfy_ready_smoke_red')
 

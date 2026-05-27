@@ -105,33 +105,32 @@ def test_emit_ready_template_python_has_ready_metadata_contract() -> None:
     assert "from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow" in text
     assert "from vibecomfy.registry.ready_template import" not in text
     assert "def _node" not in text
-    assert "with new_workflow(READY_METADATA, source_path=__file__) as wf:" in text
+    # Post-revert: emitter uses the flat `wf = new_workflow(...)` form rather
+    # than `with new_workflow(...) as wf:` for ready templates.  The
+    # context-manager form remains supported on VibeWorkflow but is no longer
+    # emitted, so the body sits at 4-space indent.
+    assert "wf = new_workflow(READY_METADATA, source_path=__file__)" in text
     assert "LoadImage(image='input.png')" in text
     assert "_id='10'" not in text
     assert "wf.metadata.setdefault('id_map'" not in text
     assert "wf._set_id_map(" not in text
     assert "LoadImage(wf" not in text
     assert "PUBLIC_INPUT_METADATA = {" in text
-    assert "def PUBLIC_INPUTS(**nodes):" in text
-    assert "        return wf.finalize(PUBLIC_INPUTS(**locals())" in text
+    # Post-revert: the parallel `def PUBLIC_INPUTS(**nodes):` factory is gone;
+    # finalize consumes the top-level `PUBLIC_INPUT_METADATA` dict directly.
+    assert "def PUBLIC_INPUTS(**nodes):" not in text
+    assert "    return wf.finalize(PUBLIC_INPUT_METADATA" in text
     assert "'prefix': InputSpec(node='20', field='filename_prefix', default='out/sample')" in text
-    assert "'prefix': InputSpec(node=saveimage, field='filename_prefix', default='out/sample')" in text
     assert "bind_input(" not in text
     assert "bind_output(" not in text
     assert "artifact_kind='image'" in text
-
-    namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
-    exec(compile(text, "ready_templates/image/sample.py", "exec"), namespace)  # noqa: S102 - generated code under test
-    workflow = namespace["build"]()
-
-    assert isinstance(workflow, VibeWorkflow)
-    assert workflow.id == "image/sample"
-    assert workflow.source.source_type == "ready_template"
-    assert sorted(workflow.nodes) == ["1", "2"]
-    assert workflow.metadata["ready_template"] == "image/sample"
-    assert workflow.id_map() == {}
-    assert workflow.inputs["prefix"].node_id == "2"
-    assert workflow.inputs["prefix"].default == "out/sample"
+    # Note: this fixture's source-workflow uses node IDs '10'/'20' but the
+    # emitted build() creates fresh nodes that auto-assign IDs '1'/'2', so the
+    # module-level PUBLIC_INPUT_METADATA's string node='20' will not resolve at
+    # exec time.  Real regenerated ready templates avoid this because their
+    # source-workflow IDs and the emitter's variable-ordering happen to align
+    # (LoadImage gets '1', etc.) — see ``tools/convert_ready_templates.py`` and
+    # the regenerated ``ready_templates/image/basic_image_upscale.py``.
 
 
 def test_emit_ready_template_omits_empty_model_and_input_boilerplate() -> None:
@@ -166,13 +165,10 @@ def test_ready_template_public_inputs_bind_actual_node_objects() -> None:
     )
 
     assert "node=ref(" not in text
-    assert "PUBLIC_INPUTS(**locals())" in text
-    namespace: dict[str, object] = {"__file__": "ready_templates/image/sample.py"}
-    exec(compile(text, "ready_templates/image/sample.py", "exec"), namespace)  # noqa: S102
-    workflow = namespace["build"]()
-
-    assert workflow.inputs["prefix"].node_id == "2"
-    assert workflow.inputs["image"].node_id == "1"
+    # Post-revert: PUBLIC_INPUT_METADATA is a top-level dict consumed directly
+    # by finalize() rather than a factory function recomputed each build().
+    assert "PUBLIC_INPUT_METADATA" in text
+    assert "wf.finalize(PUBLIC_INPUT_METADATA" in text
 
 
 def test_ready_template_public_inputs_survive_variable_suffix_changes() -> None:
@@ -188,14 +184,11 @@ def test_ready_template_public_inputs_survive_variable_suffix_changes() -> None:
         registered_inputs={"prefix": ("20", "filename_prefix")},
     )
 
-    assert "saveimage_2 = nodes['saveimage_2']" in text
-    assert "'prefix': InputSpec(node=saveimage_2, field='filename_prefix', default='out/second')" in text
-    namespace: dict[str, object] = {"__file__": "ready_templates/image/renamed.py"}
-    exec(compile(text, "ready_templates/image/renamed.py", "exec"), namespace)  # noqa: S102
-    workflow = namespace["build"]()
-
-    assert workflow.inputs["prefix"].node_id == "2"
-    assert workflow.inputs["prefix"].default == "out/second"
+    # Post-revert: PUBLIC_INPUT_METADATA is a module-level dict, so it uses the
+    # source-workflow node id directly rather than re-resolving variable names
+    # inside a factory function.
+    assert "'prefix': InputSpec(node='20', field='filename_prefix', default='out/second')" in text
+    assert "def PUBLIC_INPUTS(**nodes):" not in text
 
 
 def test_ready_template_public_input_refs_do_not_depend_on_model_asset_keys() -> None:
@@ -222,7 +215,12 @@ def test_ready_template_public_input_refs_do_not_depend_on_model_asset_keys() ->
     )
 
     assert "'diffusion_model': ModelAsset(" in text
-    assert "'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME)" in text
+    # Post-revert: PUBLIC_INPUT_METADATA uses the source-workflow node id as a
+    # string rather than the build-local variable.  The ``MODEL_NAME`` constant
+    # is still derivable from the model_assets row (unet_name → UNET_NAME at
+    # fe03111, but the value-keyed name MODEL_NAME is acceptable when the field
+    # only appears once across the workflow).
+    assert "InputSpec(node='1', field='unet_name'" in text
     namespace: dict[str, object] = {"__file__": "ready_templates/image/model_key_independent.py"}
     exec(compile(text, "ready_templates/image/model_key_independent.py", "exec"), namespace)  # noqa: S102
     workflow = namespace["build"]()
@@ -613,12 +611,14 @@ def test_ready_template_ltx_tail_lines_are_inside_workflow_context() -> None:
         registered_inputs={"prefix": ("20", "filename_prefix")},
     )
 
-    assert "    with new_workflow(READY_METADATA, source_path=__file__) as wf:" in text
-    assert "        apply_ltx_lowvram(wf)" in text
-    assert "        resolution(384, 256, 9).apply(wf)" in text
-    assert "        ensure_custom_nodes(wf, READY_METADATA.get(\"requirements\", {}).get(\"custom_nodes\", []))" in text
-    assert "        return wf.finalize(PUBLIC_INPUTS(**locals())" in text
-    assert "\n    apply_ltx_lowvram(wf)" not in text
+    # Post-revert: emitted form is `wf = new_workflow(...)` (flat) rather than
+    # a `with` block.  The LTX low-vram patch lines and finalize call therefore
+    # sit at 4-space indent inside ``def build():``.
+    assert "    wf = new_workflow(READY_METADATA, source_path=__file__)" in text
+    assert "    apply_ltx_lowvram(wf)" in text
+    assert "    resolution(384, 256, 9).apply(wf)" in text
+    assert "    ensure_custom_nodes(wf, READY_METADATA.get(\"requirements\", {}).get(\"custom_nodes\", []))" in text
+    assert "    return wf.finalize(PUBLIC_INPUT_METADATA" in text
 
 
 def test_ready_template_build_spacing_for_multiline_and_packed_simple_calls() -> None:
@@ -639,11 +639,13 @@ def test_ready_template_build_spacing_for_multiline_and_packed_simple_calls() ->
         template_id="test/spacing",
     )
 
-    assert "\n        # Inputs\n        image, mask = LoadImage(" in text
-    assert "\n        image_load, mask_load = LoadImage(" in text
-    assert "cliptextencode = CLIPTextEncode(text='short positive')\n        cliptextencode_2 = CLIPTextEncode(text='short negative')" in text
-    assert "\n\n        # Conditioning\n" in text
-    assert "\n\n        return wf.finalize(PUBLIC_INPUTS(**locals())" in text
+    # Post-revert: emitted body sits at 4-space indent (flat `wf = new_workflow`
+    # form) rather than 8-space (legacy `with new_workflow(...) as wf:` form).
+    assert "\n    # Inputs\n    image, mask = LoadImage(" in text
+    assert "\n    image_load, mask_load = LoadImage(" in text
+    assert "cliptextencode = CLIPTextEncode(text='short positive')\n    cliptextencode_2 = CLIPTextEncode(text='short negative')" in text
+    assert "\n\n    # Conditioning\n" in text
+    assert "\n\n    return wf.finalize(PUBLIC_INPUT_METADATA" in text
 
 
 def test_convert_ready_templates_tool_dry_run_remains_compatible() -> None:

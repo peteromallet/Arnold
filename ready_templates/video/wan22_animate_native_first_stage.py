@@ -9,22 +9,22 @@ from vibecomfy.nodes.kjnodes import BlockifyMask, DrawMaskOnImage, PointsEditor
 from vibecomfy.nodes.sam2 import DownloadAndLoadSAM2Model, Sam2Segmentation
 
 
+BBOX_DETECTOR_NAME = 'yolox_l.onnx'
+CLIP_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
+CLIP_NAME_2 = 'clip_vision_h.safetensors'
 DEFAULT_FPS = 16
 DEFAULT_FRAMES = 81
 DEFAULT_FRAMES_2 = 4096
 DEFAULT_PROMPT = 'a person moving naturally, cinematic motion'
 DEFAULT_SEED = 42
+DISABLE = 'disable'
 GUIDE_STRENGTH = 1
-MODEL_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
-MODEL_NAME_2 = 'wan_2.1_vae.safetensors'
-MODEL_NAME_3 = 'clip_vision_h.safetensors'
-MODEL_NAME_4 = 'Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_5 = 'sam2_hiera_base_plus.safetensors'
-MODEL_NAME_6 = 'lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
-MODEL_NAME_7 = 'WanAnimate_relight_lora_fp16.safetensors'
-MODEL_NAME_8 = 'yolox_l.onnx'
-MODEL_NAME_9 = 'dw-ll_ucoco_384_bs5.torchscript.pt'
-SCALE_STICK_FOR_XINSR_CN = 'disable'
+LORA_NAME = 'lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
+LORA_NAME_2 = 'WanAnimate_relight_lora_fp16.safetensors'
+MODEL_NAME = 'sam2_hiera_base_plus.safetensors'
+POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
+UNET_NAME = 'Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'
+VAE_NAME = 'wan_2.1_vae.safetensors'
 
 
 MODELS = {
@@ -41,39 +41,21 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='4', field='image', default='reference_image.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'width': InputSpec(node='15', field='width', default=832, type='INT'),
-    'height': InputSpec(node='15', field='height', default=480, type='INT'),
-    'frames': InputSpec(node='108', field='length', default=DEFAULT_FRAMES, type='INT'),
-    'seed': InputSpec(node='109', field='seed', default=DEFAULT_SEED, type='INT'),
-    'fps': InputSpec(node='113', field='fps', default=DEFAULT_FPS, type='FLOAT'),
-    'prompt': InputSpec(node='8', field='text', default='low quality, blurry, distorted', type='STRING', required=True, media_semantics='text'),
+    'model': InputSpec(node='5', field='unet_name', default=UNET_NAME),
+    'prompt': InputSpec(node='8', field='text', default='low quality, blurry, distorted'),
+    'seed': InputSpec(node='109', field='seed', default=DEFAULT_SEED),
+    'image': InputSpec(node='4', field='image', default='reference_image.png', aliases=('input_image',)),
+    'width': InputSpec(node='15', field='width', default=832),
+    'height': InputSpec(node='15', field='height', default=480),
+    'frames': InputSpec(node='108', field='length', default=DEFAULT_FRAMES),
+    'fps': InputSpec(node='113', field='fps', default=DEFAULT_FPS),
 }
-
-
-def PUBLIC_INPUTS(**nodes):
-    image = nodes['image']
-    imagescale = nodes['imagescale']
-    imagescale = nodes['imagescale']
-    positive = nodes['positive']
-    ksampler = nodes['ksampler']
-    createvideo = nodes['createvideo']
-    cliptextencode = nodes['cliptextencode']
-    return {
-    'image': InputSpec(node=image, field='image', default='reference_image.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'width': InputSpec(node=imagescale, field='width', default=832, type='INT'),
-    'height': InputSpec(node=imagescale, field='height', default=480, type='INT'),
-    'frames': InputSpec(node=positive, field='length', default=DEFAULT_FRAMES, type='INT'),
-    'seed': InputSpec(node=ksampler, field='seed', default=DEFAULT_SEED, type='INT'),
-    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS, type='FLOAT'),
-    'prompt': InputSpec(node=cliptextencode, field='text', default='low quality, blurry, distorted', type='STRING', required=True, media_semantics='text'),
-    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='animate_character',
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-segment-anything-2', 'comfyui_controlnet_aux'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'version': 'unknown', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-segment-anything-2', 'source': 'git', 'version': 'unknown', 'commit': '0c35fff5f382803e2310103357b5e985f5437f32', 'url': 'https://github.com/kijai/ComfyUI-segment-anything-2.git'}, {'slug': 'comfyui_controlnet_aux', 'source': 'git', 'version': 'unknown', 'commit': 'e8b689a513c3e6b63edc44066560ca5919c0576e', 'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git'}]},
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-segment-anything-2', 'comfyui_controlnet_aux']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['BlockifyMask', 'DrawMaskOnImage', 'PointsEditor'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-segment-anything-2': {'commit': '0c35fff5f382803e2310103357b5e985f5437f32', 'url': 'https://github.com/kijai/ComfyUI-segment-anything-2.git', 'class_schema_sha256': 'e3640990ce145928d9404234721b4f23fd02717c7f07af03b3d0be0f8a150e9c', 'classes_used': ['DownloadAndLoadSAM2Model', 'Sam2Segmentation'], 'pip_packages': ['opencv-python-headless'], 'status': 'pinned'}, 'comfyui_controlnet_aux': {'commit': 'e8b689a513c3e6b63edc44066560ca5919c0576e', 'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git', 'class_schema_sha256': 'e485b148824d72ef7af7e90f711eefb511ffe73b25cd1c6053e1e5c7bd3bbd62', 'classes_used': ['DWPreprocessor'], 'pip_packages': ['onnxruntime', 'opencv-python-headless'], 'status': 'pinned'}},
     approach='Native ComfyUI Wan 2.2 Animate first-stage replacement workflow using DWPose, SAM2 masking, and native WanAnimateToVideo.',
     runtime_note='Worker scratchpads patch reference image, motion video, prompt, negative prompt, seed, steps, width, height, frame count, and output options.',
@@ -83,150 +65,146 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        # Loaders
-        cliploader = CLIPLoader(clip_name=MODEL_NAME, type_='wan')
-        vaeloader = VAELoader(vae_name=MODEL_NAME_2)
-        clipvisionloader = CLIPVisionLoader(clip_name=MODEL_NAME_3)
+    # Loaders
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    vaeloader = VAELoader(vae_name=VAE_NAME)
+    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
-        # Inputs
-        image, mask = LoadImage(image='reference_image.png')
-        unetloader = UNETLoader(unet_name=MODEL_NAME_4)
+    # Inputs
+    image, mask = LoadImage(image='reference_image.png')
+    unetloader = UNETLoader(unet_name=UNET_NAME)
 
-        downloadandloadsam2model = DownloadAndLoadSAM2Model(
-            model=MODEL_NAME_5,
-            segmentor='video',
-            device='cuda',
-        )
+    downloadandloadsam2model = DownloadAndLoadSAM2Model(
+        model=MODEL_NAME,
+        segmentor='video',
+        device='cuda',
+    )
 
-        loadvideo = LoadVideo(file='motion_video.mp4')
+    loadvideo = LoadVideo(file='motion_video.mp4')
 
-        # Conditioning
-        cliptextencode = CLIPTextEncode(
-            text='low quality, blurry, distorted',
-            clip=cliploader,
-        )
+    # Conditioning
+    cliptextencode = CLIPTextEncode(
+        text='low quality, blurry, distorted',
+        clip=cliploader,
+    )
 
-        clipvisionencode = CLIPVisionEncode(
-            crop='none',
-            clip_vision=clipvisionloader,
-            image=image,
-        )
+    clipvisionencode = CLIPVisionEncode(
+        crop='none',
+        clip_vision=clipvisionloader,
+        image=image,
+    )
 
-        loraloadermodelonly = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_6,
-            model=unetloader,
-        )
+    loraloadermodelonly = LoraLoaderModelOnly(lora_name=LORA_NAME, model=unetloader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+    images, audio, fps = GetVideoComponents(video=loadvideo)
 
-        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
-        images, audio, fps = GetVideoComponents(video=loadvideo)
+    loraloadermodelonly_2 = LoraLoaderModelOnly(
+        lora_name=LORA_NAME_2,
+        model=loraloadermodelonly,
+    )
 
-        loraloadermodelonly_2 = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_7,
-            model=loraloadermodelonly,
-        )
+    pixelperfectresolution = PixelPerfectResolution(
+        image_gen_height=480,
+        image_gen_width=832,
+        original_image=images,
+    )
 
-        pixelperfectresolution = PixelPerfectResolution(
-            image_gen_height=480,
-            image_gen_width=832,
-            original_image=images,
-        )
+    imagescale = ImageScale(
+        upscale_method='lanczos',
+        width=832,
+        height=480,
+        crop='center',
+        image=images,
+    )
 
-        imagescale = ImageScale(
-            upscale_method='lanczos',
-            width=832,
-            height=480,
-            crop='center',
-            image=images,
-        )
+    dwpreprocessor = raw_call('DWPreprocessor', '100',
+        detect_hand='disable',
+        detect_body='disable',
+        detect_face='enable',
+        bbox_detector=BBOX_DETECTOR_NAME,
+        pose_estimator=POSE_ESTIMATOR_NAME,
+        scale_stick_for_xinsr_cn=DISABLE,
+        resolution=pixelperfectresolution,
+        image=imagescale,
+    )
 
-        dwpreprocessor = raw_call('DWPreprocessor', '100',
-            detect_hand='disable',
-            detect_body='disable',
-            detect_face='enable',
-            bbox_detector=MODEL_NAME_8,
-            pose_estimator=MODEL_NAME_9,
-            scale_stick_for_xinsr_cn=SCALE_STICK_FOR_XINSR_CN,
-            resolution=pixelperfectresolution,
-            image=imagescale,
-        )
+    dwpreprocessor_2 = raw_call('DWPreprocessor', '101',
+        detect_hand='enable',
+        detect_body='enable',
+        detect_face='disable',
+        bbox_detector=BBOX_DETECTOR_NAME,
+        pose_estimator=POSE_ESTIMATOR_NAME,
+        scale_stick_for_xinsr_cn=DISABLE,
+        resolution=pixelperfectresolution,
+        image=imagescale,
+    )
 
-        dwpreprocessor_2 = raw_call('DWPreprocessor', '101',
-            detect_hand='enable',
-            detect_body='enable',
-            detect_face='disable',
-            bbox_detector=MODEL_NAME_8,
-            pose_estimator=MODEL_NAME_9,
-            scale_stick_for_xinsr_cn=SCALE_STICK_FOR_XINSR_CN,
-            resolution=pixelperfectresolution,
-            image=imagescale,
-        )
+    modelsamplingsd3 = ModelSamplingSD3(shift=8, model=loraloadermodelonly_2)
 
-        modelsamplingsd3 = ModelSamplingSD3(shift=8, model=loraloadermodelonly_2)
+    positive_coords, negative_coords, bbox, bbox_mask, cropped_image = PointsEditor(
+        points_store='[{}]',
+        coordinates='[{"x":320,"y":320}]',
+        neg_coordinates='[]',
+        bbox_store='[{}]',
+        bboxes='[{"startX":160,"startY":96,"endX":480,"endY":544}]',
+        bbox_format='xyxy',
+        width=640,
+        height=640,
+        bg_image=imagescale,
+    )
 
-        positive_coords, negative_coords, bbox, bbox_mask, cropped_image = PointsEditor(
-            points_store='[{}]',
-            coordinates='[{"x":320,"y":320}]',
-            neg_coordinates='[]',
-            bbox_store='[{}]',
-            bboxes='[{"startX":160,"startY":96,"endX":480,"endY":544}]',
-            bbox_format='xyxy',
-            width=640,
-            height=640,
-            bg_image=imagescale,
-        )
+    sam2segmentation = Sam2Segmentation(
+        keep_model_loaded=True,
+        coordinates_positive=positive_coords,
+        image=imagescale,
+        sam2_model=downloadandloadsam2model,
+    )
 
-        sam2segmentation = Sam2Segmentation(
-            keep_model_loaded=True,
-            coordinates_positive=positive_coords,
-            image=imagescale,
-            sam2_model=downloadandloadsam2model,
-        )
+    growmask = GrowMask(expand=10, mask=sam2segmentation)
+    blockifymask = BlockifyMask(masks=growmask)
+    drawmaskonimage = DrawMaskOnImage(image=imagescale, mask=blockifymask)
 
-        growmask = GrowMask(expand=10, mask=sam2segmentation)
-        blockifymask = BlockifyMask(masks=growmask)
-        drawmaskonimage = DrawMaskOnImage(image=imagescale, mask=blockifymask)
+    positive, negative, latent, trim_latent, trim_image, video_frame_offset = WanAnimateToVideo(
+        length=DEFAULT_FRAMES,
+        background_video=drawmaskonimage,
+        character_mask=blockifymask,
+        clip_vision_output=clipvisionencode,
+        face_video=dwpreprocessor,
+        negative=cliptextencode,
+        pose_video=dwpreprocessor_2,
+        positive=cliptextencode_2,
+        reference_image=image,
+        vae=vaeloader,
+    )
 
-        positive, negative, latent, trim_latent, trim_image, video_frame_offset = WanAnimateToVideo(
-            length=DEFAULT_FRAMES,
-            background_video=drawmaskonimage,
-            character_mask=blockifymask,
-            clip_vision_output=clipvisionencode,
-            face_video=dwpreprocessor,
-            negative=cliptextencode,
-            pose_video=dwpreprocessor_2,
-            positive=cliptextencode_2,
-            reference_image=image,
-            vae=vaeloader,
-        )
+    # Sampling
+    ksampler = KSampler(
+        seed=DEFAULT_SEED,
+        cfg=GUIDE_STRENGTH,
+        sampler_name='euler',
+        latent_image=latent,
+        model=modelsamplingsd3,
+        negative=negative,
+        positive=positive,
+    )
 
-        # Sampling
-        ksampler = KSampler(
-            seed=DEFAULT_SEED,
-            cfg=GUIDE_STRENGTH,
-            sampler_name='euler',
-            latent_image=latent,
-            model=modelsamplingsd3,
-            negative=negative,
-            positive=positive,
-        )
+    trimvideolatent = TrimVideoLatent(samples=ksampler, trim_amount=trim_latent)
 
-        trimvideolatent = TrimVideoLatent(samples=ksampler, trim_amount=trim_latent)
+    # Decode
+    vaedecode = VAEDecode(samples=trimvideolatent, vae=vaeloader)
 
-        # Decode
-        vaedecode = VAEDecode(samples=trimvideolatent, vae=vaeloader)
+    imagefrombatch = ImageFromBatch(
+        length=DEFAULT_FRAMES_2,
+        batch_index=trim_image,
+        image=vaedecode,
+    )
 
-        imagefrombatch = ImageFromBatch(
-            length=DEFAULT_FRAMES_2,
-            batch_index=trim_image,
-            image=vaedecode,
-        )
+    createvideo = CreateVideo(fps=DEFAULT_FPS, audio=audio, images=imagefrombatch)
 
-        createvideo = CreateVideo(fps=DEFAULT_FPS, audio=audio, images=imagefrombatch)
+    # Outputs
+    savevideo = SaveVideo(video=createvideo)
 
-        # Outputs
-        savevideo = SaveVideo(video=createvideo)
-
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

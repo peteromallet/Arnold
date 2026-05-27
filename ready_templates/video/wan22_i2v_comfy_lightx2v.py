@@ -7,20 +7,20 @@ from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workfl
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, LoadImage, LoraLoaderModelOnly, ModelSamplingSD3, SaveVideo, UNETLoader, VAEDecode, VAELoader, WanImageToVideo
 
 
+CLIP_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
 DEFAULT_FPS = 16
 DEFAULT_FRAMES = 81
 DEFAULT_PROMPT = 'A felt-style little eagle cashier greeting, waving, and smiling at the camera.'
 DEFAULT_PROMPT_2 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_SEED = 0
+EULER = 'euler'
 GUIDE_STRENGTH = 1.0000000000000002
 GUIDE_STRENGTH_2 = 1
-MODEL_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
-MODEL_NAME_2 = 'wan_2.1_vae.safetensors'
-MODEL_NAME_3 = 'wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors'
-MODEL_NAME_4 = 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors'
-MODEL_NAME_5 = 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors'
-MODEL_NAME_6 = 'wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors'
-SAMPLER_NAME = 'euler'
+LORA_NAME = 'wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors'
+LORA_NAME_2 = 'wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors'
+UNET_NAME = 'wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors'
+UNET_NAME_2 = 'wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors'
+VAE_NAME = 'wan_2.1_vae.safetensors'
 
 
 MODELS = {
@@ -34,42 +34,16 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='4', field='unet_name', default=MODEL_NAME_3),
+    'model': InputSpec(node='4', field='unet_name', default=UNET_NAME),
     'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
     'seed': InputSpec(node='130:110', field='noise_seed', default=DEFAULT_SEED),
     'steps': InputSpec(node='130:110', field='steps', default=4),
-    'image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
-    'input_image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
+    'image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png', aliases=('input_image',)),
     'fps': InputSpec(node='14', field='fps', default=DEFAULT_FPS),
     'width': InputSpec(node='12', field='width', default=720),
     'height': InputSpec(node='12', field='height', default=720),
     'frames': InputSpec(node='12', field='length', default=DEFAULT_FRAMES),
 }
-
-
-def PUBLIC_INPUTS(**nodes):
-    unetloader = nodes['unetloader']
-    cliptextencode = nodes['cliptextencode']
-    ksampleradvanced = nodes['ksampleradvanced']
-    ksampleradvanced = nodes['ksampleradvanced']
-    image = nodes['image']
-    image = nodes['image']
-    createvideo = nodes['createvideo']
-    positive = nodes['positive']
-    positive = nodes['positive']
-    positive = nodes['positive']
-    return {
-    'model': InputSpec(node=unetloader, field='unet_name', default=MODEL_NAME_3),
-    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node=ksampleradvanced, field='noise_seed', default=DEFAULT_SEED),
-    'steps': InputSpec(node=ksampleradvanced, field='steps', default=4),
-    'image': InputSpec(node=image, field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
-    'input_image': InputSpec(node=image, field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png'),
-    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS),
-    'width': InputSpec(node=positive, field='width', default=720),
-    'height': InputSpec(node=positive, field='height', default=720),
-    'frames': InputSpec(node=positive, field='length', default=DEFAULT_FRAMES),
-    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
@@ -96,93 +70,91 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        # Inputs
-        image, mask = LoadImage(
-            image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png',
-        )
+    # Inputs
+    image, mask = LoadImage(image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png')
 
-        # Loaders
-        cliploader = CLIPLoader(clip_name=MODEL_NAME, type_='wan')
-        vaeloader = VAELoader(vae_name=MODEL_NAME_2)
-        unetloader = UNETLoader(unet_name=MODEL_NAME_3)
-        unetloader_2 = UNETLoader(unet_name=MODEL_NAME_4)
+    # Loaders
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    vaeloader = VAELoader(vae_name=VAE_NAME)
+    unetloader = UNETLoader(unet_name=UNET_NAME)
+    unetloader_2 = UNETLoader(unet_name=UNET_NAME_2)
 
-        # Conditioning
-        cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
-        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+    # Conditioning
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
 
-        loraloadermodelonly = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_5,
-            strength_model=GUIDE_STRENGTH,
-            model=unetloader,
-        )
+    loraloadermodelonly = LoraLoaderModelOnly(
+        lora_name=LORA_NAME,
+        strength_model=GUIDE_STRENGTH,
+        model=unetloader,
+    )
 
-        loraloadermodelonly_2 = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_6,
-            strength_model=GUIDE_STRENGTH,
-            model=unetloader_2,
-        )
+    loraloadermodelonly_2 = LoraLoaderModelOnly(
+        lora_name=LORA_NAME_2,
+        strength_model=GUIDE_STRENGTH,
+        model=unetloader_2,
+    )
 
-        modelsamplingsd3 = ModelSamplingSD3(
-            shift=5.000000000000001,
-            model=loraloadermodelonly,
-        )
+    modelsamplingsd3 = ModelSamplingSD3(
+        shift=5.000000000000001,
+        model=loraloadermodelonly,
+    )
 
-        modelsamplingsd3_2 = ModelSamplingSD3(
-            shift=5.000000000000001,
-            model=loraloadermodelonly_2,
-        )
+    modelsamplingsd3_2 = ModelSamplingSD3(
+        shift=5.000000000000001,
+        model=loraloadermodelonly_2,
+    )
 
-        positive, negative, latent = WanImageToVideo(
-            height=720,
-            length=DEFAULT_FRAMES,
-            width=720,
-            negative=cliptextencode_2,
-            positive=cliptextencode,
-            start_image=image,
-            vae=vaeloader,
-        )
+    positive, negative, latent = WanImageToVideo(
+        height=720,
+        length=DEFAULT_FRAMES,
+        width=720,
+        negative=cliptextencode_2,
+        positive=cliptextencode,
+        start_image=image,
+        vae=vaeloader,
+    )
 
-        # Sampling
-        ksampleradvanced = raw_call('KSamplerAdvanced', '130:110',
-            add_noise='enable',
-            noise_seed=DEFAULT_SEED,
-            steps=4,
-            cfg=GUIDE_STRENGTH_2,
-            sampler_name=SAMPLER_NAME,
-            end_at_step=2,
-            return_with_leftover_noise='enable',
-            latent_image=latent,
-            model=modelsamplingsd3,
-            negative=negative,
-            positive=positive,
-        )
+    # Sampling
+    ksampleradvanced = raw_call('KSamplerAdvanced', '130:110',
+        add_noise='enable',
+        noise_seed=DEFAULT_SEED,
+        steps=4,
+        cfg=GUIDE_STRENGTH_2,
+        sampler_name=EULER,
+        end_at_step=2,
+        return_with_leftover_noise='enable',
+        latent_image=latent,
+        model=modelsamplingsd3,
+        negative=negative,
+        positive=positive,
+    )
 
-        ksampleradvanced_2 = raw_call('KSamplerAdvanced', '130:111',
-            add_noise='disable',
-            steps=4,
-            cfg=GUIDE_STRENGTH_2,
-            sampler_name=SAMPLER_NAME,
-            start_at_step=2,
-            end_at_step=4,
-            return_with_leftover_noise='disable',
-            latent_image=ksampleradvanced,
-            model=modelsamplingsd3_2,
-            negative=negative,
-            positive=positive,
-        )
+    ksampleradvanced_2 = raw_call('KSamplerAdvanced', '130:111',
+        add_noise='disable',
+        steps=4,
+        cfg=GUIDE_STRENGTH_2,
+        sampler_name=EULER,
+        start_at_step=2,
+        end_at_step=4,
+        return_with_leftover_noise='disable',
+        latent_image=ksampleradvanced,
+        model=modelsamplingsd3_2,
+        negative=negative,
+        positive=positive,
+    )
 
-        # Decode
-        vaedecode = VAEDecode(samples=ksampleradvanced_2, vae=vaeloader)
-        createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
+    # Decode
+    vaedecode = VAEDecode(samples=ksampleradvanced_2, vae=vaeloader)
+    createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
 
-        # Outputs
-        savevideo = SaveVideo(
-            filename_prefix='video/Wan2.2_image_to_video',
-            video=createvideo,
-        )
+    # Outputs
+    savevideo = SaveVideo(
+        filename_prefix='video/Wan2.2_image_to_video',
+        video=createvideo,
+    )
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/Wan2.2_image_to_video')
 

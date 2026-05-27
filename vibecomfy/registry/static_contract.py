@@ -64,7 +64,10 @@ def extract_ready_template_contract(path: str | Path) -> dict[str, Any]:
     public_outputs: list[dict[str, Any]] = []
 
     # ── Derive public_inputs from PUBLIC_INPUTS/InputSpec when present ──
-    public_inputs_dict = assignments.get("PUBLIC_INPUTS")
+    # Generated templates use either ``PUBLIC_INPUT_METADATA`` (canonical
+    # post-revert shape) or the legacy ``PUBLIC_INPUTS`` alias.  Try the new
+    # name first and fall back to the old.
+    public_inputs_dict = assignments.get("PUBLIC_INPUT_METADATA") or assignments.get("PUBLIC_INPUTS")
     if isinstance(public_inputs_dict, dict):
         for name, spec in public_inputs_dict.items():
             if not isinstance(spec, dict):
@@ -348,6 +351,7 @@ _KNOWN_TOP_LEVEL_NAMES = frozenset({
     "READY_METADATA",
     "READY_REQUIREMENTS",
     "PUBLIC_INPUTS",
+    "PUBLIC_INPUT_METADATA",
     "MODELS",
     "OUTPUT_PREFIX",
     "PRIVATE_KNOBS",
@@ -361,8 +365,30 @@ def _module_assignments(tree: ast.Module, diagnostics: list[dict[str, Any]]) -> 
     call expressions (which are evaluated into a dict).
     """
     assignments: dict[str, Any] = {}
-    # Two-pass: first collect all simple assignments for cross-references,
-    # then evaluate call expressions.
+    # First pass: collect simple ALL_CAPS constant assignments (e.g.
+    # ``DEFAULT_SEED = 12345``, ``MODEL_NAME = 'foo.safetensors'``).  Generated
+    # templates use these as ``default=`` references inside PUBLIC_INPUT_METADATA
+    # InputSpec calls, and ``_literal_value`` resolves ast.Name through the
+    # assignments dict.  Without this pass, InputSpec.default references end up
+    # as _UNSUPPORTED and the dict-level eval drops the whole entry.
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            name = target.id
+            if name in _KNOWN_TOP_LEVEL_NAMES:
+                continue
+            # Heuristic: ALL_CAPS module constants.  Skip class-level definitions.
+            if not name.isupper() and "_" not in name:
+                continue
+            value = _literal_value(node.value, assignments)
+            if value is _UNSUPPORTED:
+                continue
+            assignments[name] = value
+    # Two-pass: now collect the named template top-level names that may
+    # reference the constants from the first pass.
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue

@@ -355,6 +355,57 @@ def _classify_node_role(node: Any) -> str | None:
     return _ROLE_CLASSIFICATION.get(node.class_type)
 
 
+def _constant_name_base_for_category(category: str, field: str) -> str:
+    """Return the unsuffixed constant name for a hoisted field.
+
+    For non-model categories, returns a canonical name (DEFAULT_PROMPT, etc.).
+    For ``model``, derives the name from the field (e.g. ``clip_name`` →
+    ``CLIP_NAME``, ``unet_name`` → ``UNET_NAME``, ``vae_name`` → ``VAE_NAME``,
+    ``bbox_detector_name`` → ``BBOX_DETECTOR_NAME``).
+    """
+    if category != "model":
+        return {
+            "prompt": "DEFAULT_PROMPT",
+            "negative_prompt": "DEFAULT_NEGATIVE",
+            "seed": "DEFAULT_SEED",
+            "output_prefix": "OUTPUT_PREFIX",
+            "size": "DEFAULT_SIZE",
+            "fps": "DEFAULT_FPS",
+            "frames": "DEFAULT_FRAMES",
+            "guide": "GUIDE_STRENGTH",
+        }.get(category, "CONSTANT")
+
+    normalized = re.sub(r"\d+$", "", field)
+    if normalized == "lora":
+        normalized = "lora_name"
+    elif normalized == "text_encoder":
+        normalized = "text_encoder_name"
+    elif not normalized.endswith("_name"):
+        normalized = f"{normalized}_name"
+
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", normalized.upper())
+    if not sanitized or sanitized[0].isdigit():
+        sanitized = f"MODEL_{sanitized}"
+    return sanitized
+
+
+def _constant_name_for_string_value(value: str) -> str:
+    """Return an uppercase-slugified constant name derived from string VALUE.
+
+    Used for "preset" hoisting (repeated non-categorized string values).
+    Examples: ``'vae'`` → ``VAE``, ``'wan_i2v.safetensors'`` →
+    ``WAN_I2V_SAFETENSORS``.  Numeric suffixes are added by callers only on
+    real name collision.
+    """
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", str(value).upper())
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    if not sanitized:
+        return "VALUE"
+    if sanitized[0].isdigit():
+        sanitized = f"V_{sanitized}"
+    return sanitized
+
+
 def _build_section_groups(
     workflow_nodes: dict[str, Any],
     edges_in: dict[str, list[Any]],
@@ -442,25 +493,12 @@ def _hoist_constants(
     constant_defs: dict[str, tuple[Any, str]] = {}  # name -> (value, category)
     constant_map: dict[tuple[str, str], str] = {}  # (nid, field) -> name
 
-    # Pre-defined name patterns by category
-    _CATEGORY_NAMES: dict[str, str] = {
-        "prompt": "DEFAULT_PROMPT",
-        "negative_prompt": "DEFAULT_NEGATIVE",
-        "seed": "DEFAULT_SEED",
-        "model": "MODEL_NAME",
-        "output_prefix": "OUTPUT_PREFIX",
-        "size": "DEFAULT_SIZE",
-        "fps": "DEFAULT_FPS",
-        "frames": "DEFAULT_FRAMES",
-        "guide": "GUIDE_STRENGTH",
-    }
-
-    # Value dedup: same category + same value string -> same constant name
-    value_to_name: dict[tuple[str, str], str] = {}  # (category, str(value)) -> name
+    # Value dedup: same (base, category, value string) -> same constant name
+    value_to_name: dict[tuple[str, str, str], str] = {}
 
     for nid, field, value, category in candidates:
-        value_key = (category, str(value))
-        count = value_counts[value_key]
+        count_key = (category, str(value))
+        count = value_counts[count_key]
 
         # Always hoist categories that represent public defaults
         always_hoist = category in ("model", "prompt", "negative_prompt", "seed",
@@ -470,10 +508,11 @@ def _hoist_constants(
         if not should_hoist:
             continue
 
+        base = _constant_name_base_for_category(category, field)
+        value_key = (base, category, str(value))
         if value_key in value_to_name:
             name = value_to_name[value_key]
         else:
-            base = _CATEGORY_NAMES.get(category, "CONSTANT")
             category_counters[base] = category_counters.get(base, 0) + 1
             cnt = category_counters[base]
             name = base if cnt == 1 else f"{base}_{cnt}"
@@ -505,14 +544,11 @@ def _hoist_constants(
 
     for (field, value), count in all_values.items():
         if count >= 2:
-            # This is a repeated preset
-            value_key = ("preset", str(value))
+            # This is a repeated preset — name by value (uppercase-slugified)
+            sanitized = _constant_name_for_string_value(value)
+            value_key = (sanitized, "preset", str(value))
             if value_key in value_to_name:
                 continue  # already named
-            # Deterministic name: field name ALL_CAPS_ style
-            sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", field.upper())
-            if not sanitized or sanitized[0].isdigit():
-                sanitized = f"P_{sanitized}"
             category_counters[sanitized] = category_counters.get(sanitized, 0) + 1
             cnt = category_counters[sanitized]
             name = sanitized if cnt == 1 else f"{sanitized}_{cnt}"
@@ -645,8 +681,29 @@ def _format_public_inputs_block(specs: list[_PublicInputSpec], *, metadata: bool
     if not specs:
         return []
     lines = ["PUBLIC_INPUT_METADATA = {" if metadata else "    return {"]
+    # Dedup by (node_ref, field): aliases for the same underlying binding collapse
+    # to one entry under the canonical name with the others recorded as
+    # aliases=(...).  Without this, both 'negative' and 'negative_prompt' end up as
+    # separate dict keys for the same node/field, which silently duplicates state.
+    seen: dict[tuple[str, str], str] = {}
     for spec in specs:
         node_ref = spec.metadata_node_ref if metadata else spec.node_ref
+        key = (node_ref, spec.field)
+        if key in seen:
+            continue
+        seen[key] = spec.name
+        # Fold any other specs that share (node_ref, field) into the aliases tuple.
+        extra_aliases: list[str] = []
+        for other in specs:
+            other_node = other.metadata_node_ref if metadata else other.node_ref
+            if (other_node, other.field) != key:
+                continue
+            if other.name != spec.name and other.name not in extra_aliases:
+                extra_aliases.append(other.name)
+        aliases = tuple(spec.aliases or ())
+        for alias in extra_aliases:
+            if alias not in aliases:
+                aliases = aliases + (alias,)
         args = [
             f"node={node_ref}",
             f"field={spec.field!r}",
@@ -656,23 +713,12 @@ def _format_public_inputs_block(specs: list[_PublicInputSpec], *, metadata: bool
             args.append(f"type={spec.type!r}")
         if spec.required:
             args.append("required=True")
-        if spec.aliases:
-            args.append(f"aliases={spec.aliases!r}")
+        if aliases:
+            args.append(f"aliases={aliases!r}")
         if spec.media_semantics is not None:
             args.append(f"media_semantics={spec.media_semantics!r}")
         lines.append(f"    {spec.name!r}: InputSpec({', '.join(args)}),")
     lines.append("}" if metadata else "    }")
-    return lines
-
-
-def _format_public_inputs_factory(specs: list[_PublicInputSpec]) -> list[str]:
-    if not specs:
-        return []
-    lines = ["def PUBLIC_INPUTS(**nodes):"]
-    for spec in specs:
-        if spec.node_ref.isidentifier():
-            lines.append(f"    {spec.node_ref} = nodes[{spec.node_ref!r}]")
-    lines.extend(_format_public_inputs_block(specs))
     return lines
 
 
@@ -1016,11 +1062,6 @@ def emit_ready_template_python(
     if public_input_metadata_lines:
         out_lines.append("")
         out_lines.extend(public_input_metadata_lines)
-        out_lines.append("")
-    public_input_factory_lines = _format_public_inputs_factory(public_inputs)
-    if public_input_factory_lines:
-        out_lines.append("")
-        out_lines.extend(public_input_factory_lines)
         out_lines.append("")
     out_lines.extend(
         _format_ready_metadata_build(
@@ -1775,9 +1816,19 @@ def _emit_build_function(
         body_indent = "    "
         continuation_indent = "        "
     elif use_shared_helpers:
-        out_lines.append(f"    with new_workflow({workflow_id_expr}, source_path={source_path_expr}) as wf:")
-        body_indent = "        "
-        continuation_indent = "            "
+        # new_workflow() eagerly binds the ContextVar, so emit a plain assignment
+        # rather than wrapping the body in `with new_workflow(...) as wf:`.
+        # finalize() releases the binding.
+        if source_type != "ready_template":
+            out_lines.append(
+                f"    wf = new_workflow({workflow_id_expr}, source_path={source_path_expr}, source_type={source_type!r})"
+            )
+        else:
+            out_lines.append(
+                f"    wf = new_workflow({workflow_id_expr}, source_path={source_path_expr})"
+            )
+        body_indent = "    "
+        continuation_indent = "        "
     else:
         out_lines.append(
             "    wf = VibeWorkflow(\n"
@@ -1967,7 +2018,12 @@ def _emit_build_function(
             out_lines.append(f"{body_indent}return {_subgraph_return_expr(return_refs, workflow_nodes, var_names, output_var_names, diagnostics)}")
         else:
             tail_lines = _with_id_map_tail_line(tail_lines, var_names)
-            out_lines.extend("    " + line if line else line for line in tail_lines)
+            # tail_lines are pre-indented at 4 spaces ("    return wf.finalize(...)").
+            # When use_shared_helpers emits a flat `wf = new_workflow(...)` form,
+            # body_indent is 4, so emit tail lines verbatim.  When a `with`
+            # wrapper is in use (body_indent == 8), prepend an extra 4 spaces.
+            extra_indent = "    " if body_indent == "        " else ""
+            out_lines.extend(extra_indent + line if line else line for line in tail_lines)
         return out_lines
     out_lines.append("")
     out_lines.extend(tail_lines)
@@ -2344,7 +2400,7 @@ def _ready_template_tail_lines(
     metadata: Mapping[str, Any],
 ) -> list[str]:
     finalize_args = _finalize_args(workflow_nodes, edges_in, var_names, output_var_names, metadata)
-    input_expr = "PUBLIC_INPUTS(**locals())" if metadata.get("_has_public_inputs_for_emit") else "{}"
+    input_expr = "PUBLIC_INPUT_METADATA" if metadata.get("_has_public_inputs_for_emit") else "{}"
     call = f"    return wf.finalize({input_expr}{finalize_args})"
     if has_ltx_tail:
         return [
@@ -2366,7 +2422,10 @@ def _finalize_args(
     output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
     args: list[str] = []
     selected_id: str | None = output_node_ids[0] if output_node_ids else None
-    if len(output_node_ids) > 1 and selected_id is not None:
+    if selected_id is not None:
+        # Bind output_node to the specific node's emitter-assigned variable name
+        # so the finalize call is self-documenting (and so downstream tooling can
+        # introspect the chosen terminal node).
         output_var = _first_output_var(output_var_names.get(selected_id))
         args.append(f"output_node={output_var or var_names.get(selected_id, repr(selected_id))}")
     if selected_id is not None:

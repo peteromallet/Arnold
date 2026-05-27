@@ -8,21 +8,21 @@ from vibecomfy.nodes.core import SaveImage
 from vibecomfy.nodes.wanvideowrapper import WanVideoBlockSwap, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoVAELoader
 
 
-BASE_PRECISION = 'fp16'
-BATCHED_CFG = ''
 DEFAULT_FRAMES = 1
 DEFAULT_NEGATIVE = 'fading, breaking, shot cuts, jumpcuts, blurry, noise, distorted'
 DEFAULT_PROMPT = 'A compact cinematic still of a red cube on a clean white tabletop.'
 DEFAULT_SEED = 12345
+EULER = 'euler'
+FP16 = 'fp16'
+FP8_E4M3FN_SCALED = 'fp8_e4m3fn_scaled'
 GUIDE_STRENGTH = 3.0
 GUIDE_STRENGTH_2 = 1.0
+LORA__NAME = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
 MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
 MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
 MODEL_NAME_3 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 MODEL_NAME_4 = 'WanVideo\\2_2\\Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_5 = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
-QUANTIZATION = 'fp8_e4m3fn_scaled'
-SCHEDULER = 'euler'
+VALUE = ''
 
 
 MODELS = {
@@ -41,19 +41,6 @@ PUBLIC_INPUT_METADATA = {
     'height': InputSpec(node='5', field='height', default=480),
 }
 
-
-def PUBLIC_INPUTS(**nodes):
-    wanvideovaeloader = nodes['wanvideovaeloader']
-    samples = nodes['samples']
-    wanvideoemptyembeds = nodes['wanvideoemptyembeds']
-    wanvideoemptyembeds = nodes['wanvideoemptyembeds']
-    return {
-    'model': InputSpec(node=wanvideovaeloader, field='model_name', default=MODEL_NAME_3),
-    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
-    'width': InputSpec(node=wanvideoemptyembeds, field='width', default=832),
-    'height': InputSpec(node=wanvideoemptyembeds, field='height', default=480),
-    }
-
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_image_single_frame',
     inputs=PUBLIC_INPUT_METADATA,
@@ -68,105 +55,105 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-            model_name=MODEL_NAME,
-            positive_prompt=DEFAULT_PROMPT,
-            negative_prompt=DEFAULT_NEGATIVE,
-        )
+    text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
+        model_name=MODEL_NAME,
+        positive_prompt=DEFAULT_PROMPT,
+        negative_prompt=DEFAULT_NEGATIVE,
+    )
 
-        wanvideomodelloader = WanVideoModelLoader(
-            model=MODEL_NAME_2,
-            base_precision=BASE_PRECISION,
-            quantization=QUANTIZATION,
-            widget_1='fp16',
-        )
+    wanvideomodelloader = WanVideoModelLoader(
+        model=MODEL_NAME_2,
+        base_precision=FP16,
+        quantization=FP8_E4M3FN_SCALED,
+        widget_1='fp16',
+    )
 
-        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
-        wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
+    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+    wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
 
-        wanvideoemptyembeds = WanVideoEmptyEmbeds(
-            width=832,
-            height=480,
-            num_frames=DEFAULT_FRAMES,
-            widget_0=832,
-            widget_1=480,
-            widget_2=1,
-        )
+    wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        width=832,
+        height=480,
+        num_frames=DEFAULT_FRAMES,
+        widget_0=832,
+        widget_1=480,
+        widget_2=1,
+    )
 
-        wanvideomodelloader_2 = WanVideoModelLoader(
-            model=MODEL_NAME_4,
-            base_precision=BASE_PRECISION,
-            quantization=QUANTIZATION,
-            widget_1='fp16',
-        )
+    wanvideomodelloader_2 = WanVideoModelLoader(
+        model=MODEL_NAME_4,
+        base_precision=FP16,
+        quantization=FP8_E4M3FN_SCALED,
+        widget_1='fp16',
+    )
 
-        wanvideoloraselectmulti = WanVideoLoraSelectMulti(
-            lora_0=MODEL_NAME_5,
-            merge_loras=False,
-            widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
-        )
+    wanvideoloraselectmulti = WanVideoLoraSelectMulti(
+        lora_0=LORA__NAME,
+        merge_loras=False,
+        widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
+    )
 
-        wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
-            lora_0=MODEL_NAME_5,
-            merge_loras=False,
-            widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
-        )
+    wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
+        lora_0=LORA__NAME,
+        merge_loras=False,
+        widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
+    )
 
-        wanvideosetloras = WanVideoSetLoRAs(
-            lora=wanvideoloraselectmulti_2,
-            model=wanvideomodelloader,
-        )
+    wanvideosetloras = WanVideoSetLoRAs(
+        lora=wanvideoloraselectmulti_2,
+        model=wanvideomodelloader,
+    )
 
-        wanvideosetloras_2 = WanVideoSetLoRAs(
-            lora=wanvideoloraselectmulti,
-            model=wanvideomodelloader_2,
-        )
+    wanvideosetloras_2 = WanVideoSetLoRAs(
+        lora=wanvideoloraselectmulti,
+        model=wanvideomodelloader_2,
+    )
 
-        wanvideosetblockswap = WanVideoSetBlockSwap(
-            block_swap_args=wanvideoblockswap,
-            model=wanvideosetloras,
-        )
+    wanvideosetblockswap = WanVideoSetBlockSwap(
+        block_swap_args=wanvideoblockswap,
+        model=wanvideosetloras,
+    )
 
-        wanvideosetblockswap_2 = WanVideoSetBlockSwap(
-            block_swap_args=wanvideoblockswap,
-            model=wanvideosetloras_2,
-        )
+    wanvideosetblockswap_2 = WanVideoSetBlockSwap(
+        block_swap_args=wanvideoblockswap,
+        model=wanvideosetloras_2,
+    )
 
-        samples, denoised_samples = WanVideoSampler(
-            steps=6,
-            cfg=GUIDE_STRENGTH,
-            seed=DEFAULT_SEED,
-            scheduler=SCHEDULER,
-            batched_cfg=BATCHED_CFG,
-            end_step=2,
-            image_embeds=wanvideoemptyembeds,
-            model=wanvideosetblockswap,
-            text_embeds=text_embeds,
-        )
+    samples, denoised_samples = WanVideoSampler(
+        steps=6,
+        cfg=GUIDE_STRENGTH,
+        seed=DEFAULT_SEED,
+        scheduler=EULER,
+        batched_cfg=VALUE,
+        end_step=2,
+        image_embeds=wanvideoemptyembeds,
+        model=wanvideosetblockswap,
+        text_embeds=text_embeds,
+    )
 
-        samples_wan, denoised_samples_wan = WanVideoSampler(
-            steps=6,
-            cfg=GUIDE_STRENGTH_2,
-            seed=DEFAULT_SEED,
-            scheduler=SCHEDULER,
-            batched_cfg=BATCHED_CFG,
-            start_step=2,
-            image_embeds=wanvideoemptyembeds,
-            model=wanvideosetblockswap_2,
-            samples=samples,
-            text_embeds=text_embeds,
-        )
+    samples_wan, denoised_samples_wan = WanVideoSampler(
+        steps=6,
+        cfg=GUIDE_STRENGTH_2,
+        seed=DEFAULT_SEED,
+        scheduler=EULER,
+        batched_cfg=VALUE,
+        start_step=2,
+        image_embeds=wanvideoemptyembeds,
+        model=wanvideosetblockswap_2,
+        samples=samples,
+        text_embeds=text_embeds,
+    )
 
-        wanvideodecode = WanVideoDecode(
-            normalization='default',
-            samples=samples_wan,
-            vae=wanvideovaeloader,
-        )
+    wanvideodecode = WanVideoDecode(
+        normalization='default',
+        samples=samples_wan,
+        vae=wanvideovaeloader,
+    )
 
-        # Outputs
-        saveimage = SaveImage(filename_prefix='Wan-2-2-T2I', images=wanvideodecode)
+    # Outputs
+    saveimage = SaveImage(filename_prefix='Wan-2-2-T2I', images=wanvideodecode)
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
 

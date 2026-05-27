@@ -65,12 +65,24 @@ def _derive_output_kind(class_type: str | None) -> str | None:
     return None
 
 
-def new_workflow(metadata: Mapping[str, Any], *, source_path: str | None = None) -> VibeWorkflow:
+def new_workflow(
+    metadata: Mapping[str, Any],
+    *,
+    source_path: str | None = None,
+    source_type: str | None = None,
+) -> VibeWorkflow:
     """Create a ready-template workflow and apply module metadata.
 
     Convenience wrapper for template authoring; for runtime use see
     ``vibecomfy.registry.ready_template``. Generated templates should pass
     ``source_path=__file__`` because the fallback here is this helper module.
+
+    The returned workflow eagerly binds the ``workflow_context`` ContextVar so
+    that subsequent ``node(...)`` / typed-wrapper calls at module body can
+    discover the active workflow without an enclosing ``with`` block.
+    ``finalize()`` releases the binding.  The workflow also supports use as a
+    context manager (``with new_workflow(...) as wf:``) for callers that prefer
+    explicit scoping.
     """
     raw_workflow_id = str(metadata.get("ready_template") or metadata.get("workflow_template") or "ready_template")
     workflow_id = _category_qualified_template_id(raw_workflow_id, source_path)
@@ -84,6 +96,34 @@ def new_workflow(metadata: Mapping[str, Any], *, source_path: str | None = None)
         provenance=provenance if isinstance(provenance, Mapping) else None,
     )
     wf.metadata.update(metadata)
+
+    # Eagerly bind the ContextVar so that node()/typed-wrapper calls in the
+    # caller's body can find the active workflow.  finalize() releases this
+    # binding.  Skipping if the workflow is already bound (e.g. caller is using
+    # ``with new_workflow(...) as wf:``); the ``with`` form will then re-bind a
+    # fresh token in __enter__.
+    if getattr(wf, "_workflow_context_token", None) is None:
+        from vibecomfy.workflow_context import active_workflow, bind_workflow
+
+        # Defensive: if a *different* previous workflow leaked its binding
+        # (e.g. its build() raised before finalize() could release the token),
+        # clear it so a brand-new template can be built.  Only do this when the
+        # leaked workflow itself has no token attribute — a sign that its owner
+        # has been garbage-collected and can never run __exit__.  Genuine nested
+        # ``with new_workflow(...) as wf:`` blocks where the outer workflow is
+        # still held by the caller will fall through to bind_workflow() and
+        # raise ``Nested workflow contexts not supported``, preserving Block A's
+        # contract.
+        existing = active_workflow()
+        if existing is not None and existing is not wf:
+            existing_token = getattr(existing, "_workflow_context_token", None)
+            if existing_token is None:
+                from vibecomfy.workflow_context import _CURRENT_WORKFLOW
+
+                _CURRENT_WORKFLOW.set(None)
+
+        wf._workflow_context_token = bind_workflow(wf)
+
     return wf
 
 
@@ -333,6 +373,18 @@ class InputSpec:
         node_id = _node_id_from_binding(self.node)
         if node_id is None:
             node_id = str(self.node)
+        # If the literal source-workflow ID doesn't exist in the freshly-built
+        # workflow (typical when emitter auto-assigns IDs that differ from the
+        # source-JSON IDs), fall back to searching ``namespace`` for a local
+        # variable that resolves to a matching node — this is how the legacy
+        # ``def PUBLIC_INPUTS(**nodes):`` factory bridged the gap.
+        if node_id not in wf.nodes and namespace:
+            for value in namespace.values():
+                candidate = _node_id_from_binding(value)
+                if candidate is not None and candidate in wf.nodes:
+                    candidate_node = wf.nodes[candidate]
+                    if self.field in candidate_node.inputs or self.field in candidate_node.widgets:
+                        return candidate
         return node_id
 
 
@@ -488,6 +540,22 @@ def _finalize_impl(
     ``output_node`` is omitted, a single terminal Save/Create/Preview node is
     selected; multiple candidates require an explicit output binding.
     """
+    # Release the eager ContextVar binding that ``new_workflow()`` set, BEFORE
+    # any work that might raise — otherwise an exec_failed/validate path leaves
+    # the binding stuck across the next template's build() and the regen tool
+    # cascades into ``ContextVarBindingError``.  ``new_workflow()`` exists to
+    # let module-body node() calls discover the active workflow; by the time we
+    # reach finalize, that purpose is served.
+    token = getattr(wf, "_workflow_context_token", None)
+    if token is not None:
+        try:
+            from vibecomfy.workflow_context import reset_workflow
+
+            reset_workflow(token)
+        except Exception:
+            pass
+        wf._workflow_context_token = None
+
     source_path = bind_kwargs.pop("source_path", None)
     requirements = bind_kwargs.pop("requirements", None)
     if source_path is None:

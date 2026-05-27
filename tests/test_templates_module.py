@@ -189,55 +189,80 @@ def test_new_workflow_constructs_ready_workflow_with_metadata() -> None:
 
 
 def test_new_workflow_direct_assignment_remains_vibeworkflow() -> None:
+    # Post-revert: new_workflow() eagerly binds the ContextVar so that the
+    # emitted ``wf = new_workflow(...)`` form makes the workflow discoverable to
+    # subsequent node() calls in build() without an explicit ``with`` block.
+    # ``wf.finalize(...)`` releases the binding.
     wf = new_workflow({"ready_template": "image/example"}, source_path="ready_templates/image/example.py")
 
-    assert isinstance(wf, VibeWorkflow)
-    with pytest.raises(RuntimeError, match="No active workflow"):
-        _current_workflow_or_raise()
+    try:
+        assert isinstance(wf, VibeWorkflow)
+        assert _current_workflow_or_raise() is wf
+    finally:
+        # Clean up so subsequent tests start with a clean context.
+        from vibecomfy.workflow_context import _CURRENT_WORKFLOW
+
+        _CURRENT_WORKFLOW.set(None)
+        wf._workflow_context_token = None
 
 
 def test_workflow_context_propagates() -> None:
     wf = new_workflow({"ready_template": "image/example"}, source_path="ready_templates/image/example.py")
 
-    with wf as active:
-        assert active is wf
-        assert _current_workflow_or_raise() is wf
+    try:
+        # Post-revert: new_workflow() already bound wf; entering ``with wf``
+        # reuses the existing binding.
+        with wf as active:
+            assert active is wf
+            assert _current_workflow_or_raise() is wf
+    finally:
+        from vibecomfy.workflow_context import _CURRENT_WORKFLOW
 
-    with pytest.raises(RuntimeError, match="No active workflow"):
-        _current_workflow_or_raise()
+        _CURRENT_WORKFLOW.set(None)
+        wf._workflow_context_token = None
 
 
 def test_nested_workflow_context_raises() -> None:
     outer = new_workflow({"ready_template": "image/outer"}, source_path="ready_templates/image/outer.py")
-    inner = new_workflow({"ready_template": "image/inner"}, source_path="ready_templates/image/inner.py")
-
-    with outer:
+    try:
         with pytest.raises(RuntimeError, match="Nested workflow contexts not supported"):
-            with inner:
-                pass
+            # Calling new_workflow() while ``outer`` is still bound (and still
+            # held by the caller) raises bind_workflow's nested-contexts error.
+            new_workflow({"ready_template": "image/inner"}, source_path="ready_templates/image/inner.py")
+    finally:
+        from vibecomfy.workflow_context import _CURRENT_WORKFLOW
 
-    with pytest.raises(RuntimeError, match="No active workflow"):
-        _current_workflow_or_raise()
+        _CURRENT_WORKFLOW.set(None)
+        outer._workflow_context_token = None
 
 
 def test_exception_in_workflow_context_unbinds() -> None:
     wf = new_workflow({"ready_template": "image/example"}, source_path="ready_templates/image/example.py")
 
-    with pytest.raises(ValueError, match="boom"):
-        with wf:
-            assert _current_workflow_or_raise() is wf
-            raise ValueError("boom")
+    try:
+        with pytest.raises(ValueError, match="boom"):
+            with wf:
+                assert _current_workflow_or_raise() is wf
+                raise ValueError("boom")
+    finally:
+        from vibecomfy.workflow_context import _CURRENT_WORKFLOW
 
-    with pytest.raises(RuntimeError, match="No active workflow"):
-        _current_workflow_or_raise()
+        _CURRENT_WORKFLOW.set(None)
+        wf._workflow_context_token = None
 
 
 def test_workflow_context_isolated_across_async_tasks() -> None:
     async def build(template_id: str) -> str:
         wf = new_workflow({"ready_template": template_id}, source_path=f"ready_templates/{template_id}.py")
-        with wf:
-            await asyncio.sleep(0)
-            return _current_workflow_or_raise().id
+        try:
+            with wf:
+                await asyncio.sleep(0)
+                return _current_workflow_or_raise().id
+        finally:
+            from vibecomfy.workflow_context import _CURRENT_WORKFLOW
+
+            _CURRENT_WORKFLOW.set(None)
+            wf._workflow_context_token = None
 
     async def run_builds() -> list[str]:
         return list(await asyncio.gather(build("image/one"), build("image/two")))

@@ -16,13 +16,6 @@ PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='1', field='seed', default=DEFAULT_SEED),
 }
 
-
-def PUBLIC_INPUTS(**nodes):
-    ailab_qwen3ttscustomvoice = nodes['ailab_qwen3ttscustomvoice']
-    return {
-    'seed': InputSpec(node=ailab_qwen3ttscustomvoice, field='seed', default=DEFAULT_SEED),
-    }
-
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_speech_custom_voice',
     inputs=PUBLIC_INPUT_METADATA,
@@ -37,20 +30,20 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        ailab_qwen3ttscustomvoice = AILab_Qwen3TTSCustomVoice(
-            instruct='Calm, clear, friendly delivery.',
-            language='English',
-            model_size='0.6B',
-            seed=DEFAULT_SEED,
-            text=DEFAULT_PROMPT,
-        )
+    ailab_qwen3ttscustomvoice = AILab_Qwen3TTSCustomVoice(
+        instruct='Calm, clear, friendly delivery.',
+        language='English',
+        model_size='0.6B',
+        seed=DEFAULT_SEED,
+        text=DEFAULT_PROMPT,
+    )
 
-        saveaudiomp3 = SaveAudioMP3(
-            filename_prefix='audio/qwen3_tts_custom_voice',
-            audio=ailab_qwen3ttscustomvoice,
-        )
+    saveaudiomp3 = SaveAudioMP3(
+        filename_prefix='audio/qwen3_tts_custom_voice',
+        audio=ailab_qwen3ttscustomvoice,
+    )
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveaudiomp3, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

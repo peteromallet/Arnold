@@ -9,6 +9,27 @@ import warnings
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _reset_workflow_context_var() -> None:
+    """Reset ``_CURRENT_WORKFLOW`` between tests.
+
+    Post-revert, ``new_workflow()`` eagerly binds the ContextVar so that the
+    emitted ``wf = new_workflow(...)`` form can be discovered by node() at
+    build time.  Tests that build workflows but don't call ``wf.finalize(...)``
+    (the canonical release point) can leak the binding into subsequent tests,
+    which then trip ``Nested workflow contexts not supported``.  This autouse
+    fixture clears any leaked binding before each test.
+    """
+    try:
+        from vibecomfy.workflow_context import _CURRENT_WORKFLOW
+    except Exception:
+        yield
+        return
+    _CURRENT_WORKFLOW.set(None)
+    yield
+    _CURRENT_WORKFLOW.set(None)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     # Hand the active pytest config to the runpod budget helpers so that
     # ``--runpod-full`` raises the default cap from $2 to $15 without each

@@ -115,8 +115,16 @@ class VibeWorkflow:
     _id_map: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __enter__(self) -> "VibeWorkflow":
-        from vibecomfy.workflow_context import bind_workflow
+        from vibecomfy.workflow_context import active_workflow, bind_workflow
 
+        # If ``new_workflow()`` already eagerly bound this workflow (the post-
+        # revert default for emitted templates), reuse that binding rather than
+        # raising — the ``with`` form is purely scoping sugar in that case.
+        if (
+            getattr(self, "_workflow_context_token", None) is not None
+            and active_workflow() is self
+        ):
+            return self
         if getattr(self, "_workflow_context_token", None) is not None:
             raise RuntimeError(
                 "Nested workflow contexts not supported. The outer `with new_workflow(...)` "

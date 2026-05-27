@@ -8,18 +8,8 @@ from vibecomfy.nodes.core import ImageScaleBy, LoadImage, SaveImage
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='1', field='image', default='image_upscale_input.png'),
-    'input_image': InputSpec(node='1', field='image', default='image_upscale_input.png'),
+    'image': InputSpec(node='1', field='image', default='image_upscale_input.png', aliases=('input_image',)),
 }
-
-
-def PUBLIC_INPUTS(**nodes):
-    image = nodes['image']
-    image = nodes['image']
-    return {
-    'image': InputSpec(node=image, field='image', default='image_upscale_input.png'),
-    'input_image': InputSpec(node=image, field='image', default='image_upscale_input.png'),
-    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_upscale',
@@ -31,11 +21,11 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        image, mask = LoadImage(image='image_upscale_input.png')
-        imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
-        saveimage = SaveImage(filename_prefix='image-upscale', images=imagescaleby)
+    image, mask = LoadImage(image='image_upscale_input.png')
+    imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
+    saveimage = SaveImage(filename_prefix='image-upscale', images=imagescaleby)
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='image-upscale')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='image-upscale')
 

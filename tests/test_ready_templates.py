@@ -58,6 +58,11 @@ def test_ready_template_ids_include_curated_workflows() -> None:
 
 
 def test_ready_templates_use_v26_context_bound_shape() -> None:
+    # Post-revert: emitted templates use either
+    #   wf = new_workflow(READY_METADATA, source_path=__file__)
+    # or the legacy ``with new_workflow(...) as wf:`` block.  Both shapes bind
+    # the ContextVar (the flat assignment does so eagerly inside
+    # ``new_workflow``; the ``with`` form does so via __enter__).
     offenders: list[str] = []
 
     for path in _ready_template_paths():
@@ -83,10 +88,21 @@ def test_ready_templates_use_v26_context_bound_shape() -> None:
                 for item in stmt.items
             )
         ]
-        if len(with_blocks) != 1:
-            offenders.append(f"{path}: expected exactly one top-level with new_workflow(...) as wf")
-        if "wf = new_workflow(READY_METADATA, source_path=__file__)" in source:
-            offenders.append(f"{path}: old explicit new_workflow assignment")
+        flat_assignments = [
+            stmt
+            for stmt in build.body
+            if isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+            and stmt.targets[0].id == "wf"
+            and isinstance(stmt.value, ast.Call)
+            and getattr(stmt.value.func, "id", None) == "new_workflow"
+        ]
+        if (len(with_blocks) + len(flat_assignments)) != 1:
+            offenders.append(
+                f"{path}: expected exactly one top-level `wf = new_workflow(...)` "
+                "or `with new_workflow(...) as wf:`"
+            )
         if "return finalize(" in source:
             offenders.append(f"{path}: old finalize(...) helper return")
         if "return wf.finalize(" not in source:

@@ -9,37 +9,26 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoControlnet, WanVideoControlnetLoader, WanVideoDecode, WanVideoEasyCache, WanVideoEmptyEmbeds, WanVideoEnhanceAVideo, WanVideoExperimentalArgs, WanVideoModelLoader, WanVideoSLG, WanVideoSampler, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
+CPU = 'cpu'
 DEFAULT_FPS = 24
 DEFAULT_FRAMES = 5
 DEFAULT_NEGATIVE = 'Bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards"'
 DEFAULT_PROMPT = "Close-up shot with soft lighting, focusing sharply on the lower half of a young woman's face. Her lips are slightly parted as she blows an enormous bubblegum bubble. The bubble is semi-transparent, shimmering gently under the light, and surprisingly contains a miniature aquarium inside, where two orange-and-white goldfish slowly swim, their fins delicately fluttering as if in an aquatic universe. The background is a pure light blue color."
 DEFAULT_SEED = 47
-DEVICE = 'cpu'
 GUIDE_STRENGTH = 5
-KEEP_PROPORTION = 'stretch'
 MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
 MODEL_NAME_2 = 'Wan2_2_VAE_bf16.safetensors'
 MODEL_NAME_3 = 'wan2.2-ti2v-5b-controlnet-depth-v1/diffusion_pytorch_model.safetensors'
 MODEL_NAME_4 = 'Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors'
-UPSCALE_METHOD = 'nearest-exact'
+NEAREST_EXACT = 'nearest-exact'
+STRETCH = 'stretch'
 
 
 PUBLIC_INPUT_METADATA = {
     'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
     'seed': InputSpec(node='109', field='seed', default=DEFAULT_SEED),
-    'fps': InputSpec(node='107', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'fps': InputSpec(node='107', field='fps', default=DEFAULT_FPS),
 }
-
-
-def PUBLIC_INPUTS(**nodes):
-    loadwanvideot5textencoder = nodes['loadwanvideot5textencoder']
-    samples = nodes['samples']
-    previewanimation = nodes['previewanimation']
-    return {
-    'model': InputSpec(node=loadwanvideot5textencoder, field='model_name', default=MODEL_NAME),
-    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
-    'fps': InputSpec(node=previewanimation, field='fps', default=DEFAULT_FPS, type='FLOAT'),
-    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_video_controlnet',
@@ -53,114 +42,114 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
-        wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
 
-        wanvideoexperimentalargs = WanVideoExperimentalArgs(
-            cfg_zero_star=True,
-            use_tcfg=True,
-        )
+    wanvideoexperimentalargs = WanVideoExperimentalArgs(
+        cfg_zero_star=True,
+        use_tcfg=True,
+    )
 
-        wanvideoslg = WanVideoSLG(blocks='7,8,9', end_percent=0.7)
-        wanvideoeasycache = WanVideoEasyCache()
-        wanvideocontrolnetloader = WanVideoControlnetLoader(model=MODEL_NAME_3)
-        wanvideoenhanceavideo = WanVideoEnhanceAVideo()
-        intconstant = INTConstant(value=121)
-        intconstant_2 = INTConstant(value=704)
-        intconstant_3 = INTConstant(value=1280)
+    wanvideoslg = WanVideoSLG(blocks='7,8,9', end_percent=0.7)
+    wanvideoeasycache = WanVideoEasyCache()
+    wanvideocontrolnetloader = WanVideoControlnetLoader(model=MODEL_NAME_3)
+    wanvideoenhanceavideo = WanVideoEnhanceAVideo()
+    intconstant = INTConstant(value=121)
+    intconstant_2 = INTConstant(value=704)
+    intconstant_3 = INTConstant(value=1280)
 
-        wanvideomodelloader = WanVideoModelLoader(
-            model=MODEL_NAME_4,
-            base_precision='fp16',
-            compile_args=wanvideotorchcompilesettings,
-        )
+    wanvideomodelloader = WanVideoModelLoader(
+        model=MODEL_NAME_4,
+        base_precision='fp16',
+        compile_args=wanvideotorchcompilesettings,
+    )
 
-        image, frame_count, audio, video_info = VHS_LoadVideo(
-            video='wolf_interpolated.mp4',
-            frame_load_cap=intconstant,
-        )
+    image, frame_count, audio, video_info = VHS_LoadVideo(
+        video='wolf_interpolated.mp4',
+        frame_load_cap=intconstant,
+    )
 
-        wanvideoemptyembeds = WanVideoEmptyEmbeds(
-            num_frames=DEFAULT_FRAMES,
-            widget_0=256,
-            widget_1=256,
-            widget_2=5,
-            width=intconstant_3,
-            height=intconstant_2,
-        )
+    wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        num_frames=DEFAULT_FRAMES,
+        widget_0=256,
+        widget_1=256,
+        widget_2=5,
+        width=intconstant_3,
+        height=intconstant_2,
+    )
 
-        image_image, width, height, mask = ImageResizeKJv2(
-            upscale_method=UPSCALE_METHOD,
-            keep_proportion=KEEP_PROPORTION,
-            device=DEVICE,
-            width=intconstant_3,
-            height=intconstant_2,
-            image=image,
-        )
+    image_image, width, height, mask = ImageResizeKJv2(
+        upscale_method=NEAREST_EXACT,
+        keep_proportion=STRETCH,
+        device=CPU,
+        width=intconstant_3,
+        height=intconstant_2,
+        image=image,
+    )
 
-        midas_depthmappreprocessor = raw_call('MiDaS-DepthMapPreprocessor', '104',
-            widget_0=6.28318530718,
-            widget_1=0.1,
-            widget_2=512,
-            image=image_image,
-        )
+    midas_depthmappreprocessor = raw_call('MiDaS-DepthMapPreprocessor', '104',
+        widget_0=6.28318530718,
+        widget_1=0.1,
+        widget_2=512,
+        image=image_image,
+    )
 
-        image_image_2, width_image, height_image, mask_image = ImageResizeKJv2(
-            upscale_method=UPSCALE_METHOD,
-            keep_proportion=KEEP_PROPORTION,
-            device=DEVICE,
-            width=intconstant_3,
-            height=intconstant_2,
-            image=midas_depthmappreprocessor.out(0),
-        )
+    image_image_2, width_image, height_image, mask_image = ImageResizeKJv2(
+        upscale_method=NEAREST_EXACT,
+        keep_proportion=STRETCH,
+        device=CPU,
+        width=intconstant_3,
+        height=intconstant_2,
+        image=midas_depthmappreprocessor.out(0),
+    )
 
-        wanvideocontrolnet = WanVideoControlnet(
-            widget_0=1,
-            widget_1=3,
-            widget_2=0,
-            widget_3=1,
-            control_images=image_image_2,
-            controlnet=wanvideocontrolnetloader,
-            model=wanvideomodelloader,
-        )
+    wanvideocontrolnet = WanVideoControlnet(
+        widget_0=1,
+        widget_1=3,
+        widget_2=0,
+        widget_3=1,
+        control_images=image_image_2,
+        controlnet=wanvideocontrolnetloader,
+        model=wanvideomodelloader,
+    )
 
-        previewanimation = PreviewAnimation(fps=DEFAULT_FPS, images=image_image_2)
+    previewanimation = PreviewAnimation(fps=DEFAULT_FPS, images=image_image_2)
 
-        wanvideotextencode = WanVideoTextEncode(
-            positive_prompt=DEFAULT_PROMPT,
-            negative_prompt=DEFAULT_NEGATIVE,
-            model_to_offload=wanvideocontrolnet,
-            t5=loadwanvideot5textencoder,
-        )
+    wanvideotextencode = WanVideoTextEncode(
+        positive_prompt=DEFAULT_PROMPT,
+        negative_prompt=DEFAULT_NEGATIVE,
+        model_to_offload=wanvideocontrolnet,
+        t5=loadwanvideot5textencoder,
+    )
 
-        samples, denoised_samples = WanVideoSampler(
-            steps=1,
-            cfg=GUIDE_STRENGTH,
-            shift=8,
-            seed=DEFAULT_SEED,
-            scheduler='flowmatch_pusa',
-            batched_cfg='',
-            add_noise_to_samples='',
-            cache_args=wanvideoeasycache,
-            experimental_args=wanvideoexperimentalargs,
-            feta_args=wanvideoenhanceavideo,
-            image_embeds=wanvideoemptyembeds,
-            model=wanvideocontrolnet,
-            slg_args=wanvideoslg,
-            text_embeds=wanvideotextencode,
-        )
+    samples, denoised_samples = WanVideoSampler(
+        steps=1,
+        cfg=GUIDE_STRENGTH,
+        shift=8,
+        seed=DEFAULT_SEED,
+        scheduler='flowmatch_pusa',
+        batched_cfg='',
+        add_noise_to_samples='',
+        cache_args=wanvideoeasycache,
+        experimental_args=wanvideoexperimentalargs,
+        feta_args=wanvideoenhanceavideo,
+        image_embeds=wanvideoemptyembeds,
+        model=wanvideocontrolnet,
+        slg_args=wanvideoslg,
+        text_embeds=wanvideotextencode,
+    )
 
-        wanvideodecode = WanVideoDecode(
-            normalization='default',
-            samples=samples,
-            vae=wanvideovaeloader,
-        )
+    wanvideodecode = WanVideoDecode(
+        normalization='default',
+        samples=samples,
+        vae=wanvideovaeloader,
+    )
 
-        # Outputs
-        vhs_videocombine = VHS_VideoCombine(images=wanvideodecode)
+    # Outputs
+    vhs_videocombine = VHS_VideoCombine(images=wanvideodecode)
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_node=previewanimation)
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=previewanimation)
 

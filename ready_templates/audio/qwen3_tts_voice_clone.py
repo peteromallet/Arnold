@@ -8,20 +8,13 @@ from vibecomfy.nodes.core import LoadAudio, SaveAudioMP3
 from vibecomfy.nodes.qwentts import AILab_Qwen3TTSVoiceClone
 
 
-AUDIO = 'speech_smoke.wav'
 DEFAULT_SEED = 3189
+SPEECH_SMOKE_WAV = 'speech_smoke.wav'
 
 
 PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='2', field='seed', default=DEFAULT_SEED),
 }
-
-
-def PUBLIC_INPUTS(**nodes):
-    ailab_qwen3ttsvoiceclone = nodes['ailab_qwen3ttsvoiceclone']
-    return {
-    'seed': InputSpec(node=ailab_qwen3ttsvoiceclone, field='seed', default=DEFAULT_SEED),
-    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_speech_voice_clone',
@@ -37,23 +30,23 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        loadaudio = LoadAudio(audio=AUDIO, widget_0='speech_smoke.wav')
+    loadaudio = LoadAudio(audio=SPEECH_SMOKE_WAV, widget_0='speech_smoke.wav')
 
-        ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
-            language='English',
-            model_size='0.6B',
-            reference_text='This is a short reference audio sample for workflow smoke testing.',
-            seed=DEFAULT_SEED,
-            target_text='This Qwen voice clone template uses a tiny bundled reference clip and runs as a reusable audio smoke test.',
-            reference_audio=loadaudio,
-        )
+    ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
+        target_text='This Qwen voice clone template uses a tiny bundled reference clip and runs as a reusable audio smoke test.',
+        model_size='0.6B',
+        language='English',
+        reference_text='This is a short reference audio sample for workflow smoke testing.',
+        seed=DEFAULT_SEED,
+        reference_audio=loadaudio,
+    )
 
-        saveaudiomp3 = SaveAudioMP3(
-            filename_prefix='audio/qwen3_tts_voice_clone',
-            audio=ailab_qwen3ttsvoiceclone,
-        )
+    saveaudiomp3 = SaveAudioMP3(
+        filename_prefix='audio/qwen3_tts_voice_clone',
+        audio=ailab_qwen3ttsvoiceclone,
+    )
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveaudiomp3, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one')
 

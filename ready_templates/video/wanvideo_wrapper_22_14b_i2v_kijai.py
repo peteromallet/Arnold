@@ -10,22 +10,22 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import CreateCFGScheduleFloatList, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoVAELoader
 
 
-ADD_NOISE_TO_SAMPLES = ''
-BASE_PRECISION = 'fp16'
+CLIP_NAME = 'umt5_xxl_fp16.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = 'old man gets up and jumps into the lake'
 DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
 DEFAULT_PROMPT_3 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_SEED = 43
+DPM_SDE = 'dpm++_sde'
+FP16 = 'fp16'
+FP8_E4M3FN_SCALED = 'fp8_e4m3fn_scaled'
 GUIDE_STRENGTH = 1
+LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
 MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
 MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
 MODEL_NAME_3 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_4 = 'umt5_xxl_fp16.safetensors'
-MODEL_NAME_5 = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
-MODEL_NAME_6 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
-QUANTIZATION = 'fp8_e4m3fn_scaled'
-SCHEDULER = 'dpm++_sde'
+MODEL_NAME_4 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+VALUE = ''
 
 
 MODELS = {
@@ -42,30 +42,10 @@ PUBLIC_INPUT_METADATA = {
     'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
     'prompt': InputSpec(node='13', field='text', default=DEFAULT_PROMPT_2),
     'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node='7', field='image', default='oldman_upscaled.png'),
-    'input_image': InputSpec(node='7', field='image', default='oldman_upscaled.png'),
+    'image': InputSpec(node='7', field='image', default='oldman_upscaled.png', aliases=('input_image',)),
     'width': InputSpec(node='15', field='width', default=720),
     'height': InputSpec(node='15', field='height', default=720),
 }
-
-
-def PUBLIC_INPUTS(**nodes):
-    loadwanvideot5textencoder = nodes['loadwanvideot5textencoder']
-    cliptextencode = nodes['cliptextencode']
-    samples = nodes['samples']
-    image = nodes['image']
-    image = nodes['image']
-    image_image = nodes['image_image']
-    image_image = nodes['image_image']
-    return {
-    'model': InputSpec(node=loadwanvideot5textencoder, field='model_name', default=MODEL_NAME),
-    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT_2),
-    'seed': InputSpec(node=samples, field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node=image, field='image', default='oldman_upscaled.png'),
-    'input_image': InputSpec(node=image, field='image', default='oldman_upscaled.png'),
-    'width': InputSpec(node=image_image, field='width', default=720),
-    'height': InputSpec(node=image_image, field='height', default=720),
-    }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
@@ -82,151 +62,149 @@ READY_METADATA = ReadyMetadata.build(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
 
-        wanvideomodelloader = WanVideoModelLoader(
-            model=MODEL_NAME_2,
-            base_precision=BASE_PRECISION,
-            quantization=QUANTIZATION,
-        )
+    wanvideomodelloader = WanVideoModelLoader(
+        model=MODEL_NAME_2,
+        base_precision=FP16,
+        quantization=FP8_E4M3FN_SCALED,
+    )
 
-        wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
-        wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
+    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+    wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
 
-        # Loaders
-        cliploader = CLIPLoader(clip_name=MODEL_NAME_4, type_='wan')
+    # Loaders
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
 
-        wanvideoloraselect = WanVideoLoraSelect(
-            lora=MODEL_NAME_5,
-            strength=3,
-            merge_loras=False,
-        )
+    wanvideoloraselect = WanVideoLoraSelect(
+        lora=LORA_NAME,
+        strength=3,
+        merge_loras=False,
+    )
 
-        # Inputs
-        image, mask = LoadImage(image='oldman_upscaled.png')
+    # Inputs
+    image, mask = LoadImage(image='oldman_upscaled.png')
 
-        wanvideomodelloader_2 = WanVideoModelLoader(
-            model=MODEL_NAME_6,
-            base_precision=BASE_PRECISION,
-            quantization=QUANTIZATION,
-        )
+    wanvideomodelloader_2 = WanVideoModelLoader(
+        model=MODEL_NAME_4,
+        base_precision=FP16,
+        quantization=FP8_E4M3FN_SCALED,
+    )
 
-        intconstant = INTConstant(value=3)
-        intconstant_2 = INTConstant(value=6)
-        wanvideoloraselect_2 = WanVideoLoraSelect(lora=MODEL_NAME_5, merge_loras=False)
+    intconstant = INTConstant(value=3)
+    intconstant_2 = INTConstant(value=6)
+    wanvideoloraselect_2 = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
 
-        wanvideotextencode = WanVideoTextEncode(
-            positive_prompt=DEFAULT_PROMPT,
-            negative_prompt=DEFAULT_NEGATIVE,
-            t5=loadwanvideot5textencoder,
-        )
+    wanvideotextencode = WanVideoTextEncode(
+        positive_prompt=DEFAULT_PROMPT,
+        negative_prompt=DEFAULT_NEGATIVE,
+        t5=loadwanvideot5textencoder,
+    )
 
-        # Conditioning
-        cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-        cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
+    # Conditioning
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
 
-        image_image, width, height, mask_image = ImageResizeKJv2(
-            width=720,
-            height=720,
-            upscale_method='lanczos',
-            keep_proportion='crop',
-            divisible_by=32,
-            device='cpu',
-            image=image,
-        )
+    image_image, width, height, mask_image = ImageResizeKJv2(
+        width=720,
+        height=720,
+        upscale_method='lanczos',
+        keep_proportion='crop',
+        divisible_by=32,
+        device='cpu',
+        image=image,
+    )
 
-        wanvideosetblockswap = WanVideoSetBlockSwap(
-            block_swap_args=wanvideoblockswap,
-            model=wanvideomodelloader,
-        )
+    wanvideosetblockswap = WanVideoSetBlockSwap(
+        block_swap_args=wanvideoblockswap,
+        model=wanvideomodelloader,
+    )
 
-        wanvideosetblockswap_2 = WanVideoSetBlockSwap(
-            block_swap_args=wanvideoblockswap,
-            model=wanvideomodelloader_2,
-        )
+    wanvideosetblockswap_2 = WanVideoSetBlockSwap(
+        block_swap_args=wanvideoblockswap,
+        model=wanvideomodelloader_2,
+    )
 
-        createcfgschedulefloatlist = CreateCFGScheduleFloatList(
-            cfg_scale_start=2,
-            cfg_scale_end=2,
-            end_percent=0.01,
-            steps=intconstant_2,
-        )
+    createcfgschedulefloatlist = CreateCFGScheduleFloatList(
+        cfg_scale_start=2,
+        cfg_scale_end=2,
+        end_percent=0.01,
+        steps=intconstant_2,
+    )
 
-        wanvideotextembedbridge = WanVideoTextEmbedBridge(
-            negative=cliptextencode_2,
-            positive=cliptextencode,
-        )
+    wanvideotextembedbridge = WanVideoTextEmbedBridge(
+        negative=cliptextencode_2,
+        positive=cliptextencode,
+    )
 
-        wanvideosetloras = WanVideoSetLoRAs(
-            lora=wanvideoloraselect_2,
-            model=wanvideosetblockswap_2,
-        )
+    wanvideosetloras = WanVideoSetLoRAs(
+        lora=wanvideoloraselect_2,
+        model=wanvideosetblockswap_2,
+    )
 
-        wanvideosetloras_2 = WanVideoSetLoRAs(
-            lora=wanvideoloraselect,
-            model=wanvideosetblockswap,
-        )
+    wanvideosetloras_2 = WanVideoSetLoRAs(
+        lora=wanvideoloraselect,
+        model=wanvideosetblockswap,
+    )
 
-        wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
-            fun_or_fl2v_model=False,
-            width=width,
-            height=height,
-            start_image=image_image,
-            vae=wanvideovaeloader,
-        )
+    wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
+        fun_or_fl2v_model=False,
+        width=width,
+        height=height,
+        start_image=image_image,
+        vae=wanvideovaeloader,
+    )
 
-        samples, denoised_samples = WanVideoSampler(
-            shift=8,
-            seed=DEFAULT_SEED,
-            scheduler=SCHEDULER,
-            add_noise_to_samples=ADD_NOISE_TO_SAMPLES,
-            steps=intconstant_2,
-            cfg=createcfgschedulefloatlist,
-            end_step=intconstant,
-            image_embeds=wanvideoimagetovideoencode,
-            model=wanvideosetloras_2,
-            text_embeds=wanvideotextencode,
-        )
+    samples, denoised_samples = WanVideoSampler(
+        shift=8,
+        seed=DEFAULT_SEED,
+        scheduler=DPM_SDE,
+        add_noise_to_samples=VALUE,
+        steps=intconstant_2,
+        cfg=createcfgschedulefloatlist,
+        end_step=intconstant,
+        image_embeds=wanvideoimagetovideoencode,
+        model=wanvideosetloras_2,
+        text_embeds=wanvideotextencode,
+    )
 
-        samples_wan, denoised_samples_wan = WanVideoSampler(
-            cfg=GUIDE_STRENGTH,
-            shift=8,
-            seed=DEFAULT_SEED,
-            scheduler=SCHEDULER,
-            add_noise_to_samples=ADD_NOISE_TO_SAMPLES,
-            steps=intconstant_2,
-            start_step=intconstant,
-            image_embeds=wanvideoimagetovideoencode,
-            model=wanvideosetloras,
-            samples=samples,
-            text_embeds=wanvideotextencode,
-        )
+    samples_wan, denoised_samples_wan = WanVideoSampler(
+        cfg=GUIDE_STRENGTH,
+        shift=8,
+        seed=DEFAULT_SEED,
+        scheduler=DPM_SDE,
+        add_noise_to_samples=VALUE,
+        steps=intconstant_2,
+        start_step=intconstant,
+        image_embeds=wanvideoimagetovideoencode,
+        model=wanvideosetloras,
+        samples=samples,
+        text_embeds=wanvideotextencode,
+    )
 
-        wanvideodecode = WanVideoDecode(
-            normalization='default',
-            samples=samples_wan,
-            vae=wanvideovaeloader,
-        )
+    wanvideodecode = WanVideoDecode(
+        normalization='default',
+        samples=samples_wan,
+        vae=wanvideovaeloader,
+    )
 
-        image_get, width_get, height_get, count = GetImageSizeAndCount(
-            image=wanvideodecode,
-        )
+    image_get, width_get, height_get, count = GetImageSizeAndCount(image=wanvideodecode)
 
-        # Outputs
-        vhs_videocombine = VHS_VideoCombine(
-            frame_rate=16,
-            filename_prefix='WanVideo2_2_I2V',
-            format='video/h264-mp4',
-            save_output=False,
-            crf=19,
-            pix_fmt='yuv420p',
-            save_metadata=True,
-            trim_to_audio=False,
-            videopreview={'hidden': False, 'params': {'filename': 'WanVideo2_2_I2V_00006.mp4', 'format': 'video/h264-mp4', 'frame_rate': 16, 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideo2_2_I2V_00006.mp4', 'subfolder': '', 'type': 'temp', 'workflow': 'WanVideo2_2_I2V_00006.png'}, 'paused': False},
-            images=image_get,
-        )
+    # Outputs
+    vhs_videocombine = VHS_VideoCombine(
+        frame_rate=16,
+        filename_prefix='WanVideo2_2_I2V',
+        format='video/h264-mp4',
+        save_output=False,
+        crf=19,
+        pix_fmt='yuv420p',
+        save_metadata=True,
+        trim_to_audio=False,
+        videopreview={'hidden': False, 'params': {'filename': 'WanVideo2_2_I2V_00006.mp4', 'format': 'video/h264-mp4', 'frame_rate': 16, 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideo2_2_I2V_00006.mp4', 'subfolder': '', 'type': 'temp', 'workflow': 'WanVideo2_2_I2V_00006.png'}, 'paused': False},
+        images=image_get,
+    )
 
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_2_I2V')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_2_I2V')
 
