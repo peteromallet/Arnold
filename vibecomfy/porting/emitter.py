@@ -1463,7 +1463,7 @@ def emit_ready_template_python(
 
     raw_workflow = raw_workflow or _raw_workflow_from_metadata(metadata)
     subgraph_definitions = _subgraph_definitions_from_raw(raw_workflow, source_path=_source_workflow_path(metadata))
-    prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides)
+    prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides, template_id=template_id)
     prepared["subgraph_definitions"] = subgraph_definitions
     _apply_subgraph_names_to_prepared(prepared)
     has_ltx_tail = _has_ltx_lowvram_tail(template_id)
@@ -1624,7 +1624,12 @@ def emit_scratchpad_python(
     return "\n".join(out_lines) + "\n"
 
 
-def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any] | None) -> dict[str, Any]:
+def _prepare_workflow_for_emit(
+    workflow: Any,
+    *,
+    apply_overrides: dict[str, Any] | None,
+    template_id: str | None = None,
+) -> dict[str, Any]:
     # Defensive assertion: resolver MUST have eliminated all helper nodes before emission.
     # If any RESOLVABLE_HELPER_CLASS_TYPES node survives, the resolver has a bug.
     for nid, node in getattr(workflow, 'nodes', {}).items():
@@ -1649,6 +1654,12 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
     if apply_overrides:
         _apply_overrides(workflow_nodes, edges_in, apply_overrides.get("patches") or [])
 
+    workflow_nodes, edges_in = _prune_dead_branches_for_emit(
+        workflow_nodes,
+        edges_in,
+        template_id=template_id,
+    )
+
     from vibecomfy.workflow import VibeEdge as _Edge
 
     extracted_edges_for_naming: list[Any] = []
@@ -1672,6 +1683,77 @@ def _prepare_workflow_for_emit(workflow: Any, *, apply_overrides: dict[str, Any]
         "var_names": var_names,
         "output_var_names": output_var_names,
     }
+
+
+def _prune_dead_branches_for_emit(
+    workflow_nodes: dict[str, Any],
+    edges_in: dict[str, list[Any]],
+    *,
+    template_id: str | None,
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    output_node_ids = _terminal_output_node_ids(workflow_nodes, edges_in)
+    if not output_node_ids:
+        return workflow_nodes, edges_in
+
+    live: set[str] = set(output_node_ids)
+    pending = list(output_node_ids)
+    while pending:
+        node_id = pending.pop()
+        node = workflow_nodes.get(node_id)
+        if node is None:
+            continue
+        for edge in edges_in.get(node_id, []):
+            if _is_dead_optional_output_input(node, str(getattr(edge, "to_input", "")), template_id):
+                continue
+            from_node = str(getattr(edge, "from_node", ""))
+            if from_node in workflow_nodes and from_node not in live:
+                live.add(from_node)
+                pending.append(from_node)
+        for key, value in {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}.items():
+            if _is_dead_optional_output_input(node, str(key), template_id):
+                continue
+            if not _is_link(value):
+                continue
+            from_node = str(value[0])
+            if from_node in workflow_nodes and from_node not in live:
+                live.add(from_node)
+                pending.append(from_node)
+
+    pruned_nodes = {nid: node for nid, node in workflow_nodes.items() if nid in live}
+    pruned_edges_in: dict[str, list[Any]] = {}
+    for to_node, edges in edges_in.items():
+        if str(to_node) not in pruned_nodes:
+            continue
+        kept = [
+            edge
+            for edge in edges
+            if str(getattr(edge, "from_node", "")) in pruned_nodes
+            and not _is_dead_optional_output_input(
+                pruned_nodes[str(to_node)],
+                str(getattr(edge, "to_input", "")),
+                template_id,
+            )
+        ]
+        if kept:
+            pruned_edges_in[str(to_node)] = kept
+    return pruned_nodes, pruned_edges_in
+
+
+def _is_dead_optional_output_input(node: Any, input_name: str, template_id: str | None) -> bool:
+    if str(getattr(node, "class_type", "")) != "VHS_VideoCombine" or input_name != "audio":
+        return False
+    if not _ltx_travel_template_omits_synthetic_audio(template_id):
+        return False
+    return True
+
+
+def _ltx_travel_template_omits_synthetic_audio(template_id: str | None) -> bool:
+    lowered = str(template_id or "").lower()
+    if not lowered.startswith("video/ltx2_3"):
+        return False
+    if any(token in lowered for token in ("audio", "lipsync", "talk")):
+        return False
+    return "first_last" in lowered or "first_middle_last" in lowered or "travel" in lowered
 
 
 def _source_workflow_path(metadata: Mapping[str, Any]) -> str | None:
