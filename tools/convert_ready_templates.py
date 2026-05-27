@@ -122,16 +122,117 @@ def _load_override(path: Path) -> dict | None:
 
 
 def _source_workflow_path(metadata: dict[str, Any]) -> Path | None:
-    source = metadata.get("source_workflow")
-    provenance = metadata.get("provenance")
-    if not source and isinstance(provenance, dict):
-        source = provenance.get("source_workflow")
+    # Try multiple keys; different generations of the emitter wrote different
+    # provenance shapes (``source_workflow``, ``source_workflow_path``, and
+    # ``source_path``). Check each in priority order, both at the metadata
+    # top-level and inside an embedded ``provenance`` dict.
+    candidate_keys = ("source_workflow", "source_workflow_path", "source_path")
+    source: str | None = None
+    for key in candidate_keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value:
+            source = value
+            break
+    if source is None:
+        provenance = metadata.get("provenance")
+        if isinstance(provenance, dict):
+            for key in candidate_keys:
+                value = provenance.get(key)
+                if isinstance(value, str) and value:
+                    source = value
+                    break
     if not isinstance(source, str) or not source:
         return None
     path = Path(source)
     if not path.is_absolute():
         path = REPO_ROOT / path
     return path if path.exists() else None
+
+
+# --- Bucket 1 fallback: scrape source-workflow path from a broken .py file ----
+
+_SOURCE_PATH_LINE_RE = re.compile(
+    r"['\"](?:source_workflow|source_workflow_path|source_path)['\"]\s*:\s*['\"]([^'\"]+)['\"]"
+)
+
+
+def _scrape_source_workflow_path(template_path: Path) -> Path | None:
+    """Best-effort: regex the .py for a provenance source path.
+
+    This avoids importing a .py file whose body raises (Bucket 1 case where
+    the existing emission is broken and ``workflow_from_ready`` can't run).
+    """
+    try:
+        text = template_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for match in _SOURCE_PATH_LINE_RE.finditer(text):
+        candidate = match.group(1)
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = REPO_ROOT / path
+        if path.exists():
+            return path
+    return None
+
+
+def _clear_workflow_contextvar() -> None:
+    """Defensive: ensure no leaked ContextVar binding from a prior failing build.
+
+    ``new_workflow()`` eagerly binds the workflow ContextVar. When build() raises
+    before ``wf.finalize()`` releases the token, subsequent template builds in
+    the same process die with ``ContextVarBindingError: Nested workflow contexts
+    not supported``. Reset between every per-template attempt.
+    """
+    try:
+        from vibecomfy.workflow_context import _CURRENT_WORKFLOW
+        _CURRENT_WORKFLOW.set(None)
+    except Exception:
+        pass
+
+
+def _emit_from_source_json(template_path: Path, template_id: str) -> tuple[str | None, str | None]:
+    """Run the standard ``port convert`` pipeline against the source JSON.
+
+    Returns ``(emitted_text, error_note)``. On success ``error_note`` is None.
+    """
+    metadata_text = ""
+    try:
+        metadata_text = template_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return (None, f"regen_source_read_failed: {exc}")
+
+    # Try the structured metadata path first (works for templates that DO
+    # parse-import OK but whose source provenance lives in metadata).
+    source_path = _scrape_source_workflow_path(template_path)
+    if source_path is None:
+        return (None, "regen_no_source_workflow_found_in_provenance")
+
+    _clear_workflow_contextvar()
+    try:
+        from vibecomfy.porting.convert import port_convert_workflow
+        from vibecomfy.porting.workbench import load_port_source
+
+        loaded = load_port_source(str(source_path))
+        result = port_convert_workflow(
+            loaded.workflow,
+            ready_id=template_id,
+            source_path=str(source_path),
+            raw_workflow=loaded.raw_workflow,
+        )
+    except Exception as exc:
+        return (None, f"regen_from_source_failed: {type(exc).__name__}: {exc}")
+    finally:
+        _clear_workflow_contextvar()
+
+    # Best-effort: also sanity-check the produced text compiles.
+    try:
+        compile(result.text, str(template_path) + " (regen)", "exec")
+    except SyntaxError as exc:
+        return (None, f"regen_syntax_error: {exc}")
+    return (result.text, None)
 
 
 def _load_source_workflow(metadata: dict[str, Any]) -> dict | None:
@@ -159,7 +260,12 @@ def _subgraph_definition_count(raw_workflow: dict | None) -> int:
     return 0
 
 
-def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row, str | None, dict | None]:
+def _convert_template(
+    path: Path,
+    *,
+    include_manual: bool = False,
+    regen_from_source: bool = False,
+) -> tuple[Row, str | None, dict | None]:
     """Process one template. Returns (row, emitted_text or None, original_compiled_api)."""
     template_id = _template_id_for_path(path)
     row = Row(template_id=template_id)
@@ -196,7 +302,10 @@ def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row,
         return (row, None, None)
 
     # Build the original workflow first so we can roundtrip-equality check.
+    # Defensively clear the workflow ContextVar so a leaked binding from a
+    # previously failing template doesn't poison this attempt.
     original_api = None
+    _clear_workflow_contextvar()
     try:
         from vibecomfy.registry.ready import workflow_from_ready
         original_workflow = workflow_from_ready(template_id)
@@ -205,6 +314,22 @@ def _convert_template(path: Path, *, include_manual: bool = False) -> tuple[Row,
     except Exception as exc:
         row.parse = "fail"
         row.note = f"build_original_failed: {type(exc).__name__}: {exc}"
+        _clear_workflow_contextvar()
+        # Bucket 1 fallback: the existing .py is broken Python, but the user
+        # opted into --regen-from-source. Rebuild emission directly from the
+        # source JSON listed in provenance and short-circuit roundtrip parity
+        # (we have no callable "original" to compare against).
+        if regen_from_source:
+            emitted, regen_note = _emit_from_source_json(path, template_id)
+            if emitted is None:
+                row.note = f"{row.note}; {regen_note}" if regen_note else row.note
+                return (row, None, None)
+            row.parse = "skip-broken-original"
+            row.build = "ok"
+            row.validate = "skip-broken-original"
+            row.roundtrip = "skip-broken-original"
+            row.note = f"{row.note}; regenerated_from_source_json"
+            return (row, emitted, None)
         return (row, None, None)
 
     # Drive the parser path (matching the spec's distinction).
@@ -436,6 +561,25 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Explicit one-time v2.6 migration override for first-line manual templates.",
     )
+    parser.add_argument(
+        "--regen-from-source",
+        action="store_true",
+        help=(
+            "When the existing .py fails to import (broken-original), rebuild "
+            "emission directly from the source JSON listed in provenance. "
+            "Roundtrip parity is skipped for these templates because there is "
+            "no callable original to compare against."
+        ),
+    )
+    parser.add_argument(
+        "--force-roundtrip-fail",
+        action="store_true",
+        help=(
+            "Write templates that pass validate=ok but fail canonical roundtrip "
+            "parity. Use only when you've reviewed the diff and accept that "
+            "the emitted graph diverges from the source. Logs a WARNING line."
+        ),
+    )
     args = parser.parse_args(argv)
 
     _bootstrap_comfy_runtime()
@@ -463,14 +607,44 @@ def main(argv: list[str] | None = None) -> int:
     rows: list[Row] = []
     converted = 0
     for path in paths:
-        row, emitted, _ = _convert_template(path, include_manual=args.include_manual)
+        row, emitted, _ = _convert_template(
+            path,
+            include_manual=args.include_manual,
+            regen_from_source=args.regen_from_source,
+        )
         rows.append(row)
         if emitted is None:
             continue
-        # Write only if validate.ok and (legacy ⇒ roundtrip ok or skipped).
+        # Write gate: the standard path requires validate=ok AND roundtrip in
+        # the safe-skip set. Two opt-in escape hatches:
+        #   --regen-from-source allows skip-broken-original (no original to
+        #     compare against, so neither validate nor roundtrip ran).
+        #   --force-roundtrip-fail allows validate=ok templates that fail
+        #     canonical roundtrip parity, with an explicit WARNING.
+        force_regen_ok = (
+            args.regen_from_source
+            and row.validate == "skip-broken-original"
+            and row.roundtrip == "skip-broken-original"
+        )
+        force_roundtrip_ok = (
+            args.force_roundtrip_fail
+            and row.validate == "ok"
+            and row.roundtrip == "fail"
+        )
+        if force_roundtrip_ok:
+            print(
+                f"WARNING: {row.template_id}: writing despite roundtrip=fail "
+                f"(validate=ok, --force-roundtrip-fail)"
+            )
+            for d in row.diffs[:5]:
+                print(f"    diff: {d}")
         gated_ok = (
-            row.validate == "ok"
-            and (row.roundtrip in ("ok", "skip", "skip-authored"))
+            (
+                row.validate == "ok"
+                and (row.roundtrip in ("ok", "skip", "skip-authored"))
+            )
+            or force_regen_ok
+            or force_roundtrip_ok
         )
         if not gated_ok:
             continue
@@ -499,7 +673,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"    diff: {d}")
     hard_failures = [
         r for r in rows
-        if r.validate == "fail" or r.parse == "fail" or r.build == "fail" or (args.write and r.roundtrip == "fail")
+        if r.validate == "fail"
+        or r.parse == "fail"
+        or r.build == "fail"
+        or (args.write and r.roundtrip == "fail" and not args.force_roundtrip_fail)
     ]
     return 0 if not hard_failures else 1
 

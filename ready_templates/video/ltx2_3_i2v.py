@@ -11,23 +11,24 @@ from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.resolution import resolution
 
 
-API_KEY = ''
-CONTROL_AFTER_GENERATE = 'fixed'
+AUTO = 'auto'
+CKPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 DEFAULT_FPS = 24.0
 DEFAULT_FRAMES = 121
 DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_PROMPT_2 = 'A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.'
 DEFAULT_SEED = 42
 DEFAULT_SEED_2 = 43
+ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
+FIXED = 'fixed'
 GUIDE_STRENGTH = 7
 GUIDE_STRENGTH_2 = 3
 GUIDE_STRENGTH_3 = 1
 GUIDE_STRENGTH_4 = 0.5
 GUIDE_STRENGTH_5 = 0.2
-MODEL_NAME = 'ltx-2.3-22b-dev.safetensors'
-MODEL_NAME_2 = 'comfy_gemma_3_12B_it.safetensors'
-MODEL_NAME_3 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
-UNUSED_WIDGET_4 = 'auto'
+LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
+TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
+VALUE = ''
 
 
 PUBLIC_INPUT_METADATA = {
@@ -41,255 +42,214 @@ PUBLIC_INPUT_METADATA = {
     'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
-
-def PUBLIC_INPUTS(**nodes):
-    image = nodes['image']
-    emptyltxvlatentvideo = nodes['emptyltxvlatentvideo']
-    emptyltxvlatentvideo = nodes['emptyltxvlatentvideo']
-    emptyltxvlatentvideo = nodes['emptyltxvlatentvideo']
-    randomnoise = nodes['randomnoise']
-    createvideo = nodes['createvideo']
-    cliptextencode = nodes['cliptextencode']
-    cliptextencode_2 = nodes['cliptextencode_2']
-    return {
-    'image': InputSpec(node=image, field='image', default='example.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'width': InputSpec(node=emptyltxvlatentvideo, field='width', default=960, type='INT'),
-    'height': InputSpec(node=emptyltxvlatentvideo, field='height', default=544, type='INT'),
-    'frames': InputSpec(node=emptyltxvlatentvideo, field='length', default=DEFAULT_FRAMES, type='INT'),
-    'seed': InputSpec(node=randomnoise, field='noise_seed', default=DEFAULT_SEED, type='INT'),
-    'fps': InputSpec(node=createvideo, field='fps', default=DEFAULT_FPS, type='FLOAT'),
-    'prompt': InputSpec(node=cliptextencode, field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
-    'negative_prompt': InputSpec(node=cliptextencode_2, field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
-    }
-
 READY_METADATA = ReadyMetadata.build(
     capability='unknown',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['euler_ancestral_cfg_pp', 'ltx-2.3-22b-dev.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors']},
     custom_node_packs={'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVEmptyLatentAudio', 'LTXVPreprocess', 'LTXVScheduler', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'discovered'}},
-    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json', 'source_id': 'ltx2_3_single_stage_distilled_full', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json', 'source_hash': 'sha256:128e089227852b1aed1e7e8f8294507583b3272769f43dfd48cb84d5b73c8d1c', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_i2v'},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json', 'source_id': 'ltx2_3_single_stage_distilled_full', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/ltx2_3_single_stage_distilled_full.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_i2v'},
 )
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        # Inputs
-        image, mask = LoadImage(image='example.png', unused_widget_1='image')
+    # Inputs
+    image, mask = LoadImage(image='example.png', unused_widget_1='image')
 
-        # Sampling
-        emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-            width=960,
-            height=544,
-            length=DEFAULT_FRAMES,
-        )
+    # Sampling
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        width=960,
+        height=544,
+        length=DEFAULT_FRAMES,
+    )
 
-        # Loaders
-        model, clip, vae = CheckpointLoaderSimple(ckpt_name=MODEL_NAME)
-        ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=MODEL_NAME)
+    # Loaders
+    model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate=FIXED)
+    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+    randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
-        randomnoise = RandomNoise(
-            noise_seed=DEFAULT_SEED,
-            control_after_generate=CONTROL_AFTER_GENERATE,
-        )
+    gemmaapitextencode = GemmaAPITextEncode(
+        ckpt_name=CKPT_NAME,
+        enhance_prompt=ENHANCE_PROMPT_NAME,
+        widget_0='',
+    )
 
-        ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+    ltxavtextencoderloader = LTXAVTextEncoderLoader(
+        text_encoder=TEXT_ENCODER_NAME,
+        ckpt_name=CKPT_NAME,
+        device='default',
+    )
 
-        randomnoise_2 = RandomNoise(
-            noise_seed=DEFAULT_SEED_2,
-            control_after_generate=CONTROL_AFTER_GENERATE,
-        )
+    gemmaapitextencode_2 = GemmaAPITextEncode(
+        ckpt_name=CKPT_NAME,
+        enhance_prompt=False,
+        prompt=DEFAULT_PROMPT,
+        widget_0='',
+    )
 
-        gemmaapitextencode = GemmaAPITextEncode(
-            ckpt_name=MODEL_NAME,
-            enhance_prompt=MODEL_NAME,
-            widget_0='',
-        )
+    guiderparameters = GuiderParameters(
+        cfg=GUIDE_STRENGTH,
+        modality='AUDIO',
+        modality_scale=3,
+    )
 
-        ltxavtextencoderloader = LTXAVTextEncoderLoader(
-            text_encoder=MODEL_NAME_2,
-            ckpt_name=MODEL_NAME,
-            device='default',
-        )
+    clownsampler_beta = raw_call('ClownSampler_Beta', '4967',
+        widget_0=0.25,
+        widget_1='exponential/res_2s',
+        widget_2=94,
+        widget_3='fixed',
+        widget_4=True,
+    )
 
-        gemmaapitextencode_2 = GemmaAPITextEncode(
-            ckpt_name=MODEL_NAME,
-            enhance_prompt=False,
-            prompt=DEFAULT_PROMPT,
-            widget_0='',
-        )
+    manualsigmas = ManualSigmas(
+        sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
+    )
 
-        guiderparameters = GuiderParameters(
-            cfg=GUIDE_STRENGTH,
-            modality='AUDIO',
-            modality_scale=3,
-        )
+    ltxfloattoint = LTXFloatToInt(rounding=0, a=24.0)
 
-        clownsampler_beta = raw_call('ClownSampler_Beta', '4967',
-            widget_0=0.25,
-            widget_1='exponential/res_2s',
-            widget_2=94,
-            widget_3='fixed',
-            widget_4=True,
-        )
+    # Conditioning
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=ltxavtextencoderloader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
 
-        manualsigmas = ManualSigmas(
-            sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
-        )
+    ltxvemptylatentaudio = LTXVEmptyLatentAudio(
+        frames_number=121,
+        frame_rate=ltxfloattoint,
+        audio_vae=ltxvaudiovaeloader,
+    )
 
-        ltxfloattoint = LTXFloatToInt(rounding=0, a=24.0)
+    loraloadermodelonly = LoraLoaderModelOnly(
+        lora_name=LORA_NAME,
+        strength_model=GUIDE_STRENGTH_4,
+        model=model,
+    )
 
-        # Conditioning
-        cliptextencode = CLIPTextEncode(
-            text=DEFAULT_PROMPT_2,
-            clip=ltxavtextencoderloader,
-        )
+    guiderparameters_2 = GuiderParameters(
+        cfg=GUIDE_STRENGTH_2,
+        modality_scale=3,
+        rescale=0.9,
+        parameters=guiderparameters,
+    )
 
-        cliptextencode_2 = CLIPTextEncode(
-            text=DEFAULT_PROMPT,
-            clip=ltxavtextencoderloader,
-        )
+    loraloadermodelonly_2 = LoraLoaderModelOnly(
+        lora_name=LORA_NAME,
+        strength_model=GUIDE_STRENGTH_5,
+        model=model,
+    )
 
-        ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-            frames_number=121,
-            frame_rate=ltxfloattoint,
-            audio_vae=ltxvaudiovaeloader,
-        )
+    resizeimagemasknode = ResizeImageMaskNode(
+        resize_type='scale longer dimension',
+        scale_method='lanczos',
+        unused_widget_1=1536,
+        input=image,
+    )
 
-        loraloadermodelonly = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_3,
-            strength_model=GUIDE_STRENGTH_4,
-            model=model,
-        )
+    positive, negative = LTXVConditioning(
+        frame_rate=24.0,
+        negative=cliptextencode_2,
+        positive=cliptextencode,
+    )
 
-        guiderparameters_2 = GuiderParameters(
-            cfg=GUIDE_STRENGTH_2,
-            modality_scale=3,
-            rescale=0.9,
-            parameters=guiderparameters,
-        )
+    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagemasknode)
 
-        loraloadermodelonly_2 = LoraLoaderModelOnly(
-            lora_name=MODEL_NAME_3,
-            strength_model=GUIDE_STRENGTH_5,
-            model=model,
-        )
+    ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
+        strength=0.7,
+        bypass=True,
+        image=ltxvpreprocess,
+        latent=emptyltxvlatentvideo,
+        vae=vae,
+    )
 
-        resizeimagemasknode = ResizeImageMaskNode(
-            resize_type='scale longer dimension',
-            scale_method='lanczos',
-            unused_widget_1=1536,
-            input=image,
-        )
+    multimodalguider = MultimodalGuider(
+        widget_0='28',
+        model=loraloadermodelonly_2,
+        negative=negative,
+        parameters=guiderparameters_2,
+        positive=positive,
+    )
 
-        positive, negative = LTXVConditioning(
-            frame_rate=24.0,
-            negative=cliptextencode_2,
-            positive=cliptextencode,
-        )
+    cfgguider = CFGGuider(
+        cfg=GUIDE_STRENGTH_3,
+        model=loraloadermodelonly,
+        negative=negative,
+        positive=positive,
+    )
 
-        ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagemasknode)
+    ltxvconcatavlatent = LTXVConcatAVLatent(
+        audio_latent=ltxvemptylatentaudio,
+        video_latent=ltxvimgtovideoconditiononly,
+    )
 
-        ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
-            strength=0.7,
-            bypass=True,
-            image=ltxvpreprocess,
-            latent=emptyltxvlatentvideo,
-            vae=vae,
-        )
+    output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
+        guider=cfgguider,
+        latent_image=ltxvconcatavlatent,
+        noise=randomnoise_2,
+        sampler=ksamplerselect,
+        sigmas=manualsigmas,
+    )
 
-        multimodalguider = MultimodalGuider(
-            widget_0='28',
-            model=loraloadermodelonly_2,
-            negative=negative,
-            parameters=guiderparameters_2,
-            positive=positive,
-        )
+    ltxvscheduler = LTXVScheduler(steps=15, latent=ltxvconcatavlatent)
 
-        cfgguider = CFGGuider(
-            cfg=GUIDE_STRENGTH_3,
-            model=loraloadermodelonly,
-            negative=negative,
-            positive=positive,
-        )
+    output, denoised_output = SamplerCustomAdvanced(
+        guider=multimodalguider,
+        latent_image=ltxvconcatavlatent,
+        noise=randomnoise,
+        sampler=clownsampler_beta.out(0),
+        sigmas=ltxvscheduler,
+    )
 
-        ltxvconcatavlatent = LTXVConcatAVLatent(
-            audio_latent=ltxvemptylatentaudio,
-            video_latent=ltxvimgtovideoconditiononly,
-        )
+    video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
+        av_latent=output_sampler,
+    )
 
-        output_sampler, denoised_output_sampler = SamplerCustomAdvanced(
-            guider=cfgguider,
-            latent_image=ltxvconcatavlatent,
-            noise=randomnoise_2,
-            sampler=ksamplerselect,
-            sigmas=manualsigmas,
-        )
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
-        ltxvscheduler = LTXVScheduler(steps=15, latent=ltxvconcatavlatent)
+    ltxvaudiovaedecode_2 = LTXVAudioVAEDecode(
+        audio_vae=ltxvaudiovaeloader,
+        samples=audio_latent_ltxv,
+    )
 
-        output, denoised_output = SamplerCustomAdvanced(
-            guider=multimodalguider,
-            latent_image=ltxvconcatavlatent,
-            noise=randomnoise,
-            sampler=clownsampler_beta.out(0),
-            sigmas=ltxvscheduler,
-        )
+    ltxvtiledvaedecode = LTXVTiledVAEDecode(
+        horizontal_tiles=2,
+        vertical_tiles=2,
+        overlap=6,
+        latents=video_latent_ltxv,
+        vae=vae,
+    )
 
-        video_latent_ltxv, audio_latent_ltxv = LTXVSeparateAVLatent(
-            av_latent=output_sampler,
-        )
+    ltxvaudiovaedecode = LTXVAudioVAEDecode(
+        audio_vae=ltxvaudiovaeloader,
+        samples=audio_latent,
+    )
 
-        video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
+    createvideo_2 = CreateVideo(
+        fps=DEFAULT_FPS,
+        audio=ltxvaudiovaedecode_2,
+        images=ltxvtiledvaedecode,
+    )
 
-        ltxvaudiovaedecode_2 = LTXVAudioVAEDecode(
-            audio_vae=ltxvaudiovaeloader,
-            samples=audio_latent_ltxv,
-        )
+    ltxvtiledvaedecode_2 = LTXVTiledVAEDecode(
+        horizontal_tiles=2,
+        vertical_tiles=2,
+        overlap=6,
+        latents=video_latent,
+        vae=vae,
+    )
 
-        ltxvtiledvaedecode = LTXVTiledVAEDecode(
-            horizontal_tiles=2,
-            vertical_tiles=2,
-            overlap=6,
-            unused_widget_4=UNUSED_WIDGET_4,
-            unused_widget_5='auto',
-            latents=video_latent_ltxv,
-            vae=vae,
-        )
+    createvideo = CreateVideo(
+        fps=DEFAULT_FPS,
+        audio=ltxvaudiovaedecode,
+        images=ltxvtiledvaedecode_2,
+    )
 
-        ltxvaudiovaedecode = LTXVAudioVAEDecode(
-            audio_vae=ltxvaudiovaeloader,
-            samples=audio_latent,
-        )
+    # Outputs
+    savevideo_2 = SaveVideo(filename_prefix='output_D', video=createvideo_2)
+    savevideo = SaveVideo(filename_prefix='output_F', video=createvideo)
 
-        createvideo_2 = CreateVideo(
-            fps=DEFAULT_FPS,
-            audio=ltxvaudiovaedecode_2,
-            images=ltxvtiledvaedecode,
-        )
-
-        ltxvtiledvaedecode_2 = LTXVTiledVAEDecode(
-            horizontal_tiles=2,
-            vertical_tiles=2,
-            overlap=6,
-            unused_widget_4=UNUSED_WIDGET_4,
-            unused_widget_5='auto',
-            latents=video_latent,
-            vae=vae,
-        )
-
-        createvideo = CreateVideo(
-            fps=DEFAULT_FPS,
-            audio=ltxvaudiovaedecode,
-            images=ltxvtiledvaedecode_2,
-        )
-
-        # Outputs
-        savevideo_2 = SaveVideo(filename_prefix='output_D', video=createvideo_2)
-        savevideo = SaveVideo(filename_prefix='output_F', video=createvideo)
-
-        apply_ltx_lowvram(wf)
-        resolution(384, 256, 9).apply(wf)
-        ensure_custom_nodes(wf, READY_METADATA.get("requirements", {}).get("custom_nodes", []))
-        return wf.finalize(PUBLIC_INPUTS(**locals()), output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output_F')
+    apply_ltx_lowvram(wf)
+    resolution(384, 256, 9).apply(wf)
+    ensure_custom_nodes(wf, READY_METADATA.get("requirements", {}).get("custom_nodes", []))
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output_F')
 
