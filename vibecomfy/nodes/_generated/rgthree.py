@@ -22,10 +22,10 @@ def Any_Switch_rgthree(
 ):
     """
     Any Switch (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: *
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -52,10 +52,10 @@ def Context_rgthree(
 ):
     """
     Context (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -114,10 +114,10 @@ def Context_Big_rgthree(
 ):
     """
     Context Big (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED, STEPS, STEP_REFINER, CFG, CKPT_NAME, SAMPLER, SCHEDULER, CLIP_WIDTH, CLIP_HEIGHT, TEXT_POS_G, TEXT_POS_L, TEXT_NEG_G, TEXT_NEG_L, MASK, CONTROL_NET
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -181,10 +181,10 @@ def Context_Merge_rgthree(
 ):
     """
     Context Merge (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -202,10 +202,10 @@ def Context_Merge_Big_rgthree(
 ):
     """
     Context Merge Big (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED, STEPS, STEP_REFINER, CFG, CKPT_NAME, SAMPLER, SCHEDULER, CLIP_WIDTH, CLIP_HEIGHT, TEXT_POS_G, TEXT_POS_L, TEXT_NEG_G, TEXT_NEG_L, MASK, CONTROL_NET
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -223,10 +223,10 @@ def Context_Switch_rgthree(
 ):
     """
     Context Switch (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -244,10 +244,10 @@ def Context_Switch_Big_rgthree(
 ):
     """
     Context Switch Big (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONTEXT, MODEL, CLIP, VAE, POSITIVE, NEGATIVE, LATENT, IMAGE, SEED, STEPS, STEP_REFINER, CFG, CKPT_NAME, SAMPLER, SCHEDULER, CLIP_WIDTH, CLIP_HEIGHT, TEXT_POS_G, TEXT_POS_L, TEXT_NEG_G, TEXT_NEG_L, MASK, CONTROL_NET
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -266,10 +266,10 @@ def Display_Any_rgthree(
 ):
     """
     Display Any (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: None
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -290,10 +290,10 @@ def Display_Int_rgthree(
 ):
     """
     Display Int (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: None
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -315,10 +315,10 @@ def Image_Comparer_rgthree(
 ):
     """
     Compares two images with a hover slider, or click from properties.
-    
+
     Pack: rgthree-comfy
     Returns: None
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -346,10 +346,10 @@ def Image_Inset_Crop_rgthree(
 ):
     """
     Image Inset Crop (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: IMAGE
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -385,10 +385,10 @@ def Image_Resize_rgthree(
 ):
     """
     Resize the image.
-    
+
     Pack: rgthree-comfy
     Returns: IMAGE, WIDTH, HEIGHT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -418,10 +418,10 @@ def Image_or_Latent_Size_rgthree(
 ):
     """
     Image or Latent Size (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: WIDTH, HEIGHT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -444,10 +444,10 @@ def KSampler_Config_rgthree(
 ):
     """
     KSampler Config (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: STEPS, REFINER_STEP, CFG, SAMPLER, SCHEDULER
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -485,10 +485,10 @@ def Lora_Loader_Stack_rgthree(
 ):
     """
     Lora Loader Stack (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: MODEL, CLIP
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -528,10 +528,10 @@ def Power_Lora_Loader_rgthree(
 ):
     """
     Power Lora Loader (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: MODEL, CLIP
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -553,10 +553,10 @@ def Power_Primitive_rgthree(
 ):
     """
     Power Primitive (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: *
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -580,10 +580,10 @@ def Power_Prompt_rgthree(
 ):
     """
     Power Prompt (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONDITIONING, MODEL, CLIP, TEXT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -617,10 +617,10 @@ def Power_Prompt_Simple_rgthree(
 ):
     """
     Power Prompt - Simple (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONDITIONING, TEXT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -646,10 +646,10 @@ def Power_Puter_rgthree(
 ):
     """
     Power Puter (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: *
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -670,10 +670,10 @@ def SDXL_Empty_Latent_Image_rgthree(
 ):
     """
     SDXL Empty Latent Image (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: LATENT, CLIP_WIDTH, CLIP_HEIGHT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -710,10 +710,10 @@ def SDXL_Power_Prompt_Positive_rgthree(
 ):
     """
     SDXL Power Prompt - Positive (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONDITIONING, MODEL, CLIP, TEXT_G, TEXT_L
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -768,10 +768,10 @@ def SDXL_Power_Prompt_Simple_Negative_rgthree(
 ):
     """
     SDXL Power Prompt - Simple / Negative (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: CONDITIONING, TEXT_G, TEXT_L
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -812,10 +812,10 @@ def Seed_rgthree(
 ):
     """
     Seed (rgthree)
-    
+
     Pack: rgthree-comfy
     Returns: SEED
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -828,3 +828,4 @@ def Seed_rgthree(
     return node(wf, 'Seed (rgthree)', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['Any_Switch_rgthree', 'Context_rgthree', 'Context_Big_rgthree', 'Context_Merge_rgthree', 'Context_Merge_Big_rgthree', 'Context_Switch_rgthree', 'Context_Switch_Big_rgthree', 'Display_Any_rgthree', 'Display_Int_rgthree', 'Image_Comparer_rgthree', 'Image_Inset_Crop_rgthree', 'Image_Resize_rgthree', 'Image_or_Latent_Size_rgthree', 'KSampler_Config_rgthree', 'Lora_Loader_Stack_rgthree', 'Power_Lora_Loader_rgthree', 'Power_Primitive_rgthree', 'Power_Prompt_rgthree', 'Power_Prompt_Simple_rgthree', 'Power_Puter_rgthree', 'SDXL_Empty_Latent_Image_rgthree', 'SDXL_Power_Prompt_Positive_rgthree', 'SDXL_Power_Prompt_Simple_Negative_rgthree', 'Seed_rgthree']
+__vibecomfy_class_types__ = {'Any_Switch_rgthree': 'Any Switch (rgthree)', 'Context_rgthree': 'Context (rgthree)', 'Context_Big_rgthree': 'Context Big (rgthree)', 'Context_Merge_rgthree': 'Context Merge (rgthree)', 'Context_Merge_Big_rgthree': 'Context Merge Big (rgthree)', 'Context_Switch_rgthree': 'Context Switch (rgthree)', 'Context_Switch_Big_rgthree': 'Context Switch Big (rgthree)', 'Display_Any_rgthree': 'Display Any (rgthree)', 'Display_Int_rgthree': 'Display Int (rgthree)', 'Image_Comparer_rgthree': 'Image Comparer (rgthree)', 'Image_Inset_Crop_rgthree': 'Image Inset Crop (rgthree)', 'Image_Resize_rgthree': 'Image Resize (rgthree)', 'Image_or_Latent_Size_rgthree': 'Image or Latent Size (rgthree)', 'KSampler_Config_rgthree': 'KSampler Config (rgthree)', 'Lora_Loader_Stack_rgthree': 'Lora Loader Stack (rgthree)', 'Power_Lora_Loader_rgthree': 'Power Lora Loader (rgthree)', 'Power_Primitive_rgthree': 'Power Primitive (rgthree)', 'Power_Prompt_rgthree': 'Power Prompt (rgthree)', 'Power_Prompt_Simple_rgthree': 'Power Prompt - Simple (rgthree)', 'Power_Puter_rgthree': 'Power Puter (rgthree)', 'SDXL_Empty_Latent_Image_rgthree': 'SDXL Empty Latent Image (rgthree)', 'SDXL_Power_Prompt_Positive_rgthree': 'SDXL Power Prompt - Positive (rgthree)', 'SDXL_Power_Prompt_Simple_Negative_rgthree': 'SDXL Power Prompt - Simple / Negative (rgthree)', 'Seed_rgthree': 'Seed (rgthree)'}

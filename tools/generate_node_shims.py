@@ -12,7 +12,6 @@ from vibecomfy.porting.object_info import CACHE_DIR, get_class
 # TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
 # script-mode import path is package-import-safe.
 ROOT = Path(__file__).resolve().parents[1]
-INVENTORY_PATH = ROOT / "vibecomfy" / "porting" / "cache" / "class_inventory.json"
 GENERATED_DIR = ROOT / "vibecomfy" / "nodes" / "_generated"
 NODES_DIR = ROOT / "vibecomfy" / "nodes"
 
@@ -173,13 +172,19 @@ CURATED_WRAPPER_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 PACK_MODULES = {
+    "AILab_AudioDuration": "ailab_audioduration",
     "AILab_QwenTTS": "qwentts",
     "AILab_QwenTTS_Tools": "qwentts",
+    "ComfyUI-Custom-Scripts": "custom_scripts",
     "ComfyUI-DepthAnythingV2": "depthanythingv2",
+    "ComfyUI-Florence2": "florence2",
     "ComfyUI-GGUF": "gguf",
+    "ComfyUI-GIMM-VFI": "gimm_vfi",
     "ComfyUI-KJNodes": "kjnodes",
     "ComfyUI-LTXVideo": "ltxvideo",
+    "ComfyUI-MelBandRoformer": "melbandroformer",
     "ComfyUI-Qwen3-TTS": "qwen3tts",
+    "ComfyUI-QwenTTS": "qwentts",
     "ComfyUI-VideoHelperSuite": "videohelpersuite",
     "ComfyUI-WanAnimatePreprocess": "wananimatepreprocess",
     "ComfyUI-WanVideoWrapper": "wanvideowrapper",
@@ -187,16 +192,23 @@ PACK_MODULES = {
     "comfy": "core",
     "comfy_core": "core",
     "comfy_extras": "core",
+    "comfyui_controlnet_aux": "controlnet_aux",
     "rgthree-comfy": "rgthree",
+    "vibecomfy": "vibecomfy_internal",
 }
 
 PACK_FILE_MODULES = {
+    "AILab_AudioDuration@runpod-snapshot.json": "ailab_audioduration",
     "AILab_QwenTTS@runpod-snapshot.json": "qwentts",
     "AILab_QwenTTS_Tools@runpod-snapshot.json": "qwentts",
+    "ComfyUI-Custom-Scripts@stub.json": "custom_scripts",
     "ComfyUI-DepthAnythingV2@local-5531878.json": "depthanythingv2",
+    "ComfyUI-Florence2@stub.json": "florence2",
     "ComfyUI-GGUF@local-6ea2651.json": "gguf",
+    "ComfyUI-GIMM-VFI@stub.json": "gimm_vfi",
     "ComfyUI-KJNodes@runpod-snapshot.json": "kjnodes",
     "ComfyUI-LTXVideo@runpod-snapshot.json": "ltxvideo",
+    "ComfyUI-MelBandRoformer@stub.json": "melbandroformer",
     "ComfyUI-Qwen3-TTS@local-17c22ad.json": "qwen3tts",
     "ComfyUI-VideoHelperSuite@runpod-snapshot.json": "videohelpersuite",
     "ComfyUI-WanAnimatePreprocess@local-1a35b81.json": "wananimatepreprocess",
@@ -205,20 +217,12 @@ PACK_FILE_MODULES = {
     "comfy@runpod-snapshot.json": "core",
     "comfy_core@runpod-snapshot.json": "core",
     "comfy_extras@runpod-snapshot.json": "core",
+    "comfyui_controlnet_aux@stub.json": "controlnet_aux",
     "rgthree-comfy@runpod-snapshot.json": "rgthree",
+    "vibecomfy@runpod-snapshot.json": "vibecomfy_internal",
 }
 
-FORCED_WHOLE_PACK_MODULES = {
-    "depthanythingv2",
-    "gguf",
-    "qwentts",
-    "qwen3tts",
-    "rgthree",
-    "sam2",
-    "videohelpersuite",
-    "wananimatepreprocess",
-}
-TARGET_MODULES = (
+BASE_TARGET_MODULES = (
     "core",
     "kjnodes",
     "ltxvideo",
@@ -232,6 +236,12 @@ TARGET_MODULES = (
     "rgthree",
     "sam2",
     "wananimatepreprocess",
+    "ailab_audioduration",
+    "custom_scripts",
+    "florence2",
+    "gimm_vfi",
+    "melbandroformer",
+    "vibecomfy_internal",
 )
 
 _LOCAL_SCHEMA_ENTRIES: dict[str, dict[str, Any]] = {}
@@ -239,48 +249,57 @@ _LOCAL_SCHEMA_ENTRIES: dict[str, dict[str, Any]] = {}
 
 def main() -> None:
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
-    classes_by_module = _select_classes()
+    target_modules = _target_modules()
+    classes_by_module = _select_classes(target_modules)
     all_exports: dict[str, list[str]] = {}
-    for module in TARGET_MODULES:
+    for module in target_modules:
         exports = _write_module(module, sorted(classes_by_module.get(module, set())))
         _write_stub_module(module, sorted(classes_by_module.get(module, set())))
         all_exports[module] = exports
         _write_reexport_module(module)
         _write_reexport_stub_module(module)
-    _write_generated_init()
+    _write_generated_init(target_modules)
     _write_generated_init_stub()
-    _write_nodes_init(all_exports)
+    _write_nodes_init(target_modules, all_exports)
     _write_nodes_init_stub(all_exports)
-    print(f"generated {sum(len(v) for v in all_exports.values())} wrappers across {len(TARGET_MODULES)} modules")
+    print(f"generated {sum(len(v) for v in all_exports.values())} wrappers across {len(target_modules)} modules")
 
 
-def _select_classes() -> dict[str, set[str]]:
-    selected: dict[str, set[str]] = {module: set() for module in TARGET_MODULES}
-    if INVENTORY_PATH.is_file():
-        inventory = json.loads(INVENTORY_PATH.read_text(encoding="utf-8"))
-        fallback = set(inventory.get("fallback_helpers", {})) | HELPER_CLASSES
-        for class_type, info in inventory.get("typed_wrappers", {}).items():
-            if class_type in fallback or _skip_class_type(class_type):
-                continue
-            entry = get_class(class_type)
-            if entry is None:
-                continue
-            module = PACK_MODULES.get(str(entry.get("pack") or ""))
-            if module is None:
-                module = "core" if bool(info.get("is_core")) else None
-            if module in selected:
-                selected[module].add(class_type)
+def _target_modules() -> tuple[str, ...]:
+    modules = list(BASE_TARGET_MODULES)
+    for path in _cache_pack_files():
+        module = _module_for_pack_file(path.name)
+        if module not in modules:
+            modules.append(module)
+    return tuple(modules)
 
-    for filename, module in PACK_FILE_MODULES.items():
-        if module not in FORCED_WHOLE_PACK_MODULES:
-            continue
-        path = CACHE_DIR / filename
-        if not path.is_file():
-            continue
+
+def _cache_pack_files() -> list[Path]:
+    ignored = {"index.json", "provenance.json"}
+    return sorted(path for path in CACHE_DIR.glob("*.json") if path.name not in ignored)
+
+
+def _pack_name_from_cache_filename(filename: str) -> str:
+    return filename.split("@", 1)[0]
+
+
+def _module_for_pack_file(filename: str) -> str:
+    pack_name = _pack_name_from_cache_filename(filename)
+    return PACK_FILE_MODULES.get(filename) or PACK_MODULES.get(pack_name) or _identifier(pack_name).lower()
+
+
+def _select_classes(target_modules: tuple[str, ...]) -> dict[str, set[str]]:
+    selected: dict[str, set[str]] = {module: set() for module in target_modules}
+    for path in _cache_pack_files():
+        module = _module_for_pack_file(path.name)
+        if module not in selected:
+            selected[module] = set()
+        pack_name = _pack_name_from_cache_filename(path.name)
         pack = json.loads(path.read_text(encoding="utf-8"))
         for class_type, entry in pack.items():
-            if _is_wrappable(class_type, entry):
-                _LOCAL_SCHEMA_ENTRIES[class_type] = entry
+            normalized = _normalized_schema_entry(entry, pack_name)
+            if _is_wrappable(class_type, normalized):
+                _LOCAL_SCHEMA_ENTRIES.setdefault(class_type, normalized)
                 selected[module].add(class_type)
     for class_type, entry in CURATED_WRAPPER_SCHEMAS.items():
         module = PACK_MODULES.get(str(entry.get("pack") or ""))
@@ -290,8 +309,28 @@ def _select_classes() -> dict[str, set[str]]:
     return selected
 
 
+def _normalized_schema_entry(entry: Any, pack_name: str) -> dict[str, Any]:
+    if not isinstance(entry, dict):
+        return {"pack": pack_name}
+    normalized = dict(entry)
+    normalized.setdefault("pack", pack_name)
+    if "outputs" not in normalized and isinstance(normalized.get("output"), list):
+        output_types = [str(value) for value in normalized.get("output") or []]
+        output_names = normalized.get("output_name")
+        names = [str(value) for value in output_names] if isinstance(output_names, list) else []
+        normalized["outputs"] = [
+            {
+                "name": names[index] if index < len(names) and names[index] else output_type,
+                "type": output_type,
+            }
+            for index, output_type in enumerate(output_types)
+        ]
+    return normalized
+
+
 def _write_module(module: str, class_types: list[str]) -> list[str]:
     export_names: list[str] = []
+    class_types_by_export: dict[str, str] = {}
     used_names: set[str] = set()
     lines = [
         '"""Auto-generated thin wrappers for ComfyUI node classes.',
@@ -318,9 +357,11 @@ def _write_module(module: str, class_types: list[str]) -> list[str]:
         function_name = _unique_name(_identifier(class_type), used_names)
         used_names.add(function_name)
         export_names.append(function_name)
+        class_types_by_export[function_name] = class_type
         lines.extend(_render_wrapper(function_name, class_type, entry))
         lines.append("")
     lines.append(f"__all__ = {export_names!r}")
+    lines.append(f"__vibecomfy_class_types__ = {class_types_by_export!r}")
     lines.append("")
     (GENERATED_DIR / f"{module}.py").write_text("\n".join(lines), encoding="utf-8")
     return export_names
@@ -349,11 +390,11 @@ def _render_wrapper(function_name: str, class_type: str, entry: dict[str, Any]) 
     lines.append("):")
     doc = ['    """']
     if description:
-        doc.extend(f"    {line}" if line else "    " for line in description.splitlines())
-        doc.append("    ")
+        doc.extend(f"    {line.rstrip()}" if line.strip() else "" for line in description.splitlines())
+        doc.append("")
     doc.append(f"    Pack: {pack}")
     doc.append(f"    Returns: {returns}")
-    doc.append("    ")
+    doc.append("")
     doc.append("    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.")
     doc.append('    """')
     lines.extend(doc)
@@ -563,17 +604,24 @@ def _write_reexport_stub_module(module: str) -> None:
     )
 
 
-def _write_generated_init() -> None:
-    (GENERATED_DIR / "__init__.py").write_text('__all__: list[str] = []\n', encoding="utf-8")
+def _write_generated_init(target_modules: tuple[str, ...]) -> None:
+    (GENERATED_DIR / "__init__.py").write_text(
+        "\n".join([
+            f"MODULES = {list(target_modules)!r}",
+            "__all__: list[str] = []",
+            "",
+        ]),
+        encoding="utf-8",
+    )
 
 
 def _write_generated_init_stub() -> None:
     (GENERATED_DIR / "__init__.pyi").write_text("__all__: list[str]\n", encoding="utf-8")
 
 
-def _write_nodes_init(all_exports: dict[str, list[str]]) -> None:
+def _write_nodes_init(target_modules: tuple[str, ...], all_exports: dict[str, list[str]]) -> None:
     lines = ["from __future__ import annotations", ""]
-    for module in TARGET_MODULES:
+    for module in target_modules:
         lines.append(f"from vibecomfy.nodes.{module} import *")
     exported = sorted({name for names in all_exports.values() for name in names})
     lines.append("")
@@ -584,7 +632,7 @@ def _write_nodes_init(all_exports: dict[str, list[str]]) -> None:
 
 def _write_nodes_init_stub(all_exports: dict[str, list[str]]) -> None:
     lines = ["from __future__ import annotations", ""]
-    for module in TARGET_MODULES:
+    for module in all_exports:
         lines.append(f"from vibecomfy.nodes.{module} import *")
     lines.append("")
     lines.append(f"__all__: list[str]")

@@ -29,10 +29,10 @@ def AILab_Qwen3TTSCustomVoice(
 ):
     """
     Custom Voice (QwenTTS)
-    
+
     Pack: AILab_QwenTTS
     Returns: audio
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -80,10 +80,10 @@ def AILab_Qwen3TTSCustomVoice_Advanced(
 ):
     """
     Custom Voice (QwenTTS) Advanced
-    
+
     Pack: AILab_QwenTTS
     Returns: audio
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -135,10 +135,10 @@ def AILab_Qwen3TTSLoadVoice(
 ):
     """
     Load Voice (QwenTTS)
-    
+
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -169,10 +169,10 @@ def AILab_Qwen3TTSVoiceClone(
 ):
     """
     Voice Clone (QwenTTS)
-    
+
     Pack: AILab_QwenTTS
     Returns: audio
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -226,10 +226,10 @@ def AILab_Qwen3TTSVoiceClone_Advanced(
 ):
     """
     Voice Clone (QwenTTS) Advanced
-    
+
     Pack: AILab_QwenTTS
     Returns: audio
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -289,10 +289,10 @@ def AILab_Qwen3TTSVoiceDesign(
 ):
     """
     Voice Design (QwenTTS)
-    
+
     Pack: AILab_QwenTTS
     Returns: audio
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -337,10 +337,10 @@ def AILab_Qwen3TTSVoiceDesign_Advanced(
 ):
     """
     Voice Design (QwenTTS) Advanced
-    
+
     Pack: AILab_QwenTTS
     Returns: audio
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -391,10 +391,10 @@ def AILab_Qwen3TTSVoiceInstruct(
 ):
     """
     Voice Instruct (QwenTTS)
-    
+
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE_INSTRUCT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -421,10 +421,10 @@ def AILab_Qwen3TTSVoiceInstructZH(
 ):
     """
     声音风格指引 (QwenTTS)
-    
+
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE_INSTRUCT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -457,10 +457,10 @@ def AILab_Qwen3TTSVoicesLibrary(
 ):
     """
     Create Voice (QwenTTS)
-    
+
     Pack: AILab_QwenTTS_Tools
     Returns: VOICE
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -500,10 +500,10 @@ def AILab_Qwen3TTSWhisperSTT(
 ):
     """
     Whisper STT (QwenTTS)
-    
+
     Pack: AILab_QwenTTS_Tools
     Returns: text
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -522,3 +522,4 @@ def AILab_Qwen3TTSWhisperSTT(
     return node(wf, 'AILab_Qwen3TTSWhisperSTT', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['AILab_Qwen3TTSCustomVoice', 'AILab_Qwen3TTSCustomVoice_Advanced', 'AILab_Qwen3TTSLoadVoice', 'AILab_Qwen3TTSVoiceClone', 'AILab_Qwen3TTSVoiceClone_Advanced', 'AILab_Qwen3TTSVoiceDesign', 'AILab_Qwen3TTSVoiceDesign_Advanced', 'AILab_Qwen3TTSVoiceInstruct', 'AILab_Qwen3TTSVoiceInstructZH', 'AILab_Qwen3TTSVoicesLibrary', 'AILab_Qwen3TTSWhisperSTT']
+__vibecomfy_class_types__ = {'AILab_Qwen3TTSCustomVoice': 'AILab_Qwen3TTSCustomVoice', 'AILab_Qwen3TTSCustomVoice_Advanced': 'AILab_Qwen3TTSCustomVoice_Advanced', 'AILab_Qwen3TTSLoadVoice': 'AILab_Qwen3TTSLoadVoice', 'AILab_Qwen3TTSVoiceClone': 'AILab_Qwen3TTSVoiceClone', 'AILab_Qwen3TTSVoiceClone_Advanced': 'AILab_Qwen3TTSVoiceClone_Advanced', 'AILab_Qwen3TTSVoiceDesign': 'AILab_Qwen3TTSVoiceDesign', 'AILab_Qwen3TTSVoiceDesign_Advanced': 'AILab_Qwen3TTSVoiceDesign_Advanced', 'AILab_Qwen3TTSVoiceInstruct': 'AILab_Qwen3TTSVoiceInstruct', 'AILab_Qwen3TTSVoiceInstructZH': 'AILab_Qwen3TTSVoiceInstructZH', 'AILab_Qwen3TTSVoicesLibrary': 'AILab_Qwen3TTSVoicesLibrary', 'AILab_Qwen3TTSWhisperSTT': 'AILab_Qwen3TTSWhisperSTT'}

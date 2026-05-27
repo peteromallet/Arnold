@@ -26,10 +26,10 @@ def DownloadAndLoadSAM2Model(
 ):
     """
     DownloadAndLoadSAM2Model
-    
+
     Pack: ComfyUI-segment-anything-2
     Returns: sam2_model
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -58,10 +58,10 @@ def Florence2toCoordinates(
 ):
     """
     Florence2toCoordinates
-    
+
     Pack: ComfyUI-segment-anything-2
     Returns: center_coordinates, bboxes
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -101,10 +101,10 @@ def Sam2AutoSegmentation(
 ):
     """
     Sam2AutoSegmentation
-    
+
     Pack: ComfyUI-segment-anything-2
     Returns: mask, segmented_image, bbox
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -162,10 +162,10 @@ def Sam2Segmentation(
 ):
     """
     Sam2Segmentation
-    
+
     Pack: ComfyUI-segment-anything-2
     Returns: mask
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -202,10 +202,10 @@ def Sam2VideoSegmentation(
 ):
     """
     Sam2VideoSegmentation
-    
+
     Pack: ComfyUI-segment-anything-2
     Returns: mask
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -236,10 +236,10 @@ def Sam2VideoSegmentationAddPoints(
 ):
     """
     Sam2VideoSegmentationAddPoints
-    
+
     Pack: ComfyUI-segment-anything-2
     Returns: sam2_model, inference_state
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -264,3 +264,4 @@ def Sam2VideoSegmentationAddPoints(
     return node(wf, 'Sam2VideoSegmentationAddPoints', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['DownloadAndLoadSAM2Model', 'Florence2toCoordinates', 'Sam2AutoSegmentation', 'Sam2Segmentation', 'Sam2VideoSegmentation', 'Sam2VideoSegmentationAddPoints']
+__vibecomfy_class_types__ = {'DownloadAndLoadSAM2Model': 'DownloadAndLoadSAM2Model', 'Florence2toCoordinates': 'Florence2toCoordinates', 'Sam2AutoSegmentation': 'Sam2AutoSegmentation', 'Sam2Segmentation': 'Sam2Segmentation', 'Sam2VideoSegmentation': 'Sam2VideoSegmentation', 'Sam2VideoSegmentationAddPoints': 'Sam2VideoSegmentationAddPoints'}

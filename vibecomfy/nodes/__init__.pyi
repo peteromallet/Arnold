@@ -13,5 +13,11 @@ from vibecomfy.nodes.gguf import *
 from vibecomfy.nodes.rgthree import *
 from vibecomfy.nodes.sam2 import *
 from vibecomfy.nodes.wananimatepreprocess import *
+from vibecomfy.nodes.ailab_audioduration import *
+from vibecomfy.nodes.custom_scripts import *
+from vibecomfy.nodes.florence2 import *
+from vibecomfy.nodes.gimm_vfi import *
+from vibecomfy.nodes.melbandroformer import *
+from vibecomfy.nodes.vibecomfy_internal import *
 
 __all__: list[str]

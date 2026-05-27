@@ -29,10 +29,10 @@ def DrawViTPose(
 ):
     """
     Draws pose images from pose data.
-    
+
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: pose_images
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -67,10 +67,10 @@ def OnnxDetectionModelLoader(
 ):
     """
     Loads ONNX models for pose and face detection. ViTPose for pose estimation and YOLO for object detection.
-    
+
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: model
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -100,10 +100,10 @@ def PoseAndFaceDetection(
 ):
     """
     Detects human poses and face images from input images. Optionally retargets poses based on a reference image.
-    
+
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: pose_data, face_images, key_frame_body_points, bboxes, face_bboxes
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -141,10 +141,10 @@ def PoseDetectionOneToAllAnimation(
 ):
     """
     Specialized pose detection and alignment for OneToAllAnimation model https://github.com/ssj9596/One-to-All-Animation. Detects poses from input images and aligns them based on a reference image if provided.
-    
+
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: pose_images, ref_pose_image, ref_image, ref_mask
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -179,10 +179,10 @@ def PoseRetargetPromptHelper(
 ):
     """
     Generates text prompts for pose retargeting based on visibility of arms and legs in the template pose. Originally used for Flux Kontext
-    
+
     Pack: ComfyUI-WanAnimatePreprocess
     Returns: prompt, retarget_prompt
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -195,3 +195,4 @@ def PoseRetargetPromptHelper(
     return node(wf, 'PoseRetargetPromptHelper', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['DrawViTPose', 'OnnxDetectionModelLoader', 'PoseAndFaceDetection', 'PoseDetectionOneToAllAnimation', 'PoseRetargetPromptHelper']
+__vibecomfy_class_types__ = {'DrawViTPose': 'DrawViTPose', 'OnnxDetectionModelLoader': 'OnnxDetectionModelLoader', 'PoseAndFaceDetection': 'PoseAndFaceDetection', 'PoseDetectionOneToAllAnimation': 'PoseDetectionOneToAllAnimation', 'PoseRetargetPromptHelper': 'PoseRetargetPromptHelper'}

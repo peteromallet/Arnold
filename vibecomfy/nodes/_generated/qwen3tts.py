@@ -26,10 +26,10 @@ def Qwen3AudioCompare(
 ):
     """
     Qwen3AudioCompare
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: report
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -63,10 +63,10 @@ def Qwen3CustomVoice(
 ):
     """
     Qwen3CustomVoice
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: AUDIO
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -104,10 +104,10 @@ def Qwen3DataPrep(
 ):
     """
     Qwen3DataPrep
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: processed_jsonl_path
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -136,10 +136,10 @@ def Qwen3DatasetFromFolder(
 ):
     """
     Qwen3DatasetFromFolder
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: jsonl_path
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -185,10 +185,10 @@ def Qwen3FineTune(
 ):
     """
     Qwen3FineTune
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: model_path, custom_speaker_name
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -251,10 +251,10 @@ def Qwen3LoadPrompt(
 ):
     """
     Qwen3LoadPrompt
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: prompt
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -279,10 +279,10 @@ def Qwen3Loader(
 ):
     """
     Qwen3Loader
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: model
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -314,10 +314,10 @@ def Qwen3PromptMaker(
 ):
     """
     Qwen3PromptMaker
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: QWEN3_PROMPT
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -345,10 +345,10 @@ def Qwen3SavePrompt(
 ):
     """
     Qwen3SavePrompt
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: filepath
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -379,10 +379,10 @@ def Qwen3VoiceClone(
 ):
     """
     Qwen3VoiceClone
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: AUDIO
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -423,10 +423,10 @@ def Qwen3VoiceDesign(
 ):
     """
     Qwen3VoiceDesign
-    
+
     Pack: ComfyUI-Qwen3-TTS
     Returns: AUDIO
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -447,3 +447,4 @@ def Qwen3VoiceDesign(
     return node(wf, 'Qwen3VoiceDesign', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['Qwen3AudioCompare', 'Qwen3CustomVoice', 'Qwen3DataPrep', 'Qwen3DatasetFromFolder', 'Qwen3FineTune', 'Qwen3LoadPrompt', 'Qwen3Loader', 'Qwen3PromptMaker', 'Qwen3SavePrompt', 'Qwen3VoiceClone', 'Qwen3VoiceDesign']
+__vibecomfy_class_types__ = {'Qwen3AudioCompare': 'Qwen3AudioCompare', 'Qwen3CustomVoice': 'Qwen3CustomVoice', 'Qwen3DataPrep': 'Qwen3DataPrep', 'Qwen3DatasetFromFolder': 'Qwen3DatasetFromFolder', 'Qwen3FineTune': 'Qwen3FineTune', 'Qwen3LoadPrompt': 'Qwen3LoadPrompt', 'Qwen3Loader': 'Qwen3Loader', 'Qwen3PromptMaker': 'Qwen3PromptMaker', 'Qwen3SavePrompt': 'Qwen3SavePrompt', 'Qwen3VoiceClone': 'Qwen3VoiceClone', 'Qwen3VoiceDesign': 'Qwen3VoiceDesign'}

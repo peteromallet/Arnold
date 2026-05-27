@@ -135,7 +135,7 @@ FALLBACK_CLASS_TYPES: frozenset[str] = frozenset({
 })
 RESERVED_WRAPPER_INPUT_NAMES: frozenset[str] = frozenset({"class", "from", "type"})
 
-_WRAPPER_MODULES: tuple[str, ...] = (
+_STATIC_WRAPPER_MODULES: tuple[str, ...] = (
     "core",
     "kjnodes",
     "ltxvideo",
@@ -149,6 +149,12 @@ _WRAPPER_MODULES: tuple[str, ...] = (
     "rgthree",
     "sam2",
     "wananimatepreprocess",
+    "ailab_audioduration",
+    "custom_scripts",
+    "florence2",
+    "gimm_vfi",
+    "melbandroformer",
+    "vibecomfy_internal",
 )
 
 _CURATED_SCHEMA_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -177,13 +183,24 @@ _WRAPPER_CLASS_TO_MODULE: dict[str, str] | None = None
 _WRAPPER_CLASS_TO_SYMBOL: dict[str, str] | None = None
 
 
+def _wrapper_modules() -> tuple[str, ...]:
+    try:
+        generated = importlib.import_module("vibecomfy.nodes._generated")
+    except ImportError:
+        return _STATIC_WRAPPER_MODULES
+    modules = getattr(generated, "MODULES", None)
+    if isinstance(modules, (list, tuple)):
+        return tuple(str(module) for module in modules if isinstance(module, str) and module)
+    return _STATIC_WRAPPER_MODULES
+
+
 def _wrapper_class_to_module() -> dict[str, str]:
     global _WRAPPER_CLASS_TO_MODULE, _WRAPPER_CLASS_TO_SYMBOL
     if _WRAPPER_CLASS_TO_MODULE is not None:
         return _WRAPPER_CLASS_TO_MODULE
     module_mapping: dict[str, str] = {}
     symbol_mapping: dict[str, str] = {}
-    for module_name in _WRAPPER_MODULES:
+    for module_name in _wrapper_modules():
         try:
             module = importlib.import_module(f"vibecomfy.nodes._generated.{module_name}")
         except ImportError:
@@ -200,6 +217,11 @@ def _wrapper_class_to_module() -> dict[str, str]:
 
 
 def _wrapper_class_type_for_symbol(module: Any, symbol_name: str) -> str:
+    class_types = getattr(module, "__vibecomfy_class_types__", None)
+    if isinstance(class_types, dict):
+        class_type = class_types.get(symbol_name)
+        if isinstance(class_type, str) and class_type:
+            return class_type
     func = getattr(module, symbol_name, None)
     if callable(func):
         code = getattr(func, "__code__", None)

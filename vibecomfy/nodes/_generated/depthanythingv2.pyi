@@ -26,4 +26,29 @@ def DownloadAndLoadDepthAnythingV2Model(
     **_extras: Any,
 ) -> Any: ...
 
+def LoadVideoDepthAnythingModel(
+    *args: VibeWorkflow,
+    _id: str | None = ...,
+    model: Literal['v2-vits', 'v2-vitb', 'v2-vitl'] | _Omitted = ...,
+    pass_raw: bool = ...,
+    **_extras: Any,
+) -> Any: ...
+
+def VideoDepthAnythingOutput(
+    *args: VibeWorkflow,
+    _id: str | None = ...,
+    images: Any | _Omitted = ...,
+    pass_raw: bool = ...,
+    **_extras: Any,
+) -> Any: ...
+
+def VideoDepthAnythingProcess(
+    *args: VibeWorkflow,
+    _id: str | None = ...,
+    model: Any | _Omitted = ...,
+    images: Any | _Omitted = ...,
+    pass_raw: bool = ...,
+    **_extras: Any,
+) -> Any: ...
+
 __all__: list[str]

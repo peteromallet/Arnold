@@ -25,10 +25,10 @@ def DualCLIPLoaderGGUF(
 ):
     """
     DualCLIPLoaderGGUF
-    
+
     Pack: ComfyUI-GGUF
     Returns: None
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -53,10 +53,10 @@ def UnetLoaderGGUF(
 ):
     """
     UnetLoaderGGUF
-    
+
     Pack: ComfyUI-GGUF
     Returns: MODEL
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -69,3 +69,4 @@ def UnetLoaderGGUF(
     return node(wf, 'UnetLoaderGGUF', _id, pass_raw=pass_raw, **_kwargs)
 
 __all__ = ['DualCLIPLoaderGGUF', 'UnetLoaderGGUF']
+__vibecomfy_class_types__ = {'DualCLIPLoaderGGUF': 'DualCLIPLoaderGGUF', 'UnetLoaderGGUF': 'UnetLoaderGGUF'}

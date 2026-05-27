@@ -24,10 +24,10 @@ def DepthAnything_V2(
 ):
     """
     https://depth-anything-v2.github.io
-    
+
     Pack: ComfyUI-DepthAnythingV2
     Returns: image
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -50,14 +50,14 @@ def DownloadAndLoadDepthAnythingV2Model(
     **_extras: Any,
 ):
     """
-    Models autodownload to `ComfyUI/models/depthanything` from   
-    https://huggingface.co/Kijai/DepthAnythingV2-safetensors/tree/main   
-       
+    Models autodownload to `ComfyUI/models/depthanything` from
+    https://huggingface.co/Kijai/DepthAnythingV2-safetensors/tree/main
+
     fp16 reduces quality by a LOT, not recommended.
-    
+
     Pack: ComfyUI-DepthAnythingV2
     Returns: da_v2_model
-    
+
     Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
     """
     if len(args) > 1:
@@ -71,4 +71,80 @@ def DownloadAndLoadDepthAnythingV2Model(
     _kwargs.update(_extras)
     return node(wf, 'DownloadAndLoadDepthAnythingV2Model', _id, pass_raw=pass_raw, **_kwargs)
 
-__all__ = ['DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model']
+def LoadVideoDepthAnythingModel(
+    *args: VibeWorkflow,
+    _id: str | None = None,
+    model: Literal['v2-vits', 'v2-vitb', 'v2-vitl'] | _Omitted = _UNSET,
+    pass_raw: bool = False,
+    **_extras: Any,
+):
+    """
+    Load video depth anything model
+
+    Pack: ComfyUI-DepthAnythingV2
+    Returns: model
+
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
+    """
+    if len(args) > 1:
+        raise TypeError(f"LoadVideoDepthAnythingModel() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
+    _kwargs: dict[str, Any] = {}
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    _kwargs.update(_extras)
+    return node(wf, 'LoadVideoDepthAnythingModel', _id, pass_raw=pass_raw, **_kwargs)
+
+def VideoDepthAnythingOutput(
+    *args: VibeWorkflow,
+    _id: str | None = None,
+    images: Any | _Omitted = _UNSET,
+    pass_raw: bool = False,
+    **_extras: Any,
+):
+    """
+    Output video depth
+
+    Pack: ComfyUI-DepthAnythingV2
+    Returns: depth_image
+
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
+    """
+    if len(args) > 1:
+        raise TypeError(f"VideoDepthAnythingOutput() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
+    _kwargs: dict[str, Any] = {}
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    _kwargs.update(_extras)
+    return node(wf, 'VideoDepthAnythingOutput', _id, pass_raw=pass_raw, **_kwargs)
+
+def VideoDepthAnythingProcess(
+    *args: VibeWorkflow,
+    _id: str | None = None,
+    model: Any | _Omitted = _UNSET,
+    images: Any | _Omitted = _UNSET,
+    pass_raw: bool = False,
+    **_extras: Any,
+):
+    """
+    Process video frames with Depth Anything V2
+
+    Pack: ComfyUI-DepthAnythingV2
+    Returns: depth
+
+    Use inside a `with new_workflow(...) as wf:` block, or pass wf explicitly.
+    """
+    if len(args) > 1:
+        raise TypeError(f"VideoDepthAnythingProcess() takes at most 1 positional argument, got {len(args)}")
+    wf = args[0] if args else _current_workflow_or_raise()
+    _kwargs: dict[str, Any] = {}
+    if model is not _UNSET:
+        _kwargs['model'] = model
+    if images is not _UNSET:
+        _kwargs['images'] = images
+    _kwargs.update(_extras)
+    return node(wf, 'VideoDepthAnythingProcess', _id, pass_raw=pass_raw, **_kwargs)
+
+__all__ = ['DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model', 'LoadVideoDepthAnythingModel', 'VideoDepthAnythingOutput', 'VideoDepthAnythingProcess']
+__vibecomfy_class_types__ = {'DepthAnything_V2': 'DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model': 'DownloadAndLoadDepthAnythingV2Model', 'LoadVideoDepthAnythingModel': 'LoadVideoDepthAnythingModel', 'VideoDepthAnythingOutput': 'VideoDepthAnythingOutput', 'VideoDepthAnythingProcess': 'VideoDepthAnythingProcess'}
