@@ -14,6 +14,7 @@ from vibecomfy.nodes.wanvideowrapper import WanVideoBlockSwap, WanVideoClipVisio
 BBOX_DETECTOR_NAME = 'yolox_l.torchscript.pt'
 BF16 = 'bf16'
 CLIP_NAME = 'clip_vision_h.safetensors'
+CLIP_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = 'man is walking, style is soft 3D render style, night time, moonlight'
 DEFAULT_SEED = 42
@@ -22,10 +23,9 @@ GUIDE_STRENGTH = 1
 LORA__NAME = 'WanVideo\\WanAnimate_relight_lora_fp16.safetensors'
 LORA__NAME_2 = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
 MODEL_NAME = 'sam2_hiera_base_plus.safetensors'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_4 = 'WanVideo\\2_2\\Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 YUV420P = 'yuv420p'
 
@@ -50,7 +50,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
 
     wanvideoblockswap = WanVideoBlockSwap(
         blocks_to_swap=25,
@@ -62,7 +62,7 @@ def build() -> VibeWorkflow:
     image_load, mask = LoadImage(image='refer.jpeg')
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-        model_name=MODEL_NAME_3,
+        model_name=CLIP_NAME_2,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         use_disk_cache=False,
@@ -93,7 +93,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_4,
+        model=MODEL_NAME_2,
         base_precision='fp16_fast',
         attention_mode='sageattn',
         compile_args=wanvideotorchcompilesettings,

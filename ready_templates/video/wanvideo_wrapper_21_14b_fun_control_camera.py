@@ -11,7 +11,8 @@ from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoB
 
 
 BF16 = 'bf16'
-CLIP_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
+CLIP_NAME_2 = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
@@ -19,10 +20,9 @@ DEFAULT_PROMPT_3 = 'high quality video of an old man'
 DEFAULT_SEED = 43
 DISABLED = 'disabled'
 GUIDE_STRENGTH = 6
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'WanVideo\\Wan2.1-Fun-V1.1-1.3B-Control-Camera.safetensors'
+MODEL_NAME = 'WanVideo\\Wan2.1-Fun-V1.1-1.3B-Control-Camera.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -45,14 +45,14 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
-    wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME_3)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
+    wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=15, use_non_blocking=True)
 
     # Loaders
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    cliploader = CLIPLoader(clip_name=CLIP_NAME_2, type_='wan')
 
     wanvideoteacache = WanVideoTeaCache(
         rel_l1_thresh=0.08000000000000002,

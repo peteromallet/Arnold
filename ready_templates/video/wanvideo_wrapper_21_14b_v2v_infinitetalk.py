@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CLIPVisionLoader, GetImageRangeFromBatch, LoadAudio, PreviewAny
+from vibecomfy.nodes.core import CLIPVisionLoader, GetImageRangeFromBatch, LoadAudio
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageConcatMulti, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import DownloadAndLoadWav2VecModel, MultiTalkModelLoader, MultiTalkWav2VecEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoEncode, WanVideoImageToVideoMultiTalk, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader, Wav2VecModelLoader
@@ -12,6 +12,7 @@ from vibecomfy.nodes.wanvideowrapper import DownloadAndLoadWav2VecModel, MultiTa
 
 BF16 = 'bf16'
 CLIP_NAME = 'clip_vision_h.safetensors'
+CLIP_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT_FRAMES = 1
 DEFAULT_NEGATIVE = 'bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards'
 DEFAULT_SEED = 2
@@ -21,12 +22,11 @@ GUIDE_STRENGTH = 1.0000000000000002
 LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
 MAIN_DEVICE = 'main_device'
 MODEL_NAME = 'WanVideo\\InfiniteTalk\\InfiniteTalk\\Wan2_1-InfiniteTalk_Single_Q8.gguf'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_4 = 'WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf'
-MODEL_NAME_5 = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
-MODEL_NAME_6 = 'wav2vec2-chinese-base_fp16.safetensors'
-MODEL_NAME_7 = 'TencentGameMate/chinese-wav2vec2-base'
+MODEL_NAME_2 = 'WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf'
+MODEL_NAME_3 = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
+MODEL_NAME_4 = 'wav2vec2-chinese-base_fp16.safetensors'
+MODEL_NAME_5 = 'TencentGameMate/chinese-wav2vec2-base'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -51,9 +51,9 @@ def build() -> VibeWorkflow:
         audio='one-does-not-simply-walk-into-mordor-its-black-gates-are-guarded-by-more-than-just-orcs.mp3',
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(use_non_blocking=True, prefetch_blocks=1)
-    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_7)
+    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_5)
     wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
 
@@ -61,7 +61,7 @@ def build() -> VibeWorkflow:
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME)
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-        model_name=MODEL_NAME_3,
+        model_name=CLIP_NAME_2,
         positive_prompt='a woman is singing a lullaby',
         negative_prompt=DEFAULT_NEGATIVE,
         use_disk_cache=False,
@@ -70,11 +70,11 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=640)
     intconstant_2 = INTConstant(value=640)
     intconstant_3 = INTConstant(value=1000)
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '303', model=MODEL_NAME_5)
-    wav2vecmodelloader = Wav2VecModelLoader(model=MODEL_NAME_6)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '303', model=MODEL_NAME_3)
+    wav2vecmodelloader = Wav2VecModelLoader(model=MODEL_NAME_4)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_4,
+        model=MODEL_NAME_2,
         base_precision='fp16_fast',
         attention_mode='sageattn',
         block_swap_args=wanvideoblockswap,
@@ -129,7 +129,6 @@ def build() -> VibeWorkflow:
     )
 
     image_get, mask_get = GetImageRangeFromBatch(images=image_image)
-    previewany = PreviewAny(source=num_frames)
     image_get_2, width_get, height_get, count = GetImageSizeAndCount(image=image_get)
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(

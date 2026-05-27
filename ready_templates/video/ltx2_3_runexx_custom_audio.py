@@ -11,10 +11,10 @@ from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
-CKPT_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
-CLIP_NAME = 'gemma-3-12b-it-Q2_K.gguf'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
-CLIP_NAME_3 = 'gemma_3_12B_it_fp8_scaled.safetensors'
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
+CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
+CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 DEFAULT_PROMPT = 'blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud'
 DEFAULT_PROMPT_2 = 'Make this image come alive with fluid motion. \n\nA man with an intimidating expression speaks with expressive body language and gesticulations. \n\nHe looks at the vewer and talks, he says  : "If you say a bad word about LTX 2 point 3, i will find you.... and i will kill you" '
 DEFAULT_SEED = 420
@@ -26,9 +26,9 @@ LORA_NAME = 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors'
 MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.0.safetensors'
 MODEL_NAME_2 = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors'
-UNET_NAME_2 = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
-VAE_NAME = 'vae_approx\\taeltx2_3.safetensors'
-VAE_NAME_2 = 'LTX23_video_vae_bf16_KJ.safetensors'
+UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
+VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
+VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -61,33 +61,33 @@ def build() -> VibeWorkflow:
     image_load, mask_load = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VAE_NAME_2)
+    vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
 
     dualcliploader = DualCLIPLoader(
-        clip_name1=CLIP_NAME_3,
-        clip_name2=CLIP_NAME_2,
+        clip_name1=CLIP_NAME,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )
 
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
     intconstant = INTConstant(value=10)
     intconstant_2 = INTConstant(value=1280)
     intconstant_3 = INTConstant(value=736)
 
-    float_simple, int_simple, boolean_simple = SimpleCalculatorKJ(
+    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
         expression='a',
         **{'variables.a': 24.0},
     )
 
     unetloader = UNETLoader(unet_name=UNET_NAME)
-    vaeloader_2 = VAELoader(vae_name=VAE_NAME)
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_2)
+    vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     dualcliploadergguf = DualCLIPLoaderGGUF(
-        clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name1=CLIP_NAME_GGUF,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='sdxl',
     )
 
@@ -124,7 +124,7 @@ def build() -> VibeWorkflow:
         image=image_load,
     )
 
-    float, int, boolean = SimpleCalculatorKJ(
+    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
         expression='1+ 8*(round(a*b)/8)',
         b=24.0,
         a=intconstant,
@@ -138,8 +138,8 @@ def build() -> VibeWorkflow:
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        frames_number=int,
-        frame_rate=int_simple,
+        frames_number=calc_int,
+        frame_rate=calc_int_simple,
         audio_vae=ltxvaudiovaeloader,
     )
 
@@ -153,10 +153,10 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    float_simple_2, int_simple_2, boolean_simple_2 = SimpleCalculatorKJ(
+    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
         expression='a/b',
         b=24.0,
-        a=int,
+        a=calc_int,
     )
 
     cliptextencode_2 = CLIPTextEncode(text=textgenerateltx2prompt, clip=dualcliploader)
@@ -164,7 +164,7 @@ def build() -> VibeWorkflow:
     width, height, batch_size = GetImageSize(image=resizeimagemasknode)
     model, clip = Power_Lora_Loader_rgthree(model=ltxvchunkfeedforward)
     easy_showanything = raw_call('easy showAnything', '351', anything=textgenerateltx2prompt)
-    trimaudioduration = TrimAudioDuration(duration=float_simple_2, audio=loadaudio)
+    trimaudioduration = TrimAudioDuration(duration=calc_float_simple_2, audio=loadaudio)
 
     positive, negative = LTXVConditioning(
         frame_rate=24.0,
@@ -172,7 +172,12 @@ def build() -> VibeWorkflow:
         positive=cliptextencode_2,
     )
 
-    emptyltxvlatentvideo = EmptyLTXVLatentVideo(width=width, height=height, length=int)
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        width=width,
+        height=height,
+        length=calc_int,
+    )
+
     ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '337', model=model, vae=vaeloader_2)
 
     melbandroformersampler = raw_call('MelBandRoFormerSampler', '371',

@@ -10,7 +10,8 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import CreateCFGScheduleFloatList, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoVAELoader
 
 
-CLIP_NAME = 'umt5_xxl_fp16.safetensors'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
+CLIP_NAME_2 = 'umt5_xxl_fp16.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = 'old man gets up and jumps into the lake'
 DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
@@ -21,10 +22,9 @@ FP16 = 'fp16'
 FP8_E4M3FN_SCALED = 'fp8_e4m3fn_scaled'
 GUIDE_STRENGTH = 1
 LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_3 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_4 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 VALUE = ''
 
 
@@ -63,19 +63,19 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_2,
+        model=MODEL_NAME,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
 
     # Loaders
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    cliploader = CLIPLoader(clip_name=CLIP_NAME_2, type_='wan')
 
     wanvideoloraselect = WanVideoLoraSelect(
         lora=LORA_NAME,
@@ -87,7 +87,7 @@ def build() -> VibeWorkflow:
     image, mask = LoadImage(image='oldman_upscaled.png')
 
     wanvideomodelloader_2 = WanVideoModelLoader(
-        model=MODEL_NAME_4,
+        model=MODEL_NAME_2,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
     )

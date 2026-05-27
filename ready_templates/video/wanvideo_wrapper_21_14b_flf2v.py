@@ -14,7 +14,9 @@ BF16 = 'bf16'
 BLACK = 'black'
 CENTER = 'center'
 CLIP_NAME = 'umt5_xxl_fp16.safetensors'
-CLIP_NAME_2 = 'clip_vision_h.safetensors'
+CLIP_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
+CLIP_NAME_3 = 'open-clip-xlm-roberta-large-vit-huge-14_visual_fp16.safetensors'
+CLIP_NAME_4 = 'clip_vision_h.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
 DEFAULT_FRAMES = 81
@@ -26,12 +28,10 @@ FREEMONO_TTF = 'FreeMono.ttf'
 GUIDE_STRENGTH = 1.0000000000000002
 LANCZOS = 'lanczos'
 LORA_NAME = 'Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'open-clip-xlm-roberta-large-vit-huge-14_visual_fp16.safetensors'
-MODEL_NAME_4 = 'WanVideo\\Wan2_1-FLF2V-14B-720P_fp8_e4m3fn.safetensors'
+MODEL_NAME = 'WanVideo\\Wan2_1-FLF2V-14B-720P_fp8_e4m3fn.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
 UP = 'up'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 V_0_0_0 = '0, 0, 0'
 WHITE = 'white'
 
@@ -56,23 +56,23 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME_2)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(use_non_blocking=True)
 
     # Loaders
     cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
-    loadwanvideocliptextencoder = LoadWanVideoClipTextEncoder(model_name=MODEL_NAME_3)
+    loadwanvideocliptextencoder = LoadWanVideoClipTextEncoder(model_name=CLIP_NAME_3)
 
     # Inputs
     image, mask = LoadImage(image='pasted/image (853).png')
-    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
+    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_4)
     image_load, mask_load = LoadImage(image='pasted/image (852).png')
     wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME, strength=1.2000000000000002)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_4,
+        model=MODEL_NAME,
         base_precision='fp16_fast',
         quantization='fp8_e4m3fn',
         attention_mode='sageattn',

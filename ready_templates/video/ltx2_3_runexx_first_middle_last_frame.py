@@ -4,18 +4,19 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAddGuideMulti, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoraLoaderModelOnly, ManualSigmas, PreviewAny, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, UNETLoader, VAEDecodeTiled, VAELoader
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAddGuideMulti, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVChunkFeedForward, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
 A_2 = 'a/2'
 CENTER = 'center'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
-CLIP_NAME_3 = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
 DEFAULT_PROMPT = 'blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud'
@@ -29,10 +30,9 @@ LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_
 LTXV = 'ltxv'
 MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
-UNET_NAME_2 = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
-VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
-VAE_NAME_2 = 'vae_approx\\taeltx2_3.safetensors'
-VAE_NAME_3 = 'LTX23_video_vae_bf16_KJ.safetensors'
+UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
+VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
+VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 V_0_0_0 = '0, 0, 0'
 
 
@@ -97,20 +97,9 @@ def frames_split_view():
     Inner nodes: ResizeImageMaskNodex3, ImagePadForOutpaintx2, ImageStitchx2.
     """
 
-    resizeimagemasknode = ResizeImageMaskNode(
-        resize_type='scale by multiplier',
-        input=['2168', 0],
-    )
-
-    resizeimagemasknode_2 = ResizeImageMaskNode(
-        resize_type='scale by multiplier',
-        input=['2083', 0],
-    )
-
-    resizeimagemasknode_3 = ResizeImageMaskNode(
-        resize_type='scale by multiplier',
-        input=['2083', 0],
-    )
+    resizeimagemasknode = ResizeImageMaskNode(resize_type='scale by multiplier')
+    resizeimagemasknode_2 = ResizeImageMaskNode(resize_type='scale by multiplier')
+    resizeimagemasknode_3 = ResizeImageMaskNode(resize_type='scale by multiplier')
 
     imagepadforoutpaint = raw_call('ImagePadForOutpaint', '2098',
         _outputs=('IMAGE', 'MASK'),
@@ -155,34 +144,34 @@ def build() -> VibeWorkflow:
     # Inputs
     image_load, mask_load = LoadImage(image='sodacan_01.png')
     image_load_2, mask_load_2 = LoadImage(image='image (11).png')
-    float, int, boolean = SimpleCalculatorKJ(expression='a', a=24.0)
+    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(expression='a', a=24.0)
 
     vaeloaderkj = VAELoaderKJ(
-        vae_name=VAE_NAME,
+        vae_name=AUDIO_VAE_NAME,
         device='main_device',
         weight_dtype='bf16',
     )
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VAE_NAME_2)
-    vaeloader_2 = VAELoader(vae_name=VAE_NAME_3)
+    vaeloader = VAELoader(vae_name=VAE_TAESD_NAME)
+    vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploadergguf = DualCLIPLoaderGGUF(
-        clip_name1=CLIP_NAME_3,
-        clip_name2=CLIP_NAME_2,
+        clip_name1=CLIP_NAME_GGUF,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_=LTXV,
     )
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_=LTXV,
         device='default',
     )
 
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_2)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     manualsigmas_2 = ManualSigmas(
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
@@ -221,34 +210,34 @@ def build() -> VibeWorkflow:
         prompt='Make this come alive with cinematic motion, smooth animation. \n\nThe scene starts with a close up of an LTX soda can with ic cubes around it. \n\nAll of a suddent an arm comes into frame and grabs the soda can, and lifts the soda can up. \n\nCamera pans up smoothly to show a woman holding the soda can. She talks with a soft British voice, and she says :" An LTX a day, keeps the doctor away". Then she laghts, and finally she drinks from the soda can. ',
     )
 
-    float_simple, int_simple, boolean_simple = SimpleCalculatorKJ(
+    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         b=24.0,
         a=intconstant,
     )
 
-    float_comfy, int_comfy = ComfyMathExpression(
+    comfy_float, comfy_int = ComfyMathExpression(
         expression='a/2',
         **{'values.a': intconstant_3},
     )
 
-    float_comfy_2, int_comfy_2 = ComfyMathExpression(
+    comfy_float_comfy, comfy_int_comfy = ComfyMathExpression(
         expression='a/2',
         **{'values.a': intconstant_2},
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        frames_number=int_simple,
-        frame_rate=int,
+        frames_number=calc_int_simple,
+        frame_rate=calc_int,
         audio_vae=vaeloaderkj,
     )
 
     cliptextencode_2 = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        width=int_comfy,
-        height=int_comfy_2,
-        length=int_simple,
+        width=comfy_int,
+        height=comfy_int_comfy,
+        length=calc_int_simple,
     )
 
     image_image, width_image, height_image, mask_image = ImageResizeKJv2(
@@ -266,21 +255,14 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    previewany = PreviewAny(
-        widget_0=None,
-        widget_1=None,
-        widget_2=None,
-        source=prompt_enhancer_result,
-    )
-
     resizeimagesbylongeredge_2 = ResizeImagesByLongerEdge(
         longer_edge=1536,
         images=image,
     )
 
-    float_simple_2, int_simple_2, boolean_simple_2 = SimpleCalculatorKJ(
+    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
         expression=A_2,
-        **{'variables.a': int_simple},
+        **{'variables.a': calc_int_simple},
     )
 
     positive, negative = LTXVConditioning(
@@ -347,7 +329,7 @@ def build() -> VibeWorkflow:
         negative=negative,
         positive=positive,
         vae=vaeloader_2,
-        **{'num_guides.strength_1': 0.7, 'num_guides.strength_2': 0.3, 'num_guides.strength_3': 1.0, 'num_guides.frame_idx_2': int_simple_2, 'num_guides.image_1': ltxvpreprocess_2, 'num_guides.image_2': ltxvpreprocess_3, 'num_guides.image_3': ltxvpreprocess},
+        **{'num_guides.strength_1': 0.7, 'num_guides.strength_2': 0.3, 'num_guides.strength_3': 1.0, 'num_guides.frame_idx_2': calc_int_simple_2, 'num_guides.image_1': ltxvpreprocess_2, 'num_guides.image_2': ltxvpreprocess_3, 'num_guides.image_3': ltxvpreprocess},
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(

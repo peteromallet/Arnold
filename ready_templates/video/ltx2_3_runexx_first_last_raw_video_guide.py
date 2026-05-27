@@ -11,9 +11,9 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
 A = 'a'
-CKPT_NAME = 'LTX23_audio_vae_bf16.safetensors'
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16.safetensors'
 CLIP_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
 DEFAULT_PROMPT = "wf.nodes['11'].inputs.get('text', '')"
@@ -30,7 +30,7 @@ MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 UNET_NAME = 'ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
 VAE_NAME = 'taeltx2_3.safetensors'
-VAE_NAME_2 = 'LTX23_video_vae_bf16.safetensors'
+VIDEO_VAE_NAME = 'LTX23_video_vae_bf16.safetensors'
 V_0_909375_0_725_0_421875_0_0 = '0.909375, 0.725, 0.421875, 0.0'
 
 
@@ -87,18 +87,24 @@ def build() -> VibeWorkflow:
     # Inputs
     image, mask = LoadImage(image='image (6).png')
     image_load, mask_load = LoadImage(image='0 (13).webp')
-    float, int, boolean = SimpleCalculatorKJ(expression=A, variables='a', a=24.0)
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+
+    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
+        expression=A,
+        variables='a',
+        a=24.0,
+    )
+
+    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
     vaeloader = VAELoader(vae_name=VAE_NAME)
-    vaeloader_2 = VAELoader(vae_name=VAE_NAME_2)
+    vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )
@@ -138,7 +144,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    float_simple, int_simple, boolean_simple = SimpleCalculatorKJ(
+    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
         expression=A,
         variables='a,b',
         b=24.0,
@@ -149,8 +155,8 @@ def build() -> VibeWorkflow:
     images, audio, fps = GetVideoComponents(video=loadvideo)
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        frames_number=int_simple,
-        frame_rate=int,
+        frames_number=calc_int_simple,
+        frame_rate=calc_int,
         audio_vae=ltxvaudiovaeloader,
     )
 
@@ -210,7 +216,7 @@ def build() -> VibeWorkflow:
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
         width=width_get,
         height=height_get,
-        length=int_simple,
+        length=calc_int_simple,
     )
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(

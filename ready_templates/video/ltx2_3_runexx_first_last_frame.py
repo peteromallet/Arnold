@@ -4,17 +4,18 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, ImageScaleBy, KSamplerSelect, LTXVAddGuide, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoraLoaderModelOnly, ManualSigmas, PreviewAny, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, UNETLoader, VAEDecodeTiled, VAELoader
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, ImageScaleBy, KSamplerSelect, LTXVAddGuide, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
 CENTER = 'center'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
-CLIP_NAME_3 = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
 DEFAULT_PROMPT = 'blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles, distorted sound, saturated sound, loud'
@@ -28,10 +29,9 @@ LTXV = 'ltxv'
 MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
-UNET_NAME_2 = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
-VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
-VAE_NAME_2 = 'vae_approx\\taeltx2_3.safetensors'
-VAE_NAME_3 = 'LTX23_video_vae_bf16_KJ.safetensors'
+UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
+VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
+VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 V_0_0_0 = '0, 0, 0'
 
 
@@ -97,15 +97,8 @@ def frames_split_view():
     Inner nodes: ResizeImageMaskNodex2, ImagePadForOutpaintx2, ImageStitch.
     """
 
-    resizeimagemasknode = ResizeImageMaskNode(
-        resize_type='scale by multiplier',
-        input=['49', 0],
-    )
-
-    resizeimagemasknode_2 = ResizeImageMaskNode(
-        resize_type='scale by multiplier',
-        input=['2083', 0],
-    )
+    resizeimagemasknode = ResizeImageMaskNode(resize_type='scale by multiplier')
+    resizeimagemasknode_2 = ResizeImageMaskNode(resize_type='scale by multiplier')
 
     imagepadforoutpaint = raw_call('ImagePadForOutpaint', '2098',
         _outputs=('IMAGE', 'MASK'),
@@ -148,34 +141,34 @@ def build() -> VibeWorkflow:
     # Inputs
     image_load, mask_load = LoadImage(image='image (6).png')
     image_load_2, mask_load_2 = LoadImage(image='0 (13).webp')
-    float, int, boolean = SimpleCalculatorKJ(expression='a', a=24.0)
+    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(expression='a', a=24.0)
 
     vaeloaderkj = VAELoaderKJ(
-        vae_name=VAE_NAME,
+        vae_name=AUDIO_VAE_NAME,
         device='main_device',
         weight_dtype='bf16',
     )
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VAE_NAME_2)
-    vaeloader_2 = VAELoader(vae_name=VAE_NAME_3)
+    vaeloader = VAELoader(vae_name=VAE_TAESD_NAME)
+    vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploadergguf = DualCLIPLoaderGGUF(
-        clip_name1=CLIP_NAME_3,
-        clip_name2=CLIP_NAME_2,
+        clip_name1=CLIP_NAME_GGUF,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_=LTXV,
     )
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_=LTXV,
         device='default',
     )
 
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_2)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     manualsigmas_2 = ManualSigmas(
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
@@ -213,15 +206,15 @@ def build() -> VibeWorkflow:
         prompt="Make this image come alive with cinematic motion, smooth animation. \n\nA foggy night in in 1700's Amsterdam. The fog is thick and swirling, illuminating by streetlights. we see a bridge over a canal, cobblestone streets, canal buildings lining the canal The vibe is uneasy, moody, slightly dangerous.\n\nThe camera crane down high angle to a low angle ending with a close up of a vampire's hand with leather gloves on holding a walking cane.  Single continuous camera shot ",
     )
 
-    float_simple, int_simple, boolean_simple = SimpleCalculatorKJ(
+    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         b=24.0,
         a=intconstant,
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        frames_number=int_simple,
-        frame_rate=int,
+        frames_number=calc_int_simple,
+        frame_rate=calc_int,
         audio_vae=vaeloaderkj,
     )
 
@@ -241,13 +234,6 @@ def build() -> VibeWorkflow:
     pathchsageattentionkj = PathchSageAttentionKJ(
         sage_attention='auto',
         model=loraloadermodelonly,
-    )
-
-    previewany = PreviewAny(
-        widget_0=None,
-        widget_1=None,
-        widget_2=None,
-        source=prompt_enhancer_result,
     )
 
     resizeimagesbylongeredge_2 = ResizeImagesByLongerEdge(
@@ -282,7 +268,7 @@ def build() -> VibeWorkflow:
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
         width=width,
         height=height,
-        length=int_simple,
+        length=calc_int_simple,
     )
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(

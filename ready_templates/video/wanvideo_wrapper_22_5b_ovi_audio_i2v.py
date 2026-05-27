@@ -10,7 +10,9 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import OviMMAudioVAELoader, WanVideoBlockSwap, WanVideoDecode, WanVideoDecodeOviAudio, WanVideoEasyCache, WanVideoEmptyEmbeds, WanVideoEmptyMMAudioLatents, WanVideoEncode, WanVideoExtraModelSelect, WanVideoModelLoader, WanVideoOviCFG, WanVideoSLG, WanVideoSampler, WanVideoSetBlockSwap, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
+AUDIO_VAE_NAME = 'mmaudio_vae_16k_fp32.safetensors'
 BF16 = 'bf16'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT_FRAMES = 121
 DEFAULT_FRAMES_2 = 157
 DEFAULT_NEGATIVE = 'robotic, muffled, echo, distorted'
@@ -21,10 +23,8 @@ DISABLED = 'disabled'
 EXTRA_MODEL_NAME = 'WanVideo/Ovi/Wan_2_1_Ovi_audio_model_bf16.safetensors'
 GPU = 'gpu'
 GUIDE_STRENGTH = 4
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'WanVideo/Ovi/Wan_2_1_Ovi_video_model_bf16.safetensors'
-MODEL_NAME_3 = 'Wan2_2_VAE_bf16.safetensors'
-VAE_NAME = 'mmaudio_vae_16k_fp32.safetensors'
+MODEL_NAME = 'WanVideo/Ovi/Wan_2_1_Ovi_video_model_bf16.safetensors'
+VAE_NAME = 'Wan2_2_VAE_bf16.safetensors'
 VOCODER_NAME = 'mmaudio_vocoder_bigvgan_best_netG_fp32.safetensors'
 
 
@@ -57,17 +57,17 @@ def build() -> VibeWorkflow:
     )
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-        model_name=MODEL_NAME,
+        model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE_2,
         use_disk_cache=False,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_3)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
 
     ovimmaudiovaeloader = OviMMAudioVAELoader(
         precision='fp32',
-        vae=VAE_NAME,
+        vae=AUDIO_VAE_NAME,
         vocoder=VOCODER_NAME,
     )
 
@@ -75,17 +75,17 @@ def build() -> VibeWorkflow:
     wanvideoslg = WanVideoSLG(blocks='11', start_percent=0)
 
     text_embeds_wan, negative_text_embeds_wan, positive_prompt_wan = WanVideoTextEncodeCached(
-        model_name=MODEL_NAME,
+        model_name=CLIP_NAME,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
     image, mask = LoadImage(image='oldman_upscaled.png')
     wanvideoeasycache = WanVideoEasyCache()
-    wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents()
+    wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents(length=DEFAULT_FRAMES_2)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_2,
+        model=MODEL_NAME,
         attention_mode='sageattn',
         compile_args=wanvideotorchcompilesettings,
         extra_model=wanvideoextramodelselect,

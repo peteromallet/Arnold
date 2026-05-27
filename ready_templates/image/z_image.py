@@ -3,7 +3,7 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, EmptySD3LatentImage, KSampler, ModelSamplingAuraFlow, SaveImage, UNETLoader, VAEDecode, VAELoader
 
 
@@ -33,14 +33,13 @@ def text_to_image_z_image_base(
 
     Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/z_image.json.
     # vibecomfy source hash: sha256:5093fca1fcee6f4d6df426c85d09324e14882805513ee68a85b0c3a84b5aa42b
-    Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler, MarkdownNote.
+    Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler.
     """
 
     cliploader = CLIPLoader(type_='lumina2', clip_name=clip_name)
     vaeloader = VAELoader(vae_name=vae_name)
     unetloader = UNETLoader(unet_name=unet_name)
     emptysd3latentimage = EmptySD3LatentImage(width=width, height=height)
-    markdownnote = raw_call('MarkdownNote', '76')
     positive = CLIPTextEncode(text=prompt, clip=cliploader)
     modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
     negative = CLIPTextEncode(text='', clip=cliploader)

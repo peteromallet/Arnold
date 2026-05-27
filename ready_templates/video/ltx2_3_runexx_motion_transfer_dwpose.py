@@ -13,12 +13,13 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadVideoFFmpeg, VHS_VideoCombi
 
 
 AREA = 'area'
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
 BBOX_DETECTOR_NAME = 'yolox_l.onnx'
 CENTER = 'center'
 CKPT_NAME = 'depth_anything_vitl14.pth'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
-CLIP_NAME_3 = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
 DEFAULT_PROMPT = 'low contrast, washed out, text, subtitles, logo, still image, still video, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth'
@@ -35,12 +36,11 @@ MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
 SCALE_BY_MULTIPLIER = 'scale by multiplier'
-UNET_NAME = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
-UNET_NAME_2 = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
-VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
-VAE_NAME_2 = 'vae_approx\\taeltx2_3.safetensors'
-VAE_NAME_3 = 'LTX23_audio_vae_bf16_KJ.safetensors'
+UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
+UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
+VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
+VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
 V_0_0_0 = '0, 0, 0'
 YUV420P = 'yuv420p'
 
@@ -116,37 +116,37 @@ def build() -> VibeWorkflow:
     manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VAE_NAME)
+    vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )
 
     vaeloaderkj = VAELoaderKJ(
-        vae_name=VAE_NAME_3,
+        vae_name=AUDIO_VAE_NAME,
         device='main_device',
         weight_dtype='bf16',
     )
 
-    vaeloader_2 = VAELoader(vae_name=VAE_NAME_2)
-    unetloader = UNETLoader(unet_name=UNET_NAME_2)
+    vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
+    unetloader = UNETLoader(unet_name=UNET_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
     intconstant = INTConstant(value=10)
     intconstant_2 = INTConstant(value=736)
     intconstant_3 = INTConstant(value=1280)
 
     dualcliploadergguf = DualCLIPLoaderGGUF(
-        clip_name1=CLIP_NAME_3,
-        clip_name2=CLIP_NAME_2,
+        clip_name1=CLIP_NAME_GGUF,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='sdxl',
     )
 
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
-    float_simple_2, int_simple_2, boolean_simple = SimpleCalculatorKJ(
+    calc_float_simple, calc_int_simple, calc_bool_simple = SimpleCalculatorKJ(
         expression='a',
         **{'variables.a': 24.0},
     )
@@ -175,7 +175,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    float_simple, int_simple, boolean = SimpleCalculatorKJ(
+    calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.b': 24.0, 'variables.a': intconstant},
     )
@@ -192,7 +192,7 @@ def build() -> VibeWorkflow:
         force_rate=24.0,
         video='m2-res_1890p.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'm2-res_1890p.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'start_time': 0}},
-        frame_load_cap=int_simple,
+        frame_load_cap=calc_int,
     )
 
     resizeimagemasknode_4 = ResizeImageMaskNode(
@@ -200,7 +200,7 @@ def build() -> VibeWorkflow:
         input=resizeimagemasknode_2,
     )
 
-    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, math_float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     image_image, width_image, height_image, mask_image = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
@@ -294,7 +294,7 @@ def build() -> VibeWorkflow:
         device=CPU,
         width=width_get,
         height=height_get,
-        divisible_by=int,
+        divisible_by=math_int,
         image=comfyswitchnode_3,
     )
 
@@ -323,16 +323,16 @@ def build() -> VibeWorkflow:
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
         frames_number=batch_size,
-        frame_rate=int_simple_2,
+        frame_rate=calc_int_simple,
         audio_vae=vaeloaderkj,
     )
 
-    float_simple_3, int_simple_3, boolean_simple_2 = SimpleCalculatorKJ(
+    calc_float_simple_2, calc_int_simple_2, calc_bool_simple_2 = SimpleCalculatorKJ(
         expression='a / b ',
         **{'variables.b': 24.0, 'variables.a': batch_size},
     )
 
-    float_simple_4, int_simple_4, boolean_simple_3 = SimpleCalculatorKJ(
+    calc_float_simple_3, calc_int_simple_3, calc_bool_simple_3 = SimpleCalculatorKJ(
         expression='a / b',
         **{'variables.b': 24.0, 'variables.a': batch_size},
     )
@@ -343,8 +343,8 @@ def build() -> VibeWorkflow:
         vae=vaeloader,
     )
 
-    trimaudioduration = TrimAudioDuration(duration=float_simple_3, audio=loadaudio)
-    emptyaudio = EmptyAudio(duration=float_simple_4)
+    trimaudioduration = TrimAudioDuration(duration=calc_float_simple_2, audio=loadaudio)
+    emptyaudio = EmptyAudio(duration=calc_float_simple_3)
 
     positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
         strength=0.7,

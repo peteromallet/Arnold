@@ -129,7 +129,7 @@ def build() -> VibeWorkflow:
     )
 
     cannyedgepreprocessor = raw_call('CannyEdgePreprocessor', '4991', low_threshold=92, image=resizeimagemasknode)
-    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, math_float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     videodepthanythingprocess = raw_call('VideoDepthAnythingProcess', '5061',
         widget_0=518,
@@ -143,7 +143,7 @@ def build() -> VibeWorkflow:
         resize_type='scale to multiple',
         scale_method=LANCZOS,
         input=cannyedgepreprocessor,
-        **{'resize_type.multiple': int},
+        **{'resize_type.multiple': math_int},
     )
 
     videodepthanythingoutput = raw_call('VideoDepthAnythingOutput', '5062',

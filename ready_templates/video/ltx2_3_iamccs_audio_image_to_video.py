@@ -12,6 +12,7 @@ from vibecomfy.nodes.rgthree import Seed_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
+AUDIO_VAE_NAME = 'LTX2_audio_vae_bf16.safetensors'
 AUTO = 'auto'
 BF16 = 'bf16'
 CKPT_NAME = 'ltx-2-19b-distilled.safetensors'
@@ -27,10 +28,9 @@ MODEL_NAME = 'MelBandRoformer_fp32.safetensors'
 NO = 'no'
 NONE = 'none'
 TINY = 'tiny'
-UNET_NAME = 'LTX-2-dev-Q4_K_S.gguf'
-VAE_NAME = 'LTX2_video_vae_2_bf16.safetensors'
-VAE_NAME_2 = 'LTX2_audio_vae_bf16.safetensors'
+UNET_NAME_GGUF = 'LTX-2-dev-Q4_K_S.gguf'
 VALUE = ''
+VIDEO_VAE_NAME = 'LTX2_video_vae_2_bf16.safetensors'
 V_1_7B = '1.7B'
 WIDGET__NAME = 'ltx-2-19b-distilled-lora-384.safetensors'
 WIDGET__NAME_2 = 'ltx-2-19b-lora-camera-control-static.safetensors'
@@ -71,7 +71,7 @@ def build() -> VibeWorkflow:
     )
 
     text_multiline = raw_call('Text Multiline', '293', widget_0='video of a goblin talking to the camera')
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     # Loaders
     dualcliploader = DualCLIPLoader(
@@ -81,10 +81,14 @@ def build() -> VibeWorkflow:
         device='default',
     )
 
-    vaeloaderkj = VAELoaderKJ(vae_name=VAE_NAME, device=MAIN_DEVICE, weight_dtype=BF16)
+    vaeloaderkj = VAELoaderKJ(
+        vae_name=VIDEO_VAE_NAME,
+        device=MAIN_DEVICE,
+        weight_dtype=BF16,
+    )
 
     vaeloaderkj_2 = VAELoaderKJ(
-        vae_name=VAE_NAME_2,
+        vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )

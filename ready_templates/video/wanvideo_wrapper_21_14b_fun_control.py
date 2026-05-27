@@ -15,6 +15,7 @@ BF16 = 'bf16'
 CENTER = 'center'
 CLIP_NAME = 'umt5_xxl_fp16.safetensors'
 CLIP_NAME_2 = 'clip_vision_h.safetensors'
+CLIP_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
@@ -24,9 +25,8 @@ DISABLED = 'disabled'
 GUIDE_STRENGTH = 6
 MODEL_NAME = 'depth_anything_v2_vitl_fp16.safetensors'
 MODEL_NAME_2 = 'WanVideo\\wan2.1_fun_control_1.3B_bf16.safetensors'
-MODEL_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_4 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 YUV420P = 'yuv420p'
 
@@ -50,10 +50,10 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME_3)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME_3)
     wanvideomodelloader = WanVideoModelLoader(model=MODEL_NAME_2)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_4)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=10, use_non_blocking=True)
     wanvideovrammanagement = WanVideoVRAMManagement()
 

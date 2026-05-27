@@ -115,13 +115,13 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
+    math_int, math_float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='scale to multiple',
         scale_method=LANCZOS,
         input=resizeimagemasknode,
-        **{'resize_type.multiple': int},
+        **{'resize_type.multiple': math_int},
     )
 
     ltxvsparsetrackeditor = raw_call('LTXVSparseTrackEditor', '5040',

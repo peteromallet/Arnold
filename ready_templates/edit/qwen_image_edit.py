@@ -3,7 +3,7 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGNorm, CLIPLoader, ComfySwitchNode, ImageScaleToTotalPixels, KSampler, LoadImage, LoraLoaderModelOnly, ModelSamplingAuraFlow, SaveImage, TextEncodeQwenImageEdit, UNETLoader, VAEDecode, VAEEncode, VAELoader
 
 
@@ -33,13 +33,12 @@ def qwen_image_edit(
 
     Materialized from subgraph 74a8e1e2-9cb8-4112-978e-06ce1b5793f1 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/qwen_image_edit.json.
     # vibecomfy source hash: sha256:b7fc773a3b338bd4ce58cdc36f425635b40eb71bc0eb73b9f007ec3160c52b36
-    Inner nodes: VAELoader, TextEncodeQwenImageEditx2, CFGNorm, ModelSamplingAuraFlow, VAEDecode, CLIPLoader, VAEEncode, MarkdownNote, LoraLoaderModelOnly, UNETLoader, KSampler, ComfySwitchNodex3.
+    Inner nodes: VAELoader, TextEncodeQwenImageEditx2, CFGNorm, ModelSamplingAuraFlow, VAEDecode, CLIPLoader, VAEEncode, LoraLoaderModelOnly, UNETLoader, KSampler, ComfySwitchNodex3.
     """
 
     unetloader = UNETLoader(unet_name=unet_name)
     cliploader = CLIPLoader(type_='qwen_image', clip_name=clip_name)
     vaeloader = VAELoader(vae_name=vae_name)
-    markdownnote = raw_call('MarkdownNote', '97')
     comfyswitchnode_2 = ComfySwitchNode(switch=False)
     comfyswitchnode_3 = ComfySwitchNode(switch=False)
 

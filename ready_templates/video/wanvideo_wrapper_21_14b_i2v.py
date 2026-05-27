@@ -13,6 +13,7 @@ from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoB
 BF16 = 'bf16'
 CLIP_NAME = 'umt5_xxl_fp16.safetensors'
 CLIP_NAME_2 = 'clip_vision_h.safetensors'
+CLIP_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT_FRAMES = 81
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
@@ -21,10 +22,9 @@ DEFAULT_PROMPT_3 = 'an old man is stroking his beard thoughtfully'
 DEFAULT_SEED = 1057359483639287
 GUIDE_STRENGTH = 1
 LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'WanVideo\\Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors'
+MODEL_NAME = 'WanVideo\\Wan2_1-I2V-14B-480P_fp8_e4m3fn.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -47,9 +47,9 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME_3)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=10, use_non_blocking=True)
     wanvideovrammanagement = WanVideoVRAMManagement()
 
@@ -66,7 +66,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_3,
+        model=MODEL_NAME,
         base_precision='fp16',
         quantization='fp8_e4m3fn',
         lora=wanvideoloraselect,

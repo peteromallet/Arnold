@@ -13,6 +13,7 @@ from vibecomfy.nodes.rgthree import Any_Switch_rgthree
 
 AFTER = 'after'
 ALL_OR_NOTHING = 'all_or_nothing'
+AUDIO_VAE_NAME = 'LTX2_audio_vae_bf16.safetensors'
 A_1 = 'a-1'
 BF16 = 'bf16'
 CKPT_NAME = 'ltx-2-19b-distilled.safetensors'
@@ -33,9 +34,8 @@ MP4 = 'mp4'
 NONE = 'none'
 SOURCE = 'source'
 TARGET_EXTENSION_LTX2 = 'target_extension_ltx2'
-UNET_NAME = 'LTX-2-dev-Q5_K_S.gguf'
-VAE_NAME = 'LTX2_audio_vae_bf16.safetensors'
-VAE_NAME_2 = 'LTX2_video_vae_2_bf16.safetensors'
+UNET_NAME_GGUF = 'LTX-2-dev-Q5_K_S.gguf'
+VIDEO_VAE_NAME = 'LTX2_video_vae_2_bf16.safetensors'
 WIDGET__NAME = 'ltx-2-19b-distilled-lora-384.safetensors'
 WIDGET__NAME_2 = 'ltx-2-19b-lora-camera-control-dolly-right.safetensors'
 
@@ -397,7 +397,7 @@ def build() -> VibeWorkflow:
     image, mask = LoadImage(image='z-image_00255_.png')
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     iamccs_ltx2_lorastackstaged = raw_call('IAMCCS_LTX2_LoRAStackStaged', '5218',
         widget_0=WIDGET__NAME,
@@ -412,13 +412,13 @@ def build() -> VibeWorkflow:
     )
 
     vaeloaderkj = VAELoaderKJ(
-        vae_name=VAE_NAME_2,
+        vae_name=VIDEO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
     vaeloaderkj_2 = VAELoaderKJ(
-        vae_name=VAE_NAME,
+        vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )

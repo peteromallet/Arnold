@@ -11,10 +11,10 @@ from vibecomfy.nodes.ltxvideo import LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXI
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16.safetensors'
 BBOX_DETECTOR_NAME = 'yolox_l.onnx'
-CKPT_NAME = 'LTX23_audio_vae_bf16.safetensors'
 CLIP_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
 DEFAULT_PROMPT = 'blurry, oversaturated, pixelated, low resolution, grainy, distorted, noise, compression artifacts, jpeg artifacts, glitches, watermark, text, logo, signature, copyright, subtitles'
@@ -33,7 +33,7 @@ POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
 STRETCH = 'stretch'
 UNET_NAME = 'ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
 VAE_NAME = 'taeltx2_3.safetensors'
-VAE_NAME_2 = 'LTX23_video_vae_bf16.safetensors'
+VIDEO_VAE_NAME = 'LTX23_video_vae_bf16.safetensors'
 
 
 MODELS = {
@@ -51,7 +51,7 @@ MODELS = {
 
 PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED),
-    'model': InputSpec(node='7', field='ckpt_name', default=CKPT_NAME),
+    'model': InputSpec(node='7', field='ckpt_name', default=AUDIO_VAE_NAME),
     'prompt': InputSpec(node='20', field='text', default=DEFAULT_PROMPT),
     'image': InputSpec(node='5', field='image', default='example.png', aliases=('input_image',)),
 }
@@ -84,16 +84,16 @@ def build() -> VibeWorkflow:
     # Inputs
     image, mask = LoadImage(image='example.png')
     image_load, mask_load = LoadImage(image='egyptian_queen.png')
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
     vaeloader = VAELoader(vae_name=VAE_NAME)
-    vaeloader_2 = VAELoader(vae_name=VAE_NAME_2)
+    vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )

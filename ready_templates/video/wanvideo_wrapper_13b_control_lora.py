@@ -11,6 +11,7 @@ from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoC
 
 
 BF16 = 'bf16'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT = 'default'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_SEED = 0
@@ -18,10 +19,9 @@ DISABLED = 'disabled'
 GUIDE_STRENGTH = 6
 INDUCTOR = 'inductor'
 LORA_NAME = 'WanVid\\wan2.1-1.3b-control-lora-tile-v0.1_comfy.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
+MODEL_NAME = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -40,9 +40,9 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoteacache = WanVideoTeaCache(rel_l1_thresh=0.1, use_coefficients='true')
     wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
 
@@ -61,7 +61,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_3,
+        model=MODEL_NAME,
         base_precision='fp16',
         lora=wanvideoloraselect,
     )
@@ -84,6 +84,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, denoised_samples = WanVideoSampler(
+        seed=DEFAULT_SEED,
         batched_cfg='',
         cache_args=wanvideoteacache,
         image_embeds=wanvideocontrolembeds,

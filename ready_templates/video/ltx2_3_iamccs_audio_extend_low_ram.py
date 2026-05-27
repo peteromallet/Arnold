@@ -11,10 +11,11 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadAudioUpload
 
 
 ALL = 'all'
+AUDIO_VAE_NAME = 'ltx-2.3-22b-dev_audio_vae.safetensors'
 AUTO = 'auto'
 BF16 = 'bf16'
 CLIP_NAME = 'gemma_3_12B_it_fp8_e4m3fn.safetensors'
-CLIP_NAME_2 = 'ltx-2.3_text_projection_bf16.safetensors'
+CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CUT = 'cut'
 DEFAULT_FRAMES = 249
 DEFAULT_FRAMES_2 = 241
@@ -37,13 +38,12 @@ RANDOMIZE = 'randomize'
 SNAP_TO_VIDEO_DURATION = 'snap_to_video_duration'
 SOFT_CLAMP = 'soft_clamp'
 SOURCE = 'source'
-UNET_NAME = 'ltx-2.3-22b-dev-Q4_K_S.gguf'
-UNET_NAME_2 = 'MelBandRoformer_fp32.safetensors'
+UNET_NAME = 'MelBandRoformer_fp32.safetensors'
+UNET_NAME_GGUF = 'ltx-2.3-22b-dev-Q4_K_S.gguf'
 USE_TIMELINE_CURSOR = 'use_timeline_cursor'
-VAE_NAME = 'ltx-2.3-22b-dev_video_vae.safetensors'
-VAE_NAME_2 = 'ltx-2.3-22b-dev_audio_vae.safetensors'
 VALUE = ''
 VIDEOCLIP_AUDIO_24FPS = 'videoclip_audio_24fps'
+VIDEO_VAE_NAME = 'ltx-2.3-22b-dev_video_vae.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -60,7 +60,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='unknown',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['MelBandRoformer_fp32.safetensors', 'euler', 'ltx-2.3-22b-dev-Q4_K_S.gguf', 'ltx-2.3-22b-dev_audio_vae.safetensors', 'ltx-2.3-22b-dev_video_vae.safetensors', 'ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors']},
-    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ResizeImagesByLongerEdge', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Label (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
+    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ResizeImagesByLongerEdge', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'discovered'}},
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json', 'source_id': 'IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX23_BEST_3SEG_AUDIOEXT_30S_FREE_LOW_RAM.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_iamccs_audio_extend_low_ram'},
 )
 
@@ -78,12 +78,12 @@ def build() -> VibeWorkflow:
         start_time=38,
     )
 
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
+    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     # Loaders
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
-        clip_name2=CLIP_NAME_2,
+        clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )
@@ -95,10 +95,14 @@ def build() -> VibeWorkflow:
         sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    vaeloaderkj = VAELoaderKJ(vae_name=VAE_NAME, device=MAIN_DEVICE, weight_dtype=BF16)
+    vaeloaderkj = VAELoaderKJ(
+        vae_name=VIDEO_VAE_NAME,
+        device=MAIN_DEVICE,
+        weight_dtype=BF16,
+    )
 
     vaeloaderkj_2 = VAELoaderKJ(
-        vae_name=VAE_NAME_2,
+        vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
@@ -142,22 +146,7 @@ def build() -> VibeWorkflow:
         control_after_generate=RANDOMIZE,
     )
 
-    label__rgthree_ = raw_call('Label (rgthree)', '75')
-    label__rgthree__2 = raw_call('Label (rgthree)', '76')
-    unetloader = UNETLoader(unet_name=UNET_NAME_2)
-    label__rgthree__3 = raw_call('Label (rgthree)', '79')
-    label__rgthree__4 = raw_call('Label (rgthree)', '81')
-    label__rgthree__5 = raw_call('Label (rgthree)', '82')
-    label__rgthree__6 = raw_call('Label (rgthree)', '83')
-    label__rgthree__7 = raw_call('Label (rgthree)', '84')
-    label__rgthree__8 = raw_call('Label (rgthree)', '85')
-    label__rgthree__9 = raw_call('Label (rgthree)', '86')
-    label__rgthree__10 = raw_call('Label (rgthree)', '87')
-    label__rgthree__11 = raw_call('Label (rgthree)', '88')
-    label__rgthree__12 = raw_call('Label (rgthree)', '89')
-    label__rgthree__13 = raw_call('Label (rgthree)', '90')
-    label__rgthree__14 = raw_call('Label (rgthree)', '91')
-    label__rgthree__15 = raw_call('Label (rgthree)', '92')
+    unetloader = UNETLoader(unet_name=UNET_NAME)
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale dimensions',

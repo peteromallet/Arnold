@@ -12,6 +12,7 @@ from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoC
 
 BF16 = 'bf16'
 CENTER = 'center'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
 CPU = 'cpu'
 DEFAULT_FPS = 24
 DEFAULT_FRAMES = 121
@@ -21,12 +22,11 @@ DEFAULT_SEED = 47
 DISABLED = 'disabled'
 GUIDE_STRENGTH = 5
 MODEL_NAME = 'Wan2_2-TI2V-5B-FastWanFullAttn_bf16.safetensors'
-MODEL_NAME_2 = 'wan2.2-ti2v-5b-controlnet-depth-v1/diffusion_pytorch_model.safetensors'
-MODEL_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_4 = 'Wan2_2_VAE_bf16.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 OFFLOAD_DEVICE = 'offload_device'
 STRETCH = 'stretch'
+UNET_NAME = 'wan2.2-ti2v-5b-controlnet-depth-v1/diffusion_pytorch_model.safetensors'
+VAE_NAME = 'Wan2_2_VAE_bf16.safetensors'
 V_0_0_0 = '0, 0, 0'
 
 
@@ -47,9 +47,9 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME_3)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_4)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
 
     wanvideoexperimentalargs = WanVideoExperimentalArgs(
         cfg_zero_star=True,
@@ -58,7 +58,7 @@ def build() -> VibeWorkflow:
 
     wanvideoslg = WanVideoSLG(blocks='7,8,9', end_percent=0.7)
     wanvideoeasycache = WanVideoEasyCache()
-    wanvideocontrolnetloader = WanVideoControlnetLoader(model=MODEL_NAME_2)
+    wanvideocontrolnetloader = WanVideoControlnetLoader(model=UNET_NAME)
     wanvideoenhanceavideo = WanVideoEnhanceAVideo()
     intconstant = INTConstant(value=121)
     intconstant_2 = INTConstant(value=1280)

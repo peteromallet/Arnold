@@ -45,7 +45,11 @@ def build() -> VibeWorkflow:
     vaeloader = VAELoader(vae_name=VAE_NAME)
 
     # Sampling
-    emptyhunyuanlatentvideo = EmptyHunyuanLatentVideo(width=832, length=DEFAULT_FRAMES)
+    emptyhunyuanlatentvideo = EmptyHunyuanLatentVideo(
+        width=832,
+        height=480,
+        length=DEFAULT_FRAMES,
+    )
 
     # Conditioning
     positive = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)

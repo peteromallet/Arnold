@@ -10,7 +10,8 @@ from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoB
 
 
 BF16 = 'bf16'
-CLIP_NAME = 'umt5_xxl_fp16.safetensors'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
+CLIP_NAME_2 = 'umt5_xxl_fp16.safetensors'
 DEFAULT_FRAMES = 81
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
@@ -18,10 +19,9 @@ DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on
 DEFAULT_SEED = 42
 GUIDE_STRENGTH = 1
 LORA__NAME = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'WanVideo\\fp8_scaled_kj\\T2V\\Wan2_1-T2V-14B_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME = 'WanVideo\\fp8_scaled_kj\\T2V\\Wan2_1-T2V-14B_fp8_e4m3fn_scaled_KJ.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -43,21 +43,21 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_3,
+        model=MODEL_NAME,
         base_precision='fp16',
         quantization='fp8_e4m3fn_scaled',
     )
 
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideoemptyembeds = WanVideoEmptyEmbeds()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideoemptyembeds = WanVideoEmptyEmbeds(width=832, height=480)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap()
 
     # Loaders
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    cliploader = CLIPLoader(clip_name=CLIP_NAME_2, type_='wan')
     wanvideoenhanceavideo = WanVideoEnhanceAVideo()
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(

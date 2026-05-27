@@ -15,6 +15,7 @@ ANIMATEDIFF = 'AnimateDiff'
 BF16 = 'bf16'
 BLACK = 'black'
 CENTER = 'center'
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
 COLOR = 'color'
 COMFY = 'comfy'
 CROP = 'crop'
@@ -34,16 +35,15 @@ GUIDE_STRENGTH = 4.000000000000001
 IMAGE = 'image'
 LANCZOS = 'lanczos'
 LEFT = 'left'
-MODEL_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_3 = 'depth_anything_v2_vitl_fp16.safetensors'
-MODEL_NAME_4 = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
+MODEL_NAME = 'depth_anything_v2_vitl_fp16.safetensors'
+MODEL_NAME_2 = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
 PAD = 'pad'
 TRUE = 'true'
 UNIPC = 'unipc'
 UP = 'up'
 VACE_MODEL_NAME = 'WanVideo\\Wan2_1-VACE_module_1_3B_bf16.safetensors'
+VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 VALUE = ''
 VIDEO_H264_MP4 = 'video/h264-mp4'
 V_172_172_172 = '172,172,172'
@@ -73,9 +73,9 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME_2)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
 
     wanvideoblockswap = WanVideoBlockSwap(
         blocks_to_swap=0,
@@ -128,7 +128,7 @@ def build() -> VibeWorkflow:
     )
 
     downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
-        model=MODEL_NAME_3,
+        model=MODEL_NAME,
     )
 
     wanvideoslg_3 = WanVideoSLG(
@@ -154,7 +154,7 @@ def build() -> VibeWorkflow:
     wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=VACE_MODEL_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_4,
+        model=MODEL_NAME_2,
         base_precision='fp16',
         vace_model=wanvideovacemodelselect,
     )

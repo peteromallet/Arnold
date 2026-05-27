@@ -9,6 +9,7 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import WanVideoBlockSwap, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoVACEEncode, WanVideoVACEModelSelect, WanVideoVACEStartToEndFrame, WanVideoVAELoader
 
 
+CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
 DEFAULT_NEGATIVE = 'fading, breaking, shot cuts, jumpcuts, blurry, noise, distorted'
 DEFAULT_PROMPT = 'A smooth cinematic transition with consistent identity, lighting, and camera motion.'
 DEFAULT_SEED = 12345
@@ -18,11 +19,10 @@ FP8_E4M3FN_SCALED = 'fp8_e4m3fn_scaled'
 GUIDE_STRENGTH = 3.0
 GUIDE_STRENGTH_2 = 1.0
 LORA__NAME = 'WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'WanVideo/2_2/Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_4 = 'WanVideo/2_2/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME = 'WanVideo/2_2/Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_2 = 'WanVideo/2_2/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
 VACE_MODEL_NAME = 'WanVideo/Wan2_1-VACE_module_14B_fp8_e4m3fn.safetensors'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 
 
 MODELS = {
@@ -59,12 +59,12 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-        model_name=MODEL_NAME,
+        model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
 
     wanvideoblockswap = WanVideoBlockSwap(
         blocks_to_swap=30,
@@ -101,14 +101,14 @@ def build() -> VibeWorkflow:
     wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=VACE_MODEL_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_3,
+        model=MODEL_NAME,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
         extra_model=wanvideovacemodelselect,
     )
 
     wanvideomodelloader_2 = WanVideoModelLoader(
-        model=MODEL_NAME_4,
+        model=MODEL_NAME_2,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
         extra_model=wanvideovacemodelselect,
@@ -121,6 +121,8 @@ def build() -> VibeWorkflow:
     )
 
     wanvideovaceencode = WanVideoVACEEncode(
+        width=832,
+        height=480,
         input_frames=images,
         input_masks=masks,
         ref_images=image,
