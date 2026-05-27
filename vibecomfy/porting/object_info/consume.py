@@ -100,7 +100,11 @@ _CURATED_OUTPUTS: dict[str, list[dict[str, str]]] = {
         {"name": "positive", "type": "CONDITIONING"},
         {"name": "negative", "type": "CONDITIONING"},
     ],
-    "LTXVCropGuides": [{"name": "latent", "type": "LATENT"}],
+    "LTXVCropGuides": [
+        {"name": "positive", "type": "CONDITIONING"},
+        {"name": "negative", "type": "CONDITIONING"},
+        {"name": "latent", "type": "LATENT"},
+    ],
     "LTXVEmptyLatentAudio": [{"name": "Latent", "type": "LATENT"}],
     "LTXVImgToVideoInplaceKJ": [{"name": "latent", "type": "LATENT"}],
     "LTXVPreprocess": [{"name": "output_image", "type": "IMAGE"}],

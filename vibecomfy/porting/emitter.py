@@ -1650,7 +1650,7 @@ def _all_nodes_for_imports(workflow_nodes: dict[str, Any], subgraphs: dict[str, 
     nodes = dict(workflow_nodes)
     for subgraph in subgraphs.values():
         for nid, node in subgraph.nodes.items():
-            nodes.setdefault(f"{subgraph.id}:{nid}", node)
+            nodes.setdefault(_subgraph_emitted_node_id(subgraph.id, nid), node)
     return nodes
 
 
@@ -2623,8 +2623,14 @@ def _subgraph_topological_order(subgraphs: dict[str, _SubgraphDef]) -> list[str]
     return ordered
 
 
+def _short_subgraph_id_prefix(subgraph_id: str) -> str:
+    if len(subgraph_id) >= 32 and "-" in subgraph_id:
+        return subgraph_id[:8]
+    return subgraph_id
+
+
 def _subgraph_emitted_node_id(subgraph_id: str, node_id: str) -> str:
-    return f"{subgraph_id}:{node_id}"
+    return f"{_short_subgraph_id_prefix(subgraph_id)}:{node_id}"
 
 
 COMFY_TYPE_TO_PY_HINT = {
