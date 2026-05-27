@@ -19,6 +19,11 @@ from typing import Any, Final, TypedDict
 
 _KNOWN_EFFORT_TOKENS: Final[frozenset[str]] = frozenset({"low", "medium", "high"})
 
+#: Maximum number of bespoke "other" custom critique areas the evaluator may
+#: add on top of the 9-lens catalog. These are additive — they do not
+#: participate in the 9-lens coverage invariant.
+MAX_OTHER_AREAS: Final[int] = 2
+
 
 class _RosterEntry:
     __slots__ = ("model", "rank", "cost_hint")
@@ -44,6 +49,33 @@ CRITIC_MODEL_ROSTER: Final[tuple[_RosterEntry, ...]] = (
 _ROSTER_BY_MODEL: Final[dict[str, _RosterEntry]] = {
     entry.model: entry for entry in CRITIC_MODEL_ROSTER
 }
+
+#: Map each premium roster model to the ``--vendor`` value that owns it. Models
+#: not listed here (the DeepSeek tiers) are vendor-independent and appear in
+#: every per-vendor roster view.
+_PREMIUM_ROSTER_MODEL_VENDOR: Final[dict[str, str]] = {
+    "claude-opus-4-7": "claude",
+    "claude-sonnet-4-6": "claude",
+    "gpt-5.5": "codex",
+    "gpt-5.4": "codex",
+}
+
+
+def roster_for_vendor(vendor: str) -> tuple[_RosterEntry, ...]:
+    """Return the roster entries visible under ``vendor``.
+
+    Premium entries owned by the *other* premium vendor are dropped so the
+    evaluator is only ever offered strong critics it can actually dispatch
+    under the active ``--vendor``. DeepSeek tiers (vendor-independent) always
+    appear. Unknown vendors fall back to the full roster.
+    """
+    if vendor not in ("claude", "codex"):
+        return CRITIC_MODEL_ROSTER
+    return tuple(
+        entry
+        for entry in CRITIC_MODEL_ROSTER
+        if _PREMIUM_ROSTER_MODEL_VENDOR.get(entry.model, vendor) == vendor
+    )
 
 
 def _normalize_hermes_spec(spec: str) -> str:
@@ -83,16 +115,9 @@ _AGENT_DEFAULT_MODEL: Final[dict[str, str]] = {
     "codex": "gpt-5.5",
 }
 
-#: Provider prefixes that may appear before a model name in a spec
-#: (e.g. ``deepseek:deepseek-v4-pro``).  These are not agents
-#: themselves; the part after the colon is the model name.
-_KNOWN_NATIVE_PROVIDERS: Final[frozenset[str]] = frozenset({
-    "deepseek", "fireworks", "zhipu", "google", "minimax",
-})
 
-
-def roster_rank(model: str) -> int:
-    """Return the roster rank (1 = strongest) for *model*.
+def _resolve_canonical(model: str) -> str:
+    """Resolve a model spec to its canonical roster key.
 
     Accepts every legitimate profile model string and normalises it to a
     roster key:
@@ -117,12 +142,8 @@ def roster_rank(model: str) -> int:
         raise ValueError(f"Empty model spec: {model!r}")
 
     # ── already a roster key ───────────────────────────────────────────
-    # The roster's own model names (e.g. ``claude-opus-4-7``, ``gpt-5.5``)
-    # are passed back as ``evaluator_model`` by the call site, so accept
-    # them directly before attempting agent/provider normalization.
-    direct = _ROSTER_BY_MODEL.get(stripped)
-    if direct is not None:
-        return direct.rank
+    if stripped in _ROSTER_BY_MODEL:
+        return stripped
 
     # ── hermes provider specs ──────────────────────────────────────────
     if stripped.startswith("hermes:"):
@@ -135,14 +156,15 @@ def roster_rank(model: str) -> int:
             # Resolve bare agent names (e.g. ``claude`` → ``claude-opus-4-7``).
             if normalized in _AGENT_DEFAULT_MODEL:
                 normalized = _AGENT_DEFAULT_MODEL[normalized]
-        elif agent in _KNOWN_NATIVE_PROVIDERS:
-            # ``deepseek:deepseek-v4-pro`` → ``deepseek-v4-pro``, etc.
-            # The rest after the provider prefix IS the model name.
-            normalized = rest
         else:
-            raise ValueError(
-                f"Unknown agent {agent!r} in model spec {model!r}"
-            )
+            # Provider-prefixed spec without an explicit ``hermes:`` prefix
+            # (e.g. ``deepseek:deepseek-v4-pro``, which is how a DeepSeek-only
+            # profile's evaluator reports its own model, or
+            # ``fireworks:accounts/.../deepseek-v4-pro``). The roster ranks by
+            # model family, so extract the trailing model component the same
+            # way hermes specs are normalized. An unknown model still raises
+            # below when it is not found in the roster.
+            normalized = _normalize_hermes_spec(stripped)
     else:
         # Bare agent name (e.g. ``claude``, ``codex``).
         agent = stripped.lower()
@@ -154,14 +176,25 @@ def roster_rank(model: str) -> int:
                 f"provider spec"
             )
 
-    entry = _ROSTER_BY_MODEL.get(normalized)
-    if entry is None:
+    if normalized not in _ROSTER_BY_MODEL:
         raise ValueError(
             f"Model {model!r} normalised to {normalized!r}, which is not in "
             f"CRITIC_MODEL_ROSTER. Known roster keys: "
             f"{sorted(_ROSTER_BY_MODEL.keys())}"
         )
-    return entry.rank
+    return normalized
+
+
+def roster_rank(model: str) -> int:
+    """Return the roster rank (1 = strongest) for *model*.
+
+    Accepts every legitimate profile model string and normalises it to a
+    roster key via :func:`_resolve_canonical`.
+
+    Raises:
+        ValueError: *model* does not normalise to a known roster entry.
+    """
+    return _ROSTER_BY_MODEL[_resolve_canonical(model)].rank
 
 
 def roster_dispatch_spec(model: str) -> str:
@@ -249,13 +282,42 @@ class EvaluatorVerdict(TypedDict, total=False):
 
 
 def validate_evaluator_verdict(
-    payload: dict[str, Any], *, evaluator_model: str
-) -> None:
+    payload: dict[str, Any], *, evaluator_model: str, vendor: str | None = None,
+) -> list[str]:
     """Validate a critique evaluator payload with hard-reject discipline.
+
+    A *consistent* duplicate selection — the same ``check_id`` listed more
+    than once with an identical ``critic_model`` — is **deduped in place**
+    (the first occurrence wins; later twins are dropped from ``payload``)
+    and a human-readable warning is returned rather than triggering a full
+    hard-reject. Losing the entire premium adaptive selection over a cosmetic
+    duplicate is a bad failure mode: the model agreed with itself, so the
+    intent is unambiguous. A *conflicting* duplicate (same ``check_id``, a
+    different ``critic_model``) remains a hard reject because the model's
+    intent for that lens is genuinely ambiguous and silently picking one
+    assignment could under- or over-power the critique.
+
+    Genuine integrity violations — unknown ids, coverage gaps, overlap,
+    rater<dispatchee, unjustified skips — remain hard rejects.
+
+    When *vendor* is ``"claude"`` or ``"codex"``, every selection's
+    ``critic_model`` is resolved to its canonical roster key and checked
+    against the vendor-filtered roster: a premium model owned by the
+    **other** vendor (e.g. a Claude model under ``--vendor codex``) is
+    rejected. DeepSeek tiers are vendor-independent and always pass.
+    Aliases that resolve to a valid same-vendor model (e.g. ``"claude"``
+    under ``--vendor claude``) are accepted.  When *vendor* is ``None``
+    (default) no vendor gate is applied.
+
+    Returns:
+        A list of human-readable warning strings (empty when the verdict was
+        clean). Currently only consistent-duplicate dedupes are reported.
 
     Raises:
         ValueError: on any schema or invariant violation.
     """
+
+    warnings: list[str] = []
 
     def _reject(message: str) -> None:
         raise ValueError(f"critique_evaluator verdict rejected: {message}")
@@ -276,21 +338,25 @@ def validate_evaluator_verdict(
     all_check_ids: set[str] = {check["id"] for check in CRITIQUE_CHECKS}
 
     # ── selections validation ──────────────────────────────────────────
-    selected_ids: set[str] = set()
+    # First occurrence of each check_id wins; consistent duplicates are
+    # dropped (and reported), conflicting duplicates hard-reject.
+    selected_models: dict[str, str] = {}
+    deduped_selections: list[dict[str, Any]] = []
+    # Bespoke "other" custom areas are ADDITIVE — they never enter
+    # selected_ids and so never participate in the 9-lens coverage union.
+    custom_selections: list[dict[str, Any]] = []
+    custom_area_keys: set[str] = set()
     for idx, sel in enumerate(selections, start=1):
         if not isinstance(sel, dict):
             _reject(f"selection {idx} must be an object.")
         cid = sel.get("check_id")
         if not isinstance(cid, str) or not cid.strip():
             _reject(f"selection {idx} is missing a non-empty `check_id`.")
-        if cid not in all_check_ids:
+        if cid not in all_check_ids and cid != "other":
             _reject(
                 f"selection {idx}: unknown check_id {cid!r}. "
                 f"Known ids: {sorted(all_check_ids)}"
             )
-        if cid in selected_ids:
-            _reject(f"selection {idx}: duplicate check_id {cid!r}.")
-        selected_ids.add(cid)
 
         critic_model = sel.get("critic_model")
         if not isinstance(critic_model, str) or not critic_model.strip():
@@ -304,6 +370,24 @@ def validate_evaluator_verdict(
                 f"selection {idx} ({cid}): critic_model {critic_model!r} "
                 f"not in CRITIC_MODEL_ROSTER: {exc}"
             )
+
+        # ── vendor gate (when active) ────────────────────────────────────
+        # Resolve the critic_model to its canonical roster key (handles
+        # aliases like "claude" → "claude-opus-4-7" and specs like
+        # "claude:claude-sonnet-4-6" → "claude-sonnet-4-6") then check
+        # whether the canonical model is a premium model owned by the OTHER
+        # vendor. DeepSeek tiers are vendor-independent and always pass.
+        if vendor in ("claude", "codex"):
+            canonical = _resolve_canonical(critic_model)
+            model_vendor = _PREMIUM_ROSTER_MODEL_VENDOR.get(canonical)
+            if model_vendor is not None and model_vendor != vendor:
+                _reject(
+                    f"selection {idx} ({cid}): critic_model "
+                    f"{critic_model!r} (resolved to {canonical!r}, owned "
+                    f"by {model_vendor!r}) is not available under "
+                    f"--vendor {vendor}. The evaluator must only assign "
+                    f"critics from the vendor-filtered roster."
+                )
 
         # critic must be no stronger than evaluator (rank >= evaluator rank)
         try:
@@ -320,10 +404,79 @@ def validate_evaluator_verdict(
                 f"(roster_rank(critic) >= roster_rank(evaluator))."
             )
 
+        # ── bespoke "other" custom area ──────────────────────────────────
+        # An "other" selection is NOT a catalog lens: it carries its own
+        # `area` name and its `why` doubles as the critic's probe. It is
+        # additive — it must stay OUT of selected_models / selected_ids so
+        # the coverage union (selected_ids | skipped_ids == all_check_ids)
+        # keeps computing over the 9 catalog lenses only.
+        if cid == "other":
+            area = sel.get("area")
+            if not isinstance(area, str) or not area.strip():
+                _reject(
+                    f'selection {idx}: an "other" selection needs a '
+                    f"non-empty `area` naming the custom critique area"
+                )
+            why = sel.get("why")
+            if not isinstance(why, str) or not why.strip():
+                _reject(
+                    f'selection {idx} ("other" / {area!r}): an "other" '
+                    f"selection needs a non-empty `why` (it is the probe)."
+                )
+            area_key = area.strip().lower()
+            if area_key in custom_area_keys:
+                # Consistent duplicate custom area: dedupe + warn, mirroring
+                # the catalog consistent-duplicate policy.
+                warnings.append(
+                    f'selection {idx}: duplicate "other" area {area!r} — '
+                    f"deduped (kept first occurrence)."
+                )
+                continue
+            custom_area_keys.add(area_key)
+            custom_selections.append(sel)
+            deduped_selections.append(sel)
+            if len(custom_selections) > MAX_OTHER_AREAS:
+                _reject(
+                    f"at most {MAX_OTHER_AREAS} 'other' custom areas allowed"
+                )
+            continue
+
+        if cid in selected_models:
+            prior_model = selected_models[cid]
+            if prior_model == critic_model:
+                # Consistent duplicate: the model assigned the same lens to the
+                # same critic twice. Dedupe (keep the first) and warn — don't
+                # nuke the whole premium adaptive selection over a redundancy.
+                warnings.append(
+                    f"selection {idx}: duplicate check_id {cid!r} with the same "
+                    f"critic_model {critic_model!r} — deduped (kept first "
+                    f"occurrence)."
+                )
+                continue
+            # Conflicting duplicate: same lens, different critic. Intent is
+            # ambiguous; keep this a hard reject.
+            _reject(
+                f"selection {idx}: conflicting duplicate check_id {cid!r} — "
+                f"already assigned to {prior_model!r}, now {critic_model!r}. "
+                f"A lens may appear at most once; resolve the conflicting "
+                f"critic assignment."
+            )
+        selected_models[cid] = critic_model
+        deduped_selections.append(sel)
+
         # why is not required per schema but we note it
 
+    selected_ids: set[str] = set(selected_models)
+    # Persist the deduped selection list so the caller sees each lens once.
+    if len(deduped_selections) != len(selections):
+        payload["selections"] = deduped_selections
+
     # ── skipped validation ──────────────────────────────────────────────
+    # A skip carries no critic_model, so any repeat of a skipped check_id is a
+    # consistent duplicate (same lens, same intent: skip it). Dedupe + warn
+    # rather than hard-reject, mirroring the selections policy.
     skipped_ids: set[str] = set()
+    deduped_skipped: list[dict[str, Any]] = []
     for idx, sk in enumerate(skipped, start=1):
         if not isinstance(sk, dict):
             _reject(f"skip entry {idx} must be an object.")
@@ -335,9 +488,6 @@ def validate_evaluator_verdict(
                 f"skip entry {idx}: unknown check_id {cid!r}. "
                 f"Known ids: {sorted(all_check_ids)}"
             )
-        if cid in skipped_ids:
-            _reject(f"skip entry {idx}: duplicate check_id {cid!r}.")
-        skipped_ids.add(cid)
 
         why = sk.get("why")
         if not isinstance(why, str) or not why.strip():
@@ -345,6 +495,18 @@ def validate_evaluator_verdict(
                 f"skip entry {idx} ({cid}): every skip must have a "
                 f"non-empty `why` justification."
             )
+
+        if cid in skipped_ids:
+            warnings.append(
+                f"skip entry {idx}: duplicate check_id {cid!r} — deduped "
+                f"(kept first occurrence)."
+            )
+            continue
+        skipped_ids.add(cid)
+        deduped_skipped.append(sk)
+
+    if len(deduped_skipped) != len(skipped):
+        payload["skipped"] = deduped_skipped
 
     # ── coverage: union must be all check ids, no overlap ───────────────
     if selected_ids & skipped_ids:
@@ -364,7 +526,9 @@ def validate_evaluator_verdict(
         )
 
     # ── at least one selection ──────────────────────────────────────────
-    if len(selections) == 0:
+    # An all-skip-of-9 verdict is allowed only when it carries ≥1 bespoke
+    # "other" custom area (which is additive and never enters selected_ids).
+    if len(selected_ids) == 0 and not custom_selections:
         _reject(
             "At least one lens must be selected (len(selections) >= 1). "
             "An all-skip verdict is rejected."
@@ -417,146 +581,4 @@ def validate_evaluator_verdict(
                 )
             seen_fv.add(fid)
 
-
-# ---------------------------------------------------------------------------
-# Wiring probes — used by init-time startup validation and `megaplan doctor
-# --adaptive-critique`. Each probe returns a 3-tuple
-# (label, passed, detail) so callers can render either a green/red status
-# line (doctor) or assemble a structured AdaptiveCritiqueMisconfiguredError
-# (init). The probes are deliberately offline + read-only.
-# ---------------------------------------------------------------------------
-
-
-def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
-    """Probe every load-bearing piece of the adaptive critique path.
-
-    Returns a list of ``(label, passed, detail)`` tuples. ``passed`` is the
-    only authoritative field; ``detail`` is for human surface and may be
-    empty on success. A failing probe means adaptive critique would
-    KeyError or otherwise fall back at runtime — the exact bug class the
-    layered defense is built to prevent.
-
-    Probes:
-
-    1. ``"critique_evaluator"`` is registered in ``STEP_SCHEMA_FILENAMES``.
-    2. The mapped schema filename is in the ``SCHEMAS`` dict.
-    3. The ``critique_evaluator`` prompt template loads (and is callable).
-    4. ``_STEP_REQUIRED_KEYS`` derives sensible keys for the step (the
-       required-keys table is built from the schema; a missing schema
-       silently produces an empty required-keys set).
-    """
-    results: list[tuple[str, bool, str]] = []
-
-    # Probe 1: step → schema filename dispatch
-    try:
-        from megaplan.workers._impl import STEP_SCHEMA_FILENAMES
-    except ImportError as exc:  # pragma: no cover — defensive
-        results.append((
-            "STEP_SCHEMA_FILENAMES importable",
-            False,
-            f"ImportError: {exc}",
-        ))
-        return results
-
-    if "critique_evaluator" not in STEP_SCHEMA_FILENAMES:
-        results.append((
-            "critique_evaluator registered in STEP_SCHEMA_FILENAMES",
-            False,
-            "missing key — adaptive critique will KeyError at dispatch and "
-            "fall back to static lenses",
-        ))
-        return results
-    schema_filename = STEP_SCHEMA_FILENAMES["critique_evaluator"]
-    results.append((
-        "critique_evaluator registered in STEP_SCHEMA_FILENAMES",
-        True,
-        f"→ {schema_filename}",
-    ))
-
-    # Probe 2: schema filename → SCHEMAS dict entry
-    try:
-        from megaplan.schemas import SCHEMAS
-    except ImportError as exc:  # pragma: no cover — defensive
-        results.append((
-            "SCHEMAS importable",
-            False,
-            f"ImportError: {exc}",
-        ))
-        return results
-
-    if schema_filename not in SCHEMAS:
-        results.append((
-            f"{schema_filename} registered in SCHEMAS",
-            False,
-            "schema is dispatched-to but not registered; "
-            "ensure_runtime_layout would not render it to disk",
-        ))
-    else:
-        results.append((
-            f"{schema_filename} registered in SCHEMAS",
-            True,
-            "",
-        ))
-
-    # Probe 3: prompt template
-    try:
-        from megaplan.prompts import create_prompt  # type: ignore
-        from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
-    except ImportError as exc:
-        results.append((
-            "critique_evaluator prompt template importable",
-            False,
-            f"ImportError: {exc}",
-        ))
-        return results
-    results.append((
-        "critique_evaluator prompt template importable",
-        bool(callable(_critique_evaluator_prompt)),
-        "",
-    ))
-
-    # Probe 4: required-keys table populated
-    try:
-        from megaplan.workers._impl import _STEP_REQUIRED_KEYS
-        required = set(_STEP_REQUIRED_KEYS.get("critique_evaluator", set()))
-    except ImportError as exc:  # pragma: no cover — defensive
-        results.append((
-            "_STEP_REQUIRED_KEYS importable",
-            False,
-            f"ImportError: {exc}",
-        ))
-        return results
-    expected = {"selections", "skipped", "evaluator_model"}
-    missing = expected - required
-    results.append((
-        "_STEP_REQUIRED_KEYS covers selections/skipped/evaluator_model",
-        not missing,
-        "" if not missing else f"missing: {sorted(missing)}",
-    ))
-
-    return results
-
-
-def assert_adaptive_critique_wired() -> None:
-    """Run :func:`probe_adaptive_critique_wiring` and raise
-    :class:`AdaptiveCritiqueMisconfiguredError` if any probe fails.
-
-    Called from ``handlers/init.py`` after ``adaptive_critique`` resolves
-    True so misconfigurations fail at init, not after planning cost.
-    """
-    from megaplan.types import AdaptiveCritiqueMisconfiguredError
-
-    results = probe_adaptive_critique_wiring()
-    failures = [(label, detail) for label, passed, detail in results if not passed]
-    if failures:
-        lines = ["adaptive critique is misconfigured:"]
-        for label, detail in failures:
-            lines.append(f"  - {label}: {detail}")
-        lines.append(
-            "Run `megaplan doctor --adaptive-critique` for a full status, "
-            "or set `[execution] adaptive_critique = false` to disable."
-        )
-        raise AdaptiveCritiqueMisconfiguredError(
-            "\n".join(lines),
-            missing=[label for label, _ in failures],
-        )
+    return warnings
