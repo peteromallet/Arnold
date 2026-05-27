@@ -295,6 +295,97 @@ def test_model_block_uses_role_based_keys_for_model_constants() -> None:
     assert "'obscure_file_name': ModelAsset(" not in text
 
 
+def test_model_constant_names_dedupe_path_prefixed_basenames() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "DualCLIPLoader",
+        inputs={
+            "clip_name1": "gemma_3_12B_it_fp4_mixed.safetensors",
+            "clip_name2": "ltx-2.3_text_projection_bf16.safetensors",
+        },
+    )
+    workflow.nodes["2"] = VibeNode(
+        "2",
+        "ProjectionLoader",
+        inputs={"model_name": r"VIDEO\LTX\LTX-2\ltx-2.3_text_projection_bf16.safetensors"},
+    )
+    workflow.nodes["3"] = VibeNode("3", "VAELoader", inputs={"vae_name": "taeltx2_3.safetensors"})
+    workflow.nodes["4"] = VibeNode("4", "VAELoader", inputs={"vae_name": r"vae_approx\taeltx2_3.safetensors"})
+    workflow.nodes["5"] = VibeNode("5", "TextEncoderLoader", inputs={"text_encoder": "gemma_3_12B_it_fp4_mixed.safetensors"})
+    workflow.nodes["6"] = VibeNode("6", "CheckpointLoaderSimple", inputs={"ckpt_name": "ltx-2-19b-distilled.safetensors"})
+    workflow.nodes["7"] = VibeNode("7", "LTXModelLoader", inputs={"ltxv_path": "ltx-2-19b-distilled.safetensors"})
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/model_dedupe", "capability": "image"},
+        ready_requirements={},
+        template_id="image/model_dedupe",
+    )
+
+    assert "CKPT_PROJECTION_NAME" not in text
+    assert text.count("CLIP_PROJECTION_NAME =") == 1
+    assert "CLIP_PROJECTION_NAME = 'VIDEO\\\\LTX\\\\LTX-2\\\\ltx-2.3_text_projection_bf16.safetensors'" in text
+    assert text.count("VAE_TAESD_NAME =") == 1
+    assert "VAE_TAESD_NAME = 'vae_approx\\\\taeltx2_3.safetensors'" in text
+    assert "VAE_NAME = 'taeltx2_3.safetensors'" not in text
+    assert "TEXT_ENCODER_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'" not in text
+    assert "LTXV_PATH_NAME = 'ltx-2-19b-distilled.safetensors'" not in text
+
+
+def test_model_constant_names_use_known_model_families() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "AudioModelLoader",
+        inputs={"model_name": r"MelBandRoformer\MelBandRoformer_fp16.safetensors"},
+    )
+    workflow.nodes["2"] = VibeNode(
+        "2",
+        "UpscaleModelLoader",
+        inputs={"model_name": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors"},
+    )
+    workflow.nodes["3"] = VibeNode(
+        "3",
+        "CheckpointLoaderSimple",
+        inputs={"ckpt_name": "depth_anything_vitl14.pth"},
+    )
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/model_families", "capability": "image"},
+        ready_requirements={},
+        template_id="image/model_families",
+    )
+
+    assert "MEL_BAND_ROFORMER_NAME = 'MelBandRoformer\\\\MelBandRoformer_fp16.safetensors'" in text
+    assert "SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'" in text
+    assert "DEPTH_ANYTHING_NAME = 'depth_anything_vitl14.pth'" in text
+    assert "MODEL_NAME =" not in text
+    assert "CKPT_NAME = 'depth_anything_vitl14.pth'" not in text
+
+
+def test_emitter_resolves_serialized_graph_lookup_prompt_literals() -> None:
+    workflow = VibeWorkflow("sample", WorkflowSource("sample"))
+    prompt = "a detailed cinematic prompt that is long enough to hoist"
+    workflow.nodes["11"] = VibeNode("11", "CLIPTextEncode", inputs={"text": prompt})
+    workflow.nodes["21"] = VibeNode(
+        "21",
+        "CLIPTextEncode",
+        inputs={"text": "wf.nodes['11'].inputs.get('text', '')"},
+    )
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/lookup_prompt", "capability": "image"},
+        ready_requirements={},
+        template_id="image/lookup_prompt",
+    )
+
+    assert "wf.nodes['11'].inputs.get('text', '')" not in text
+    assert f"DEFAULT_PROMPT = {prompt!r}" in text
+
+
 def test_ready_template_emits_custom_node_pack_provenance_from_lockfile() -> None:
     workflow = VibeWorkflow("sample", WorkflowSource("sample"))
     workflow.nodes["1"] = VibeNode("1", "DepthAnything_V2", inputs={"image": "input.png"})

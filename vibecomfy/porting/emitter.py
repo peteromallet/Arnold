@@ -438,26 +438,188 @@ def _constant_name_for_string_value(value: str) -> str:
     return sanitized
 
 
+_GRAPH_FIELD_GET_RE = re.compile(
+    r"^wf\.nodes\[(?P<node_quote>['\"])(?P<node_id>.+?)(?P=node_quote)\]"
+    r"\.(?P<store>inputs|widgets)\.get\("
+    r"(?P<field_quote>['\"])(?P<field>.+?)(?P=field_quote)"
+    r"(?:,\s*(?P<default>.*))?\)$"
+)
+
+
+_MISSING = object()
+
+
+def _literal_default_from_graph_get(default_expr: str | None) -> Any:
+    if default_expr is None:
+        return _MISSING
+    try:
+        return ast.literal_eval(default_expr)
+    except Exception:
+        return _MISSING
+
+
+def _resolve_graph_field_get_string(
+    value: Any,
+    workflow_nodes: Mapping[str, Any],
+    *,
+    _seen: frozenset[str] = frozenset(),
+) -> Any:
+    """Resolve serialized ``wf.nodes[...]`` field lookups captured as strings.
+
+    Older generated templates could serialize build-time graph lookup
+    expressions into node text fields.  Emitting those strings as prompt
+    constants bakes source code into the template, so resolve the narrow
+    expression form against the source workflow before formatting literals.
+    """
+    if not isinstance(value, str) or value in _seen:
+        return value
+    match = _GRAPH_FIELD_GET_RE.fullmatch(value.strip())
+    if match is None:
+        return value
+
+    node_id = match.group("node_id")
+    field = match.group("field")
+    store = match.group("store")
+    default = _literal_default_from_graph_get(match.group("default"))
+    node = workflow_nodes.get(str(node_id))
+    if node is None:
+        return "" if default is _MISSING else default
+
+    container = getattr(node, store, {}) or {}
+    if field not in container:
+        return "" if default is _MISSING else default
+
+    resolved = container[field]
+    if resolved == value:
+        return "" if default is _MISSING else default
+    if isinstance(resolved, str):
+        return _resolve_graph_field_get_string(
+            resolved,
+            workflow_nodes,
+            _seen=frozenset((*_seen, value)),
+        )
+    return resolved
+
+
+_MODEL_FAMILY_CONSTANTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("melbandroformer",), "MEL_BAND_ROFORMER_NAME"),
+    (("spatial-upscaler", "spatial_upscaler", "upscaler"), "SPATIAL_UPSCALER_NAME"),
+    (("depth_anything", "depthanything"), "DEPTH_ANYTHING_NAME"),
+)
+
+
+def _model_path_parts(value: str) -> list[str]:
+    return [part for part in re.split(r"[\\/]+", str(value)) if part]
+
+
+def _model_basename(value: str) -> str:
+    parts = _model_path_parts(value)
+    return parts[-1] if parts else str(value)
+
+
+def _model_family_constant_name(value: str, format_suffix: str = "") -> str | None:
+    basename = _model_basename(value).lower()
+    for keywords, constant_name in _MODEL_FAMILY_CONSTANTS:
+        if any(keyword in basename for keyword in keywords):
+            return f"{constant_name}{format_suffix}"
+    return None
+
+
+def _canonical_prefixed_model_value(values: list[str]) -> str | None:
+    unique = sorted(set(values))
+    if len(unique) < 2:
+        return None
+
+    prefixed = [
+        value
+        for value in unique
+        if len(_model_path_parts(value)) > 1
+    ]
+    if not prefixed:
+        return None
+
+    parent_dirs = {
+        "/".join(part.lower() for part in _model_path_parts(value)[:-1])
+        for value in prefixed
+    }
+    if len(parent_dirs) > 1:
+        return None
+
+    return max(prefixed, key=lambda value: (len(_model_path_parts(value)), len(value), value))
+
+
+_MODEL_CONSTANT_BASE_PRIORITY: tuple[str, ...] = (
+    "MEL_BAND_ROFORMER_NAME",
+    "SPATIAL_UPSCALER_NAME",
+    "DEPTH_ANYTHING_NAME",
+    "AUDIO_VAE_NAME",
+    "VIDEO_VAE_NAME",
+    "VAE_TAESD_NAME",
+    "CLIP_PROJECTION_NAME",
+    "CLIP_NAME",
+    "UNET_NAME",
+    "VAE_NAME",
+    "CKPT_NAME",
+)
+
+
+def _model_constant_base_priority(base: str) -> tuple[int, str]:
+    bare_base = base.removesuffix("_GGUF")
+    try:
+        return (_MODEL_CONSTANT_BASE_PRIORITY.index(bare_base), base)
+    except ValueError:
+        return (len(_MODEL_CONSTANT_BASE_PRIORITY), base)
+
+
+def _canonical_model_values_by_base(
+    candidates: list[tuple[str, str, Any, str]],
+) -> dict[tuple[str, str], tuple[str, str]]:
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for _nid, field, value, category in candidates:
+        if category != "model" or not isinstance(value, str):
+            continue
+        base = _constant_name_for_model_value(field, value)
+        if base is None:
+            base = _constant_name_base_for_category(category, field)
+        grouped.setdefault(_model_basename(value).lower(), []).append((base, value))
+
+    canonical_by_raw: dict[tuple[str, str], tuple[str, str]] = {}
+    for records in grouped.values():
+        values = [value for _base, value in records]
+        unique_values = set(values)
+        canonical = values[0] if len(unique_values) == 1 else _canonical_prefixed_model_value(values)
+        if canonical is None:
+            continue
+        chosen_base = min({base for base, _value in records}, key=_model_constant_base_priority)
+        for base, value in records:
+            canonical_by_raw[(base, value)] = (chosen_base, canonical)
+    return canonical_by_raw
+
+
 def _constant_name_for_model_value(field: str, value: str) -> str | None:
     """Return a semantic model constant name from the field and filename hints."""
     field_base = _constant_name_base_for_category("model", field)
     lower = str(value).lower()
+    path_leaf = _model_basename(value)
+    leaf_lower = path_leaf.lower()
     format_suffix = "_GGUF" if lower.endswith(".gguf") else ""
 
     if "audio_vae" in lower:
         return f"AUDIO_VAE_NAME{format_suffix}"
     if "video_vae" in lower:
         return f"VIDEO_VAE_NAME{format_suffix}"
-    if "taesd" in lower or "vae_approx" in lower:
+    if "taesd" in lower or "vae_approx" in lower or leaf_lower.startswith("tae"):
         return f"VAE_TAESD_NAME{format_suffix}"
-    if "text_projection" in lower:
-        prefix = "CLIP" if field_base.startswith("CLIP") else field_base.removesuffix("_NAME")
-        return f"{prefix}_PROJECTION_NAME{format_suffix}"
+    if "text_projection" in leaf_lower:
+        return f"CLIP_PROJECTION_NAME{format_suffix}"
+
+    family_name = _model_family_constant_name(value, format_suffix)
+    if family_name is not None:
+        return family_name
 
     if field_base != "MODEL_NAME":
         return f"{field_base}{format_suffix}"
 
-    path_leaf = re.split(r"[\\/]", str(value))[-1]
     leaf_slug = _constant_name_for_string_value(path_leaf)
     if "clip" in lower or "text_encoder" in lower or "gemma" in lower or "t5" in lower:
         return f"CLIP_NAME{format_suffix}"
@@ -525,6 +687,7 @@ def _hoist_constants(
             translated = _translate_widget_for_key(key, input_aliases, cls)
             if translated is None:
                 continue
+            value = _resolve_graph_field_get_string(value, workflow_nodes)
             category = _classify_value_category(translated, value, cls)
             if category is not None:
                 candidates.append((nid, translated, value, category))
@@ -536,6 +699,7 @@ def _hoist_constants(
             translated = _translate_widget_for_key(key, input_aliases, cls)
             if translated is None:
                 continue
+            value = _resolve_graph_field_get_string(value, workflow_nodes)
             category = _classify_value_category(translated, value, cls)
             if category is not None:
                 candidates.append((nid, translated, value, category))
@@ -557,6 +721,7 @@ def _hoist_constants(
 
     # Value dedup: same (base, category, value string) -> same constant name
     value_to_name: dict[tuple[str, str, str], str] = {}
+    canonical_model_values = _canonical_model_values_by_base(candidates)
 
     for nid, field, value, category in candidates:
         count_key = (category, str(value))
@@ -576,7 +741,15 @@ def _hoist_constants(
             base = _constant_name_base_for_category(category, field)
         if base is None:
             base = _constant_name_base_for_category(category, field)
-        value_key = (base, category, str(value))
+        emit_value = value
+        value_key_value = str(value)
+        if category == "model" and isinstance(value, str):
+            canonical_model = canonical_model_values.get((base, value))
+            if canonical_model is not None:
+                base, canonical_model_value = canonical_model
+                emit_value = canonical_model_value
+                value_key_value = _model_basename(value).lower()
+        value_key = (base, category, value_key_value)
         if value_key in value_to_name:
             name = value_to_name[value_key]
         else:
@@ -584,7 +757,7 @@ def _hoist_constants(
             cnt = category_counters[base]
             name = base if cnt == 1 else f"{base}_{cnt}"
             value_to_name[value_key] = name
-            constant_defs[name] = (value, category)
+            constant_defs[name] = (emit_value, category)
 
         constant_map[(nid, field)] = name
 
@@ -601,8 +774,11 @@ def _hoist_constants(
             translated = _translate_widget_for_key(key, input_aliases, cls)
             if translated is None:
                 continue
+            value = _resolve_graph_field_get_string(value, workflow_nodes)
             # Only track string values that are not already categorized
             if not isinstance(value, str):
+                continue
+            if not value:
                 continue
             cat = _classify_value_category(translated, value, cls)
             if cat is not None:
@@ -707,9 +883,13 @@ def _public_input_specs(
         field_values = _resolved_field_values(node)
         if binding.field not in field_values:
             return
+        default_value = _resolve_graph_field_get_string(
+            field_values[binding.field],
+            workflow_nodes,
+        )
         default_expr = constant_map.get((str(binding.node_id), binding.field))
         if default_expr is None:
-            default_expr = _format_value(field_values[binding.field])
+            default_expr = _format_value(default_value)
         node_var = _first_output_var(output_var_names.get(str(binding.node_id))) or var_names.get(str(binding.node_id))
         node_ref = node_var if node_var is not None else repr(str(binding.node_id))
         metadata_node_ref = repr(str(binding.node_id))
@@ -1732,13 +1912,17 @@ def _infer_public_input_bindings(
         title = _node_title(node).lower()
 
         if class_type in {"CLIPTextEncode", "CLIPTextEncodeFlux", "CLIPTextEncodeSD3", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEdit"}:
-            value = fields.get("text")
+            value = _resolve_graph_field_get_string(fields.get("text"), workflow_nodes)
             if isinstance(value, str):
                 if "negative" in title:
                     negative_candidate = negative_candidate or (str(node_id), "text")
                 elif value.strip():
                     prompt_candidate = prompt_candidate or (str(node_id), "text")
-        if class_type in {"PrimitiveStringMultiline", "PrimitiveString"} and isinstance(fields.get("value"), str):
+        primitive_value = _resolve_graph_field_get_string(fields.get("value"), workflow_nodes)
+        if class_type in {"PrimitiveStringMultiline", "PrimitiveString"} and isinstance(
+            primitive_value,
+            str,
+        ) and primitive_value.strip():
             prompt_candidate = prompt_candidate or (str(node_id), "value")
         if class_type == "LoadImage" and "image" in fields:
             add("image", str(node_id), "image", type="IMAGE", required=True, aliases=("input_image",), media_semantics="image")
@@ -2996,6 +3180,7 @@ def _node_kwargs(
         translated = _translate_widget(key, value)
         if translated is None:
             continue
+        value = _resolve_graph_field_get_string(value, workflow_nodes)
         if translated != key and translated not in raw_inputs and translated not in static_inputs and translated not in incoming:
             static_inputs[translated] = value
         else:
