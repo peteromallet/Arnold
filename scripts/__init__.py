@@ -1,1 +1,1 @@
-"""Make repository scripts importable during tests."""
+"""Repository-local maintenance scripts package (importable during tests)."""

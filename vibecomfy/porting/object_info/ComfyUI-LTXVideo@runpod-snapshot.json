@@ -1,0 +1,6577 @@
+{
+  "APGGuider": {
+    "category": "lightricks/LTXV",
+    "description": "\n    The APG Guider implements Adaptive Projected Guidance (APG).\n    Reference: https://arxiv.org/abs/2410.02416.\n    ",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 APG Guider",
+    "function": "APGGuider",
+    "input_order": {
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "cfg_scale",
+        "eta",
+        "norm_threshold",
+        "momentum_coefficient"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "positive",
+      "negative",
+      "cfg_scale",
+      "eta",
+      "norm_threshold",
+      "momentum_coefficient"
+    ],
+    "inputs": {
+      "required": {
+        "cfg_scale": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "eta": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "momentum_coefficient": [
+          "FLOAT",
+          {
+            "default": -0.9,
+            "max": 3.0,
+            "min": -3.0,
+            "step": 0.01
+          }
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "norm_threshold": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "positive": [
+          "CONDITIONING"
+        ]
+      }
+    },
+    "name": "APGGuider",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "cfg_scale",
+      "eta",
+      "norm_threshold",
+      "momentum_coefficient"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER",
+        "type": "GUIDER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.stg"
+  },
+  "DynamicConditioning": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Dynamic Conditioning",
+    "function": "DynamicConditioning",
+    "input_order": {
+      "required": [
+        "model",
+        "power",
+        "only_first_frame"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "power",
+      "only_first_frame"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "only_first_frame": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "power": [
+          "FLOAT",
+          {
+            "default": 1.3,
+            "max": 2,
+            "min": 1,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "DynamicConditioning",
+    "object_info_widget_order": [
+      null,
+      "power",
+      "only_first_frame"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.dynamic_conditioning"
+  },
+  "GemmaAPITextEncode": {
+    "category": "api node/text/Lightricks",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Gemma API Text Encode",
+    "function": "GemmaAPITextEncode",
+    "input_order": {
+      "required": [
+        "api_key",
+        "prompt",
+        "enhance_prompt",
+        "ckpt_name"
+      ]
+    },
+    "input_order_all": [
+      "api_key",
+      "prompt",
+      "enhance_prompt",
+      "ckpt_name"
+    ],
+    "inputs": {
+      "required": {
+        "api_key": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": false,
+            "placeholder": "API_KEY",
+            "tooltip": "API key for authentication"
+          }
+        ],
+        "ckpt_name": [
+          [
+            "ltx-2.3-22b-dev.safetensors",
+            "ltx-2.3-22b-distilled.safetensors",
+            "ltx-2.3-22b-distilled-fp8.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "LTX23_audio_vae_bf16.safetensors"
+          ],
+          {
+            "tooltip": "The name of the checkpoint (model) to load."
+          }
+        ],
+        "enhance_prompt": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "When enabled, the prompt is enhanced using Gemma 3 before encoding"
+          }
+        ],
+        "prompt": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true,
+            "tooltip": "Text prompt to encode"
+          }
+        ]
+      }
+    },
+    "name": "GemmaAPITextEncode",
+    "object_info_widget_order": [
+      "api_key",
+      "prompt",
+      "enhance_prompt",
+      "ckpt_name"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "conditioning",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.gemma_api_conditioning"
+  },
+  "GuiderParameters": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Guider Parameters",
+    "function": "GuiderParameters",
+    "input_order": {
+      "optional": [
+        "parameters"
+      ],
+      "required": [
+        "modality",
+        "cfg",
+        "stg",
+        "perturb_attn",
+        "rescale",
+        "modality_scale",
+        "skip_step",
+        "cross_attn"
+      ]
+    },
+    "input_order_all": [
+      "modality",
+      "cfg",
+      "stg",
+      "perturb_attn",
+      "rescale",
+      "modality_scale",
+      "skip_step",
+      "cross_attn",
+      "parameters"
+    ],
+    "inputs": {
+      "optional": {
+        "parameters": [
+          "GUIDER_PARAMETERS",
+          {
+            "default": null
+          }
+        ]
+      },
+      "required": {
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.1
+          }
+        ],
+        "cross_attn": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "modality": [
+          [
+            "VIDEO",
+            "AUDIO"
+          ],
+          {
+            "default": "VIDEO"
+          }
+        ],
+        "modality_scale": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "perturb_attn": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "rescale": [
+          "FLOAT",
+          {
+            "default": 0.7,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "skip_step": [
+          "INT",
+          {
+            "default": 0,
+            "max": 100,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "stg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "GuiderParameters",
+    "object_info_widget_order": [
+      "modality",
+      "cfg",
+      "stg",
+      "perturb_attn",
+      "rescale",
+      "modality_scale",
+      "skip_step",
+      "cross_attn",
+      "parameters"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER_PARAMETERS",
+        "type": "GUIDER_PARAMETERS"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.guiders.parameters"
+  },
+  "ImageToCPU": {
+    "category": "utility",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Image to CPU",
+    "function": "ImageToCPU",
+    "input_order": {
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image"
+    ],
+    "inputs": {
+      "required": {
+        "image": [
+          "IMAGE"
+        ]
+      }
+    },
+    "name": "ImageToCPU",
+    "object_info_widget_order": [
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.utiltily_nodes"
+  },
+  "LTXAddVideoICLoRAGuide": {
+    "category": "Lightricks/IC-LoRA",
+    "description": "Adds one or more conditioning frames starting at the specified frame index. Supports both single images and multi-frame videos. The latent_downscale_factor resizes input to a fraction of the target size (1 = original, 2 = half, 3 = third, etc.) for IC-LoRA on small grids.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Add Video IC-LoRA Guide",
+    "function": "LTXAddVideoICLoRAGuide",
+    "input_order": {
+      "required": [
+        "positive",
+        "negative",
+        "vae",
+        "latent",
+        "image",
+        "frame_idx",
+        "strength",
+        "latent_downscale_factor",
+        "crop",
+        "use_tiled_encode",
+        "tile_size",
+        "tile_overlap"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "vae",
+      "latent",
+      "image",
+      "frame_idx",
+      "strength",
+      "latent_downscale_factor",
+      "crop",
+      "use_tiled_encode",
+      "tile_size",
+      "tile_overlap"
+    ],
+    "inputs": {
+      "required": {
+        "crop": [
+          "COMBO",
+          {
+            "default": "disabled",
+            "multiselect": false,
+            "options": [
+              "disabled",
+              "center"
+            ],
+            "tooltip": "Crop mode when resizing. 'center' crops to fit, 'disabled' stretches to fit."
+          }
+        ],
+        "frame_idx": [
+          "INT",
+          {
+            "default": 0,
+            "max": 9999,
+            "min": -9999,
+            "tooltip": "Frame index to start the conditioning at. For single-frame videos, any frame_idx value is acceptable. For videos, frame_idx must be 1 modulo 8, otherwise it will be rounded down to the nearest 1 modulo 8. Negative values are counted from the end of the video."
+          }
+        ],
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "latent": [
+          "LATENT",
+          {
+            "tooltip": "Video-only latent to condition. Must be a 5D video latent (batch, channels, frames, height, width)."
+          }
+        ],
+        "latent_downscale_factor": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 1.0,
+            "step": 1.0,
+            "tooltip": "For IC-LoRA on small grid. 1 means original size, 2 means half size, 3 means third, etc."
+          }
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "tile_overlap": [
+          "INT",
+          {
+            "default": 64,
+            "max": 256,
+            "min": 16,
+            "step": 16,
+            "tooltip": "Overlap between tiles for tiled encoding. Only used when use_tiled_encode is enabled."
+          }
+        ],
+        "tile_size": [
+          "INT",
+          {
+            "default": 256,
+            "max": 512,
+            "min": 64,
+            "step": 32,
+            "tooltip": "Spatial tile size for tiled encoding. Only used when use_tiled_encode is enabled."
+          }
+        ],
+        "use_tiled_encode": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Enable tiled VAE encoding for large resolutions/long videos to reduce memory usage."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ]
+      }
+    },
+    "name": "LTXAddVideoICLoRAGuide",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "frame_idx",
+      "strength",
+      "latent_downscale_factor",
+      "crop",
+      "use_tiled_encode",
+      "tile_size",
+      "tile_overlap"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.iclora"
+  },
+  "LTXAddVideoICLoRAGuideAdvanced": {
+    "category": "Lightricks/IC-LoRA",
+    "description": "Adds IC-LoRA guide conditioning with per-guide attention strength control. Same as LTXAddVideoICLoRAGuide, but allows controlling how strongly this guide influences generation via self-attention, optionally with a spatial mask.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Add Video IC-LoRA Guide Advanced",
+    "function": "LTXAddVideoICLoRAGuideAdvanced",
+    "input_order": {
+      "optional": [
+        "attention_mask"
+      ],
+      "required": [
+        "positive",
+        "negative",
+        "vae",
+        "latent",
+        "image",
+        "frame_idx",
+        "strength",
+        "latent_downscale_factor",
+        "crop",
+        "use_tiled_encode",
+        "tile_size",
+        "tile_overlap",
+        "attention_strength"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "vae",
+      "latent",
+      "image",
+      "frame_idx",
+      "strength",
+      "latent_downscale_factor",
+      "crop",
+      "use_tiled_encode",
+      "tile_size",
+      "tile_overlap",
+      "attention_strength",
+      "attention_mask"
+    ],
+    "inputs": {
+      "optional": {
+        "attention_mask": [
+          "MASK",
+          {
+            "tooltip": "Optional pixel-space spatial mask. Shape (F, H, W) or (H, W). Values in [0, 1]. Controls per-region conditioning influence. Multiplied by attention_strength."
+          }
+        ]
+      },
+      "required": {
+        "attention_strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Controls how strongly this guide influences generation via self-attention. 1.0 = full conditioning (default), 0.0 = ignore. When an attention_mask is also provided, this multiplies the mask values."
+          }
+        ],
+        "crop": [
+          "COMBO",
+          {
+            "default": "disabled",
+            "multiselect": false,
+            "options": [
+              "disabled",
+              "center"
+            ]
+          }
+        ],
+        "frame_idx": [
+          "INT",
+          {
+            "default": 0,
+            "max": 9999,
+            "min": -9999,
+            "tooltip": "Frame index to start the conditioning at. The value is rounded to the nearest frame and wrapped modulo the number of video frames. Negative values are counted from the end of the video before wrapping."
+          }
+        ],
+        "image": [
+          "IMAGE",
+          {}
+        ],
+        "latent": [
+          "LATENT",
+          {
+            "tooltip": "Video-only latent to condition. Must be a 5D video latent."
+          }
+        ],
+        "latent_downscale_factor": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 1.0,
+            "step": 1.0,
+            "tooltip": "For IC-LoRA on small grid. 1 = original size, 2 = half, etc."
+          }
+        ],
+        "negative": [
+          "CONDITIONING",
+          {}
+        ],
+        "positive": [
+          "CONDITIONING",
+          {}
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "tile_overlap": [
+          "INT",
+          {
+            "default": 64,
+            "max": 256,
+            "min": 16,
+            "step": 16
+          }
+        ],
+        "tile_size": [
+          "INT",
+          {
+            "default": 256,
+            "max": 512,
+            "min": 64,
+            "step": 32
+          }
+        ],
+        "use_tiled_encode": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "vae": [
+          "VAE",
+          {}
+        ]
+      }
+    },
+    "name": "LTXAddVideoICLoRAGuideAdvanced",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "frame_idx",
+      "strength",
+      "latent_downscale_factor",
+      "crop",
+      "use_tiled_encode",
+      "tile_size",
+      "tile_overlap",
+      "attention_strength",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.iclora"
+  },
+  "LTXAttentioOverride": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Attn Block Override",
+    "function": "LTXAttentioOverride",
+    "input_order": {
+      "required": [
+        "blocks"
+      ]
+    },
+    "input_order_all": [
+      "blocks"
+    ],
+    "inputs": {
+      "required": {
+        "blocks": [
+          "STRING",
+          {
+            "multiline": true
+          }
+        ]
+      }
+    },
+    "name": "LTXAttentioOverride",
+    "object_info_widget_order": [
+      "blocks"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LTX_BLOCKS",
+        "type": "LTX_BLOCKS"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.attn_bank_nodes"
+  },
+  "LTXAttentionBank": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Attention Bank",
+    "function": "LTXAttentionBank",
+    "input_order": {
+      "required": [
+        "save_steps",
+        "blocks"
+      ]
+    },
+    "input_order_all": [
+      "save_steps",
+      "blocks"
+    ],
+    "inputs": {
+      "required": {
+        "blocks": [
+          "STRING",
+          {
+            "multiline": true
+          }
+        ],
+        "save_steps": [
+          "INT",
+          {
+            "default": 0,
+            "max": 1000,
+            "min": 0,
+            "step": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXAttentionBank",
+    "object_info_widget_order": [
+      "save_steps",
+      "blocks"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "ATTN_BANK",
+        "type": "ATTN_BANK"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.attn_bank_nodes"
+  },
+  "LTXAttnOverride": {
+    "category": "ltxtricks/attn",
+    "description": "",
+    "display_name": "LTX Attention Override",
+    "function": "LTXAttnOverride",
+    "input_order": {
+      "required": [
+        "layers"
+      ]
+    },
+    "input_order_all": [
+      "layers"
+    ],
+    "inputs": {
+      "required": {
+        "layers": [
+          "STRING",
+          {
+            "multiline": true
+          }
+        ]
+      }
+    },
+    "name": "LTXAttnOverride",
+    "object_info_widget_order": [
+      "layers"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "ATTN_OVERRIDE",
+        "type": "ATTN_OVERRIDE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.attn_override_node"
+  },
+  "LTXFetaEnhance": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Feta Enhance",
+    "function": "LTXFetaEnhance",
+    "input_order": {
+      "optional": [
+        "attn_override"
+      ],
+      "required": [
+        "model",
+        "feta_weight"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "feta_weight",
+      "attn_override"
+    ],
+    "inputs": {
+      "optional": {
+        "attn_override": [
+          "ATTN_OVERRIDE"
+        ]
+      },
+      "required": {
+        "feta_weight": [
+          "FLOAT",
+          {
+            "default": 4,
+            "max": 100.0,
+            "min": -100.0,
+            "step": 0.01
+          }
+        ],
+        "model": [
+          "MODEL"
+        ]
+      }
+    },
+    "name": "LTXFetaEnhance",
+    "object_info_widget_order": [
+      null,
+      "feta_weight",
+      "attn_override"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.ltx_feta_enhance_node"
+  },
+  "LTXFloatToInt": {
+    "category": "math/conversion",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Float To Int",
+    "function": "LTXFloatToInt",
+    "input_order": {
+      "required": [
+        "a"
+      ]
+    },
+    "input_order_all": [
+      "a"
+    ],
+    "inputs": {
+      "required": {
+        "a": [
+          "FLOAT",
+          {
+            "default": 0.0
+          }
+        ]
+      }
+    },
+    "name": "LTXFloatToInt",
+    "object_info_widget_order": [
+      "a"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "INT",
+        "type": "INT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.utiltily_nodes"
+  },
+  "LTXFlowEditCFGGuider": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Flow Edit CFG Guider",
+    "function": "LTXFlowEditCFGGuider",
+    "input_order": {
+      "required": [
+        "model",
+        "source_pos",
+        "source_neg",
+        "target_pos",
+        "target_neg",
+        "source_cfg",
+        "target_cfg"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "source_pos",
+      "source_neg",
+      "target_pos",
+      "target_neg",
+      "source_cfg",
+      "target_cfg"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "source_cfg": [
+          "FLOAT",
+          {
+            "default": 2,
+            "max": 18446744073709551615,
+            "min": 0,
+            "step": 0.01
+          }
+        ],
+        "source_neg": [
+          "CONDITIONING"
+        ],
+        "source_pos": [
+          "CONDITIONING"
+        ],
+        "target_cfg": [
+          "FLOAT",
+          {
+            "default": 4.5,
+            "max": 18446744073709551615,
+            "min": 0,
+            "step": 0.01
+          }
+        ],
+        "target_neg": [
+          "CONDITIONING"
+        ],
+        "target_pos": [
+          "CONDITIONING"
+        ]
+      }
+    },
+    "name": "LTXFlowEditCFGGuider",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "source_cfg",
+      "target_cfg"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER",
+        "type": "GUIDER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.ltx_flowedit_nodes"
+  },
+  "LTXFlowEditSampler": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Flow Edit Sampler",
+    "function": "LTXFlowEditSampler",
+    "input_order": {
+      "optional": [],
+      "required": [
+        "skip_steps",
+        "refine_steps",
+        "seed"
+      ]
+    },
+    "input_order_all": [
+      "skip_steps",
+      "refine_steps",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {},
+      "required": {
+        "refine_steps": [
+          "INT",
+          {
+            "default": 0,
+            "max": 18446744073709551615,
+            "min": 0
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 18446744073709551615,
+            "min": 0
+          }
+        ],
+        "skip_steps": [
+          "INT",
+          {
+            "default": 4,
+            "max": 18446744073709551615,
+            "min": 0
+          }
+        ]
+      }
+    },
+    "name": "LTXFlowEditSampler",
+    "object_info_widget_order": [
+      "skip_steps",
+      "refine_steps",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "SAMPLER",
+        "type": "SAMPLER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.ltx_flowedit_nodes"
+  },
+  "LTXForwardModelSamplingPred": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Forward Model Pred",
+    "function": "LTXForwardModelSamplingPred",
+    "input_order": {
+      "required": [
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "model"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ]
+      }
+    },
+    "name": "LTXForwardModelSamplingPred",
+    "object_info_widget_order": [
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.ltx_inverse_model_pred_nodes"
+  },
+  "LTXICLoRALoaderModelOnly": {
+    "category": "Lightricks/IC-LoRA",
+    "description": "Loads a LoRA model and extracts the latent_downscale_factor from the safetensors metadata.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 IC-LoRA Loader Model Only",
+    "function": "LTXICLoRALoaderModelOnly",
+    "input_order": {
+      "required": [
+        "model",
+        "lora_name",
+        "strength_model"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "lora_name",
+      "strength_model"
+    ],
+    "inputs": {
+      "required": {
+        "lora_name": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+              "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+              "WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+              "WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
+            ]
+          }
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ],
+        "strength_model": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": -100.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "LTXICLoRALoaderModelOnly",
+    "object_info_widget_order": [
+      null,
+      "lora_name",
+      "strength_model"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "model",
+        "type": "MODEL"
+      },
+      {
+        "is_list": false,
+        "name": "latent_downscale_factor",
+        "type": "FLOAT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.iclora"
+  },
+  "LTXPerturbedAttention": {
+    "category": "ltxtricks/attn",
+    "description": "",
+    "display_name": "LTX Apply Perturbed Attention",
+    "function": "LTXPerturbedAttention",
+    "input_order": {
+      "optional": [
+        "attn_override"
+      ],
+      "required": [
+        "model",
+        "scale",
+        "rescale",
+        "cfg"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "scale",
+      "rescale",
+      "cfg",
+      "attn_override"
+    ],
+    "inputs": {
+      "optional": {
+        "attn_override": [
+          "ATTN_OVERRIDE"
+        ]
+      },
+      "required": {
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 3.0,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "rescale": [
+          "FLOAT",
+          {
+            "default": 0.5,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ],
+        "scale": [
+          "FLOAT",
+          {
+            "default": 2.0,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "LTXPerturbedAttention",
+    "object_info_widget_order": [
+      null,
+      "scale",
+      "rescale",
+      "cfg",
+      "attn_override"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.ltx_pag_node"
+  },
+  "LTXPrepareAttnInjections": {
+    "category": "fluxtapoz",
+    "description": "",
+    "display_name": "LTX Prepare Attn Injection",
+    "function": "LTXPrepareAttnInjections",
+    "input_order": {
+      "optional": [
+        "blocks"
+      ],
+      "required": [
+        "latent",
+        "attn_bank",
+        "query",
+        "key",
+        "value",
+        "inject_steps"
+      ]
+    },
+    "input_order_all": [
+      "latent",
+      "attn_bank",
+      "query",
+      "key",
+      "value",
+      "inject_steps",
+      "blocks"
+    ],
+    "inputs": {
+      "optional": {
+        "blocks": [
+          "LTX_BLOCKS"
+        ]
+      },
+      "required": {
+        "attn_bank": [
+          "ATTN_BANK"
+        ],
+        "inject_steps": [
+          "INT",
+          {
+            "default": 0,
+            "max": 1000,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "key": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "latent": [
+          "LATENT"
+        ],
+        "query": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "value": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      }
+    },
+    "name": "LTXPrepareAttnInjections",
+    "object_info_widget_order": [
+      null,
+      "attn_bank",
+      "query",
+      "key",
+      "value",
+      "inject_steps",
+      "blocks"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      },
+      {
+        "is_list": false,
+        "name": "ATTN_INJ",
+        "type": "ATTN_INJ"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.attn_bank_nodes"
+  },
+  "LTXQ8Patch": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXQ8Patch",
+    "function": "LTXQ8Patch",
+    "input_order": {
+      "required": [
+        "model",
+        "use_fp8_attention",
+        "quantization_preset",
+        "quantize_self_attn",
+        "quantize_cross_attn",
+        "quantize_ffn"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "use_fp8_attention",
+      "quantization_preset",
+      "quantize_self_attn",
+      "quantize_cross_attn",
+      "quantize_ffn"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "quantization_preset": [
+          [
+            "0.9.8",
+            "ltxv2",
+            "full_bf16",
+            "custom"
+          ],
+          {
+            "default": "0.9.8"
+          }
+        ],
+        "quantize_cross_attn": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Quantize Cross Attention Layer"
+          }
+        ],
+        "quantize_ffn": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Quantize Feed Forward Layer"
+          }
+        ],
+        "quantize_self_attn": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Quantize Self Attention Layer"
+          }
+        ],
+        "use_fp8_attention": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Use FP8 attention."
+          }
+        ]
+      }
+    },
+    "name": "LTXQ8Patch",
+    "object_info_widget_order": [
+      null,
+      "use_fp8_attention",
+      "quantization_preset",
+      "quantize_self_attn",
+      "quantize_cross_attn",
+      "quantize_ffn"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.q8_nodes"
+  },
+  "LTXRFForwardODESampler": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Rf-Inv Forward Sampler",
+    "function": "LTXRFForwardODESampler",
+    "input_order": {
+      "optional": [
+        "seed",
+        "attn_bank",
+        "order"
+      ],
+      "required": [
+        "gamma",
+        "start_step",
+        "end_step",
+        "gamma_trend"
+      ]
+    },
+    "input_order_all": [
+      "gamma",
+      "start_step",
+      "end_step",
+      "gamma_trend",
+      "seed",
+      "attn_bank",
+      "order"
+    ],
+    "inputs": {
+      "optional": {
+        "attn_bank": [
+          "ATTN_BANK"
+        ],
+        "order": [
+          [
+            "first",
+            "second"
+          ]
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 0,
+            "max": 18446744073709551615,
+            "min": 0
+          }
+        ]
+      },
+      "required": {
+        "end_step": [
+          "INT",
+          {
+            "default": 5,
+            "max": 1000,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "gamma": [
+          "FLOAT",
+          {
+            "default": 0.5,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "gamma_trend": [
+          [
+            "linear_decrease",
+            "linear_increase",
+            "constant"
+          ]
+        ],
+        "start_step": [
+          "INT",
+          {
+            "default": 0,
+            "max": 1000,
+            "min": 0,
+            "step": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXRFForwardODESampler",
+    "object_info_widget_order": [
+      "gamma",
+      "start_step",
+      "end_step",
+      "gamma_trend",
+      "seed",
+      "attn_bank",
+      "order"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "SAMPLER",
+        "type": "SAMPLER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.rectified_sampler_nodes"
+  },
+  "LTXRFReverseODESampler": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Rf-Inv Reverse Sampler",
+    "function": "LTXRFReverseODESampler",
+    "input_order": {
+      "optional": [
+        "eta_trend",
+        "attn_inj",
+        "order"
+      ],
+      "required": [
+        "model",
+        "latent_image",
+        "eta",
+        "start_step",
+        "end_step"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "latent_image",
+      "eta",
+      "start_step",
+      "end_step",
+      "eta_trend",
+      "attn_inj",
+      "order"
+    ],
+    "inputs": {
+      "optional": {
+        "attn_inj": [
+          "ATTN_INJ"
+        ],
+        "eta_trend": [
+          [
+            "linear_decrease",
+            "linear_increase",
+            "constant"
+          ]
+        ],
+        "order": [
+          [
+            "first",
+            "second"
+          ]
+        ]
+      },
+      "required": {
+        "end_step": [
+          "INT",
+          {
+            "default": 15,
+            "max": 1000,
+            "min": 0,
+            "step": 1
+          }
+        ],
+        "eta": [
+          "FLOAT",
+          {
+            "default": 0.8,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "latent_image": [
+          "LATENT"
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "start_step": [
+          "INT",
+          {
+            "default": 0,
+            "max": 1000,
+            "min": 0,
+            "step": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXRFReverseODESampler",
+    "object_info_widget_order": [
+      null,
+      null,
+      "eta",
+      "start_step",
+      "end_step",
+      "eta_trend",
+      "attn_inj",
+      "order"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "SAMPLER",
+        "type": "SAMPLER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.rectified_sampler_nodes"
+  },
+  "LTXReverseModelSamplingPred": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "LTX Reverse Model Pred",
+    "function": "LTXReverseModelSamplingPred",
+    "input_order": {
+      "required": [
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "model"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ]
+      }
+    },
+    "name": "LTXReverseModelSamplingPred",
+    "object_info_widget_order": [
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.ltx_inverse_model_pred_nodes"
+  },
+  "LTXVAdainLatent": {
+    "category": "Lightricks/latents",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Adain Latent",
+    "function": "LTXVAdainLatent",
+    "input_order": {
+      "optional": [
+        "per_frame"
+      ],
+      "required": [
+        "latents",
+        "reference",
+        "factor"
+      ]
+    },
+    "input_order_all": [
+      "latents",
+      "reference",
+      "factor",
+      "per_frame"
+    ],
+    "inputs": {
+      "optional": {
+        "per_frame": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      },
+      "required": {
+        "factor": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": -10.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ],
+        "latents": [
+          "LATENT"
+        ],
+        "reference": [
+          "LATENT"
+        ]
+      }
+    },
+    "name": "LTXVAdainLatent",
+    "object_info_widget_order": [
+      null,
+      null,
+      "factor",
+      "per_frame"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latent_norm"
+  },
+  "LTXVAddGuideAdvanced": {
+    "category": "conditioning/video_models",
+    "description": "Adds a conditioning frame or a video at a specific frame index. This node is used to add a keyframe or a video segment which should appear in the generated video at a specified index. It resizes the image to the correct size and applies preprocessing to it.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Add Guide Advanced",
+    "function": "LTXVAddGuideAdvanced",
+    "input_order": {
+      "required": [
+        "positive",
+        "negative",
+        "vae",
+        "latent",
+        "image",
+        "frame_idx",
+        "strength",
+        "crf",
+        "blur_radius",
+        "interpolation",
+        "crop"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "vae",
+      "latent",
+      "image",
+      "frame_idx",
+      "strength",
+      "crf",
+      "blur_radius",
+      "interpolation",
+      "crop"
+    ],
+    "inputs": {
+      "required": {
+        "blur_radius": [
+          "INT",
+          {
+            "default": 0,
+            "max": 7,
+            "min": 0,
+            "step": 1,
+            "tooltip": "Blur kernel radius size. Higher values mean more motion, lower values mean higher quality."
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "default": 29,
+            "max": 51,
+            "min": 0,
+            "step": 1,
+            "tooltip": "CRF value for the video. Higher values mean more motion, lower values mean higher quality."
+          }
+        ],
+        "crop": [
+          [
+            "center",
+            "disabled"
+          ],
+          {
+            "default": "disabled"
+          }
+        ],
+        "frame_idx": [
+          "INT",
+          {
+            "default": 0,
+            "max": 9999,
+            "min": -9999,
+            "tooltip": "Frame index to start the conditioning at. For single-frame images or videos with 1-8 frames, any frame_idx value is acceptable. For videos with 9+ frames, frame_idx must be divisible by 8, otherwise it will be rounded down to the nearest multiple of 8. Negative values are counted from the end of the video."
+          }
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "interpolation": [
+          [
+            "lanczos",
+            "bislerp",
+            "nearest",
+            "bilinear",
+            "bicubic",
+            "area",
+            "nearest-exact"
+          ],
+          {
+            "default": "lanczos"
+          }
+        ],
+        "latent": [
+          "LATENT"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "tooltip": "Strength of the conditioning. Higher values will make the conditioning more exact."
+          }
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "LTXVAddGuideAdvanced",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "frame_idx",
+      "strength",
+      "crf",
+      "blur_radius",
+      "interpolation",
+      "crop"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.guide"
+  },
+  "LTXVAddGuideAdvancedAttention": {
+    "category": "conditioning/video_models",
+    "description": "Adds a conditioning frame/video at a specific frame index with per-guide attention strength control. Same preprocessing as LTXVAddGuideAdvanced, plus attention_strength and optional spatial attention_mask.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Add Guide Advanced Attention",
+    "function": "LTXVAddGuideAdvancedAttention",
+    "input_order": {
+      "optional": [
+        "attention_mask"
+      ],
+      "required": [
+        "positive",
+        "negative",
+        "vae",
+        "latent",
+        "image",
+        "frame_idx",
+        "strength",
+        "crf",
+        "blur_radius",
+        "interpolation",
+        "crop",
+        "attention_strength"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "vae",
+      "latent",
+      "image",
+      "frame_idx",
+      "strength",
+      "crf",
+      "blur_radius",
+      "interpolation",
+      "crop",
+      "attention_strength",
+      "attention_mask"
+    ],
+    "inputs": {
+      "optional": {
+        "attention_mask": [
+          "MASK",
+          {
+            "tooltip": "Optional pixel-space spatial mask. Shape (F, H, W) or (H, W). Values in [0, 1]. Controls per-region conditioning influence. Multiplied by attention_strength."
+          }
+        ]
+      },
+      "required": {
+        "attention_strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Controls how strongly this guide influences generation via self-attention. 1.0 = full conditioning, 0.0 = ignore."
+          }
+        ],
+        "blur_radius": [
+          "INT",
+          {
+            "default": 0,
+            "max": 7,
+            "min": 0,
+            "step": 1,
+            "tooltip": "Blur kernel radius. Higher = more motion."
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "default": 29,
+            "max": 51,
+            "min": 0,
+            "step": 1,
+            "tooltip": "CRF value. Higher = more motion, lower = higher quality."
+          }
+        ],
+        "crop": [
+          [
+            "center",
+            "disabled"
+          ],
+          {
+            "default": "disabled"
+          }
+        ],
+        "frame_idx": [
+          "INT",
+          {
+            "default": 0,
+            "max": 9999,
+            "min": -9999,
+            "tooltip": "Frame index to start the conditioning at. Negative values are counted from the end of the video."
+          }
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "interpolation": [
+          [
+            "lanczos",
+            "bislerp",
+            "nearest",
+            "bilinear",
+            "bicubic",
+            "area",
+            "nearest-exact"
+          ],
+          {
+            "default": "lanczos"
+          }
+        ],
+        "latent": [
+          "LATENT"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "tooltip": "Strength of the conditioning. Higher values make it more exact."
+          }
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "LTXVAddGuideAdvancedAttention",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "frame_idx",
+      "strength",
+      "crf",
+      "blur_radius",
+      "interpolation",
+      "crop",
+      "attention_strength",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.guide"
+  },
+  "LTXVAddLatentGuide": {
+    "category": "ltxtricks",
+    "description": "Adds a keyframe or a video segment at a specific frame index.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Add Latent Guide",
+    "function": "LTXVAddLatentGuide",
+    "input_order": {
+      "required": [
+        "vae",
+        "positive",
+        "negative",
+        "latent",
+        "guiding_latent",
+        "latent_idx",
+        "strength"
+      ]
+    },
+    "input_order_all": [
+      "vae",
+      "positive",
+      "negative",
+      "latent",
+      "guiding_latent",
+      "latent_idx",
+      "strength"
+    ],
+    "inputs": {
+      "required": {
+        "guiding_latent": [
+          "LATENT"
+        ],
+        "latent": [
+          "LATENT"
+        ],
+        "latent_idx": [
+          "INT",
+          {
+            "default": 0,
+            "max": 9999,
+            "min": -9999,
+            "step": 1,
+            "tooltip": "Latent index to start the conditioning at. Can be negative toindicate that the conditioning is on the frames before the latent."
+          }
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0
+          }
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "LTXVAddLatentGuide",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      "latent_idx",
+      "strength"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVAddLatents": {
+    "category": "latent/video",
+    "description": "Concatenates two video latents along the frames dimension. latents1 and latents2 must have the same dimensions except for the frames dimension.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Add Latents",
+    "function": "LTXVAddLatents",
+    "input_order": {
+      "required": [
+        "latents1",
+        "latents2"
+      ]
+    },
+    "input_order_all": [
+      "latents1",
+      "latents2"
+    ],
+    "inputs": {
+      "required": {
+        "latents1": [
+          "LATENT"
+        ],
+        "latents2": [
+          "LATENT"
+        ]
+      }
+    },
+    "name": "LTXVAddLatents",
+    "object_info_widget_order": [
+      null,
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVApplySTG": {
+    "category": "lightricks/LTXV",
+    "description": "Defines the blocks to apply the STG to.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Apply STG",
+    "function": "LTXVApplySTG",
+    "input_order": {
+      "required": [
+        "model",
+        "block_indices"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "block_indices"
+    ],
+    "inputs": {
+      "required": {
+        "block_indices": [
+          "STRING",
+          {
+            "default": "14, 19",
+            "tooltip": "Comma-separated indices of the blocks to apply the STG to."
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The model to apply the STG to."
+          }
+        ]
+      }
+    },
+    "name": "LTXVApplySTG",
+    "object_info_widget_order": [
+      null,
+      "block_indices"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "model",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.stg"
+  },
+  "LTXVBaseSampler": {
+    "category": "sampling",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Base Sampler",
+    "function": "LTXVBaseSampler",
+    "input_order": {
+      "optional": [
+        "optional_cond_images",
+        "optional_cond_indices",
+        "strength",
+        "crop",
+        "crf",
+        "blur"
+      ],
+      "required": [
+        "model",
+        "vae",
+        "width",
+        "height",
+        "num_frames",
+        "guider",
+        "sampler",
+        "sigmas",
+        "noise"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "vae",
+      "width",
+      "height",
+      "num_frames",
+      "guider",
+      "sampler",
+      "sigmas",
+      "noise",
+      "optional_cond_images",
+      "optional_cond_indices",
+      "strength",
+      "crop",
+      "crf",
+      "blur"
+    ],
+    "inputs": {
+      "optional": {
+        "blur": [
+          "INT",
+          {
+            "default": 0,
+            "max": 10,
+            "min": 0,
+            "tooltip": "The blur value to use for preprocessing the images."
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "default": 35,
+            "max": 100,
+            "min": 0,
+            "tooltip": "The CRF value to use for preprocessing the images."
+          }
+        ],
+        "crop": [
+          [
+            "center",
+            "disabled"
+          ],
+          {
+            "default": "disabled",
+            "tooltip": "The crop mode to use for the images."
+          }
+        ],
+        "optional_cond_images": [
+          "IMAGE",
+          {
+            "tooltip": "The images to use for conditioning the sampling."
+          }
+        ],
+        "optional_cond_indices": [
+          "STRING",
+          {
+            "tooltip": "The indices of the images to use for conditioning the sampling."
+          }
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 1,
+            "min": 0,
+            "tooltip": "The strength of the conditioning on the images."
+          }
+        ]
+      },
+      "required": {
+        "guider": [
+          "GUIDER",
+          {
+            "tooltip": "The guider to use, must be a STGGuiderAdvanced."
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 64,
+            "step": 32
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The diffusion model to use."
+          }
+        ],
+        "noise": [
+          "NOISE",
+          {
+            "tooltip": "The noise to use for the sampling."
+          }
+        ],
+        "num_frames": [
+          "INT",
+          {
+            "default": 97,
+            "max": 16384,
+            "min": 1,
+            "step": 8
+          }
+        ],
+        "sampler": [
+          "SAMPLER",
+          {
+            "tooltip": "The sampler to use."
+          }
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {
+            "tooltip": "The sigmas to use."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE to use."
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 768,
+            "max": 16384,
+            "min": 64,
+            "step": 32
+          }
+        ]
+      }
+    },
+    "name": "LTXVBaseSampler",
+    "object_info_widget_order": [
+      null,
+      null,
+      "width",
+      "height",
+      "num_frames",
+      "guider",
+      "sampler",
+      "sigmas",
+      "noise",
+      null,
+      "optional_cond_indices",
+      "strength",
+      "crop",
+      "crf",
+      "blur"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "denoised",
+        "type": "LATENT"
+      },
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.easy_samplers"
+  },
+  "LTXVDilateLatent": {
+    "category": "latent/video",
+    "description": "Dilates a latent by a grid size.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Dilate Latent",
+    "function": "LTXVDilateLatent",
+    "input_order": {
+      "required": [
+        "latent",
+        "horizontal_scale",
+        "vertical_scale"
+      ]
+    },
+    "input_order_all": [
+      "latent",
+      "horizontal_scale",
+      "vertical_scale"
+    ],
+    "inputs": {
+      "required": {
+        "horizontal_scale": [
+          "INT",
+          {
+            "default": 1,
+            "max": 100,
+            "min": 1,
+            "step": 1
+          }
+        ],
+        "latent": [
+          "LATENT"
+        ],
+        "vertical_scale": [
+          "INT",
+          {
+            "default": 1,
+            "max": 100,
+            "min": 1,
+            "step": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXVDilateLatent",
+    "object_info_widget_order": [
+      null,
+      "horizontal_scale",
+      "vertical_scale"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVDilateVideoMask": {
+    "category": "Lightricks/mask_operations",
+    "description": "Dilates a video mask spatially and/or temporally using separable max-pooling and thresholds the result.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Dilate Video Mask",
+    "function": "LTXVDilateVideoMask",
+    "input_order": {
+      "optional": [
+        "mask",
+        "image_as_mask"
+      ],
+      "required": [
+        "spatial_radius",
+        "temporal_radius"
+      ]
+    },
+    "input_order_all": [
+      "spatial_radius",
+      "temporal_radius",
+      "mask",
+      "image_as_mask"
+    ],
+    "inputs": {
+      "optional": {
+        "image_as_mask": [
+          "IMAGE",
+          {
+            "tooltip": "Image to use as mask (channel-averaged). Either this or mask must be provided."
+          }
+        ],
+        "mask": [
+          "MASK",
+          {
+            "tooltip": "Video mask to dilate. Either this or image_as_mask must be provided."
+          }
+        ]
+      },
+      "required": {
+        "spatial_radius": [
+          "INT",
+          {
+            "default": 1,
+            "max": 30,
+            "min": 0,
+            "tooltip": "Half-size of the spatial dilation kernel. Kernel = 2*radius+1."
+          }
+        ],
+        "temporal_radius": [
+          "INT",
+          {
+            "default": 0,
+            "max": 10,
+            "min": 0,
+            "tooltip": "Half-size of the temporal dilation kernel. Kernel = 2*radius+1."
+          }
+        ]
+      }
+    },
+    "name": "LTXVDilateVideoMask",
+    "object_info_widget_order": [
+      "spatial_radius",
+      "temporal_radius",
+      null,
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "mask",
+        "type": "MASK"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.vanish_nodes"
+  },
+  "LTXVDrawTracks": {
+    "category": "Lightricks/motion_tracking",
+    "description": "GPU-accelerated sparse track renderer. Rasterises circles at high resolution and downscales with bilinear interpolation.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTX Draw Sparse Tracks",
+    "function": "LTXVDrawTracks",
+    "input_order": {
+      "required": [
+        "tracks",
+        "width",
+        "height"
+      ]
+    },
+    "input_order_all": [
+      "tracks",
+      "width",
+      "height"
+    ],
+    "inputs": {
+      "required": {
+        "height": [
+          "INT",
+          {
+            "default": 512,
+            "max": 8192,
+            "min": 8,
+            "step": 8,
+            "tooltip": "Output image height in pixels."
+          }
+        ],
+        "tracks": [
+          "STRING",
+          {
+            "multiline": true,
+            "tooltip": "JSON string of track coordinates (list of point lists with x/y keys)."
+          }
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 512,
+            "max": 8192,
+            "min": 8,
+            "step": 8,
+            "tooltip": "Output image width in pixels."
+          }
+        ]
+      }
+    },
+    "name": "LTXVDrawTracks",
+    "object_info_widget_order": [
+      "tracks",
+      "width",
+      "height"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "IMAGE",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.sparse_tracks"
+  },
+  "LTXVExtendSampler": {
+    "category": "sampling",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Extend Sampler",
+    "function": "LTXVExtendSampler",
+    "input_order": {
+      "optional": [
+        "optional_guiding_latents",
+        "optional_cond_images",
+        "optional_cond_indices",
+        "cond_image_strength"
+      ],
+      "required": [
+        "model",
+        "vae",
+        "latents",
+        "num_new_frames",
+        "frame_overlap",
+        "guider",
+        "sampler",
+        "sigmas",
+        "noise",
+        "strength"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "vae",
+      "latents",
+      "num_new_frames",
+      "frame_overlap",
+      "guider",
+      "sampler",
+      "sigmas",
+      "noise",
+      "strength",
+      "optional_guiding_latents",
+      "optional_cond_images",
+      "optional_cond_indices",
+      "cond_image_strength"
+    ],
+    "inputs": {
+      "optional": {
+        "cond_image_strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "tooltip": "The strength of the conditioning on the images."
+          }
+        ],
+        "optional_cond_images": [
+          "IMAGE",
+          {
+            "tooltip": "The images to use for conditioning the sampling."
+          }
+        ],
+        "optional_cond_indices": [
+          "STRING"
+        ],
+        "optional_guiding_latents": [
+          "LATENT",
+          {
+            "tooltip": "Optional latents to guide the sampling."
+          }
+        ]
+      },
+      "required": {
+        "frame_overlap": [
+          "INT",
+          {
+            "default": 16,
+            "max": 128,
+            "min": 16,
+            "step": 8,
+            "tooltip": "The overlap region to use for conditioning the new frames on the end of the provided latents."
+          }
+        ],
+        "guider": [
+          "GUIDER",
+          {
+            "tooltip": "The guider to use, must be a STGGuiderAdvanced."
+          }
+        ],
+        "latents": [
+          "LATENT",
+          {
+            "tooltip": "The latents of the video to extend."
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The diffusion model to use."
+          }
+        ],
+        "noise": [
+          "NOISE",
+          {
+            "tooltip": "The noise to use for the sampling."
+          }
+        ],
+        "num_new_frames": [
+          "INT",
+          {
+            "default": 80,
+            "max": 16384,
+            "min": -1,
+            "step": 1,
+            "tooltip": "If -1, the number of frames will be based on the number of frames in the optional_guiding_latents."
+          }
+        ],
+        "sampler": [
+          "SAMPLER",
+          {
+            "tooltip": "The sampler to use."
+          }
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {
+            "tooltip": "The sigmas to use."
+          }
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 0.5,
+            "max": 1.0,
+            "min": 0.0,
+            "tooltip": "The strength of the conditioning on the overlapping latents, when using optional_guiding_latents."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE to use."
+          }
+        ]
+      }
+    },
+    "name": "LTXVExtendSampler",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "num_new_frames",
+      "frame_overlap",
+      "guider",
+      "sampler",
+      "sigmas",
+      "noise",
+      "strength",
+      null,
+      null,
+      "optional_cond_indices",
+      "cond_image_strength"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "denoised_video",
+        "type": "LATENT"
+      },
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.easy_samplers"
+  },
+  "LTXVGemmaCLIPModelLoader": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Gemma 3 Model Loader",
+    "function": "LTXVGemmaCLIPModelLoader",
+    "input_order": {
+      "required": [
+        "gemma_path",
+        "ltxv_path",
+        "max_length"
+      ]
+    },
+    "input_order_all": [
+      "gemma_path",
+      "ltxv_path",
+      "max_length"
+    ],
+    "inputs": {
+      "required": {
+        "gemma_path": [
+          [
+            "gemma_3_12B_it_fp4_mixed.safetensors",
+            "ltx-2.3_text_projection_bf16.safetensors",
+            "umt5_xxl_fp16.safetensors",
+            "umt5-xxl-enc-bf16.safetensors"
+          ],
+          {
+            "tooltip": "The name of the text encoder model to load."
+          }
+        ],
+        "ltxv_path": [
+          [
+            "ltx-2.3-22b-distilled-fp8.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "LTX23_audio_vae_bf16.safetensors"
+          ],
+          {
+            "tooltip": "The name of the ltxv model to load."
+          }
+        ],
+        "max_length": [
+          "INT",
+          {
+            "default": 1024,
+            "max": 131072,
+            "min": 16,
+            "step": 8
+          }
+        ]
+      }
+    },
+    "name": "LTXVGemmaCLIPModelLoader",
+    "object_info_widget_order": [
+      "gemma_path",
+      "ltxv_path",
+      "max_length"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "clip",
+        "type": "CLIP"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.gemma_encoder"
+  },
+  "LTXVGemmaEnhancePrompt": {
+    "category": "lightricks/LTXV",
+    "description": "Enhance text prompts using Gemma 3 VLLM for improved video generation.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Gemma 3 Prompt Enhancer",
+    "function": "LTXVGemmaEnhancePrompt",
+    "input_order": {
+      "optional": [
+        "image",
+        "seed"
+      ],
+      "required": [
+        "clip",
+        "prompt",
+        "system_prompt",
+        "max_tokens",
+        "bypass_i2v"
+      ]
+    },
+    "input_order_all": [
+      "clip",
+      "prompt",
+      "system_prompt",
+      "max_tokens",
+      "bypass_i2v",
+      "image",
+      "seed"
+    ],
+    "inputs": {
+      "optional": {
+        "image": [
+          "IMAGE"
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "max": 4294967295,
+            "min": 0
+          }
+        ]
+      },
+      "required": {
+        "bypass_i2v": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "clip": [
+          "CLIP"
+        ],
+        "max_tokens": [
+          "INT",
+          {
+            "default": 512,
+            "max": 1024,
+            "min": 32,
+            "step": 16
+          }
+        ],
+        "prompt": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true
+          }
+        ],
+        "system_prompt": [
+          "STRING",
+          {
+            "default": "You are a Creative Assistant. Given a user's raw input prompt describing a scene or concept, expand it into a detailed video generation prompt with specific visuals and integrated audio to guide a text-to-video model.\n\n#### Guidelines\n- Strictly follow all aspects of the user's raw input: include every element requested (style, visuals, motions, actions, camera movement, audio).\n    - If the input is vague, invent concrete details: lighting, textures, materials, scene settings, etc.\n        - For characters: describe gender, clothing, hair, expressions. DO NOT invent unrequested characters.\n- Use active language: present-progressive verbs (\"is walking,\" \"speaking\"). If no action specified, describe natural movements.\n- Maintain chronological flow: use temporal connectors (\"as,\" \"then,\" \"while\").\n- Audio layer: Describe complete soundscape (background audio, ambient sounds, SFX, speech/music when requested). Integrate sounds chronologically alongside actions. Be specific (e.g., \"soft footsteps on tile\"), not vague (e.g., \"ambient sound is present\").\n- Speech (only when requested):\n    - For ANY speech-related input (talking, conversation, singing, etc.), ALWAYS include exact words in quotes with voice characteristics (e.g., \"The man says in an excited voice: 'You won't believe what I just saw!'\").\n    - Specify language if not English and accent if relevant.\n- Style: Include visual style at the beginning: \"Style: <style>, <rest of prompt>.\" Default to cinematic-realistic if unspecified. Omit if unclear.\n- Visual and audio only: NO non-visual/auditory senses (smell, taste, touch).\n- Restrained language: Avoid dramatic/exaggerated terms. Use mild, natural phrasing.\n    - Colors: Use plain terms (\"red dress\"), not intensified (\"vibrant blue,\" \"bright red\").\n    - Lighting: Use neutral descriptions (\"soft overhead light\"), not harsh (\"blinding light\").\n    - Facial features: Use delicate modifiers for subtle features (i.e., \"subtle freckles\").\n\n#### Important notes:\n- Analyze the user's raw input carefully. In cases of FPV or POV, exclude the description of the subject whose POV is requested.\n- Camera motion: DO NOT invent camera motion unless requested by the user.\n- Speech: DO NOT modify user-provided character dialogue unless it's a typo.\n- No timestamps or cuts: DO NOT use timestamps or describe scene cuts unless explicitly requested.\n- Format: DO NOT use phrases like \"The scene opens with...\". Start directly with Style (optional) and chronological scene description.\n- Format: DO NOT start your response with special characters.\n- DO NOT invent dialogue unless the user mentions speech/talking/singing/conversation.\n- If the user's raw input prompt is highly detailed, chronological and in the requested format: DO NOT make major edits or introduce new elements. Add/enhance audio descriptions if missing.\n\n#### Output Format (Strict):\n- Single continuous paragraph in natural language (English).\n- NO titles, headings, prefaces, code fences, or Markdown.\n- If unsafe/invalid, return original user prompt. Never ask questions or clarifications.\n\nYour output quality is CRITICAL. Generate visually rich, dynamic prompts with integrated audio for high-quality video generation.\n\n#### Example\nInput: \"A woman at a coffee shop talking on the phone\"\nOutput:\nStyle: realistic with cinematic lighting. In a medium close-up, a woman in her early 30s with shoulder-length brown hair sits at a small wooden table by the window. She wears a cream-colored turtleneck sweater, holding a white ceramic coffee cup in one hand and a smartphone to her ear with the other. Ambient cafe sounds fill the space\u2014espresso machine hiss, quiet conversations, gentle clinking of cups. The woman listens intently, nodding slightly, then takes a sip of her coffee and sets it down with a soft clink. Her face brightens into a warm smile as she speaks in a clear, friendly voice, 'That sounds perfect! I'd love to meet up this weekend. How about Saturday afternoon?' She laughs softly\u2014a genuine chuckle\u2014and shifts in her chair. Behind her, other patrons move subtly in and out of focus. 'Great, I'll see you then,' she concludes cheerfully, lowering the phone.",
+            "multiline": true
+          }
+        ]
+      }
+    },
+    "name": "LTXVGemmaEnhancePrompt",
+    "object_info_widget_order": [
+      null,
+      "prompt",
+      "system_prompt",
+      "max_tokens",
+      "bypass_i2v",
+      null,
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "enhanced_prompt",
+        "type": "STRING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.gemma_encoder"
+  },
+  "LTXVHDRDecodePostprocess": {
+    "category": "Lightricks/HDR",
+    "description": "Decompresses VAE-decoded output from HDR IC-LoRA (LogC3) and applies Reinhard tonemapping. Place after VAE Decode. 'tonemapped' is the SDR preview; 'hdr_linear' is raw linear HDR for downstream use. Enable 'save_exr' to write an EXR image sequence.if save_exr is enabled, make sure to set OPENCV_IO_ENABLE_OPENEXR=1 environment in the command line",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXVHDR Decode Postprocess",
+    "function": "LTXVHDRDecodePostprocess",
+    "input_order": {
+      "optional": [
+        "exposure",
+        "save_exr",
+        "output_dir",
+        "filename_prefix",
+        "half_precision"
+      ],
+      "required": [
+        "image"
+      ]
+    },
+    "input_order_all": [
+      "image",
+      "exposure",
+      "save_exr",
+      "output_dir",
+      "filename_prefix",
+      "half_precision"
+    ],
+    "inputs": {
+      "optional": {
+        "exposure": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "display": "slider",
+            "max": 10.0,
+            "min": -10.0,
+            "step": 0.1,
+            "tooltip": "Exposure in stops (EV). 0 = no change, +1 = 2x brighter, -1 = half brightness."
+          }
+        ],
+        "filename_prefix": [
+          "STRING",
+          {
+            "default": "frame"
+          }
+        ],
+        "half_precision": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Save EXR as float16 (half). Smaller files, negligible quality loss for most workflows."
+          }
+        ],
+        "output_dir": [
+          "STRING",
+          {
+            "default": "output/hdr_exr",
+            "tooltip": "Directory for EXR frames (relative to ComfyUI output directory, or absolute path)."
+          }
+        ],
+        "save_exr": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Save raw linear HDR frames as EXR sequence."
+          }
+        ]
+      },
+      "required": {
+        "image": [
+          "IMAGE"
+        ]
+      }
+    },
+    "name": "LTXVHDRDecodePostprocess",
+    "object_info_widget_order": [
+      null,
+      "exposure",
+      "save_exr",
+      "output_dir",
+      "filename_prefix",
+      "half_precision"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "tonemapped",
+        "type": "IMAGE"
+      },
+      {
+        "is_list": false,
+        "name": "hdr_linear",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.hdr"
+  },
+  "LTXVImgToVideoAdvanced": {
+    "category": "conditioning/video_models",
+    "description": "Adds a conditioning frame or a video at index 0. This node is used to add a keyframe or a video segment which should appear in the generated video at index 0. It resizes the image to the correct size and applies preprocessing to it.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Img To Video Advanced",
+    "function": "LTXVImgToVideoAdvanced",
+    "input_order": {
+      "required": [
+        "positive",
+        "negative",
+        "vae",
+        "image",
+        "width",
+        "height",
+        "length",
+        "batch_size",
+        "crf",
+        "blur_radius",
+        "interpolation",
+        "crop",
+        "strength"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "vae",
+      "image",
+      "width",
+      "height",
+      "length",
+      "batch_size",
+      "crf",
+      "blur_radius",
+      "interpolation",
+      "crop",
+      "strength"
+    ],
+    "inputs": {
+      "required": {
+        "batch_size": [
+          "INT",
+          {
+            "default": 1,
+            "max": 4096,
+            "min": 1
+          }
+        ],
+        "blur_radius": [
+          "INT",
+          {
+            "default": 0,
+            "max": 7,
+            "min": 0,
+            "step": 1,
+            "tooltip": "Blur kernel radius size. Higher values mean more motion, lower values mean higher quality."
+          }
+        ],
+        "crf": [
+          "INT",
+          {
+            "default": 29,
+            "max": 51,
+            "min": 0,
+            "step": 1,
+            "tooltip": "CRF value for the video. Higher values mean more motion, lower values mean higher quality."
+          }
+        ],
+        "crop": [
+          [
+            "center",
+            "disabled"
+          ],
+          {
+            "default": "disabled"
+          }
+        ],
+        "height": [
+          "INT",
+          {
+            "default": 512,
+            "max": 16384,
+            "min": 64,
+            "step": 32
+          }
+        ],
+        "image": [
+          "IMAGE"
+        ],
+        "interpolation": [
+          [
+            "lanczos",
+            "bislerp",
+            "nearest",
+            "bilinear",
+            "bicubic",
+            "area",
+            "nearest-exact"
+          ],
+          {
+            "default": "lanczos"
+          }
+        ],
+        "length": [
+          "INT",
+          {
+            "default": 97,
+            "max": 16384,
+            "min": 9,
+            "step": 8
+          }
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 0.9,
+            "max": 1,
+            "min": 0
+          }
+        ],
+        "vae": [
+          "VAE"
+        ],
+        "width": [
+          "INT",
+          {
+            "default": 768,
+            "max": 16384,
+            "min": 64,
+            "step": 32
+          }
+        ]
+      }
+    },
+    "name": "LTXVImgToVideoAdvanced",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      "width",
+      "height",
+      "length",
+      "batch_size",
+      "crf",
+      "blur_radius",
+      "interpolation",
+      "crop",
+      "strength"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.guide"
+  },
+  "LTXVImgToVideoConditionOnly": {
+    "category": "conditioning/video_models",
+    "description": "Applies image conditioning to the first frames of an existing latent. Creates a noise mask to control conditioning strength.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Img To Video Condition Only",
+    "function": "LTXVImgToVideoConditionOnly",
+    "input_order": {
+      "optional": [
+        "bypass"
+      ],
+      "required": [
+        "vae",
+        "image",
+        "latent",
+        "strength"
+      ]
+    },
+    "input_order_all": [
+      "vae",
+      "image",
+      "latent",
+      "strength",
+      "bypass"
+    ],
+    "inputs": {
+      "optional": {
+        "bypass": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Bypass the conditioning."
+          }
+        ]
+      },
+      "required": {
+        "image": [
+          "IMAGE"
+        ],
+        "latent": [
+          "LATENT"
+        ],
+        "strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0
+          }
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "LTXVImgToVideoConditionOnly",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "strength",
+      "bypass"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "latent",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVInContextSampler": {
+    "category": "sampling",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV In Context Sampler",
+    "function": "LTXVInContextSampler",
+    "input_order": {
+      "optional": [
+        "optional_cond_images",
+        "num_frames"
+      ],
+      "required": [
+        "vae",
+        "guider",
+        "sampler",
+        "sigmas",
+        "noise",
+        "guiding_latents"
+      ]
+    },
+    "input_order_all": [
+      "vae",
+      "guider",
+      "sampler",
+      "sigmas",
+      "noise",
+      "guiding_latents",
+      "optional_cond_images",
+      "num_frames"
+    ],
+    "inputs": {
+      "optional": {
+        "num_frames": [
+          "INT",
+          {
+            "default": -1,
+            "max": 1000,
+            "min": -1,
+            "step": 1,
+            "tooltip": "If -1, the number of frames will be based on the number of frames in the guiding_latents."
+          }
+        ],
+        "optional_cond_images": [
+          "IMAGE",
+          {
+            "tooltip": "The image to use for conditioning the sampling, if not provided, the sampling will be unconditioned (t2v setup). The image will be resized to the size of the first frame."
+          }
+        ]
+      },
+      "required": {
+        "guider": [
+          "GUIDER",
+          {
+            "tooltip": "The guider to use, must be a STGGuiderAdvanced."
+          }
+        ],
+        "guiding_latents": [
+          "LATENT",
+          {
+            "tooltip": "The latents to use for guiding the sampling, typically with an IC-LoRA."
+          }
+        ],
+        "noise": [
+          "NOISE",
+          {
+            "tooltip": "The noise to use for the sampling."
+          }
+        ],
+        "sampler": [
+          "SAMPLER",
+          {
+            "tooltip": "The sampler to use."
+          }
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {
+            "tooltip": "The sigmas to use."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE to use."
+          }
+        ]
+      }
+    },
+    "name": "LTXVInContextSampler",
+    "object_info_widget_order": [
+      null,
+      "guider",
+      "sampler",
+      "sigmas",
+      "noise",
+      null,
+      null,
+      "num_frames"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "denoised_video",
+        "type": "LATENT"
+      },
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.easy_samplers"
+  },
+  "LTXVInpaintPreprocess": {
+    "category": "Lightricks/image_processing",
+    "description": "Composites images with a green background where mask is active, for inpainting conditioning.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Inpaint Preprocess",
+    "function": "LTXVInpaintPreprocess",
+    "input_order": {
+      "required": [
+        "images",
+        "mask"
+      ]
+    },
+    "input_order_all": [
+      "images",
+      "mask"
+    ],
+    "inputs": {
+      "required": {
+        "images": [
+          "IMAGE",
+          {
+            "tooltip": "Video frames to composite onto the green background."
+          }
+        ],
+        "mask": [
+          "MASK",
+          {
+            "tooltip": "Mask indicating regions to replace with green. Single-frame masks are broadcast."
+          }
+        ]
+      }
+    },
+    "name": "LTXVInpaintPreprocess",
+    "object_info_widget_order": [
+      null,
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "image",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.vanish_nodes"
+  },
+  "LTXVLaplacianPyramidBlend": {
+    "category": "Lightricks/utility",
+    "description": "Blend two images seamlessly using Laplacian pyramid blending.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTX Laplacian Pyramid Blend",
+    "function": "LTXVLaplacianPyramidBlend",
+    "input_order": {
+      "required": [
+        "image_a",
+        "image_b",
+        "mask",
+        "trim_to_shortest",
+        "mask_low_res_dilation"
+      ]
+    },
+    "input_order_all": [
+      "image_a",
+      "image_b",
+      "mask",
+      "trim_to_shortest",
+      "mask_low_res_dilation"
+    ],
+    "inputs": {
+      "required": {
+        "image_a": [
+          "IMAGE",
+          {
+            "tooltip": "First source image."
+          }
+        ],
+        "image_b": [
+          "IMAGE",
+          {
+            "tooltip": "Second source image."
+          }
+        ],
+        "mask": [
+          "MASK",
+          {
+            "tooltip": "Blend mask (white = image_a, black = image_b)."
+          }
+        ],
+        "mask_low_res_dilation": [
+          "INT",
+          {
+            "default": 5,
+            "max": 15,
+            "min": 0,
+            "tooltip": "Downscale the mask to long side 64, dilate it spatially, then resize it back before blending."
+          }
+        ],
+        "trim_to_shortest": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Trim image_a, image_b, and mask to the shortest sequence length before blending."
+          }
+        ]
+      }
+    },
+    "name": "LTXVLaplacianPyramidBlend",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "trim_to_shortest",
+      "mask_low_res_dilation"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "image",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.pyramid_blending"
+  },
+  "LTXVLinearOverlapLatentTransition": {
+    "category": "Lightricks/latent",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Linear Overlap Latent Transition",
+    "function": "LTXVLinearOverlapLatentTransition",
+    "input_order": {
+      "optional": [
+        "axis"
+      ],
+      "required": [
+        "samples1",
+        "samples2",
+        "overlap"
+      ]
+    },
+    "input_order_all": [
+      "samples1",
+      "samples2",
+      "overlap",
+      "axis"
+    ],
+    "inputs": {
+      "optional": {
+        "axis": [
+          "INT",
+          {
+            "default": 0
+          }
+        ]
+      },
+      "required": {
+        "overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 256,
+            "min": 1
+          }
+        ],
+        "samples1": [
+          "LATENT"
+        ],
+        "samples2": [
+          "LATENT"
+        ]
+      }
+    },
+    "name": "LTXVLinearOverlapLatentTransition",
+    "object_info_widget_order": [
+      null,
+      null,
+      "overlap",
+      "axis"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.easy_samplers"
+  },
+  "LTXVLoadConditioning": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Load Conditioning",
+    "function": "LTXVLoadConditioning",
+    "input_order": {
+      "required": [
+        "file_name",
+        "device"
+      ]
+    },
+    "input_order_all": [
+      "file_name",
+      "device"
+    ],
+    "inputs": {
+      "required": {
+        "device": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "cpu",
+              "gpu"
+            ]
+          }
+        ],
+        "file_name": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              ""
+            ]
+          }
+        ]
+      }
+    },
+    "name": "LTXVLoadConditioning",
+    "object_info_widget_order": [
+      "file_name",
+      "device"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "CONDITIONING",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.conditioning_loader"
+  },
+  "LTXVLoopingSampler": {
+    "category": "sampling",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Looping Sampler",
+    "function": "LTXVLoopingSampler",
+    "input_order": {
+      "optional": [
+        "optional_cond_images",
+        "optional_guiding_latents",
+        "adain_factor",
+        "optional_positive_conditionings",
+        "optional_negative_index_latents",
+        "guiding_start_step",
+        "guiding_end_step",
+        "optional_cond_image_indices",
+        "optional_normalizing_latents"
+      ],
+      "required": [
+        "model",
+        "vae",
+        "noise",
+        "sampler",
+        "sigmas",
+        "guider",
+        "latents",
+        "temporal_tile_size",
+        "temporal_overlap",
+        "guiding_strength",
+        "temporal_overlap_cond_strength",
+        "cond_image_strength",
+        "horizontal_tiles",
+        "vertical_tiles",
+        "spatial_overlap"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "vae",
+      "noise",
+      "sampler",
+      "sigmas",
+      "guider",
+      "latents",
+      "temporal_tile_size",
+      "temporal_overlap",
+      "guiding_strength",
+      "temporal_overlap_cond_strength",
+      "cond_image_strength",
+      "horizontal_tiles",
+      "vertical_tiles",
+      "spatial_overlap",
+      "optional_cond_images",
+      "optional_guiding_latents",
+      "adain_factor",
+      "optional_positive_conditionings",
+      "optional_negative_index_latents",
+      "guiding_start_step",
+      "guiding_end_step",
+      "optional_cond_image_indices",
+      "optional_normalizing_latents"
+    ],
+    "inputs": {
+      "optional": {
+        "adain_factor": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The strength of the AdaIn operation used to fix the statistics of each new generated temporal tile, to prevent accumulated oversaturation."
+          }
+        ],
+        "guiding_end_step": [
+          "INT",
+          {
+            "default": 1000,
+            "max": 1000,
+            "min": 0,
+            "tooltip": "The step at which the guiding latents stop to be used."
+          }
+        ],
+        "guiding_start_step": [
+          "INT",
+          {
+            "default": 0,
+            "max": 1000,
+            "min": 0,
+            "tooltip": "The step at which the guiding latents start to be used."
+          }
+        ],
+        "optional_cond_image_indices": [
+          "STRING",
+          {
+            "default": "0",
+            "tooltip": "The indices of the keyframes to use for the sampling, separated by commas. The indices are counted from the end of the video."
+          }
+        ],
+        "optional_cond_images": [
+          "IMAGE",
+          {
+            "tooltip": "The image to use for conditioning the first frame in the video (i2v setup). If not provided, the first frame will be unconditioned (t2v setup). The image will be resized to the size of the first frame."
+          }
+        ],
+        "optional_guiding_latents": [
+          "LATENT",
+          {
+            "tooltip": "The latents to use for guiding the sampling, typically with an IC-LoRA."
+          }
+        ],
+        "optional_negative_index_latents": [
+          "LATENT",
+          {
+            "tooltip": "Special optional latents to condition on a negative index before each new temporal tile as a way to provide long term context during video generation."
+          }
+        ],
+        "optional_normalizing_latents": [
+          "LATENT",
+          {
+            "tooltip": "The latents to use for normalizing the output latents, they will be used to normalize the output latents to the same statistics as the input latents."
+          }
+        ],
+        "optional_positive_conditionings": [
+          "CONDITIONING",
+          {
+            "tooltip": "Optional way to provide changing positive prompts, one per temporal tile, using the MultiPromptProvider node."
+          }
+        ]
+      },
+      "required": {
+        "cond_image_strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The strength of the conditioning on the optional_cond_images."
+          }
+        ],
+        "guider": [
+          "GUIDER",
+          {
+            "tooltip": "The guider to use, must be a STGGuiderAdvanced."
+          }
+        ],
+        "guiding_strength": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The strength of the conditioning on guiding latents, when optional_guiding_latents are provided."
+          }
+        ],
+        "horizontal_tiles": [
+          "INT",
+          {
+            "default": 1,
+            "max": 6,
+            "min": 1,
+            "tooltip": "Number of horizontal spatial tiles."
+          }
+        ],
+        "latents": [
+          "LATENT",
+          {
+            "tooltip": "The latents to use for creating the long video, they can be guiding latents or empty latents when no guidance is used."
+          }
+        ],
+        "model": [
+          "MODEL",
+          {
+            "tooltip": "The diffusion model to use."
+          }
+        ],
+        "noise": [
+          "NOISE",
+          {
+            "tooltip": "The noise to use."
+          }
+        ],
+        "sampler": [
+          "SAMPLER",
+          {
+            "tooltip": "The sampler to use."
+          }
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {
+            "tooltip": "The sigmas to use."
+          }
+        ],
+        "spatial_overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 8,
+            "min": 1,
+            "tooltip": "Overlap between spatial tiles."
+          }
+        ],
+        "temporal_overlap": [
+          "INT",
+          {
+            "default": 24,
+            "max": 80,
+            "min": 16,
+            "step": 8,
+            "tooltip": "The overlap between the temporal tiles, in pixel frames."
+          }
+        ],
+        "temporal_overlap_cond_strength": [
+          "FLOAT",
+          {
+            "default": 0.5,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "The strength of the conditioning on the latents from the previous temporal tile."
+          }
+        ],
+        "temporal_tile_size": [
+          "INT",
+          {
+            "default": 80,
+            "max": 1000,
+            "min": 24,
+            "step": 8,
+            "tooltip": "The size of the temporal tile to use for the sampling, in pixel frames, in addition to the overlapping region."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE to use."
+          }
+        ],
+        "vertical_tiles": [
+          "INT",
+          {
+            "default": 1,
+            "max": 6,
+            "min": 1,
+            "tooltip": "Number of vertical spatial tiles."
+          }
+        ]
+      }
+    },
+    "name": "LTXVLoopingSampler",
+    "object_info_widget_order": [
+      null,
+      null,
+      "noise",
+      "sampler",
+      "sigmas",
+      "guider",
+      null,
+      "temporal_tile_size",
+      "temporal_overlap",
+      "guiding_strength",
+      "temporal_overlap_cond_strength",
+      "cond_image_strength",
+      "horizontal_tiles",
+      "vertical_tiles",
+      "spatial_overlap",
+      null,
+      null,
+      "adain_factor",
+      null,
+      null,
+      "guiding_start_step",
+      "guiding_end_step",
+      "optional_cond_image_indices",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "denoised_output",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.looping_sampler"
+  },
+  "LTXVMultiPromptProvider": {
+    "category": "prompt",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Multi Prompt Provider",
+    "function": "LTXVMultiPromptProvider",
+    "input_order": {
+      "required": [
+        "prompts",
+        "clip"
+      ]
+    },
+    "input_order_all": [
+      "prompts",
+      "clip"
+    ],
+    "inputs": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {
+            "tooltip": "CLIP model to encode the prompts."
+          }
+        ],
+        "prompts": [
+          "STRING",
+          {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "tooltip": "Prompts to encode, one per line. Each prompt will be encoded separately. Each prompt will be used in one temporal_tile in LTXVLoopingSampler."
+          }
+        ]
+      }
+    },
+    "name": "LTXVMultiPromptProvider",
+    "object_info_widget_order": [
+      "prompts",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "conditionings",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.looping_sampler"
+  },
+  "LTXVNormalizingSampler": {
+    "category": "utility",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Normalizing Sampler",
+    "function": "LTXVNormalizingSampler",
+    "input_order": {
+      "required": [
+        "noise",
+        "guider",
+        "sampler",
+        "sigmas",
+        "latent_image",
+        "video_normalization_factors",
+        "audio_normalization_factors"
+      ]
+    },
+    "input_order_all": [
+      "noise",
+      "guider",
+      "sampler",
+      "sigmas",
+      "latent_image",
+      "video_normalization_factors",
+      "audio_normalization_factors"
+    ],
+    "inputs": {
+      "required": {
+        "audio_normalization_factors": [
+          "STRING",
+          {
+            "default": "1,1,0.25,1,1,0.25,1,1",
+            "multiline": false
+          }
+        ],
+        "guider": [
+          "GUIDER",
+          {}
+        ],
+        "latent_image": [
+          "LATENT",
+          {}
+        ],
+        "noise": [
+          "NOISE",
+          {}
+        ],
+        "sampler": [
+          "SAMPLER",
+          {}
+        ],
+        "sigmas": [
+          "SIGMAS",
+          {}
+        ],
+        "video_normalization_factors": [
+          "STRING",
+          {
+            "default": "1,1,1,1,1,1,1,1",
+            "multiline": false
+          }
+        ]
+      }
+    },
+    "name": "LTXVNormalizingSampler",
+    "object_info_widget_order": [
+      "noise",
+      "guider",
+      "sampler",
+      "sigmas",
+      null,
+      "video_normalization_factors",
+      "audio_normalization_factors"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "denoised_output",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.easy_samplers"
+  },
+  "LTXVPatcherVAE": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Patcher VAE",
+    "function": "LTXVPatcherVAE",
+    "input_order": {
+      "required": [
+        "vae"
+      ]
+    },
+    "input_order_all": [
+      "vae"
+    ],
+    "inputs": {
+      "required": {
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "LTXVPatcherVAE",
+    "object_info_widget_order": [
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "VAE",
+        "type": "VAE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.vae_patcher"
+  },
+  "LTXVPerStepAdainPatcher": {
+    "category": "Lightricks/latents",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Per Step Adain Patcher",
+    "function": "LTXVPerStepAdainPatcher",
+    "input_order": {
+      "optional": [
+        "per_frame"
+      ],
+      "required": [
+        "model",
+        "factors",
+        "reference"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "factors",
+      "reference",
+      "per_frame"
+    ],
+    "inputs": {
+      "optional": {
+        "per_frame": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ]
+      },
+      "required": {
+        "factors": [
+          "STRING",
+          {
+            "default": "0.9, 0.75, 0.0",
+            "tooltip": "Comma-separated list of factors, each factor will be used for one step."
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "reference": [
+          "LATENT"
+        ]
+      }
+    },
+    "name": "LTXVPerStepAdainPatcher",
+    "object_info_widget_order": [
+      null,
+      "factors",
+      null,
+      "per_frame"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latent_norm"
+  },
+  "LTXVPerStepStatNormPatcher": {
+    "category": "Lightricks/latents",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Per Step Stat Norm Patcher",
+    "function": "LTXVPerStepStatNormPatcher",
+    "input_order": {
+      "required": [
+        "model",
+        "factors",
+        "target_mean",
+        "target_std",
+        "percentile",
+        "clip_outliers"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "factors",
+      "target_mean",
+      "target_std",
+      "percentile",
+      "clip_outliers"
+    ],
+    "inputs": {
+      "required": {
+        "clip_outliers": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "factors": [
+          "STRING",
+          {
+            "default": "0.9, 0.75, 0.0",
+            "tooltip": "Comma-separated list of factors, each factor will be used for one step."
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "percentile": [
+          "FLOAT",
+          {
+            "default": 95.0,
+            "max": 100.0,
+            "min": 50.0,
+            "round": 0.1,
+            "step": 0.1,
+            "tooltip": "Percentile of distribution to use for statistics calculation"
+          }
+        ],
+        "target_mean": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 10.0,
+            "min": -10.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ],
+        "target_std": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 0.01,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "LTXVPerStepStatNormPatcher",
+    "object_info_widget_order": [
+      null,
+      "factors",
+      "target_mean",
+      "target_std",
+      "percentile",
+      "clip_outliers"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latent_norm"
+  },
+  "LTXVPreprocessMasks": {
+    "category": "Lightricks/mask_operations",
+    "description": "Preprocess masks to be used for masking latents in the LTXVideo model.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Preprocess Masks",
+    "function": "LTXVPreprocessMasks",
+    "input_order": {
+      "required": [
+        "masks",
+        "vae",
+        "invert_input_masks",
+        "ignore_first_mask",
+        "pooling_method",
+        "grow_mask",
+        "tapered_corners",
+        "clamp_min",
+        "clamp_max"
+      ]
+    },
+    "input_order_all": [
+      "masks",
+      "vae",
+      "invert_input_masks",
+      "ignore_first_mask",
+      "pooling_method",
+      "grow_mask",
+      "tapered_corners",
+      "clamp_min",
+      "clamp_max"
+    ],
+    "inputs": {
+      "required": {
+        "clamp_max": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Maximum value to clamp masks to."
+          }
+        ],
+        "clamp_min": [
+          "FLOAT",
+          {
+            "default": 0.5,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "tooltip": "Minimum value to clamp masks to, ensuring minimum opacity."
+          }
+        ],
+        "grow_mask": [
+          "INT",
+          {
+            "default": 0,
+            "max": 16384,
+            "min": -16384,
+            "step": 1,
+            "tooltip": "Pixels to grow (positive) or shrink (negative) the mask.Uses morphological operations."
+          }
+        ],
+        "ignore_first_mask": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Zero out the first mask, typically used whenit corresponds to the conditioning frame."
+          }
+        ],
+        "invert_input_masks": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "Invert the input masks before processing.Useful for masking vs unmasking operations."
+          }
+        ],
+        "masks": [
+          "MASK"
+        ],
+        "pooling_method": [
+          [
+            "max",
+            "mean",
+            "min"
+          ],
+          {
+            "default": "max",
+            "tooltip": "Method to combine temporal masks. Max preserves strongest values, mean averages them, min takes weakest values."
+          }
+        ],
+        "tapered_corners": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "Use tapered corners in morphological operations for smoother mask edges."
+          }
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "LTXVPreprocessMasks",
+    "object_info_widget_order": [
+      null,
+      null,
+      "invert_input_masks",
+      "ignore_first_mask",
+      "pooling_method",
+      "grow_mask",
+      "tapered_corners",
+      "clamp_min",
+      "clamp_max"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MASK",
+        "type": "MASK"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.masks"
+  },
+  "LTXVPromptEnhancer": {
+    "category": "lightricks/LTXV",
+    "description": "Enhances text prompts for image generation using LLMs. Optionally incorporates reference images to create more contextually relevant descriptions.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Prompt Enhancer",
+    "function": "LTXVPromptEnhancer",
+    "input_order": {
+      "optional": [
+        "image_prompt"
+      ],
+      "required": [
+        "prompt",
+        "prompt_enhancer",
+        "max_resulting_tokens"
+      ]
+    },
+    "input_order_all": [
+      "prompt",
+      "prompt_enhancer",
+      "max_resulting_tokens",
+      "image_prompt"
+    ],
+    "inputs": {
+      "optional": {
+        "image_prompt": [
+          "IMAGE"
+        ]
+      },
+      "required": {
+        "max_resulting_tokens": [
+          "INT",
+          {
+            "default": 256,
+            "max": 512,
+            "min": 32
+          }
+        ],
+        "prompt": [
+          "STRING"
+        ],
+        "prompt_enhancer": [
+          "LTXV_PROMPT_ENHANCER"
+        ]
+      }
+    },
+    "name": "LTXVPromptEnhancer",
+    "object_info_widget_order": [
+      "prompt",
+      "prompt_enhancer",
+      "max_resulting_tokens",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "str",
+        "type": "STRING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.prompt_enhancer_nodes"
+  },
+  "LTXVPromptEnhancerLoader": {
+    "category": "lightricks/LTXV",
+    "description": "Downloads and initializes LLM and image captioning models from Hugging Face to enhance text prompts for image generation.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Prompt Enhancer Loader",
+    "function": "LTXVPromptEnhancerLoader",
+    "input_order": {
+      "required": [
+        "llm_name",
+        "image_captioner_name"
+      ]
+    },
+    "input_order_all": [
+      "llm_name",
+      "image_captioner_name"
+    ],
+    "inputs": {
+      "required": {
+        "image_captioner_name": [
+          "STRING",
+          {
+            "default": [
+              "MiaoshouAI/Florence-2-large-PromptGen-v2.0"
+            ],
+            "tooltip": "The hugging face name of the image captioning model to load."
+          }
+        ],
+        "llm_name": [
+          "STRING",
+          {
+            "default": [
+              "unsloth/Llama-3.2-3B-Instruct"
+            ],
+            "tooltip": "The hugging face name of the llm model to load."
+          }
+        ]
+      }
+    },
+    "name": "LTXVPromptEnhancerLoader",
+    "object_info_widget_order": [
+      "llm_name",
+      "image_captioner_name"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "prompt_enhancer",
+        "type": "LTXV_PROMPT_ENHANCER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.prompt_enhancer_nodes"
+  },
+  "LTXVQ8LoraModelLoader": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXVQ8Lora Model Loader",
+    "function": "LTXVQ8LoraModelLoader",
+    "input_order": {
+      "required": [
+        "model",
+        "lora_name",
+        "strength_model"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "lora_name",
+      "strength_model"
+    ],
+    "inputs": {
+      "required": {
+        "lora_name": [
+          [
+            "ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors",
+            "LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors",
+            "WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+            "WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
+          ]
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "strength_model": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": -100.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "LTXVQ8LoraModelLoader",
+    "object_info_widget_order": [
+      null,
+      "lora_name",
+      "strength_model"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.q8_nodes"
+  },
+  "LTXVSaveConditioning": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Save Conditioning",
+    "function": "LTXVSaveConditioning",
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "required": [
+        "conditioning",
+        "filename",
+        "dtype"
+      ]
+    },
+    "input_order_all": [
+      "conditioning",
+      "filename",
+      "dtype"
+    ],
+    "inputs": {
+      "hidden": {
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ],
+        "prompt": [
+          "PROMPT"
+        ]
+      },
+      "required": {
+        "conditioning": [
+          "CONDITIONING",
+          {}
+        ],
+        "dtype": [
+          "COMBO",
+          {
+            "multiselect": false,
+            "options": [
+              "bfloat16",
+              "float16"
+            ]
+          }
+        ],
+        "filename": [
+          "STRING",
+          {
+            "default": "conditioning",
+            "multiline": false
+          }
+        ]
+      }
+    },
+    "name": "LTXVSaveConditioning",
+    "object_info_widget_order": [
+      null,
+      "filename",
+      "dtype"
+    ],
+    "outputs": [],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.conditioning_saver"
+  },
+  "LTXVSelectLatents": {
+    "category": "latent/video",
+    "description": "Selects a range of frames from the video latent. start_index and end_index define a closed interval (inclusive of both endpoints).",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Select Latents",
+    "function": "LTXVSelectLatents",
+    "input_order": {
+      "required": [
+        "samples",
+        "start_index",
+        "end_index"
+      ]
+    },
+    "input_order_all": [
+      "samples",
+      "start_index",
+      "end_index"
+    ],
+    "inputs": {
+      "required": {
+        "end_index": [
+          "INT",
+          {
+            "default": -1,
+            "max": 9999,
+            "min": -9999,
+            "step": 1
+          }
+        ],
+        "samples": [
+          "LATENT"
+        ],
+        "start_index": [
+          "INT",
+          {
+            "default": 0,
+            "max": 9999,
+            "min": -9999,
+            "step": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXVSelectLatents",
+    "object_info_widget_order": [
+      null,
+      "start_index",
+      "end_index"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVSetAudioRefTokens": {
+    "category": "Lightricks/IC-LoRA",
+    "description": "Provides speaker identity context for audio generation by attaching reference audio tokens to the conditioning. The tokens are prepended with negative temporal positions so the model treats them as context rather than generation targets.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Set Audio Ref Tokens",
+    "function": "LTXVSetAudioRefTokens",
+    "input_order": {
+      "required": [
+        "positive",
+        "negative",
+        "audio_latent"
+      ]
+    },
+    "input_order_all": [
+      "positive",
+      "negative",
+      "audio_latent"
+    ],
+    "inputs": {
+      "required": {
+        "audio_latent": [
+          "LATENT",
+          {
+            "tooltip": "Encoded audio latent from LTXV Audio VAE Encode."
+          }
+        ],
+        "negative": [
+          "CONDITIONING",
+          {
+            "tooltip": "Negative conditioning to attach the reference audio tokens to."
+          }
+        ],
+        "positive": [
+          "CONDITIONING",
+          {
+            "tooltip": "Positive conditioning to attach the reference audio tokens to."
+          }
+        ]
+      }
+    },
+    "name": "LTXVSetAudioRefTokens",
+    "object_info_widget_order": [
+      null,
+      null,
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "frozen_audio",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.iclora"
+  },
+  "LTXVSetAudioVideoMaskByTime": {
+    "category": "utility",
+    "description": "Sets the audio and video mask by time.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Set Audio Video Mask By Time",
+    "function": "LTXVSetAudioVideoMaskByTime",
+    "input_order": {
+      "optional": [
+        "spatial_mask"
+      ],
+      "required": [
+        "av_latent",
+        "positive",
+        "negative",
+        "model",
+        "vae",
+        "audio_vae",
+        "start_time",
+        "end_time",
+        "video_fps",
+        "mask_video",
+        "mask_audio",
+        "mask_init_value_video",
+        "mask_init_value_audio",
+        "slope_len"
+      ]
+    },
+    "input_order_all": [
+      "av_latent",
+      "positive",
+      "negative",
+      "model",
+      "vae",
+      "audio_vae",
+      "start_time",
+      "end_time",
+      "video_fps",
+      "mask_video",
+      "mask_audio",
+      "mask_init_value_video",
+      "mask_init_value_audio",
+      "slope_len",
+      "spatial_mask"
+    ],
+    "inputs": {
+      "optional": {
+        "spatial_mask": [
+          "MASK",
+          {
+            "default": null,
+            "tooltip": "Spatial mask."
+          }
+        ]
+      },
+      "required": {
+        "audio_vae": [
+          "VAE"
+        ],
+        "av_latent": [
+          "LATENT"
+        ],
+        "end_time": [
+          "FLOAT",
+          {
+            "default": 10.0,
+            "max": 2000.0,
+            "min": 0.0
+          }
+        ],
+        "mask_audio": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "mask_init_value_audio": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": 0.0
+          }
+        ],
+        "mask_init_value_video": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 1.0,
+            "min": 0.0
+          }
+        ],
+        "mask_video": [
+          "BOOLEAN",
+          {
+            "default": true
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "slope_len": [
+          "INT",
+          {
+            "default": 3,
+            "max": 100,
+            "min": 1,
+            "step": 1
+          }
+        ],
+        "start_time": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 2000.0,
+            "min": 0.0
+          }
+        ],
+        "vae": [
+          "VAE"
+        ],
+        "video_fps": [
+          "FLOAT",
+          {
+            "default": 24.0,
+            "max": 500.0,
+            "min": 0.0
+          }
+        ]
+      }
+    },
+    "name": "LTXVSetAudioVideoMaskByTime",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "start_time",
+      "end_time",
+      "video_fps",
+      "mask_video",
+      "mask_audio",
+      "mask_init_value_video",
+      "mask_init_value_audio",
+      "slope_len",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "positive",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "negative",
+        "type": "CONDITIONING"
+      },
+      {
+        "is_list": false,
+        "name": "av_latent",
+        "type": "LATENT"
+      },
+      {
+        "is_list": false,
+        "name": "video_latent_blend_coefficients",
+        "type": "FLOAT"
+      },
+      {
+        "is_list": false,
+        "name": "video_pixel_blend_coefficients",
+        "type": "FLOAT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVSetVideoLatentNoiseMasks": {
+    "category": "latent/video",
+    "description": "Applies multiple masks to a video latent. masks can be 2D, 3D, or 4D tensors. If there are fewer masks than frames, the last mask will be reused.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Set Video Latent Noise Masks",
+    "function": "LTXVSetVideoLatentNoiseMasks",
+    "input_order": {
+      "required": [
+        "samples",
+        "masks"
+      ]
+    },
+    "input_order_all": [
+      "samples",
+      "masks"
+    ],
+    "inputs": {
+      "required": {
+        "masks": [
+          "MASK"
+        ],
+        "samples": [
+          "LATENT"
+        ]
+      }
+    },
+    "name": "LTXVSetVideoLatentNoiseMasks",
+    "object_info_widget_order": [
+      null,
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latents"
+  },
+  "LTXVSparseTrackEditor": {
+    "category": "Lightricks/motion_tracking",
+    "description": "Interactive spline editor for drawing sparse motion tracks on a reference image.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTX Sparse Track Editor",
+    "function": "LTXVSparseTrackEditor",
+    "input_order": {
+      "hidden": [
+        "prompt",
+        "extra_pnginfo"
+      ],
+      "required": [
+        "image",
+        "points_store",
+        "coordinates",
+        "points_to_sample"
+      ]
+    },
+    "input_order_all": [
+      "image",
+      "points_store",
+      "coordinates",
+      "points_to_sample"
+    ],
+    "inputs": {
+      "hidden": {
+        "extra_pnginfo": [
+          "EXTRA_PNGINFO"
+        ],
+        "prompt": [
+          "PROMPT"
+        ]
+      },
+      "required": {
+        "coordinates": [
+          "STRING",
+          {
+            "default": "[]",
+            "multiline": false,
+            "tooltip": "JSON array of interpolated track coordinates produced by the editor."
+          }
+        ],
+        "image": [
+          "IMAGE",
+          {
+            "tooltip": "Reference image displayed as the editor canvas background."
+          }
+        ],
+        "points_store": [
+          "STRING",
+          {
+            "default": "[]",
+            "multiline": false,
+            "tooltip": "JSON array of spline control points managed by the editor widget."
+          }
+        ],
+        "points_to_sample": [
+          "INT",
+          {
+            "default": 121,
+            "max": 10000,
+            "min": 2,
+            "tooltip": "Number of points sampled along each spline curve."
+          }
+        ]
+      }
+    },
+    "name": "LTXVSparseTrackEditor",
+    "object_info_widget_order": [
+      null,
+      "points_store",
+      "coordinates",
+      "points_to_sample"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "tracks",
+        "type": "STRING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.sparse_tracks"
+  },
+  "LTXVSpatioTemporalTiledVAEDecode": {
+    "category": "latent",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Spatio Temporal Tiled VAE Decode",
+    "function": "LTXVSpatioTemporalTiledVAEDecode",
+    "input_order": {
+      "required": [
+        "vae",
+        "latents",
+        "spatial_tiles",
+        "spatial_overlap",
+        "temporal_tile_length",
+        "temporal_overlap",
+        "last_frame_fix",
+        "working_device",
+        "working_dtype"
+      ]
+    },
+    "input_order_all": [
+      "vae",
+      "latents",
+      "spatial_tiles",
+      "spatial_overlap",
+      "temporal_tile_length",
+      "temporal_overlap",
+      "last_frame_fix",
+      "working_device",
+      "working_dtype"
+    ],
+    "inputs": {
+      "required": {
+        "last_frame_fix": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "If true, the last frame will be repeated and discarded after the decoding."
+          }
+        ],
+        "latents": [
+          "LATENT",
+          {
+            "tooltip": "The latent samples to decode."
+          }
+        ],
+        "spatial_overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 8,
+            "min": 0,
+            "tooltip": "The overlap between the spatial tiles. (in latent frames)"
+          }
+        ],
+        "spatial_tiles": [
+          "INT",
+          {
+            "default": 4,
+            "max": 8,
+            "min": 1,
+            "tooltip": "The number of spatial tiles to use, horizontal and vertical."
+          }
+        ],
+        "temporal_overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 8,
+            "min": 0,
+            "tooltip": "The overlap between the temporal tiles, in latent frames."
+          }
+        ],
+        "temporal_tile_length": [
+          "INT",
+          {
+            "default": 16,
+            "max": 1000,
+            "min": 2,
+            "tooltip": "The length of the temporal tile to use for the sampling, in latent frames, including the overlapping region."
+          }
+        ],
+        "vae": [
+          "VAE",
+          {
+            "tooltip": "The VAE to use."
+          }
+        ],
+        "working_device": [
+          [
+            "cpu",
+            "auto"
+          ],
+          {
+            "default": "auto",
+            "tooltip": "The device to use for the decoding. auto->same as the latents."
+          }
+        ],
+        "working_dtype": [
+          [
+            "float16",
+            "float32",
+            "auto"
+          ],
+          {
+            "default": "auto",
+            "tooltip": "The data type to use for the decoding. auto->same as the latents."
+          }
+        ]
+      }
+    },
+    "name": "LTXVSpatioTemporalTiledVAEDecode",
+    "object_info_widget_order": [
+      null,
+      null,
+      "spatial_tiles",
+      "spatial_overlap",
+      "temporal_tile_length",
+      "temporal_overlap",
+      "last_frame_fix",
+      "working_device",
+      "working_dtype"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "image",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tiled_vae_decode"
+  },
+  "LTXVStatNormLatent": {
+    "category": "Lightricks/latents",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Stat Norm Latent",
+    "function": "LTXVStatNormLatent",
+    "input_order": {
+      "required": [
+        "latents",
+        "target_mean",
+        "target_std",
+        "percentile",
+        "factor",
+        "clip_outliers"
+      ]
+    },
+    "input_order_all": [
+      "latents",
+      "target_mean",
+      "target_std",
+      "percentile",
+      "factor",
+      "clip_outliers"
+    ],
+    "inputs": {
+      "required": {
+        "clip_outliers": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "factor": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": -10.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ],
+        "latents": [
+          "LATENT"
+        ],
+        "percentile": [
+          "FLOAT",
+          {
+            "default": 95.0,
+            "max": 100.0,
+            "min": 50.0,
+            "round": 0.1,
+            "step": 0.1,
+            "tooltip": "Percentile of distribution to use for statistics calculation"
+          }
+        ],
+        "target_mean": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 10.0,
+            "min": -10.0,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ],
+        "target_std": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 10.0,
+            "min": 0.01,
+            "round": 0.01,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "LTXVStatNormLatent",
+    "object_info_widget_order": [
+      null,
+      "target_mean",
+      "target_std",
+      "percentile",
+      "factor",
+      "clip_outliers"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.latent_norm"
+  },
+  "LTXVTiledSampler": {
+    "category": "sampling",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Tiled Sampler",
+    "function": "LTXVTiledSampler",
+    "input_order": {
+      "optional": [
+        "optional_cond_images",
+        "optional_cond_indices",
+        "images_cond_strengths"
+      ],
+      "required": [
+        "model",
+        "vae",
+        "noise",
+        "sampler",
+        "sigmas",
+        "guider",
+        "latents",
+        "horizontal_tiles",
+        "vertical_tiles",
+        "overlap",
+        "latents_cond_strength",
+        "boost_latent_similarity",
+        "crop"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "vae",
+      "noise",
+      "sampler",
+      "sigmas",
+      "guider",
+      "latents",
+      "horizontal_tiles",
+      "vertical_tiles",
+      "overlap",
+      "latents_cond_strength",
+      "boost_latent_similarity",
+      "crop",
+      "optional_cond_images",
+      "optional_cond_indices",
+      "images_cond_strengths"
+    ],
+    "inputs": {
+      "optional": {
+        "images_cond_strengths": [
+          "STRING",
+          {
+            "default": "0.9"
+          }
+        ],
+        "optional_cond_images": [
+          "IMAGE"
+        ],
+        "optional_cond_indices": [
+          "STRING",
+          {
+            "default": "0"
+          }
+        ]
+      },
+      "required": {
+        "boost_latent_similarity": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "crop": [
+          [
+            "center",
+            "disabled"
+          ],
+          {
+            "default": "disabled"
+          }
+        ],
+        "guider": [
+          "GUIDER"
+        ],
+        "horizontal_tiles": [
+          "INT",
+          {
+            "default": 1,
+            "max": 6,
+            "min": 1
+          }
+        ],
+        "latents": [
+          "LATENT"
+        ],
+        "latents_cond_strength": [
+          "FLOAT",
+          {
+            "default": 0.15,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "noise": [
+          "NOISE"
+        ],
+        "overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 8,
+            "min": 1
+          }
+        ],
+        "sampler": [
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "SIGMAS"
+        ],
+        "vae": [
+          "VAE"
+        ],
+        "vertical_tiles": [
+          "INT",
+          {
+            "default": 1,
+            "max": 6,
+            "min": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXVTiledSampler",
+    "object_info_widget_order": [
+      null,
+      null,
+      "noise",
+      "sampler",
+      "sigmas",
+      "guider",
+      null,
+      "horizontal_tiles",
+      "vertical_tiles",
+      "overlap",
+      "latents_cond_strength",
+      "boost_latent_similarity",
+      "crop",
+      null,
+      "optional_cond_indices",
+      "images_cond_strengths"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "output",
+        "type": "LATENT"
+      },
+      {
+        "is_list": false,
+        "name": "denoised_output",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tiled_sampler"
+  },
+  "LTXVTiledVAEDecode": {
+    "category": "latent",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 LTXV Tiled VAE Decode",
+    "function": "LTXVTiledVAEDecode",
+    "input_order": {
+      "optional": [
+        "working_device",
+        "working_dtype"
+      ],
+      "required": [
+        "vae",
+        "latents",
+        "horizontal_tiles",
+        "vertical_tiles",
+        "overlap",
+        "last_frame_fix"
+      ]
+    },
+    "input_order_all": [
+      "vae",
+      "latents",
+      "horizontal_tiles",
+      "vertical_tiles",
+      "overlap",
+      "last_frame_fix",
+      "working_device",
+      "working_dtype"
+    ],
+    "inputs": {
+      "optional": {
+        "working_device": [
+          [
+            "cpu",
+            "auto"
+          ],
+          {
+            "default": "auto"
+          }
+        ],
+        "working_dtype": [
+          [
+            "float16",
+            "float32",
+            "auto"
+          ],
+          {
+            "default": "auto"
+          }
+        ]
+      },
+      "required": {
+        "horizontal_tiles": [
+          "INT",
+          {
+            "default": 1,
+            "max": 6,
+            "min": 1
+          }
+        ],
+        "last_frame_fix": [
+          "BOOLEAN",
+          {
+            "default": false
+          }
+        ],
+        "latents": [
+          "LATENT"
+        ],
+        "overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 8,
+            "min": 1
+          }
+        ],
+        "vae": [
+          "VAE"
+        ],
+        "vertical_tiles": [
+          "INT",
+          {
+            "default": 1,
+            "max": 6,
+            "min": 1
+          }
+        ]
+      }
+    },
+    "name": "LTXVTiledVAEDecode",
+    "object_info_widget_order": [
+      null,
+      null,
+      "horizontal_tiles",
+      "vertical_tiles",
+      "overlap",
+      "last_frame_fix",
+      "working_device",
+      "working_dtype"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "image",
+        "type": "IMAGE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tiled_vae_decode"
+  },
+  "LinearOverlapLatentTransition": {
+    "category": "Lightricks/latent",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Linear transition with overlap",
+    "function": "LinearOverlapLatentTransition",
+    "input_order": {
+      "optional": [
+        "axis"
+      ],
+      "required": [
+        "samples1",
+        "samples2",
+        "overlap"
+      ]
+    },
+    "input_order_all": [
+      "samples1",
+      "samples2",
+      "overlap",
+      "axis"
+    ],
+    "inputs": {
+      "optional": {
+        "axis": [
+          "INT",
+          {
+            "default": 0
+          }
+        ]
+      },
+      "required": {
+        "overlap": [
+          "INT",
+          {
+            "default": 1,
+            "max": 256,
+            "min": 1
+          }
+        ],
+        "samples1": [
+          "LATENT"
+        ],
+        "samples2": [
+          "LATENT"
+        ]
+      }
+    },
+    "name": "LinearOverlapLatentTransition",
+    "object_info_widget_order": [
+      null,
+      null,
+      "overlap",
+      "axis"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.easy_samplers"
+  },
+  "LowVRAMAudioVAELoader": {
+    "category": "LTXV/loaders",
+    "description": "Loads an LTXV Audio VAE checkpoint with dependency support. Connect 'dependencies' to a previous loader's output to ensure sequential loading and reduce peak VRAM usage.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Low VRAM Audio VAE Loader",
+    "function": "LowVRAMAudioVAELoader",
+    "input_order": {
+      "optional": [
+        "dependencies"
+      ],
+      "required": [
+        "ckpt_name"
+      ]
+    },
+    "input_order_all": [
+      "ckpt_name",
+      "dependencies"
+    ],
+    "inputs": {
+      "optional": {
+        "dependencies": [
+          "*",
+          {
+            "tooltip": "Connect any output from a previous loader to ensure sequential loading."
+          }
+        ]
+      },
+      "required": {
+        "ckpt_name": [
+          [
+            "ltx-2.3-22b-distilled-fp8.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "LTX23_audio_vae_bf16.safetensors"
+          ],
+          {
+            "tooltip": "Audio VAE checkpoint to load."
+          }
+        ]
+      }
+    },
+    "name": "LowVRAMAudioVAELoader",
+    "object_info_widget_order": [
+      "ckpt_name",
+      "dependencies"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "audio_vae",
+        "type": "VAE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.low_vram_loaders"
+  },
+  "LowVRAMCheckpointLoader": {
+    "category": "LTXV/loaders",
+    "description": "Loads a diffusion model checkpoint with dependency support. Connect 'dependencies' to a previous loader's output to ensure sequential loading and reduce peak VRAM usage.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Low VRAM Checkpoint Loader",
+    "function": "LowVRAMCheckpointLoader",
+    "input_order": {
+      "optional": [
+        "dependencies"
+      ],
+      "required": [
+        "ckpt_name"
+      ]
+    },
+    "input_order_all": [
+      "ckpt_name",
+      "dependencies"
+    ],
+    "inputs": {
+      "optional": {
+        "dependencies": [
+          "*",
+          {
+            "tooltip": "Connect any output from a previous loader to ensure sequential loading."
+          }
+        ]
+      },
+      "required": {
+        "ckpt_name": [
+          [
+            "AOM2-Hard.safetensors",
+            "AOM3A3.safetensors",
+            "Chroma1-Base.safetensors",
+            "LTX23_audio_vae_bf16.safetensors",
+            "Realistic_Vision_V5.1_fp16-no-ema.safetensors",
+            "Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+            "ace_step_1.5_turbo_aio.safetensors",
+            "ace_step_v1_3.5b.safetensors",
+            "albedobaseXL_v21.safetensors",
+            "anyloraCheckpoint_bakedvaeBlessedFp16.safetensors",
+            "aura_flow_0.1.safetensors",
+            "aura_flow_0.2.safetensors",
+            "cosxl.safetensors",
+            "cosxl_edit.safetensors",
+            "counterfeitV30_v30.safetensors",
+            "dreamshaperXL_v21TurboDPMSDE.safetensors",
+            "dreamshaper_8.safetensors",
+            "fantexiRealistic_v10.safetensors",
+            "flux1-dev-bnb-nf4-v2.safetensors",
+            "flux1-dev-bnb-nf4.safetensors",
+            "flux1-dev-fp8.safetensors",
+            "flux1-schnell-bnb-nf4.safetensors",
+            "flux1-schnell-fp8.safetensors",
+            "hunyuan_dit_1.0.safetensors",
+            "hunyuan_dit_1.1.safetensors",
+            "hunyuan_dit_1.2.safetensors",
+            "juggernautXL_v9Rundiffusionphoto2.safetensors",
+            "ltx-2-19b-dev-fp8.safetensors",
+            "ltx-2-19b-dev.safetensors",
+            "ltx-2.3-22b-dev-fp8.safetensors",
+            "ltx-2.3-22b-dev.safetensors",
+            "ltx-2.3-22b-distilled-fp8.safetensors",
+            "ltx-2.3-22b-distilled.safetensors",
+            "ltx-video-2b-v0.9.1.safetensors",
+            "ltx-video-2b-v0.9.5.safetensors",
+            "ltx-video-2b-v0.9.safetensors",
+            "lumina_2.safetensors",
+            "mochi_preview_fp8_scaled.safetensors",
+            "noosphere_v42.safetensors",
+            "picxReal_10.safetensors",
+            "realvisxlV40_v40Bakedvae.safetensors",
+            "revAnimated_v2Rebirth.safetensors",
+            "sd3.5_large.safetensors",
+            "sd3.5_large_fp8_scaled.safetensors",
+            "sd3.5_large_turbo.safetensors",
+            "sd3.5_medium.safetensors",
+            "sd3.5_medium_incl_clips_t5xxlfp8scaled.safetensors",
+            "sd3_medium.safetensors",
+            "sd3_medium_incl_clips.safetensors",
+            "sd3_medium_incl_clips_t5xxlfp8.safetensors",
+            "sd_xl_base_1.0.safetensors",
+            "sd_xl_refiner_1.0.safetensors",
+            "sd_xl_turbo_1.0_fp16.safetensors",
+            "sdpose_wholebody_fp16.safetensors",
+            "stable-audio-open-1.0.safetensors",
+            "stable_cascade_stage_b.safetensors",
+            "stable_cascade_stage_c.safetensors",
+            "svd.safetensors",
+            "svd_xt.safetensors",
+            "v1-5-pruned-emaonly-fp16.safetensors",
+            "v1-5-pruned-emaonly.safetensors",
+            "v2-inpainting-pruned-ema.safetensors"
+          ],
+          {
+            "tooltip": "The name of the checkpoint (model) to load."
+          }
+        ]
+      }
+    },
+    "name": "LowVRAMCheckpointLoader",
+    "object_info_widget_order": [
+      "ckpt_name",
+      "dependencies"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      },
+      {
+        "is_list": false,
+        "name": "CLIP",
+        "type": "CLIP"
+      },
+      {
+        "is_list": false,
+        "name": "VAE",
+        "type": "VAE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.low_vram_loaders"
+  },
+  "LowVRAMLatentUpscaleModelLoader": {
+    "category": "loaders",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Low VRAM Latent Upscale Model Loader",
+    "function": "LowVRAMLatentUpscaleModelLoader",
+    "input_order": {
+      "required": [
+        "model_name"
+      ]
+    },
+    "input_order_all": [
+      "model_name"
+    ],
+    "inputs": {
+      "required": {
+        "model_name": [
+          [
+            "hunyuanvideo15_latent_upsampler_1080p.safetensors",
+            "ltx-2-spatial-upscaler-x2-1.0.safetensors",
+            "ltx-2.3-spatial-upscaler-x1.5-1.0.safetensors",
+            "ltx-2.3-spatial-upscaler-x2-1.0.safetensors",
+            "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+            "ltx-2.3-temporal-upscaler-x2-1.0.safetensors"
+          ]
+        ]
+      }
+    },
+    "name": "LowVRAMLatentUpscaleModelLoader",
+    "object_info_widget_order": [
+      "model_name"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "LATENT_UPSCALE_MODEL",
+        "type": "LATENT_UPSCALE_MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.low_vram_loaders"
+  },
+  "ModifyLTXModel": {
+    "category": "ltxtricks",
+    "description": "",
+    "display_name": "Modify LTX Model",
+    "function": "ModifyLTXModel",
+    "input_order": {
+      "required": [
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "model"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ]
+      }
+    },
+    "name": "ModifyLTXModel",
+    "object_info_widget_order": [
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "MODEL",
+        "type": "MODEL"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.tricks.nodes.modify_ltx_model_node"
+  },
+  "MultiPromptProvider": {
+    "category": "prompt",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Multi Prompt Provider",
+    "function": "MultiPromptProvider",
+    "input_order": {
+      "required": [
+        "prompts",
+        "clip"
+      ]
+    },
+    "input_order_all": [
+      "prompts",
+      "clip"
+    ],
+    "inputs": {
+      "required": {
+        "clip": [
+          "CLIP",
+          {
+            "tooltip": "CLIP model to encode the prompts."
+          }
+        ],
+        "prompts": [
+          "STRING",
+          {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "tooltip": "Prompts to encode, one per line. Each prompt will be encoded separately. Each prompt will be used in one temporal_tile in LTXVLoopingSampler."
+          }
+        ]
+      }
+    },
+    "name": "MultiPromptProvider",
+    "object_info_widget_order": [
+      "prompts",
+      null
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "conditionings",
+        "type": "CONDITIONING"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.looping_sampler"
+  },
+  "MultimodalGuider": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Multimodal Guider",
+    "function": "MultimodalGuider",
+    "input_order": {
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "parameters",
+        "skip_blocks"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "positive",
+      "negative",
+      "parameters",
+      "skip_blocks"
+    ],
+    "inputs": {
+      "required": {
+        "model": [
+          "MODEL"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "parameters": [
+          "GUIDER_PARAMETERS"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "skip_blocks": [
+          "STRING",
+          {
+            "default": "",
+            "multiline": true
+          }
+        ]
+      }
+    },
+    "name": "MultimodalGuider",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "parameters",
+      "skip_blocks"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER",
+        "type": "GUIDER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.guiders.multimodal_guider"
+  },
+  "STGAdvancedPresets": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 STG Advanced Presets",
+    "function": "STGAdvancedPresets",
+    "input_order": {
+      "required": [
+        "preset"
+      ]
+    },
+    "input_order_all": [
+      "preset"
+    ],
+    "inputs": {
+      "required": {
+        "preset": [
+          [
+            "Custom",
+            "13b Dynamic",
+            "13b Balanced",
+            "13b Upscale",
+            "13b Distilled",
+            "2b"
+          ],
+          {
+            "default": "13b Balanced",
+            "tooltip": "Preset resolution and frame count. Custom allows manual input."
+          }
+        ]
+      }
+    },
+    "name": "STGAdvancedPresets",
+    "object_info_widget_order": [
+      "preset"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "STG_ADVANCED_PRESET",
+        "type": "STG_ADVANCED_PRESET"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.stg"
+  },
+  "STGGuider": {
+    "category": "lightricks/LTXV",
+    "description": "Implements Spatiotemporal Skip Guidance (STG), a training-free method enhancing transformer-based video diffusion models by selectively skipping layers during sampling. This approach improves video quality without sacrificing diversity or motion fidelity.Reference: https://arxiv.org/abs/2411.18664.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 STG Guider",
+    "function": "STGGuider",
+    "input_order": {
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "cfg",
+        "stg",
+        "rescale"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "positive",
+      "negative",
+      "cfg",
+      "stg",
+      "rescale"
+    ],
+    "inputs": {
+      "required": {
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.1
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "rescale": [
+          "FLOAT",
+          {
+            "default": 0.7,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "stg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "STGGuider",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "cfg",
+      "stg",
+      "rescale"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER",
+        "type": "GUIDER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.stg"
+  },
+  "STGGuiderAdvanced": {
+    "category": "lightricks/LTXV",
+    "description": "\n    The Advanced STG Guider implements sophisticated techniques for controlling the denoising process:\n\n    It creates a dynamic mapping from scheduler-defined sigma values to CFG and STG (Spatio-Temporal Skip Guidance [1]) parameters.\n    This approach establishes distinct sigma value ranges that operate independently of step numbers, allowing precise control over:\n    \u2022 CFG scale\n    \u2022 STG scale and rescale factors\n    \u2022 STG attention layer skipping patterns\n\n    The guider also supports:\n    \u2022 CFG-Zero* [2] rescaling, which dynamically adjusts negative predictions based on the dot product between positive and negative signals\n    \u2022 Threshold-based noise prediction zeroing for steps with sigma values exceeding a specified threshold\n\n    For example if the sigma ranges are defined as [1.0, 0.9, 0.85, 0.6] and the CFG values are defined as [4, 3, 2, 1] and STG scale values\n    are defined as [2, 2, 2, 1] and STG rescale values are defined as [1, 1, 1, 1] and STG layers indices are defined as [[14, 17], [14, 16], [14], [14]], then the guider will:\n    - use CFG=4, STG scale=2, STG rescale=1 and STG layers indices = [14, 17] for sigma in the range (0.9, 1.0]\n    - use CFG=3, STG scale=2, STG rescale=1 and STG layers indices = [14, 16] for sigma in the range (0.85, 0.9]\n    - use CFG=2, STG scale=2, STG rescale=1 and STG layers indices = [14] for sigma in the range (0.8, 0.85]\n    - use CFG=1, STG scale=1, STG rescale=1 and STG layers indices = [14] for sigma in the range (0.6, 0.8]\n\n    The guider will use the same parameters for the same sigma values, regardless of the step number.\n\n    References:\n    [1] https://arxiv.org/abs/2411.18664\n    [2] https://arxiv.org/abs/2503.18886\n\n    ",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 STG Guider Advanced",
+    "function": "STGGuiderAdvanced",
+    "input_order": {
+      "optional": [
+        "preset",
+        "apply_apg",
+        "apg_cfg_scale",
+        "eta",
+        "norm_threshold"
+      ],
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "skip_steps_sigma_threshold",
+        "cfg_star_rescale",
+        "sigmas",
+        "cfg_values",
+        "stg_scale_values",
+        "stg_rescale_values",
+        "stg_layers_indices"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "positive",
+      "negative",
+      "skip_steps_sigma_threshold",
+      "cfg_star_rescale",
+      "sigmas",
+      "cfg_values",
+      "stg_scale_values",
+      "stg_rescale_values",
+      "stg_layers_indices",
+      "preset",
+      "apply_apg",
+      "apg_cfg_scale",
+      "eta",
+      "norm_threshold"
+    ],
+    "inputs": {
+      "optional": {
+        "apg_cfg_scale": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "apply_apg": [
+          "BOOLEAN",
+          {
+            "default": false,
+            "tooltip": "If true, applies the APG (Adaptive Projections Guidance) to the STG."
+          }
+        ],
+        "eta": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "norm_threshold": [
+          "FLOAT",
+          {
+            "default": 0.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "preset": [
+          "STG_ADVANCED_PRESET",
+          {
+            "tooltip": "Preset resolution and frame count. Custom allows manual input."
+          }
+        ]
+      },
+      "required": {
+        "cfg_star_rescale": [
+          "BOOLEAN",
+          {
+            "default": true,
+            "tooltip": "If true, applies the cfg star rescale, scales the negative prediction according to dot product between positive and negative."
+          }
+        ],
+        "cfg_values": [
+          "STRING",
+          {
+            "default": "8, 6, 6, 4, 3, 1",
+            "tooltip": "Comma-separated list of cfg values. Should be same length as sigmas list."
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "sigmas": [
+          "STRING",
+          {
+            "default": "1.0, 0.9933, 0.9850, 0.9767, 0.9008, 0.6180",
+            "tooltip": "Comma-separated list sigmas, the actual parameters will be selected according to the closest sigma from this list to current timestep sigma."
+          }
+        ],
+        "skip_steps_sigma_threshold": [
+          "FLOAT",
+          {
+            "default": 0.998,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.001,
+            "tooltip": "Steps with sigma greater than this values will be skipped."
+          }
+        ],
+        "stg_layers_indices": [
+          "STRING",
+          {
+            "default": "[29], [29], [29], [29], [29], [29]",
+            "tooltip": "Comma-separated list of list of layer indices. Should be same length as sigmas list."
+          }
+        ],
+        "stg_rescale_values": [
+          "STRING",
+          {
+            "default": "1, 1, 1, 1, 1, 1",
+            "tooltip": "Comma-separated list of stg rescale values. Should be same length as sigmas list."
+          }
+        ],
+        "stg_scale_values": [
+          "STRING",
+          {
+            "default": "4, 4, 3, 2, 1, 0",
+            "tooltip": "Comma-separated list of stg scale values. Should be same length as sigmas list."
+          }
+        ]
+      }
+    },
+    "name": "STGGuiderAdvanced",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "skip_steps_sigma_threshold",
+      "cfg_star_rescale",
+      "sigmas",
+      "cfg_values",
+      "stg_scale_values",
+      "stg_rescale_values",
+      "stg_layers_indices",
+      "preset",
+      "apply_apg",
+      "apg_cfg_scale",
+      "eta",
+      "norm_threshold"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER",
+        "type": "GUIDER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.stg"
+  },
+  "STGGuiderNode": {
+    "category": "lightricks/LTXV",
+    "description": "Implements Spatiotemporal Skip Guidance (STG), a training-free method enhancing transformer-based video diffusion models by selectively skipping layers during sampling. This approach improves video quality without sacrificing diversity or motion fidelity.Reference: https://arxiv.org/abs/2411.18664.",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 STG Guider Node",
+    "function": "STGGuiderNode",
+    "input_order": {
+      "required": [
+        "model",
+        "positive",
+        "negative",
+        "cfg",
+        "stg",
+        "rescale"
+      ]
+    },
+    "input_order_all": [
+      "model",
+      "positive",
+      "negative",
+      "cfg",
+      "stg",
+      "rescale"
+    ],
+    "inputs": {
+      "required": {
+        "cfg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "round": 0.01,
+            "step": 0.1
+          }
+        ],
+        "model": [
+          "MODEL"
+        ],
+        "negative": [
+          "CONDITIONING"
+        ],
+        "positive": [
+          "CONDITIONING"
+        ],
+        "rescale": [
+          "FLOAT",
+          {
+            "default": 0.7,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ],
+        "stg": [
+          "FLOAT",
+          {
+            "default": 1.0,
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01
+          }
+        ]
+      }
+    },
+    "name": "STGGuiderNode",
+    "object_info_widget_order": [
+      null,
+      null,
+      null,
+      "cfg",
+      "stg",
+      "rescale"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "GUIDER",
+        "type": "GUIDER"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.stg"
+  },
+  "Set VAE Decoder Noise": {
+    "category": "lightricks/LTXV",
+    "description": "",
+    "display_name": "\ud83c\udd5b\ud83c\udd63\ud83c\udd67 Set VAE Decoder Noise",
+    "function": "Set VAE Decoder Noise",
+    "input_order": {
+      "required": [
+        "vae",
+        "timestep",
+        "scale",
+        "seed"
+      ]
+    },
+    "input_order_all": [
+      "vae",
+      "timestep",
+      "scale",
+      "seed"
+    ],
+    "inputs": {
+      "required": {
+        "scale": [
+          "FLOAT",
+          {
+            "default": 0.025,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.001,
+            "tooltip": "The scale of the noise added to the decoder."
+          }
+        ],
+        "seed": [
+          "INT",
+          {
+            "default": 42,
+            "max": 18446744073709551615,
+            "min": 0,
+            "tooltip": "The random seed used for creating the noise."
+          }
+        ],
+        "timestep": [
+          "FLOAT",
+          {
+            "default": 0.05,
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.001,
+            "tooltip": "The timestep used for decoding the noise."
+          }
+        ],
+        "vae": [
+          "VAE"
+        ]
+      }
+    },
+    "name": "Set VAE Decoder Noise",
+    "object_info_widget_order": [
+      null,
+      "timestep",
+      "scale",
+      "seed"
+    ],
+    "outputs": [
+      {
+        "is_list": false,
+        "name": "VAE",
+        "type": "VAE"
+      }
+    ],
+    "pack": "ComfyUI-LTXVideo",
+    "pack_version": "runpod-snapshot",
+    "python_module": "ComfyUI-LTXVideo.decoder_noise"
+  }
+}

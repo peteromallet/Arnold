@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from vibecomfy.errors import WorkflowBuildError
+
 from .workflow import VibeWorkflow
 
 if TYPE_CHECKING:
@@ -25,7 +27,10 @@ def load_scratchpad(path: str | Path) -> VibeWorkflow:
         raise ValueError(f"Scratchpad {path} must define build()")
     workflow = build()
     if not isinstance(workflow, VibeWorkflow):
-        raise TypeError(f"Scratchpad build() must return VibeWorkflow, got {type(workflow).__name__}")
+        raise WorkflowBuildError(
+            f"Scratchpad build() must return VibeWorkflow, got {type(workflow).__name__}",
+            next_action="Update build() so it returns a VibeWorkflow instance, then run the scratchpad again.",
+        )
     return workflow
 
 

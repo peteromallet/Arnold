@@ -108,6 +108,27 @@ def test_install_clones_and_upserts_on_success(tmp_path: Path) -> None:
     ]
 
 
+def test_install_git_head_uses_injected_runner_after_helper_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unexpected_default_run(*_args, **_kwargs) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("git_head should use the injected node-pack runner")
+
+    monkeypatch.setattr("vibecomfy._git_utils.subprocess.run", unexpected_default_run)
+    runner = FakeRunner(sha="injectedhead")
+    install_dir = tmp_path / "custom_nodes" / "ComfyUI-VideoHelperSuite"
+
+    result = install_pack(
+        name="ComfyUI-VideoHelperSuite",
+        install_root=tmp_path / "custom_nodes",
+        lockfile_path=tmp_path / "custom_nodes.lock",
+        runner=runner,
+        cm_cli_resolver=lambda _root, _runner: None,
+    )
+
+    assert result.status == "installed"
+    assert result.git_commit_sha == "injectedhead"
+    assert ["git", "-C", str(install_dir), "rev-parse", "HEAD"] in runner.calls
+
+
 def test_install_no_lockfile_mutation_on_clone_failure(tmp_path: Path) -> None:
     runner = FakeRunner(fail_clone=True)
     lockfile = tmp_path / "custom_nodes.lock"

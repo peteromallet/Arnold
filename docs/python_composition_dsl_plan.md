@@ -267,7 +267,7 @@ Out of scope: auto-generating typed Python wrappers for all 1,202 runtime node c
 
 ## Relationship to HiddenSwitch GraphBuilder
 
-GraphBuilder stays optional. That matches the existing spike decision to enable it as an optional backend (`docs/graphbuilder_spike.md:3`) and the current `VibeWorkflow.compile("graphbuilder")` implementation path (`vibecomfy/workflow.py:184`).
+GraphBuilder stays optional. That matches the historical spike decision to enable it as an optional backend (`docs/historical/graphbuilder_spike.md:8`) and the current `VibeWorkflow.compile("graphbuilder")` implementation path (`vibecomfy/workflow.py:184`).
 
 GraphBuilder is not the authoring surface:
 
@@ -280,7 +280,7 @@ VibeComfy should borrow GraphBuilder's `id=` convention for explicit node IDs an
 
 ## Relationship to ComfyScript
 
-ComfyScript is "learn", not "adopt". That is the current spike decision (`docs/comfyscript_spike.md:3`) and it remains the plan.
+ComfyScript is "learn", not "adopt". That is the historical spike decision (`docs/historical/comfyscript_spike.md:7`) and it remains the plan.
 
 The useful future shape is a one-way import adapter:
 
@@ -288,7 +288,7 @@ The useful future shape is a one-way import adapter:
 ComfyScript script -> VibeWorkflow
 ```
 
-It is not the core VibeComfy authoring API because the spike found three mismatches: the transpiler requires a live Comfy server and `/object_info` (`docs/comfyscript_spike.md:9`), successful output uses ComfyScript-flavored calls rather than `VibeWorkflow` edits (`docs/comfyscript_spike.md:19`), and common UI-only nodes such as `MarkdownNote` broke several conversions (`docs/comfyscript_spike.md:13`).
+It is not the core VibeComfy authoring API because the spike found three mismatches: the transpiler requires a live Comfy server and `/object_info` (`docs/historical/comfyscript_spike.md:13`), successful output uses ComfyScript-flavored calls rather than `VibeWorkflow` edits (`docs/historical/comfyscript_spike.md:23`), and common UI-only nodes such as `MarkdownNote` broke several conversions (`docs/historical/comfyscript_spike.md:17`).
 
 Use ComfyScript as evidence for node naming, examples, and possible import/export ergonomics. Do not block template ingestion, scratchpad editing, or execution on ComfyScript.
 
@@ -360,7 +360,7 @@ Debugging helpers depend on typed handles. The initial affordances should be:
 
 `wf.run_until(handle)` is available only after typed handles and schema-backed output types land in P4. Until then, authors should manually attach the relevant `SaveImage`, `PreviewImage`, `SaveAudio`, or other sink node.
 
-Reuse the old analysis backlog for before/after reasoning. The port rationale explicitly calls out `analyze`, `trace`, and `diff` as workflow-understanding commands to carry forward (`docs/old_vibecomfy_port_rationale.md:25`).
+Reuse the old analysis backlog for before/after reasoning. The historical port rationale explicitly calls out `analyze`, `trace`, and `diff` as workflow-understanding commands to carry forward (`docs/historical/old_vibecomfy_port_rationale.md:30`).
 
 ## Layered Debug Affordances
 
@@ -470,7 +470,7 @@ The implementation should feel boring in the best sense: one public node-constru
 - **P1** - Add typed-metadata `Handle` API on top of the current IR with string-coerce backward compatibility; add `wf.node(...)` as the wrapper over node creation; add handle-aware `connect`; add the P1-P3 `run_until` raise contract; add parity tests against `compile("graphbuilder")`.
 - **P2** - Expand block library coverage for Wan, LTX, KJNodes, GGUF, and ACE Step; replace positional `widget_N` keys with named widgets where schema is known; add the compile-time serialization gate and raw-ref/coercion lints.
 - **P3** - Add `VibeFlow` multi-stage orchestration for Comfy <-> Python with typed media handles, but only after failure semantics, run-dir naming, stage identity, raw API wrapping, and nodepack reload are settled; add `ExternalPythonNode` codegen for rare cases that need Python at graph-execution time; add custom-node session-reload helpers; add `vibecomfy nodes lock` writing `git_commit_sha`, optional `semantic_label`, and optional `source_sha256` to `custom_nodes.lock`.
-- **P4** - Add schema-backed validation against a `/object_info` snapshot in CI, following the schema-validation direction in `docs/old_vibecomfy_port_rationale.md:9`; populate typed-handle `output_type`; ungate the `wf.run_until(handle)` debug runner.
+- **P4** - Add schema-backed validation against a `/object_info` snapshot in CI, following the schema-validation direction in `docs/historical/old_vibecomfy_port_rationale.md:14`; populate typed-handle `output_type`; ungate the `wf.run_until(handle)` debug runner.
 - **P5** - Complete the ready-template migration manually and iteratively, using a *rewritten* Flux 4B builder (now in `wf.node(...).out(...)` shape) as the canonical reference; add the optional ComfyScript import adapter and any further public docs.
 
 `wf.run_until(handle)` lands in P4, not P1. P1 can create typed handles and preserve string compatibility, but it cannot infer safe save/preview/audio sinks until P4 provides schema-backed `output_type`.

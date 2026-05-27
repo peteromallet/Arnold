@@ -1,27 +1,126 @@
 # VibeComfy
 
-**VibeComfy is an agentic interface for you and your agent to build on top of ComfyUI.** You load a workflow (a ready template, an indexed JSON workflow, or one you author from scratch) into a single editable IR — `VibeWorkflow` — tweak it, and then build on top of it, combining it with other workflows and plain Python into an agentic loop. The goal is to make it as easy as possible to build complex creative loops on top of Comfy that run entirely locally.
+**VibeComfy is a Python authoring layer for ComfyUI workflows.** Load a workflow
+from a ready template, indexed JSON file, or scratchpad into `VibeWorkflow`, edit
+it in Python, validate it, and run it through the same API JSON path ComfyUI
+accepts.
 
 ![VibeComfy explainer](docs/assets/explainer.png)
 
-## Give this to your agent to get started
+## Quickstart
 
-Paste this into your coding agent (Claude Code, Cursor, Codex, …):
-
-```
-Please set up VibeComfy for me:
-
-1. Clone https://github.com/peteromallet/VibeComfy into the current directory.
-2. Install it with `uv sync` (or `pip install -e .`). This pulls in ComfyUI
-   as a normal Python dependency via hiddenswitch/pip-and-uv-installable-ComfyUI.
-3. Run `python -m vibecomfy.cli sources sync` to build the indexes.
-4. Read .claude/skills/vibecomfy/SKILL.md to learn the authoring surface.
-5. Ask me what I'd like to create (image, video, or audio), then run a small
-   test generation end-to-end to confirm everything works. The
-   `image/z_image` ready template is a good cheap default for a first run.
+```bash
+git clone https://github.com/peteromallet/VibeComfy
+cd VibeComfy
+uv sync
+python -m vibecomfy.cli sources sync
+python -m vibecomfy.cli workflows list --ready
+python -m vibecomfy.cli inspect image/z_image
 ```
 
-That's the whole install. The bundled skill at [`.claude/skills/vibecomfy/SKILL.md`](.claude/skills/vibecomfy/SKILL.md) teaches the agent the full surface — discovery, loading, editing, patches, blocks, recipes, and the embedded / server / RunPod runtimes.
+Give your coding agent [AGENTS.md](AGENTS.md) first. It is a short bootstrap that
+points to [CLAUDE.md](CLAUDE.md), the canonical long-form agent guide for the
+current v2.7 authoring surface. The old bundled-skill path is not present in
+this checkout; use these repository docs instead.
+
+## Current v2.7 Flow
+
+The public import surface is recorded in
+[artifacts/m6-public-api.md](artifacts/m6-public-api.md). The core path is:
+
+```
+load -> edit -> patch/block -> validate -> run
+```
+
+```python
+from vibecomfy import load_workflow_any, run_embedded_sync
+from vibecomfy.patches.resolution import resolution
+from vibecomfy.patches.seed import seed
+
+wf = load_workflow_any("image/z_image")
+
+# Edit the workflow IR directly.
+wf.set_prompt("a glass teapot on basalt")
+wf.set_steps(20)
+
+# Apply patches for policy-like changes.
+resolution(832, 480).apply(wf)
+seed(42).apply(wf)
+
+wf.finalize_metadata()
+report = wf.validate()
+if not report.ok:
+    raise RuntimeError("; ".join(issue.message for issue in report.issues))
+
+result = run_embedded_sync(wf)
+print(result.outputs)
+```
+
+Use blocks when composition adds graph structure and returns handles for later
+wiring. For example, attach another image save node to an existing image handle:
+
+```python
+from vibecomfy import Handle
+from vibecomfy.blocks.save import image as save_image
+
+first_output = wf.outputs[0]
+image_handle = Handle(first_output.node_id, 0, name="image")
+save_handles = save_image(
+    wf,
+    images=image_handle,
+    filename_prefix="quickstart/extra-save",
+)
+```
+
+For verb-native generation, use the public `image` and `video` namespaces:
+
+```python
+from vibecomfy import image, video
+
+still = image.t2i("a glass teapot").run(runtime="embedded")
+clip = video.i2v(still.outputs[0], "the teapot rotates").run(runtime="embedded")
+```
+
+To inspect the exact JSON ComfyUI receives, compile the workflow:
+
+```python
+api_dict = wf.compile("api")
+```
+
+There is no separate public export method to use for this.
+
+## Validate And Run From The CLI
+
+```bash
+python -m vibecomfy.cli validate out/scratchpads/my_workflow.py
+python -m vibecomfy.cli doctor out/scratchpads/my_workflow.py
+python -m vibecomfy.cli run image/z_image --ready --prompt "a glass teapot" --seed 42 --steps 20
+```
+
+Useful discovery commands:
+
+```bash
+python -m vibecomfy.cli workflows list --ready
+python -m vibecomfy.cli workflows list
+python -m vibecomfy.cli search wan --task i2v
+python -m vibecomfy.cli nodes list
+python -m vibecomfy.cli analyze info image/z_image
+```
+
+## Public Names
+
+Top-level names currently exported from `vibecomfy` include:
+
+- Loaders: `load_workflow_any`, `load_workflow_json`, `workflow_from_file`,
+  `workflow_from_id`, `workflow_from_ready`, `ready_template_ids`
+- Compatibility aliases: `workflow_from_template`, `load_template`
+- Runtime helpers: `run`, `run_sync`, `run_embedded`, `run_embedded_sync`
+- Namespaces: `image`, `video`, `blocks`, `patches`, `router`
+- Core types: `VibeWorkflow`, `VibeNode`, `VibeEdge`, `VibeInput`,
+  `VibeOutput`, `WorkflowRequirements`, `WorkflowSource`, `ValidationIssue`,
+  `ValidationReport`, `Handle`
+- Artifact types: `Artifact`, `Image`, `Video`, `Audio`, `Latent`, `Mask`
+- Plugin hook: `ensure_plugins_loaded`
 
 ## Porting ComfyUI workflows
 

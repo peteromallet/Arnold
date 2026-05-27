@@ -59,12 +59,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 print(_memory_profile_restart_required_message("already-running session"), file=sys.stderr)
                 return 2
         schema_provider = get_schema_provider("auto", server_url=session_url)
-        workflow = load_workflow_reference(
-            args.path,
-            schema_provider=schema_provider,
-            allow_scratchpad=True,
-            ready=args.ready,
-        )
+        try:
+            workflow = load_workflow_reference(
+                args.path,
+                schema_provider=schema_provider,
+                allow_scratchpad=True,
+                ready=args.ready,
+            )
+        except SyntaxError as exc:
+            print(f"run failed: SyntaxError: {exc}", file=sys.stderr)
+            return 1
         if args.prompt is not None:
             if workflow.inputs.get("prompt") is None:
                 print(_override_unwired_message(workflow.id, "--prompt", "prompt"), file=sys.stderr)

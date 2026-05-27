@@ -13,6 +13,12 @@ from vibecomfy.ingest.normalize import detect_workflow_shape
 from vibecomfy.patches.registry import find_applicable
 from vibecomfy.porting.workbench import load_port_source
 from vibecomfy.schema import get_schema_provider
+from vibecomfy.workflow import ValidationReport
+
+
+def _status_from_report(report: ValidationReport) -> str:
+    # Inspect intentionally exposes validation only as runnable/unsupported status.
+    return "runnable" if report.ok else "unsupported"
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
@@ -57,7 +63,7 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         "outputs": [asdict(output) for output in workflow.outputs],
         "models": workflow.requirements.models,
         "custom_nodes": workflow.requirements.custom_nodes,
-        "status": "runnable" if report.ok else "unsupported",
+        "status": _status_from_report(report),
         "applicable_patches": applicable_patches,
         "contract": contract,
         **surface,

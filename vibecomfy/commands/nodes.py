@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import difflib
 import hashlib
 import json
@@ -20,6 +21,8 @@ from vibecomfy.registry.pack_resolver import PackResolverError, resolve_pack
 from vibecomfy.schema import SchemaIndexError, get_authoring_schema_provider, get_schema_provider, schemas_for, socket_types_compatible
 import vibecomfy.node_packs_install as node_packs_install
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile, write_lockfile
+from vibecomfy.porting import wrapper_codegen as _wrapper_codegen
+from vibecomfy.porting import wrapper_discovery as _wrapper_discovery
 
 
 def _cmd_nodes_list(args: argparse.Namespace) -> int:
@@ -629,6 +632,171 @@ def _parse_class_defs(source: str) -> dict[str, dict[str, Any]]:
     return classes
 
 
+DEFAULT_WRAPPER_OUT_DIR = Path("vibecomfy/nodes")
+DEFAULT_LOCKFILE = Path("custom_nodes.lock")
+
+
+def _resolve_sources(source_arg: str) -> tuple[str, ...]:
+    """Map the CLI ``--source`` flag to a discovery precedence tuple."""
+    if source_arg == "auto":
+        return _wrapper_discovery.DEFAULT_PRECEDENCE
+    return (source_arg,)
+
+
+def _cmd_nodes_generate_wrappers(args: argparse.Namespace) -> int:
+    if args.all and args.pack_slug:
+        print("--all and an explicit pack slug are mutually exclusive", file=sys.stderr)
+        return 2
+    if not args.all and not args.pack_slug:
+        print("Provide a pack slug or --all", file=sys.stderr)
+        return 2
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sources = _resolve_sources(args.source)
+    server_url = args.server_url
+
+    if args.all:
+        slugs = _wrapper_discovery._read_lockfile_pack_slugs(DEFAULT_LOCKFILE)  # noqa: SLF001 — explicit helper
+    else:
+        slugs = [args.pack_slug]
+
+    results: list[dict] = []
+    failed_packs: list[str] = []
+    for slug in slugs:
+        try:
+            specs = _wrapper_discovery.discover_pack(slug, sources=sources, server_url=server_url)
+        except (OSError, ValueError) as exc:
+            results.append({"pack": slug, "status": "error", "error": str(exc)})
+            failed_packs.append(slug)
+            continue
+        if not specs:
+            results.append({"pack": slug, "status": "no_discovery", "class_count": 0})
+            failed_packs.append(slug)
+            continue
+        timestamp = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc) if args.deterministic_timestamp else _dt.datetime.now(_dt.timezone.utc)
+        render = _wrapper_codegen.render_pack(slug, specs, out_dir=out_dir, timestamp=timestamp)
+        prior = render.module_path.read_text(encoding="utf-8") if render.module_path.exists() else None
+        action = "no_change"
+        if prior != render.source_text:
+            action = "create" if prior is None else "update"
+        diff_text = ""
+        if args.diff and prior is not None and prior != render.source_text:
+            diff_text = "".join(
+                difflib.unified_diff(
+                    prior.splitlines(keepends=True),
+                    render.source_text.splitlines(keepends=True),
+                    fromfile=str(render.module_path),
+                    tofile=str(render.module_path) + " (proposed)",
+                )
+            )
+        if not args.dry_run and action != "no_change":
+            render.module_path.write_text(render.source_text, encoding="utf-8")
+        results.append(
+            {
+                "pack": slug,
+                "status": "ok",
+                "action": action,
+                "module_path": str(render.module_path),
+                "class_count": render.class_count,
+                "skipped_classes": list(render.skipped_classes),
+                "source_sha256": render.source_sha256,
+                "diff": diff_text,
+            }
+        )
+
+    if args.json:
+        print(json.dumps({"results": results}, indent=2, sort_keys=True))
+    else:
+        for entry in results:
+            if entry["status"] == "ok":
+                print(
+                    f"{entry['pack']}: {entry['action']} {entry['module_path']} "
+                    f"(classes={entry['class_count']}, sha={entry['source_sha256'][:12]})"
+                )
+                if entry["diff"]:
+                    print(entry["diff"])
+            elif entry["status"] == "no_discovery":
+                print(f"{entry['pack']}: no discovery source available; skipping", file=sys.stderr)
+            else:
+                print(f"{entry['pack']}: error: {entry.get('error')}", file=sys.stderr)
+    return 1 if failed_packs else 0
+
+
+def _cmd_nodes_wrapper_status(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out)
+    sources = _resolve_sources(args.source)
+    slugs = _wrapper_discovery._read_lockfile_pack_slugs(Path(args.lockfile))  # noqa: SLF001
+    rows: list[dict] = []
+    for slug in slugs:
+        module_name = _wrapper_codegen._slug_to_module_name(slug)  # noqa: SLF001
+        module_path = out_dir / f"{module_name}.py"
+        existing_header = None
+        if module_path.exists():
+            existing_header = _wrapper_codegen.parse_generated_header(
+                module_path.read_text(encoding="utf-8")
+            )
+        # Compute the *current* source sha for what a regen would produce.
+        current_sha = None
+        class_count = None
+        try:
+            specs = _wrapper_discovery.discover_pack(slug, sources=sources)
+        except (OSError, ValueError):
+            specs = []
+        if specs:
+            render = _wrapper_codegen.render_pack(slug, specs, out_dir=out_dir)
+            current_sha = render.source_sha256
+            class_count = render.class_count
+        existing_sha = existing_header.get("source_sha256") if existing_header else None
+        if not module_path.exists():
+            state = "missing"
+        elif existing_header is None:
+            state = "hand_written"
+        elif current_sha is None:
+            state = "drift_unknown"
+        elif current_sha == existing_sha:
+            state = "current"
+        else:
+            state = "drifted"
+        rows.append(
+            {
+                "pack": slug,
+                "state": state,
+                "module_path": str(module_path),
+                "existing_source_sha256": existing_sha,
+                "current_source_sha256": current_sha,
+                "class_count": class_count,
+            }
+        )
+    if args.json:
+        print(json.dumps({"packs": rows}, indent=2, sort_keys=True))
+    else:
+        for row in rows:
+            extra = ""
+            if row["class_count"] is not None:
+                extra = f" classes={row['class_count']}"
+            print(f"{row['pack']:40s} {row['state']:14s} {row['module_path']}{extra}")
+    return 0
+
+
+def _cmd_nodes_generate_widget_schema(args: argparse.Namespace) -> int:
+    sources = _resolve_sources(args.source)
+    try:
+        specs = _wrapper_discovery.discover_pack(args.pack_slug, sources=sources, server_url=args.server_url)
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if not specs:
+        print(f"No discovery source produced specs for {args.pack_slug!r}", file=sys.stderr)
+        return 1
+    text = _wrapper_codegen.render_widget_schema(specs)
+    if args.json:
+        print(json.dumps({"pack": args.pack_slug, "widget_schema": text}, indent=2))
+    else:
+        print(f"# WIDGET_SCHEMA entries for pack: {args.pack_slug}")
+        print(text)
+    return 0
+
+
 def register(subparsers) -> None:
     nodes = subparsers.add_parser("nodes")
     nodes_sub = nodes.add_subparsers(dest="subcmd", required=True)
@@ -697,3 +865,55 @@ def register(subparsers) -> None:
     nodes_drift.add_argument("--to", dest="to_ref", help="Target git ref (default: HEAD)")
     nodes_drift.add_argument("--json", action="store_true")
     nodes_drift.set_defaults(func=_cmd_nodes_drift)
+
+    nodes_generate = nodes_sub.add_parser(
+        "generate-wrappers",
+        help="Generate typed wrappers for one or all custom-node packs.",
+    )
+    nodes_generate.add_argument("pack_slug", nargs="?")
+    nodes_generate.add_argument("--all", action="store_true", default=False)
+    nodes_generate.add_argument(
+        "--source",
+        choices=["live", "cache", "snapshot", "source", "auto"],
+        default="auto",
+    )
+    nodes_generate.add_argument("--server-url", default=None)
+    nodes_generate.add_argument("--out", default=str(DEFAULT_WRAPPER_OUT_DIR))
+    nodes_generate.add_argument("--dry-run", action="store_true", default=False)
+    nodes_generate.add_argument("--diff", action="store_true", default=False)
+    nodes_generate.add_argument("--json", action="store_true", default=False)
+    nodes_generate.add_argument(
+        "--deterministic-timestamp",
+        action="store_true",
+        default=True,
+        help="Use 1970-01-01 timestamp for byte-identical determinism (default: on).",
+    )
+    nodes_generate.set_defaults(func=_cmd_nodes_generate_wrappers)
+
+    nodes_status = nodes_sub.add_parser(
+        "wrapper-status",
+        help="Report which packs have wrappers and whether they are drifted.",
+    )
+    nodes_status.add_argument("--lockfile", default=str(DEFAULT_LOCKFILE))
+    nodes_status.add_argument("--out", default=str(DEFAULT_WRAPPER_OUT_DIR))
+    nodes_status.add_argument(
+        "--source",
+        choices=["live", "cache", "snapshot", "source", "auto"],
+        default="auto",
+    )
+    nodes_status.add_argument("--json", action="store_true", default=False)
+    nodes_status.set_defaults(func=_cmd_nodes_wrapper_status)
+
+    nodes_widget_schema = nodes_sub.add_parser(
+        "generate-widget-schema",
+        help="Emit WIDGET_SCHEMA entries for a pack (auxiliary; auxiliary to Sweep 2).",
+    )
+    nodes_widget_schema.add_argument("pack_slug")
+    nodes_widget_schema.add_argument(
+        "--source",
+        choices=["live", "cache", "snapshot", "source", "auto"],
+        default="auto",
+    )
+    nodes_widget_schema.add_argument("--server-url", default=None)
+    nodes_widget_schema.add_argument("--json", action="store_true", default=False)
+    nodes_widget_schema.set_defaults(func=_cmd_nodes_generate_widget_schema)

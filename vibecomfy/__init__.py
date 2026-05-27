@@ -14,10 +14,10 @@ from . import blocks, patches, router
 from .artifacts import Artifact, Audio, Image, Latent, Mask, Video
 from .cli_loader import load_workflow_any
 from .extras import ensure_plugins_loaded
+from .ingest.loader import load_template, load_workflow_json
 from .ops import image, video
 from .registry.library import workflow_from_file, workflow_from_id
 from .registry.ready import ready_template_ids, workflow_from_ready
-
 # Runtime exports are loaded lazily via PEP 562 module __getattr__ to keep
 # `import vibecomfy.testing` cheap: the dry-run runtime in
 # `vibecomfy.testing.dry_run` must not transitively load
@@ -41,7 +41,6 @@ def __getattr__(name):  # noqa: D401 — PEP 562 hook
         return globals()[name]
     raise AttributeError(f"module 'vibecomfy' has no attribute {name!r}")
 
-
 __all__ = [
     "Artifact",
     "Image",
@@ -64,6 +63,8 @@ __all__ = [
     "workflow_from_ready",
     "ready_template_ids",
     "load_workflow_any",
+    "load_workflow_json",
+    "load_template",
     "ensure_plugins_loaded",
     "image",
     "video",
@@ -72,4 +73,6 @@ __all__ = [
     "router",
     "run",
     "run_sync",
+    "run_embedded",
+    "run_embedded_sync",
 ]

@@ -34,6 +34,8 @@ from vibecomfy.porting.strict_ready import (
     apply_strict_ready_exceptions,
 )
 from vibecomfy.porting.widget_aliases import widget_alias_analysis
+from vibecomfy.porting.widget_schema import WIDGET_SCHEMA
+from vibecomfy.porting.ui_emitter import default_output_path, emit_ui_json
 from vibecomfy.porting.workbench import analyze_source, load_port_source
 from vibecomfy.registry import load_workflow_reference
 from vibecomfy.schema import ConversionSchemaProvider, get_authoring_schema_provider, get_schema_provider, validate_node_call
@@ -917,6 +919,7 @@ def _build_conversion_provider(args: argparse.Namespace) -> ConversionSchemaProv
     return ConversionSchemaProvider(
         object_info_cache_path=object_info_cache,
         object_info_index_root=Path(__file__).resolve().parents[1] / "porting" / "cache" / "object_info",
+        widget_schema=WIDGET_SCHEMA,
         enable_runtime=runtime_enabled,
         runtime_server_url=server_url,
     )
@@ -1327,14 +1330,15 @@ def register(subparsers) -> None:
     simulate.set_defaults(func=_cmd_port_simulate)
 
 
+
 __all__ = [
     "register",
     "_cmd_port_check",
     "_cmd_port_convert",
+    "_cmd_port_export",
     "_cmd_port_inventory",
     "_cmd_port_repair",
     "_cmd_port_widgets",
-    "_cmd_port_export",
     "_cmd_port_validate_call",
     "_cmd_port_doctor_all",
     "_cmd_port_lint",

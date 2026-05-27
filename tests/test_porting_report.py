@@ -97,4 +97,3 @@ def test_port_report_serializes_stable_analysis_shape() -> None:
 def test_port_issue_rejects_unknown_severity() -> None:
     with pytest.raises(ValueError, match="severity must be one of"):
         PortIssue(code="bad", message="Bad severity.", severity="fatal")  # type: ignore[arg-type]
-

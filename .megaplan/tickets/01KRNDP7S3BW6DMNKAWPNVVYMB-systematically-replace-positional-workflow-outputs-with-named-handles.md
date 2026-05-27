@@ -46,4 +46,3 @@ Non-goals
 
 - Do not invent unstable names for outputs when schema data is genuinely unavailable. In those cases the tool should leave `.out(n)` and make the uncertainty explicit.
 - Do not force one workflow architecture. This is about making dataflow handles readable and validated, not constraining how workflows are authored.
-
