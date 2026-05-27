@@ -19,8 +19,8 @@ DEFAULT_PROMPT = 'a woman is singing passionately'
 DEFAULT_SEED = 45
 GUIDE_STRENGTH = 1
 LORA__NAME = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
 MODEL_NAME = 'WanVideo\\S2V\\Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_2 = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
 VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 WIDGET__NAME = 'gimmvfi_r_arb_lpips_fp32.safetensors'
@@ -75,7 +75,7 @@ def build() -> VibeWorkflow:
 
     # Inputs
     image_load, mask = LoadImage(image='2b.jpg')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MODEL_NAME_2)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MEL_BAND_ROFORMER_NAME)
     wanvideocontextoptions = WanVideoContextOptions(context_schedule='uniform_standard')
     audio, duration = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
 

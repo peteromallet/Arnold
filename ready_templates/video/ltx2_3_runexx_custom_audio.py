@@ -23,8 +23,8 @@ FIXED = 'fixed'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.6
 LORA_NAME = 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors'
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.0.safetensors'
-MODEL_NAME_2 = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.0.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors'
 UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
@@ -62,7 +62,10 @@ def build() -> VibeWorkflow:
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
@@ -97,7 +100,7 @@ def build() -> VibeWorkflow:
     )
 
     fast_groups_bypasser__rgthree_ = raw_call('Fast Groups Bypasser (rgthree)', '354')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '370', model=MODEL_NAME_2)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '370', model=MEL_BAND_ROFORMER_NAME)
     loadaudio = LoadAudio(audio='ComfyUI_00128_.mp3')
     manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 

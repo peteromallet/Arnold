@@ -32,16 +32,15 @@ JPG = 'jpg'
 LEFT_CONTEXT_ONLY = 'left_context_only'
 LORA_NAME = 'ltx-2.3-22b-distilled-lora-dynamic_fro09_avg_rank_105_bf16.safetensors'
 MAIN_DEVICE = 'main_device'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoformer_fp32.safetensors'
 NATIVE_WORKFLOW_SAFE = 'native_workflow_safe'
 NONE = 'none'
 RANDOMIZE = 'randomize'
 SNAP_TO_VIDEO_DURATION = 'snap_to_video_duration'
 SOFT_CLAMP = 'soft_clamp'
 SOURCE = 'source'
-UNET_NAME = 'MelBandRoformer_fp32.safetensors'
 UNET_NAME_GGUF = 'ltx-2.3-22b-dev-Q4_K_S.gguf'
 USE_TIMELINE_CURSOR = 'use_timeline_cursor'
-VALUE = ''
 VIDEOCLIP_AUDIO_24FPS = 'videoclip_audio_24fps'
 VIDEO_VAE_NAME = 'ltx-2.3-22b-dev_video_vae.safetensors'
 
@@ -146,7 +145,7 @@ def build() -> VibeWorkflow:
         control_after_generate=RANDOMIZE,
     )
 
-    unetloader = UNETLoader(unet_name=UNET_NAME)
+    unetloader = UNETLoader(unet_name=MEL_BAND_ROFORMER_NAME)
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale dimensions',
@@ -394,7 +393,7 @@ def build() -> VibeWorkflow:
         widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
         widget_1='iamccs_extension_disk/30s_free_low_ram/seg0_extended',
         widget_10=VIDEOCLIP_AUDIO_24FPS,
-        widget_11=VALUE,
+        widget_11='',
         widget_12=1,
         widget_2='iamccs_extension_disk/30s_free_low_ram/seg0_start',
         widget_3=9,
@@ -457,7 +456,7 @@ def build() -> VibeWorkflow:
         widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
         widget_1='iamccs_extension_disk/30s_free_low_ram/seg1_extended',
         widget_10=VIDEOCLIP_AUDIO_24FPS,
-        widget_11=VALUE,
+        widget_11='',
         widget_12=0,
         widget_2='iamccs_extension_disk/30s_free_low_ram/seg1_start',
         widget_3=9,
@@ -521,7 +520,7 @@ def build() -> VibeWorkflow:
         widget_0=IAMCCS_VAE_FRAMES_30S_FREE_LOW_RAM_SEG0,
         widget_1='iamccs_extension_disk/30s_free_low_ram/final_extended',
         widget_10=VIDEOCLIP_AUDIO_24FPS,
-        widget_11=VALUE,
+        widget_11='',
         widget_12=1,
         widget_2='iamccs_extension_disk/30s_free_low_ram/final_start',
         widget_3=9,

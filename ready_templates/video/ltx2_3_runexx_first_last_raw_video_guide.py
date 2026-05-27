@@ -16,8 +16,6 @@ CLIP_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'
 CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
-DEFAULT_PROMPT = "wf.nodes['11'].inputs.get('text', '')"
-DEFAULT_PROMPT_2 = "wf.nodes['2103'].inputs.get('value', '')"
 DEFAULT_SEED = 43
 DEFAULT_SEED_2 = 42
 FIXED = 'fixed'
@@ -26,10 +24,10 @@ GUIDE_STRENGTH_2 = 2.5
 LANCZOS = 'lanczos'
 LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
 LTX_SMOKE_GUIDE_MP4 = 'ltx_smoke_guide.mp4'
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 NEAREST_EXACT = 'nearest-exact'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
-VAE_NAME = 'taeltx2_3.safetensors'
+VAE_TAESD_NAME = 'taeltx2_3.safetensors'
 VIDEO_VAE_NAME = 'LTX23_video_vae_bf16.safetensors'
 V_0_909375_0_725_0_421875_0_0 = '0.909375, 0.725, 0.421875, 0.0'
 
@@ -47,7 +45,6 @@ MODELS = {
 PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='4', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'image': InputSpec(node='6', field='image', default='image (6).png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'prompt': InputSpec(node='21', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -97,9 +94,13 @@ def build() -> VibeWorkflow:
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VAE_NAME)
+    vaeloader = VAELoader(vae_name=VAE_TAESD_NAME)
     vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
+
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploader = DualCLIPLoader(
@@ -125,8 +126,8 @@ def build() -> VibeWorkflow:
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=dualcliploader)
+    negative = CLIPTextEncode(text='', clip=dualcliploader)
+    negative_2 = CLIPTextEncode(text='', clip=dualcliploader)
 
     image_image, width, height, mask_image = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
@@ -160,10 +161,10 @@ def build() -> VibeWorkflow:
         audio_vae=ltxvaudiovaeloader,
     )
 
-    positive, negative = LTXVConditioning(
+    positive, negative_ltxv = LTXVConditioning(
         frame_rate=24.0,
-        negative=cliptextencode,
-        positive=cliptextencode_2,
+        negative=negative,
+        positive=negative_2,
     )
 
     imagescaleby = ImageScaleBy(upscale_method=LANCZOS, scale_by=0.5, image=image_image)
@@ -242,12 +243,17 @@ def build() -> VibeWorkflow:
 
     model, clip = Power_Lora_Loader_rgthree(model=ltx2memoryefficientsageattentionpatch)
     ltxvscheduler = LTXVScheduler(steps=1, latent=ltxvconcatavlatent)
-    ltx2_nag = LTX2_NAG(model=model, nag_cond_audio=negative, nag_cond_video=negative)
+
+    ltx2_nag = LTX2_NAG(
+        model=model,
+        nag_cond_audio=negative_ltxv,
+        nag_cond_video=negative_ltxv,
+    )
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH_2,
         model=ltx2_nag,
-        negative=negative,
+        negative=negative_ltxv,
         positive=positive,
     )
 
@@ -279,10 +285,10 @@ def build() -> VibeWorkflow:
         **{'num_images.index_1': 0, 'num_images.strength_1': 1.0, 'num_images.image_1': resizeimagesbylongeredge},
     )
 
-    positive_ltxv, negative_ltxv, latent = LTXVAddGuide(
+    positive_ltxv, negative_ltxv_2, latent = LTXVAddGuide(
         image=image_image_3,
         latent=ltxvimgtovideoinplacekj_2,
-        negative=negative,
+        negative=negative_ltxv,
         positive=positive,
         vae=vaeloader_2,
     )
@@ -294,7 +300,7 @@ def build() -> VibeWorkflow:
 
     vibecomfystripconditioningkeys = raw_call('VibeComfyStripConditioningKeys', '2292',
         _outputs=('POSITIVE', 'NEGATIVE'),
-        negative=negative_ltxv,
+        negative=negative_ltxv_2,
         positive=positive_ltxv,
     )
 
@@ -322,7 +328,7 @@ def build() -> VibeWorkflow:
         samples=audio_latent_ltxv,
     )
 
-    positive_ltxv_2, negative_ltxv_2, latent_ltxv = LTXVCropGuides(
+    positive_ltxv_2, negative_ltxv_3, latent_ltxv = LTXVCropGuides(
         latent=video_latent_ltxv,
         negative=vibecomfystripconditioningkeys.out('NEGATIVE'),
         positive=vibecomfystripconditioningkeys.out('POSITIVE'),

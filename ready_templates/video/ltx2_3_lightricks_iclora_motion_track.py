@@ -15,14 +15,12 @@ DEFAULT_FRAMES = 121
 DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_PROMPT_2 = 'Man on a small bycicle being chased by a police car. The sirens are blaring and the crowd of bystanders is cheering loudly. As he is pedaling away on the bike, he looks back at the police car and shouts in a taunting tone: "you can\'t catch me!" and waving his fist in the air. He then pedals away on his bike.'
 DEFAULT_SEED = 42
-ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.5
 LANCZOS = 'lanczos'
 LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors'
 LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
-VALUE = ''
 
 
 PUBLIC_INPUT_METADATA = {
@@ -66,7 +64,7 @@ def build() -> VibeWorkflow:
 
     gemmaapitextencode_2 = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
-        enhance_prompt=ENHANCE_PROMPT_NAME,
+        enhance_prompt=CKPT_NAME,
         widget_0='',
     )
 

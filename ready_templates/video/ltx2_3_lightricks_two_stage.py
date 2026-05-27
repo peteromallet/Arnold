@@ -15,14 +15,12 @@ DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_PROMPT_2 = 'A traditional Japanese tea ceremony takes place in a tatami room as a host carefully prepares matcha. Soft traditional koto music plays in the background, adding to the serene atmosphere. The bamboo whisk taps rhythmically against the ceramic bowl while water simmers in an iron kettle. Guests kneel in formal seiza position, watching in respectful silence. The host bows and presents the tea bowl, turning it precisely before offering it to the first guest with soft-spoken words.'
 DEFAULT_SEED = 43
 DEFAULT_SEED_2 = 42
-ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 FIXED = 'fixed'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.5
 LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
-VALUE = ''
 
 
 PUBLIC_INPUT_METADATA = {
@@ -64,12 +62,16 @@ def build() -> VibeWorkflow:
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate=FIXED)
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
+
     ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
 
     gemmaapitextencode = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
-        enhance_prompt=ENHANCE_PROMPT_NAME,
+        enhance_prompt=CKPT_NAME,
         widget_0='',
     )
 

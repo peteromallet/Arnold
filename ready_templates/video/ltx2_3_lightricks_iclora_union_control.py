@@ -13,7 +13,7 @@ CKPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_PROMPT_2 = 'Apocalyptic landscape with abandoned buildings, overgrown with foliage and trees. The sky is clear and the sun is setting, with the horizon turning bright red. The buildings are delapidated, falling apart and crumbling due to being abandoned for so long.\nThe air is full of silence and the only thing to be heard is a young girl breathing and saying: "Where is everyone?"'
 DEFAULT_SEED = 42
-ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
+DEPTH_ANYTHING_NAME = 'video_depth_anything_vits.pth'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.5
 LANCZOS = 'lanczos'
@@ -21,8 +21,6 @@ LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors'
 LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
 TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
-VALUE = ''
-WIDGET__NAME = 'video_depth_anything_vits.pth'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -65,7 +63,7 @@ def build() -> VibeWorkflow:
 
     gemmaapitextencode_2 = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
-        enhance_prompt=ENHANCE_PROMPT_NAME,
+        enhance_prompt=CKPT_NAME,
         widget_0='',
     )
 
@@ -79,7 +77,7 @@ def build() -> VibeWorkflow:
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    loadvideodepthanythingmodel = raw_call('LoadVideoDepthAnythingModel', '5060', widget_0=WIDGET__NAME)
+    loadvideodepthanythingmodel = raw_call('LoadVideoDepthAnythingModel', '5060', widget_0=DEPTH_ANYTHING_NAME)
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=ltxavtextencoderloader)

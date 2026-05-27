@@ -20,16 +20,13 @@ CLIP_NAME = 'gemma_3_12B_it_fp8_e4m3fn.safetensors'
 CLIP_NAME_2 = 'ltx-2-19b-embeddings_connector_dev_bf16.safetensors'
 DEFAULT_PROMPT = 'blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (“PNTR”), incorrect t-shirt slogan (“JUST DO IT”), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.'
 DEFAULT_SEED = 923615063061116
-GEMMA_PATH_NAME = 'gemma_3_12B_it_fp8_e4m3fn.safetensors'
 GUIDE_STRENGTH = 1
-LTXV_PATH_NAME = 'ltx-2-19b-distilled.safetensors'
 MAIN_DEVICE = 'main_device'
-MODEL_NAME = 'MelBandRoformer_fp32.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoformer_fp32.safetensors'
 NO = 'no'
 NONE = 'none'
 TINY = 'tiny'
 UNET_NAME_GGUF = 'LTX-2-dev-Q4_K_S.gguf'
-VALUE = ''
 VIDEO_VAE_NAME = 'LTX2_video_vae_2_bf16.safetensors'
 V_1_7B = '1.7B'
 WIDGET__NAME = 'ltx-2-19b-distilled-lora-384.safetensors'
@@ -67,7 +64,7 @@ def build() -> VibeWorkflow:
         seed=DEFAULT_SEED,
         widget_1='',
         widget_2='',
-        widget_3=VALUE,
+        widget_3='',
     )
 
     text_multiline = raw_call('Text Multiline', '293', widget_0='video of a goblin talking to the camera')
@@ -104,14 +101,14 @@ def build() -> VibeWorkflow:
 
     loadaudio_2 = LoadAudio(audio='man voice 2 LONG.mp3')
     loadaudio_3 = LoadAudio(audio='EdgarLetfall.mp3')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '377', model=MODEL_NAME)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '377', model=MEL_BAND_ROFORMER_NAME)
     cr_float_to_integer = raw_call('CR Float To Integer', '384', _float=25.0)
     load_whisper__mtb_ = raw_call('Load Whisper (mtb)', '405', widget_0=TINY, widget_1=True)
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
 
     ltxvgemmaclipmodelloader = LTXVGemmaCLIPModelLoader(
-        gemma_path=GEMMA_PATH_NAME,
-        ltxv_path=LTXV_PATH_NAME,
+        gemma_path=CLIP_NAME,
+        ltxv_path=CKPT_NAME,
     )
 
     model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
@@ -135,7 +132,7 @@ def build() -> VibeWorkflow:
         widget_21={'mute': False, 'solo': False},
         widget_22={'mute': False, 'solo': False},
         widget_23={'mute': False, 'solo': False},
-        widget_3=VALUE,
+        widget_3='',
         widget_4='',
         widget_5=False,
         widget_6=None,

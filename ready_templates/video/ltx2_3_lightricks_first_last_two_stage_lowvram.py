@@ -16,9 +16,9 @@ DEFAULT_FRAMES = 81
 DEFAULT_PROMPT = 'A cinematic first-last frame transition.'
 DEFAULT_SEED = 42
 GUIDE_STRENGTH = 1
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 SCALE_DIMENSIONS = 'scale dimensions'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 TEXT_ENCODER_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'
 
 
@@ -77,7 +77,10 @@ def build() -> VibeWorkflow:
 
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
     model, clip, vae = LowVRAMCheckpointLoader(ckpt_name=CKPT_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
 
     # Sampling
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')

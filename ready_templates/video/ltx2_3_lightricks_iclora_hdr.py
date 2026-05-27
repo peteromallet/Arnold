@@ -13,13 +13,11 @@ DEFAULT_FPS = 30
 DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_PROMPT_2 = 'pc game, console game, video game, ugly, still, static, slow'
 DEFAULT_SEED = 42
-ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.5
 LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-hdr-0.9.safetensors'
 LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
-VALUE = ''
 
 
 PUBLIC_INPUT_METADATA = {
@@ -57,7 +55,7 @@ def build() -> VibeWorkflow:
 
     gemmaapitextencode_2 = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
-        enhance_prompt=ENHANCE_PROMPT_NAME,
+        enhance_prompt=CKPT_NAME,
         widget_0='',
     )
 

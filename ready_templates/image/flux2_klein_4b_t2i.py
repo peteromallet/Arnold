@@ -8,7 +8,6 @@ from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, Conditio
 
 
 DEFAULT_PROMPT = 'A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n'
-VALUE = ''
 WIDGET__NAME = 'flux-2-klein-base-4b.safetensors'
 WIDGET__NAME_2 = 'qwen_3_4b.safetensors'
 WIDGET__NAME_3 = 'flux2-vae.safetensors'

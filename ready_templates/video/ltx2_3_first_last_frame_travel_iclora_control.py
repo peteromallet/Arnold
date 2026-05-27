@@ -21,18 +21,18 @@ DEFAULT_PROMPT = 'blurry, oversaturated, pixelated, low resolution, grainy, dist
 DEFAULT_PROMPT_2 = 'A cinematic first-to-last-frame travel shot with smooth continuous camera motion, coherent subject motion, realistic lighting, and natural temporal consistency.'
 DEFAULT_SEED = 43
 DEFAULT_SEED_2 = 42
+DEPTH_ANYTHING_NAME = 'depth_anything_v2_vits_fp32.safetensors'
 FIXED = 'fixed'
 GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 2.5
 LANCZOS = 'lanczos'
 LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
 LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors'
-MODEL_NAME = 'depth_anything_v2_vits_fp32.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
 STRETCH = 'stretch'
 UNET_NAME = 'ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
-VAE_NAME = 'taeltx2_3.safetensors'
+VAE_TAESD_NAME = 'taeltx2_3.safetensors'
 VIDEO_VAE_NAME = 'LTX23_video_vae_bf16.safetensors'
 
 
@@ -87,7 +87,7 @@ def build() -> VibeWorkflow:
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
-    vaeloader = VAELoader(vae_name=VAE_NAME)
+    vaeloader = VAELoader(vae_name=VAE_TAESD_NAME)
     vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
@@ -109,7 +109,7 @@ def build() -> VibeWorkflow:
     loadvideo = LoadVideo(file='ltx_smoke_guide.mp4', video='ltx_smoke_guide.mp4')
 
     downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
-        model=MODEL_NAME,
+        model=DEPTH_ANYTHING_NAME,
         precision='fp32',
     )
 

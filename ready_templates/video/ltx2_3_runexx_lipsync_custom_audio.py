@@ -13,10 +13,9 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadVideoFFmpeg, VHS_VideoCombi
 
 
 AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
-CKPT_PROJECTION_NAME = 'VIDEO\\LTX\\LTX-2\\ltx-2.3_text_projection_bf16.safetensors'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
 CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
-CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
+CLIP_PROJECTION_NAME = 'VIDEO\\LTX\\LTX-2\\ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
 DEFAULT = 'default'
 DEFAULT_FRAMES = 1
@@ -28,11 +27,10 @@ GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 1
 GUIDE_STRENGTH_3 = 0.7
 LORA_NAME = 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors'
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
-MODEL_NAME_2 = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 SCALE_BY_MULTIPLIER = 'scale by multiplier'
-TEXT_ENCODER_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
 UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
@@ -109,7 +107,10 @@ def build() -> VibeWorkflow:
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
@@ -145,8 +146,8 @@ def build() -> VibeWorkflow:
     comfy_float, comfy_int = ComfyMathExpression(expression='a', **{'values.a': 24.0})
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
-        text_encoder=TEXT_ENCODER_NAME,
-        ckpt_name=CKPT_PROJECTION_NAME,
+        text_encoder=CLIP_NAME,
+        ckpt_name=CLIP_PROJECTION_NAME,
         device=DEFAULT,
     )
 
@@ -160,7 +161,7 @@ def build() -> VibeWorkflow:
     fast_groups_bypasser__rgthree__2 = raw_call('Fast Groups Bypasser (rgthree)', '788')
     fast_groups_bypasser__rgthree__3 = raw_call('Fast Groups Bypasser (rgthree)', '819')
     loadaudio = LoadAudio(audio='e9318ca1-5e2b-47aa-8397-f4538b0151b0.wav')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '861', model=MODEL_NAME_2)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '861', model=MEL_BAND_ROFORMER_NAME)
 
     # Conditioning
     negative = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=ltxavtextencoderloader)

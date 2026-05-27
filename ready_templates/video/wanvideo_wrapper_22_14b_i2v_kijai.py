@@ -25,7 +25,6 @@ LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_b
 MODEL_NAME = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
 MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
 VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-VALUE = ''
 
 
 MODELS = {
@@ -160,7 +159,7 @@ def build() -> VibeWorkflow:
         shift=8,
         seed=DEFAULT_SEED,
         scheduler=DPM_SDE,
-        add_noise_to_samples=VALUE,
+        add_noise_to_samples='',
         steps=intconstant_2,
         cfg=createcfgschedulefloatlist,
         end_step=intconstant,
@@ -174,7 +173,7 @@ def build() -> VibeWorkflow:
         shift=8,
         seed=DEFAULT_SEED,
         scheduler=DPM_SDE,
-        add_noise_to_samples=VALUE,
+        add_noise_to_samples='',
         steps=intconstant_2,
         start_step=intconstant,
         image_embeds=wanvideoimagetovideoencode,

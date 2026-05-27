@@ -26,8 +26,8 @@ GPU = 'gpu'
 GUIDE_STRENGTH = 1
 IMAGE = 'image'
 LORA__NAME = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
 MODEL_NAME = 'WanVideo\\S2V\\Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_2 = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
 VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 V_0_0_0 = '0, 0, 0'
@@ -79,7 +79,7 @@ def build() -> VibeWorkflow:
 
     # Inputs
     image_load, mask = LoadImage(image='2b.jpg')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MODEL_NAME_2)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MEL_BAND_ROFORMER_NAME)
     audio, duration = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
     intconstant = INTConstant(value=640)
     intconstant_2 = INTConstant(value=640)

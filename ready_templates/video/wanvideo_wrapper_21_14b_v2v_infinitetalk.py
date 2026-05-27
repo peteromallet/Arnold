@@ -21,11 +21,11 @@ FP16 = 'fp16'
 GUIDE_STRENGTH = 1.0000000000000002
 LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
 MAIN_DEVICE = 'main_device'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
 MODEL_NAME = 'WanVideo\\InfiniteTalk\\InfiniteTalk\\Wan2_1-InfiniteTalk_Single_Q8.gguf'
 MODEL_NAME_2 = 'WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf'
-MODEL_NAME_3 = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
-MODEL_NAME_4 = 'wav2vec2-chinese-base_fp16.safetensors'
-MODEL_NAME_5 = 'TencentGameMate/chinese-wav2vec2-base'
+MODEL_NAME_3 = 'wav2vec2-chinese-base_fp16.safetensors'
+MODEL_NAME_4 = 'TencentGameMate/chinese-wav2vec2-base'
 VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
 
 
@@ -53,7 +53,7 @@ def build() -> VibeWorkflow:
 
     wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(use_non_blocking=True, prefetch_blocks=1)
-    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_5)
+    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_4)
     wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
 
@@ -70,8 +70,8 @@ def build() -> VibeWorkflow:
     intconstant = INTConstant(value=640)
     intconstant_2 = INTConstant(value=640)
     intconstant_3 = INTConstant(value=1000)
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '303', model=MODEL_NAME_3)
-    wav2vecmodelloader = Wav2VecModelLoader(model=MODEL_NAME_4)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '303', model=MEL_BAND_ROFORMER_NAME)
+    wav2vecmodelloader = Wav2VecModelLoader(model=MODEL_NAME_3)
 
     wanvideomodelloader = WanVideoModelLoader(
         model=MODEL_NAME_2,

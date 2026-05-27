@@ -16,7 +16,6 @@ AREA = 'area'
 AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
 BBOX_DETECTOR_NAME = 'yolox_l.onnx'
 CENTER = 'center'
-CKPT_NAME = 'depth_anything_vitl14.pth'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
 CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
 CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
@@ -25,6 +24,7 @@ CROP = 'crop'
 DEFAULT_PROMPT = 'low contrast, washed out, text, subtitles, logo, still image, still video, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth'
 DEFAULT_SEED = 42
 DEFAULT_SEED_2 = 43
+DEPTH_ANYTHING_NAME = 'depth_anything_vitl14.pth'
 FIXED = 'fixed'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.6
@@ -32,10 +32,10 @@ GUIDE_STRENGTH_3 = 0.71
 LANCZOS = 'lanczos'
 LORA_NAME = 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors'
 LORA_NAME_2 = 'LTX\\LTX-2\\IC-Lora\\ltx-2.3-22b-v1.1-ic-lora-union-control-ref0.5.safetensors'
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 NEAREST_EXACT = 'nearest-exact'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
 SCALE_BY_MULTIPLIER = 'scale by multiplier'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
 UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
@@ -133,7 +133,11 @@ def build() -> VibeWorkflow:
 
     vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
+
     intconstant = INTConstant(value=10)
     intconstant_2 = INTConstant(value=736)
     intconstant_3 = INTConstant(value=1280)
@@ -255,7 +259,7 @@ def build() -> VibeWorkflow:
     )
 
     depthanythingpreprocessor = raw_call('DepthAnythingPreprocessor', '5114',
-        ckpt_name=CKPT_NAME,
+        ckpt_name=DEPTH_ANYTHING_NAME,
         image=resizeimagemasknode,
     )
 

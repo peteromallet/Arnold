@@ -27,6 +27,7 @@ DEFAULT_PROMPT = 'black and white cartoon character'
 DEFAULT_PROMPT_2 = 'robotic cybernetic wolf turning his head'
 DEFAULT_SEED = 18
 DEFAULT_SEED_2 = 0
+DEPTH_ANYTHING_NAME = 'depth_anything_v2_vitl_fp16.safetensors'
 DISABLED = 'disabled'
 DOWN = 'down'
 E = 'e'
@@ -35,8 +36,7 @@ GUIDE_STRENGTH = 4.000000000000001
 IMAGE = 'image'
 LANCZOS = 'lanczos'
 LEFT = 'left'
-MODEL_NAME = 'depth_anything_v2_vitl_fp16.safetensors'
-MODEL_NAME_2 = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
+MODEL_NAME = 'WanVideo\\wan2.1_t2v_1.3B_fp16.safetensors'
 OFFLOAD_DEVICE = 'offload_device'
 PAD = 'pad'
 TRUE = 'true'
@@ -44,7 +44,6 @@ UNIPC = 'unipc'
 UP = 'up'
 VACE_MODEL_NAME = 'WanVideo\\Wan2_1-VACE_module_1_3B_bf16.safetensors'
 VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-VALUE = ''
 VIDEO_H264_MP4 = 'video/h264-mp4'
 V_172_172_172 = '172,172,172'
 V_255_255_255 = '255,255,255'
@@ -128,7 +127,7 @@ def build() -> VibeWorkflow:
     )
 
     downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
-        model=MODEL_NAME,
+        model=DEPTH_ANYTHING_NAME,
     )
 
     wanvideoslg_3 = WanVideoSLG(
@@ -154,7 +153,7 @@ def build() -> VibeWorkflow:
     wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=VACE_MODEL_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_2,
+        model=MODEL_NAME,
         base_precision='fp16',
         vace_model=wanvideovacemodelselect,
     )

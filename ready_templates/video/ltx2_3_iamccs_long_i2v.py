@@ -24,15 +24,13 @@ DEFAULT_PROMPT = 'Cinematic action packed shot. the man says silently: "We need 
 DEFAULT_PROMPT_2 = 'man runs away from camera. the camera cranes up and show him run into the distance down the street at a busy New York night.'
 DEFAULT_PROMPT_3 = 'the camera cranes up and show the whole streets of new york.'
 DEFAULT_SEED = 43
-GEMMA_PATH_NAME = 'gemma_3_12B_it_fp8_e4m3fn.safetensors'
 H264 = 'h264'
 LINEAR_BLEND = 'linear_blend'
-LTXV_PATH_NAME = 'ltx-2-19b-distilled.safetensors'
 MAIN_DEVICE = 'main_device'
-MODEL_NAME = 'ltx-2-spatial-upscaler-x2-1.0.safetensors'
 MP4 = 'mp4'
 NONE = 'none'
 SOURCE = 'source'
+SPATIAL_UPSCALER_NAME = 'ltx-2-spatial-upscaler-x2-1.0.safetensors'
 TARGET_EXTENSION_LTX2 = 'target_extension_ltx2'
 UNET_NAME_GGUF = 'LTX-2-dev-Q5_K_S.gguf'
 VIDEO_VAE_NAME = 'LTX2_video_vae_2_bf16.safetensors'
@@ -389,14 +387,18 @@ def build() -> VibeWorkflow:
     model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
 
     ltxvgemmaclipmodelloader = LTXVGemmaCLIPModelLoader(
-        gemma_path=GEMMA_PATH_NAME,
-        ltxv_path=LTXV_PATH_NAME,
+        gemma_path=CLIP_NAME,
+        ltxv_path=CKPT_NAME,
     )
 
     # Inputs
     image, mask = LoadImage(image='z-image_00255_.png')
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
+
     unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
 
     iamccs_ltx2_lorastackstaged = raw_call('IAMCCS_LTX2_LoRAStackStaged', '5218',

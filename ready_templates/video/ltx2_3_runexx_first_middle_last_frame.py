@@ -28,7 +28,7 @@ GUIDE_STRENGTH_2 = 1
 LANCZOS = 'lanczos'
 LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
 LTXV = 'ltxv'
-MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
 UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
@@ -155,7 +155,11 @@ def build() -> VibeWorkflow:
     # Loaders
     vaeloader = VAELoader(vae_name=VAE_TAESD_NAME)
     vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
+
     unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploadergguf = DualCLIPLoaderGGUF(

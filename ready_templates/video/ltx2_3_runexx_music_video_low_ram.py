@@ -27,9 +27,9 @@ GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 1
 LINEAR_QUADRATIC = 'linear_quadratic'
 LORA_NAME = 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors'
-MODEL_NAME = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
-MODEL_NAME_2 = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
 MYNEWVIDEO = 'mynewvideo'
+SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo\\v2\\ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors'
 UNET_NAME_GGUF = 'LTXvideo\\LTX-2\\quantstack\\LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx\\taeltx2_3.safetensors'
@@ -755,7 +755,10 @@ def build() -> VibeWorkflow:
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
-    latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME_2)
+
+    latentupscalemodelloader = LatentUpscaleModelLoader(
+        model_name=SPATIAL_UPSCALER_NAME,
+    )
 
     dualcliploader = DualCLIPLoader(
         clip_name1=CLIP_NAME,
@@ -782,7 +785,7 @@ def build() -> VibeWorkflow:
 
     intconstant_2 = INTConstant(value=480)
     loadaudio = LoadAudio(audio='ComfyUI_00152_.mp3')
-    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1600', model=MODEL_NAME)
+    melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1600', model=MEL_BAND_ROFORMER_NAME)
     intconstant_3 = INTConstant(value=832)
 
     calc_float, calc_int, calc_bool = SimpleCalculatorKJ(
