@@ -21,6 +21,7 @@ from megaplan.execute.quality import (
     _check_done_task_evidence,
     _check_done_task_evidence_by_kind,
 )
+from megaplan.types import CliError
 from megaplan.workers import WorkerResult
 from tests.conftest import (
     PlanFixture,
@@ -854,7 +855,7 @@ def test_auto_loop_aggregates_worker_tokens_into_receipt(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: dispatch_execute_auto_loop must sum per-batch worker tokens
+    """Regression: handle_execute_auto_loop must sum per-batch worker tokens
     into the aggregate step_receipt_execute_v*.json. Previously the auto-loop
     dropped prompt_tokens / completion_tokens on the floor (always recorded 0)
     even when the underlying hermes worker reported real usage."""
@@ -915,6 +916,66 @@ def test_auto_attribute_robust_auto_loop_avoids_scope_drift_blocker(
     assert "newpkg/file.py" in execution["files_changed"]
     assert not any("scope_drift_severity=high" in warning for warning in response["warnings"])
     assert not any("scope_drift_severity=high" in deviation for deviation in response["deviations"])
+
+
+def test_handle_execute_one_batch_halts_when_scope_drift_snapshot_fails(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_compute_execute_scope_drift",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            CliError("scope_drift_snapshot", "M3B_HALT_SCOPE_DRIFT_SNAPSHOT: snapshot boom")
+        ),
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+    state = load_state(plan_fixture.plan_dir)
+
+    with pytest.raises(CliError, match="M3B_HALT_SCOPE_DRIFT_SNAPSHOT"):
+        megaplan.execute.core.handle_execute_one_batch(
+            root=plan_fixture.root,
+            plan_dir=plan_fixture.plan_dir,
+            state=state,
+            args=plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                confirm_destructive=True,
+                user_approved=True,
+                batch=1,
+            ),
+            batch_number=1,
+            auto_approve=False,
+            agent="codex",
+            mode="persistent",
+            refreshed=False,
+        )
+
+
+def test_handle_execute_auto_loop_halts_when_scope_drift_snapshot_fails(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_single_auto_attribute_plan(plan_fixture)
+    monkeypatch.setattr(
+        megaplan.execute.core,
+        "_compute_execute_scope_drift",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            CliError("scope_drift_snapshot", "M3B_HALT_SCOPE_DRIFT_SNAPSHOT: snapshot boom")
+        ),
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        _hermes_style_worker(plan_fixture.project_dir),
+    )
+
+    with pytest.raises(CliError, match="M3B_HALT_SCOPE_DRIFT_SNAPSHOT"):
+        _execute_auto_loop_direct(plan_fixture)
 
 
 def test_auto_attribute_one_batch_handler_persists_per_batch_audit(
@@ -1540,7 +1601,7 @@ def test_handle_execute_persists_blocked_lifecycle_after_direct_blocked_response
             "summary": "blocked by quality gates",
         }
 
-    monkeypatch.setattr(execute_handler, "dispatch_execute_auto_loop", blocked_dispatch)
+    monkeypatch.setattr(execute_handler, "handle_execute_auto_loop", blocked_dispatch)
 
     response = megaplan.handle_execute(
         plan_fixture.root,
@@ -1592,7 +1653,7 @@ def test_handle_execute_allows_resume_from_blocked_state(
             "summary": "resumed",
         }
 
-    monkeypatch.setattr(execute_handler, "dispatch_execute_auto_loop", resumed_dispatch)
+    monkeypatch.setattr(execute_handler, "handle_execute_auto_loop", resumed_dispatch)
 
     response = megaplan.handle_execute(
         plan_fixture.root,
@@ -1625,7 +1686,7 @@ def test_handle_execute_allows_resume_from_failed_state(
 
     def resumed_dispatch(**kwargs: object) -> dict[str, object]:
         persisted = load_state(plan_fixture.plan_dir)
-        assert persisted["active_step"]["step"] == "execute"
+        assert persisted["active_step"]["phase"] == "execute"
         assert persisted["active_step"]["run_id"] != "stale"
         return {
             "success": True,
@@ -1636,7 +1697,7 @@ def test_handle_execute_allows_resume_from_failed_state(
             "summary": "resumed",
         }
 
-    monkeypatch.setattr(execute_handler, "dispatch_execute_auto_loop", resumed_dispatch)
+    monkeypatch.setattr(execute_handler, "handle_execute_auto_loop", resumed_dispatch)
 
     response = megaplan.handle_execute(
         plan_fixture.root,
@@ -1825,6 +1886,7 @@ def test_execute_multi_batch_happy_path_aggregates_results(
         ({"batch1.py": "hash-1"}, None),
         ({"batch1.py": "hash-1", "batch2.py": "hash-2"}, None),
         ({"batch1.py": "hash-1", "batch2.py": "hash-2"}, None),
+        ({"batch1.py": "hash-1", "batch2.py": "hash-2"}, None),
     ])
     monkeypatch.setattr(megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: next(snapshots))
 
@@ -1919,6 +1981,7 @@ def test_execute_multi_batch_timeout_preserves_prior_batches(
 
     snapshots = iter([
         ({}, None),
+        ({"batch1.py": "hash-1"}, None),
         ({"batch1.py": "hash-1"}, None),
         ({"batch1.py": "hash-1"}, None),
         ({"batch1.py": "hash-1"}, None),
@@ -2057,6 +2120,7 @@ def test_execute_multi_batch_observation_allows_cross_batch_reedit_and_flags_pha
         ({"megaplan/handlers.py": "hash-1"}, None),
         ({"megaplan/handlers.py": "hash-1"}, None),
         ({"megaplan/handlers.py": "hash-1"}, None),
+        ({"megaplan/handlers.py": "hash-2"}, None),
         ({"megaplan/handlers.py": "hash-2"}, None),
         ({"megaplan/handlers.py": "hash-2"}, None),
     ])
@@ -2310,6 +2374,31 @@ def test_batch_2_after_batch_1_transitions_to_executed(
     assert [item["task_id"] for item in execution["task_updates"]] == ["T1", "T2"]
     assert all(t["status"] == "done" for t in finalize_data["tasks"])
 
+
+def test_batch_2_halts_on_corrupt_prior_execution_batch(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _setup_two_batch_plan(plan_fixture)
+    monkeypatch.setattr(megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", _batch_worker)
+
+    megaplan.handle_execute(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=1),
+    )
+    (plan_fixture.plan_dir / "execution_batch_1.json").write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(CliError) as excinfo:
+        megaplan.handle_execute(
+            plan_fixture.root,
+            plan_fixture.make_args(plan=plan_fixture.plan_name, confirm_destructive=True, user_approved=True, batch=2),
+        )
+
+    assert "M3B_HALT_CORRUPT_EXECUTION_BATCH" in str(excinfo.value)
+    assert str(plan_fixture.plan_dir / "execution_batch_1.json") in str(excinfo.value)
+    assert "Expecting property name enclosed in double quotes" in str(excinfo.value)
+
 def test_execute_quality_advisories_flow_into_batch_artifacts_aggregate_and_next_prompt(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -2325,6 +2414,7 @@ def test_execute_quality_advisories_flow_into_batch_artifacts_aggregate_and_next
         ({"batch1.txt": "after-1"}, None),
         ({"batch1.txt": "after-1"}, None),
         ({"batch1.txt": "after-1", "batch2.txt": "before-2"}, None),
+        ({"batch1.txt": "after-1", "batch2.txt": "after-2"}, None),
         ({"batch1.txt": "after-1", "batch2.txt": "after-2"}, None),
         ({"batch1.txt": "after-1", "batch2.txt": "after-2"}, None),
     ])
@@ -2417,6 +2507,7 @@ def test_execute_quality_config_disable_suppresses_file_growth_deviation_end_to_
 
     snapshots = iter([
         ({"notes.txt": "before-1"}, None),
+        ({"notes.txt": "after-1"}, None),
         ({"notes.txt": "after-1"}, None),
         ({"notes.txt": "after-1"}, None),
     ])
@@ -3474,10 +3565,10 @@ def test_handle_execute_cli_override_disables_tier_routing(
             tier_map=tier_map,
         )
 
-    # Patch the import alias used by handlers/execute.py
+    # Patch the function used by handlers/execute.py
     monkeypatch.setattr(
         execute_handler,
-        "dispatch_execute_one_batch",
+        "handle_execute_one_batch",
         _capture_and_dispatch,
     )
 
@@ -3545,7 +3636,7 @@ def test_handle_execute_variable_profile_passes_tier_map_without_cli_override(
 
     monkeypatch.setattr(
         execute_handler,
-        "dispatch_execute_one_batch",
+        "handle_execute_one_batch",
         _capture_and_dispatch,
     )
 

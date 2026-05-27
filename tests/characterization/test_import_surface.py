@@ -291,6 +291,35 @@ class TestChainImportSurface:
         )
 
 
+class TestStoreDeepImportPaths:
+    """Deep import paths that runtime code and tests depend on must survive
+    decomposition.  Even if assembly modules (``file.py``, ``db.py``) remain
+    the canonical entry points, the sub-module namespace must still resolve
+    symbols at their historical paths."""
+
+    def test_deep_imports_from_store_submodules(self) -> None:
+        # These paths are used by runtime code (tickets/core.py, cli.py,
+        # resident/profile.py) and by existing tests.
+        from megaplan.store.file import FileStore  # noqa: F401
+        from megaplan.store.db import DBStore  # noqa: F401
+        from megaplan.store.multi import MultiStore  # noqa: F401
+        from megaplan.store.base import HotContext  # noqa: F401
+        from megaplan.store.base import EpicSummary  # noqa: F401
+        from megaplan.store.base import ArtifactRef  # noqa: F401
+        from megaplan.store.base import validate_plan_artifact_name  # noqa: F401
+        from megaplan.store.plan_repository import PlanRepository  # noqa: F401
+
+    def test_snapshot_imports_preserved(self) -> None:
+        from megaplan.store.snapshot import canonical_json_dumps  # noqa: F401
+        from megaplan.store.snapshot import canonical_sha256  # noqa: F401
+
+    def test_epic_summary_alias_identity_is_preserved(self) -> None:
+        from megaplan.schemas import EpicSearchSummary
+        from megaplan.store import EpicSummary
+
+        assert EpicSearchSummary is EpicSummary
+
+
 class TestEvaluationImportSurface:
     """De-facto surface: every symbol that existing tests import from
     ``megaplan.orchestration.evaluation`` must resolve."""

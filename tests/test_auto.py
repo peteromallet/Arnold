@@ -19,6 +19,7 @@ import pytest
 
 from megaplan import auto
 from megaplan.auto import DriverOutcome, drive
+from megaplan.types import CliError
 
 
 def _make_plan_dir(tmp_path: Path, plan: str) -> Path:
@@ -39,7 +40,7 @@ def test_format_phase_heartbeat_includes_plan_step_and_progress(tmp_path: Path) 
             {
                 "name": "heartbeat-plan",
                 "current_state": "planned",
-                "active_step": {"step": "execute", "agent": "codex", "mode": "persistent"},
+                "active_step": {"phase": "execute", "agent": "codex", "mode": "persistent"},
             }
         ),
         encoding="utf-8",
@@ -117,7 +118,7 @@ def _phase_status(plan: str, state: str = "planning", next_step: str = "prep") -
 def _active_wait_status(plan: str, state: str = "planning", next_step: str = "plan") -> dict:
     response = _phase_status(plan, state=state, next_step=next_step)
     response["active_step"] = {
-        "step": next_step,
+        "phase": next_step,
         "agent": "codex",
         "mode": "persistent",
         "started_at": "2026-05-19T10:00:00Z",
@@ -228,7 +229,7 @@ def _orphaned_critique_status(plan: str) -> dict:
     """
     response = _phase_status(plan, state="planned", next_step="critique")
     response["active_step"] = {
-        "step": "critique",
+        "phase": "critique",
         "agent": "claude",
         "mode": "persistent",
         "worker_pid": 999999,
@@ -270,7 +271,7 @@ def test_auto_recovers_orphaned_active_step_after_silent_phase_death(
     state_data = json.loads(state_path.read_text(encoding="utf-8"))
     state_data["current_state"] = "planned"
     state_data["active_step"] = {
-        "step": "critique",
+        "phase": "critique",
         "agent": "claude",
         "mode": "persistent",
         "worker_pid": 999999,
@@ -359,7 +360,7 @@ def test_auto_orphan_recovery_leaves_non_empty_output_alone(
     state_data = json.loads(state_path.read_text(encoding="utf-8"))
     state_data["current_state"] = "planned"
     state_data["active_step"] = {
-        "step": "critique",
+        "phase": "critique",
         "agent": "claude",
         "worker_pid": 999999,
         "started_at": "2026-05-23T14:31:00Z",
@@ -410,7 +411,7 @@ def _orphaned_rerun_execute_status(plan: str) -> dict:
     """
     response = _execute_status(plan, state="planned")
     response["active_step"] = {
-        "step": "execute",
+        "phase": "execute",
         "agent": "shannon",
         "mode": "persistent",
         "worker_pid": os.getpid(),  # alive
@@ -435,7 +436,7 @@ def _orphaned_rerun_same_step_status(plan: str) -> dict:
     """
     response = _phase_status(plan, state="planning", next_step="plan")
     response["active_step"] = {
-        "step": "plan",
+        "phase": "plan",
         "agent": "shannon",
         "mode": "persistent",
         "worker_pid": os.getpid(),  # alive
@@ -465,7 +466,7 @@ def test_auto_clears_rerun_execute_before_redispatch(tmp_path: Path) -> None:
     state_data = json.loads(state_path.read_text(encoding="utf-8"))
     state_data["current_state"] = "planned"
     state_data["active_step"] = {
-        "step": "execute",
+        "phase": "execute",
         "agent": "shannon",
         "mode": "persistent",
         "worker_pid": os.getpid(),
@@ -535,7 +536,7 @@ def test_auto_orphan_recovery_with_shannon_session_id_in_metadata(
     state_data = json.loads(state_path.read_text(encoding="utf-8"))
     state_data["current_state"] = "planning"
     state_data["active_step"] = {
-        "step": "plan",
+        "phase": "plan",
         "agent": "shannon",
         "mode": "persistent",
         "worker_pid": 999999,
@@ -547,7 +548,7 @@ def test_auto_orphan_recovery_with_shannon_session_id_in_metadata(
     def _orphaned_plan_with_session(plan_name: str) -> dict:
         response = _phase_status(plan_name, state="planning", next_step="plan")
         response["active_step"] = {
-            "step": "plan",
+            "phase": "plan",
             "agent": "shannon",
             "mode": "persistent",
             "worker_pid": 999999,
@@ -1700,7 +1701,7 @@ def test_execute_callback_failure_reconciles_latest_batch_and_clears_active_step
             {
                 "name": plan,
                 "current_state": "finalized",
-                "active_step": {"step": "execute", "run_id": "stale"},
+                "active_step": {"phase": "execute", "run_id": "stale"},
                 "config": {"mode": "code"},
             }
         ),
@@ -2538,11 +2539,99 @@ def test_recover_execute_callback_failure_state_logs_corrupt_state(
 
 def test_clear_orphaned_active_step_logs_corrupt_state(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     plan_dir = _make_plan_dir(tmp_path, "orphan-plan")
     (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
 
-    caplog.set_level("WARNING", logger="megaplan")
-    assert auto._clear_orphaned_active_step(plan_dir, "execute") is False
-    assert any("M3A_WARN_ORPHAN_CLEAR_READ" in record.getMessage() for record in caplog.records)
+    with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_READ"):
+        auto._clear_orphaned_active_step(plan_dir, "execute")
+
+
+def test_drive_halts_before_progress_when_orphan_clear_read_fails(
+    tmp_path: Path,
+) -> None:
+    plan = "orphan-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+    run_calls: list[list[str]] = []
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=lambda *_args, **_kwargs: _orphaned_critique_status(plan)), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_READ"):
+            drive(
+                plan,
+                cwd=tmp_path,
+                max_iterations=3,
+                stall_threshold=10,
+                poll_sleep=0,
+                writer=lambda _m: None,
+            )
+
+    assert run_calls == []
+
+
+def test_clear_orphaned_active_step_raises_on_write_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "orphan-plan")
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "orphan-plan", "current_state": "finalized", "active_step": {"phase": "execute"}}),
+        encoding="utf-8",
+    )
+
+    def broken_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(auto, "write_plan_state", broken_write)
+
+    with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_WRITE"):
+        auto._clear_orphaned_active_step(plan_dir, "execute")
+
+
+def test_drive_halts_before_progress_when_orphan_clear_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = "orphan-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "finalized",
+                "active_step": {"phase": "critique"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_calls: list[list[str]] = []
+
+    def broken_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        run_calls.append(list(args))
+        return 0, "{}", ""
+
+    monkeypatch.setattr(auto, "write_plan_state", broken_write)
+
+    with patch.object(auto, "_status", side_effect=lambda *_args, **_kwargs: _orphaned_critique_status(plan)), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        with pytest.raises(CliError, match="M3B_HALT_ORPHAN_CLEAR_WRITE"):
+            drive(
+                plan,
+                cwd=tmp_path,
+                max_iterations=3,
+                stall_threshold=10,
+                poll_sleep=0,
+                writer=lambda _m: None,
+            )
+
+    assert run_calls == []

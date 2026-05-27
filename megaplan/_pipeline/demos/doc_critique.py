@@ -10,8 +10,8 @@ elegantly-composable architecture:
   :mod:`megaplan._pipeline.prompts`. ``mode="doc"`` resolves a
   documentation-reviewer prompt; ``mode="joke"`` resolves a punch-up
   prompt — same Step, different output.
-- **Critic ↔ reviser interact via typed Verdict.** The critic returns
-  a :class:`Verdict` whose ``flags`` tuple carries structured issue
+- **Critic ↔ reviser interact via typed PipelineVerdict.** The critic returns
+  a :class:`PipelineVerdict` whose ``flags`` tuple carries structured issue
   identifiers; the reviser reads ``ctx.state['last_verdict_flags']``
   and applies them deterministically. Output of one step is wired into
   the input of the next through ``state_patch``, not via shared
@@ -42,7 +42,7 @@ from megaplan._pipeline.types import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 
@@ -114,7 +114,7 @@ class DocCritic:
             )
         )
 
-        verdict = Verdict(
+        verdict = PipelineVerdict(
             score=score,
             flags=flags,
             payload={"iteration": iteration + 1, "critique_path": str(out_path)},

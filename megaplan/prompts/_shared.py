@@ -25,7 +25,14 @@ def _resolve_prompt_root(plan_dir: Path, root: Path | None) -> Path:
 def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
     carry_path = plan_dir / "gate_carry.json"
     if carry_path.exists():
-        return read_json(carry_path)
+        carry = read_json(carry_path)
+        if isinstance(carry, dict):
+            normalized = dict(carry)
+            recommendation = normalized.get("recommendation") or normalized.get("verdict")
+            if recommendation is not None:
+                normalized["recommendation"] = recommendation
+            return normalized
+        return carry
 
     gate_path = plan_dir / "gate.json"
     if gate_path.exists():
@@ -43,7 +50,6 @@ def _gate_summary_or_skipped(plan_dir: Path) -> dict[str, object]:
             settled_decisions = []
         return {
             "version": 1,
-            "verdict": gate.get("recommendation", "PROCEED"),
             "recommendation": gate.get("recommendation", "PROCEED"),
             "passed": gate.get("passed", True),
             "rationale_brief": gate.get("rationale", ""),

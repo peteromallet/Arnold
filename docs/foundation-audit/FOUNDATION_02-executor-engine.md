@@ -1,6 +1,6 @@
 First read `FOUNDATION_PREAMBLE.md` (shared context + output rules). Obey it.
 
-## YOUR SUBSYSTEM: the pipeline ENGINE — executor, types, Step/Edge/Verdict, runtime policy
+## YOUR SUBSYSTEM: the pipeline ENGINE — executor, types, Step/Edge/PipelineVerdict, runtime policy
 
 The brief's whole thesis is "everything runs through `run_pipeline`/`run_pipeline_with_policy`."
 That engine must be solid enough to carry planning (the most complex flow). Stress-test it.
@@ -10,7 +10,7 @@ Investigate (cite path:line):
   loop, edge resolution, gate dispatch, subloop/override edge handling, error/exception paths,
   how it decides "done", how it persists, how it resumes mid-graph.
 - `_pipeline/types.py`: `Step`, `Stage`, `ParallelStage`, `Edge` (kinds incl. `gate`/`subloop`/
-  `override` ~16-20,76-78), `Verdict`, `Pipeline`, `StepResult`/state_patch. Are these frozen
+  `override` ~16-20,76-78), `PipelineVerdict`, `Pipeline`, `StepResult`/state_patch. Are these frozen
   types actually expressive enough, or do real flows escape them via side channels?
 - `runtime.py` `RuntimePolicy` (stall/cost/escalate/retry): how robust? edge cases?
 - `_pipeline/steps/human_gate.py`, `ResumeCursor`: are engine resume primitives coherent?

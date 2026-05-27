@@ -22,7 +22,7 @@ into the cost path — separate issue, out of scope here.)
 
 ## Root cause
 
-`megaplan/execute/core.py::dispatch_execute_auto_loop` (the multi-batch entry
+`megaplan/execute/core.py::handle_execute_auto_loop` (the multi-batch entry
 point that runs ≥1 batches and then aggregates into a single
 `execution.json` + `step_receipt_execute_v<iter>.json`) builds its
 `receipt_worker` like this around line 1473:
@@ -49,7 +49,7 @@ receipt_worker = WorkerResult(
 receipt.
 
 By contrast, the single-batch path at `core.py:887-898`
-(`dispatch_execute_one_batch`) *does* forward `prompt_tokens`,
+(`handle_execute_one_batch`) *does* forward `prompt_tokens`,
 `completion_tokens`, and `total_tokens` from `result.worker`. So single-batch
 executes would record real tokens — the bug only manifests in the auto-loop.
 

@@ -105,7 +105,7 @@ def compile_planning_pipeline() -> Pipeline:
                    Edge(label="halt", target="halt")),
         ),
         # T11 LOAD-BEARING: TiebreakerStep is a SubloopStep that emits a
-        # Verdict with a typed recommendation. The three kind='gate' edges
+        # PipelineVerdict with a typed recommendation. The three kind='gate' edges
         # below replace the legacy label-only edges; the legacy 'escalate
         # folds into the finalize branch' semantics are preserved via
         # escalate→finalize (anti-scope: no new pipeline branches this

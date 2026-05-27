@@ -88,7 +88,7 @@ class TestEpicBlitzE2E:
     def test_full_run_terminates_normally_at_readiness(self, tmp_path: Path) -> None:
         """Pipeline runs all 6 stages and terminates cleanly at readiness.
 
-        No HumanGateStep exists, so run_pipeline must NOT produce
+        No HumanDecisionStep exists, so run_pipeline must NOT produce
         ``halt_reason='awaiting_user'``.
         """
         pipeline = build_pipeline()

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import CliError, STATE_AWAITING_HUMAN, STATE_DONE, StepResponse
+from megaplan.types import CliError, STATE_AWAITING_HUMAN_VERIFY, STATE_DONE, StepResponse
 from megaplan._core import atomic_write_json, latest_plan_meta_path, load_plan, now_utc, read_json, save_state_merge_meta
 from .shared import _warn_read_fallback
 
@@ -212,7 +212,7 @@ def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
         }
 
     # ── verdict recording mode ──────────────────────────────────────────
-    if state["current_state"] != STATE_AWAITING_HUMAN:
+    if state["current_state"] != STATE_AWAITING_HUMAN_VERIFY:
         raise CliError(
             "wrong_state",
             f"verify-human requires state 'awaiting_human_verify', got '{state['current_state']}'.",

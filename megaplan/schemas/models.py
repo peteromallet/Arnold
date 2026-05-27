@@ -10,6 +10,7 @@ from .arnold import (
     Epic,
     EpicEvent,
     EpicLock,
+    EpicSummary,
     EpicSearchSummary,
     EpicSnapshot,
     ExternalRequest,
@@ -25,7 +26,7 @@ from .arnold import (
     TicketEpicLink,
     ToolCall,
 )
-from .base import HomeBackend, StorageModel, utc_now
+from .base import Backend, HomeBackend, StorageModel, utc_now
 from .sprint1 import (
     AutomationActor,
     CloudRun,
@@ -41,6 +42,7 @@ from .sprint1 import (
 __all__ = [
     "AutomationActor",
     "BotTurn",
+    "Backend",
     "ChecklistItem",
     "CodeArtifact",
     "Codebase",
@@ -49,6 +51,7 @@ __all__ = [
     "Epic",
     "EpicEvent",
     "EpicLock",
+    "EpicSummary",
     "EpicSearchSummary",
     "EpicSnapshot",
     "ExecutionLease",

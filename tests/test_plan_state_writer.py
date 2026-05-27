@@ -77,6 +77,12 @@ def test_write_plan_state_patch_modes_preserve_existing_state(tmp_path: Path) ->
     assert state["resume_cursor"] == {"phase": "execute"}
 
 
+def test_write_plan_state_patch_many_creates_state_file_on_first_run(tmp_path: Path) -> None:
+    write_plan_state(tmp_path, mode="patch-many", patch={"meta": {"created": True}})
+
+    assert _read(tmp_path) == {"meta": {"created": True}}
+
+
 def test_write_plan_state_executor_key_merge_keeps_unowned_disk_keys(tmp_path: Path) -> None:
     save_state(tmp_path, _state(meta={"disk": True}, current_state=STATE_PLANNED))
 
@@ -90,6 +96,42 @@ def test_write_plan_state_executor_key_merge_keeps_unowned_disk_keys(tmp_path: P
     assert state["current_state"] == STATE_PLANNED
     assert state["meta"] == {"disk": True}
     assert state["_pipeline_paused"] is True
+
+
+def test_write_plan_state_rejects_corrupt_json_without_renaming_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(CliError, match="M3B_HALT_CORRUPT_STATE_WRITE"):
+        write_plan_state(tmp_path, mode="patch-many", patch={"meta": {"x": 1}})
+
+    assert state_path.read_text(encoding="utf-8") == "{not valid json"
+    assert not list(tmp_path.glob("state.json.corrupt-executor-backup*"))
+
+
+def test_write_plan_state_rejects_non_object_json_shape(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text('["not", "an", "object"]', encoding="utf-8")
+
+    with pytest.raises(CliError, match="M3B_HALT_INVALID_STATE_SHAPE"):
+        write_plan_state(tmp_path, mode="patch-many", patch={"meta": {"x": 1}})
+
+    assert state_path.read_text(encoding="utf-8") == '["not", "an", "object"]'
+    assert not list(tmp_path.glob("state.json.corrupt-executor-backup*"))
+
+
+def test_executor_merge_backs_up_corrupt_state_before_reraising(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(CliError, match="M3B_HALT_CORRUPT_STATE_WRITE") as excinfo:
+        _merge_state_to_disk(tmp_path, _state(), executor_owned_keys={"meta"})
+
+    backup_path = Path(excinfo.value.extra["forensic_backup_path"])
+    assert backup_path.parent == tmp_path
+    assert backup_path.name == "state.json.corrupt-executor-backup"
+    assert backup_path.read_text(encoding="utf-8") == "{not valid json"
+    assert state_path.read_text(encoding="utf-8") == "{not valid json"
 
 
 def test_resume_cursor_save_patches_only_resume_cursor(tmp_path: Path) -> None:
@@ -143,7 +185,7 @@ def test_write_plan_state_active_step_heartbeat_only_updates_matching_run(tmp_pa
         tmp_path,
         _state(
             active_step={
-                "step": "execute",
+                "phase": "execute",
                 "agent": "codex",
                 "mode": "fresh",
                 "run_id": "r1",
@@ -158,7 +200,7 @@ def test_write_plan_state_active_step_heartbeat_only_updates_matching_run(tmp_pa
 
     touch_active_step(tmp_path, run_id="r1", kind="token", detail="x" * 600)
     active = _read(tmp_path)["active_step"]
-    assert active["step"] == "execute"
+    assert active["phase"] == "execute"
     assert active["agent"] == "codex"
     assert active["mode"] == "fresh"
     assert active["run_id"] == "r1"

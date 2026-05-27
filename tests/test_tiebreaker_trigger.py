@@ -16,7 +16,7 @@ from megaplan.orchestration.plan_audit import load_tiebreaker_audit, record_tieb
 from megaplan.handlers import _apply_gate_outcome, handle_tiebreaker_decide
 from megaplan.prompts.critique import _settled_decisions_block
 from megaplan.types import (
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,
     STATE_PLANNED,
     STATE_TIEBREAKER_PENDING,
@@ -313,6 +313,8 @@ class TestValidateTiebreakerMissingFields:
             "claude", (), {}, {}, tmp_path,
         )
         assert result == "tiebreaker_rejected_missing_fields"
+        assert "TIEBREAKER_DOWNGRADED_MISSING_FIELDS" in gate["rationale"]
+        assert "tiebreaker_question" in gate["rationale"]
 
     def test_missing_flag_ids_demotes(self, tmp_path: Path) -> None:
         from megaplan.handlers import _validate_tiebreaker
@@ -327,6 +329,8 @@ class TestValidateTiebreakerMissingFields:
             "claude", (), {}, {}, tmp_path,
         )
         assert result == "tiebreaker_rejected_missing_fields"
+        assert "TIEBREAKER_DOWNGRADED_MISSING_FIELDS" in gate["rationale"]
+        assert "tiebreaker_flag_ids" in gate["rationale"]
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +491,7 @@ class TestHandleTiebreakerDecideEscalate:
         with _mock_plan_locked(plan_dir, state):
             response = handle_tiebreaker_decide(tmp_path, args)
 
-        assert response["state"] == STATE_AWAITING_HUMAN
+        assert response["state"] == STATE_AWAITING_HUMAN_VERIFY
         assert response["next_step"] == "override add-note"
         assert response["details"]["action"] == "escalate"
 

@@ -5,7 +5,7 @@ Collapses the legacy two-state tiebreaker pair (``tiebreaker_pending``
 ``critiqued``) into a single :class:`SubloopStep` whose child Pipeline
 runs the run-and-decide pair in sequence.
 
-The parent's Verdict.recommendation is derived from the child's final
+The parent's PipelineVerdict.recommendation is derived from the child's final
 state.json: when ``current_state`` advances back to ``critiqued`` the
 tiebreaker resolved; the parent emits ``"iterate"`` so the planning
 critique loop can continue with the resolved decision.
@@ -53,7 +53,7 @@ def _build_tiebreaker_child_pipeline() -> Pipeline:
 
 
 def _promote_from_child_state(state: dict[str, Any]) -> GateRecommendation:
-    """Map the child pipeline's final state to a parent Verdict.
+    """Map the child pipeline's final state to a parent PipelineVerdict.
 
     The child writes to ``current_state``; after a successful
     tiebreaker run+decide the state transitions back to ``critiqued``

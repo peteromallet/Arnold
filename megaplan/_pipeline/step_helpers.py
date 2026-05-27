@@ -4,7 +4,7 @@ These helpers are independent of any particular Step class — they resolve
 input refs, interpolate input contents into prompts, pick the next /
 latest versioned artifact in a stage directory, and resolve prompt refs
 to text. They are used by AgentStep / PanelReviewerStep / GateStep /
-HumanGateStep and by the run_cli human-gate resume path.
+HumanDecisionStep and by the run_cli human-gate resume path.
 
 ``panel_reviewer_order`` is the mapping
 ``{panel_stage_name: tuple_of_reviewer_ids_in_order}`` used to expand

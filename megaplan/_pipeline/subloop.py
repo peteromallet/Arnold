@@ -3,7 +3,7 @@
 A :class:`SubloopStep` is the executor-level primitive: it carries a
 nested :class:`Pipeline`, runs it as a child via
 :func:`run_pipeline`, and then promotes the child's final state into
-a :class:`Verdict` on the parent. The parent's Verdict.recommendation
+a :class:`PipelineVerdict` on the parent. The parent's PipelineVerdict.recommendation
 is set from the child pipeline's terminal stage by a configurable
 :attr:`promote` callable.
 
@@ -23,7 +23,7 @@ State-flow contract: the child runs with a *copy* of ``ctx.state``
 (``state=dict(ctx.state)``). Child state mutations therefore do not
 propagate back to the parent state map directly — only the
 ``promote`` callable's :class:`GateRecommendation` flows up via
-:class:`Verdict`, plus the two ``subloop:<name>:recommendation`` /
+:class:`PipelineVerdict`, plus the two ``subloop:<name>:recommendation`` /
 ``subloop:<name>:state`` keys emitted as ``state_patch`` on the
 parent. Downstream handlers that need to observe child results
 should read them from on-disk artifacts (the child writes under
@@ -41,7 +41,7 @@ from megaplan._pipeline.types import (
     Pipeline,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 
@@ -54,7 +54,7 @@ class SubloopStep:
 
     ``child_pipeline``: the inner pipeline to run.
     ``promote``: callable that maps the child's final state dict to a
-    :class:`GateRecommendation` for the parent's Verdict.
+    :class:`GateRecommendation` for the parent's PipelineVerdict.
     ``artifact_subdir``: subdir under ``ctx.plan_dir`` where the child
     pipeline's state.json + per-stage artifacts land. Defaults to the
     Step's name.
@@ -85,7 +85,7 @@ class SubloopStep:
         child_state: dict[str, Any] = result.get("state", {})
 
         recommendation = self.promote(child_state)
-        verdict = Verdict(
+        verdict = PipelineVerdict(
             score=float(child_state.get("score", 1.0)),
             recommendation=recommendation,
             payload={

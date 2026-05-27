@@ -26,10 +26,13 @@ import megaplan.workers
 
 from megaplan._pipeline.planning import compile_planning_pipeline
 from megaplan._pipeline.stages.inprocess_step import (
+    InProcessHandlerStep,
+    _read_state,
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,
 )
+from megaplan.types import CliError
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,
@@ -226,3 +229,64 @@ def test_pipeline_drives_plan_end_to_end(
     assert "finalized->execute" in visits
     assert "executed->review" in visits
     assert "terminal:done" in visits
+
+
+def test_corrupt_state_json_prevents_handler_from_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Corrupt state.json raises M3B_HALT_CORRUPT_STATE_READ before handler runs."""
+    root, project_dir, plan_name, plan_dir = _make_mock_root(tmp_path, monkeypatch)
+
+    # Write corrupt state.json
+    (plan_dir / "state.json").write_text("not valid json {{{", encoding="utf-8")
+
+    # Direct _read_state raises on corrupt JSON
+    with pytest.raises(CliError, match="M3B_HALT_CORRUPT_STATE_READ"):
+        _read_state(plan_dir)
+
+    # Prove handler does not run: create a simple step and ensure
+    # corrupt state prevents execution
+    handler_called = False
+
+    def tracking_handler(_root: Any, _args: Any) -> dict[str, Any]:
+        nonlocal handler_called
+        handler_called = True
+        return {"success": True}
+
+    step = InProcessHandlerStep(
+        name="test",
+        kind="produce",
+        handler=tracking_handler,
+    )
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state={"name": plan_name},
+        profile={"root": root, "project_dir": project_dir},
+        mode="code",
+        inputs={},
+        budget=None,
+    )
+
+    with pytest.raises(CliError, match="M3B_HALT_CORRUPT_STATE_READ"):
+        step.run(ctx)
+
+    assert not handler_called, "handler should not have been called when state is corrupt"
+
+
+def test_non_dict_state_json_raises_invalid_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-dict state.json (e.g. a list) raises M3B_HALT_INVALID_STATE_SHAPE."""
+    root, project_dir, plan_name, plan_dir = _make_mock_root(tmp_path, monkeypatch)
+
+    # Write valid JSON that is not a dict
+    (plan_dir / "state.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    # Direct _read_state raises on wrong shape
+    with pytest.raises(CliError, match="M3B_HALT_INVALID_STATE_SHAPE"):
+        _read_state(plan_dir)
+
+    # Missing state.json still returns {}
+    (plan_dir / "state.json").unlink()
+    result = _read_state(plan_dir)
+    assert result == {}

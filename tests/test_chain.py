@@ -1485,6 +1485,44 @@ def test_init_plan_warns_when_inherited_vendor_ignored_by_locked_profile(tmp_pat
     assert "inherited vendor=codex is ignored" in joined
 
 
+def test_vendor_lock_profile_metadata_load_failure_raises(tmp_path: Path) -> None:
+    with patch("megaplan.chain.load_profile_metadata", side_effect=RuntimeError("metadata offline")):
+        with pytest.raises(CliError, match="M3B_HALT_VENDOR_LOCK_PROFILE_LOAD"):
+            chain_module._warn_vendor_ignored_for_locked_profile(
+                tmp_path,
+                profile="apex",
+                vendor="codex",
+                writer=lambda _: None,
+            )
+
+
+def test_vendor_lock_with_no_profile_and_no_vendor_is_noop(tmp_path: Path) -> None:
+    writer_calls: list[str] = []
+
+    with patch("megaplan.chain.load_profile_metadata") as load_metadata:
+        chain_module._warn_vendor_ignored_for_locked_profile(
+            tmp_path,
+            profile=None,
+            vendor=None,
+            writer=writer_calls.append,
+        )
+
+    load_metadata.assert_not_called()
+    assert writer_calls == []
+
+
+def test_vendor_lock_default_vendor_resolution_failure_raises(tmp_path: Path) -> None:
+    with patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
+         patch("megaplan.chain._resolve_default_vendor", side_effect=RuntimeError("no default vendor")):
+        with pytest.raises(CliError, match="M3B_HALT_VENDOR_LOCK_RESOLVE"):
+            chain_module._warn_vendor_ignored_for_locked_profile(
+                tmp_path,
+                profile="apex",
+                vendor=None,
+                writer=lambda _: None,
+            )
+
+
 def test_init_plan_forwards_prep_direction_flag(tmp_path: Path) -> None:
     idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
     proc = subprocess.CompletedProcess(

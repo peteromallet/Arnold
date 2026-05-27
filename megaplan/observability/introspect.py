@@ -42,6 +42,11 @@ def _parse_iso(ts_str: str) -> Optional[float]:
         return None
 
 
+def _active_phase_name(active: dict[str, Any]) -> str | None:
+    phase = active.get("phase") or active.get("step")
+    return phase if isinstance(phase, str) and phase else None
+
+
 def _git_info(project_dir: Path) -> dict:
     """Return git branch, dirty flag, and head hash for the project."""
     info: dict = {"branch": None, "dirty": False, "head": None}
@@ -460,7 +465,7 @@ def build_introspect_payload(plan_dir: Path) -> dict:
     if state and isinstance(state, dict):
         active = state.get("active_step")
         if isinstance(active, dict):
-            active_phase["phase"] = active.get("step")
+            active_phase["phase"] = _active_phase_name(active)
             active_phase["agent"] = active.get("agent")
             active_phase["model"] = active.get("model")
             active_phase["started_at"] = active.get("started_at")

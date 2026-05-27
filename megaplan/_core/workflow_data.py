@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from megaplan.types import (
     STATE_ABORTED,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -73,7 +73,7 @@ WORKFLOW: dict[str, list[Transition]] = {
     STATE_EXECUTED: [
         Transition("review", STATE_DONE),
     ],
-    STATE_AWAITING_HUMAN: [
+    STATE_AWAITING_HUMAN_VERIFY: [
         Transition("verify-human", STATE_DONE),
     ],
     STATE_TIEBREAKER_PENDING: [

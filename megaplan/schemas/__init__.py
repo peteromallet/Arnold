@@ -6,6 +6,7 @@ while opening a dedicated namespace for the Sprint 1 storage models.
 
 from .models import (
     AutomationActor,
+    Backend,
     BotTurn,
     ChecklistItem,
     CodeArtifact,
@@ -15,6 +16,7 @@ from .models import (
     Epic,
     EpicEvent,
     EpicLock,
+    EpicSummary,
     EpicSearchSummary,
     EpicSnapshot,
     ExecutionLease,
@@ -49,6 +51,7 @@ from .runtime import (
 
 __all__ = [
     "AutomationActor",
+    "Backend",
     "BotTurn",
     "ChecklistItem",
     "CodeArtifact",
@@ -58,6 +61,7 @@ __all__ = [
     "Epic",
     "EpicEvent",
     "EpicLock",
+    "EpicSummary",
     "EpicSearchSummary",
     "EpicSnapshot",
     "ExecutionLease",

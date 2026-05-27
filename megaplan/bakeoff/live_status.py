@@ -42,7 +42,7 @@ def _profile_status_line(record: dict[str, Any]) -> str:
         [
             str(record.get("name") or ""),
             str(plan_state.get("current_state") or ""),
-            str(active.get("step") or ""),
+            str(active.get("phase") or active.get("step") or ""),
             str(plan_state.get("iteration") or ""),
             _age(record.get("launched_at")),
             str(meta.get("total_cost_usd") or ""),

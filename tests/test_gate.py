@@ -334,6 +334,23 @@ def test_revise_rejects_proceed_preflight_block(plan_fixture: PlanFixture) -> No
     assert "ITERATE" in str(error.value)
 
 
+def test_revise_accepts_legacy_verdict_only_gate_carry(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["last_gate"] = {"recommendation": "ITERATE", "passed": False}
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (plan_fixture.plan_dir / "gate_carry.json").write_text(
+        json.dumps({"version": 1, "verdict": "ITERATE", "passed": False}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_revise(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert response["state"] == megaplan.STATE_PLANNED
+    assert response["next_step"] == "critique"
+
+
 def test_gate_proceed_partial_resolutions_still_missing_after_reprompt_downgrades_to_iterate(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
@@ -716,8 +733,8 @@ def test_gate_writes_carry_artifact(plan_fixture: PlanFixture, monkeypatch: pyte
     carry = read_json(carry_path)
     assert carry_path.stat().st_size <= 5_000
     assert carry["version"] == 1
-    assert carry["verdict"] == "ITERATE"
     assert carry["recommendation"] == "ITERATE"
+    assert "verdict" not in carry
 
 
 def test_carry_settled_decisions_are_dicts(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
