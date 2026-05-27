@@ -34,10 +34,10 @@ MODELS = {
 PUBLIC_INPUT_METADATA = {
     'model': InputSpec(node='4', field='unet_name', default=UNET_NAME),
     'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node='130:110', field='noise_seed', default=0),
-    'steps': InputSpec(node='130:110', field='steps', default=4),
+    'seed': InputSpec(node='13', field='noise_seed', default=0),
+    'steps': InputSpec(node='13', field='steps', default=4),
     'image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png', aliases=('input_image',)),
-    'fps': InputSpec(node='14', field='fps', default=DEFAULT_FPS),
+    'fps': InputSpec(node='16', field='fps', default=DEFAULT_FPS),
     'width': InputSpec(node='12', field='width', default=720),
     'height': InputSpec(node='12', field='height', default=720),
     'frames': InputSpec(node='12', field='length', default=81),

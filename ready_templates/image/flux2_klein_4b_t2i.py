@@ -126,20 +126,20 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     edited = text_to_image_flux2_klein_4b(
-        value='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
-        value_1=None,
+        value=1024,
+        value_1=1024,
         unet_name='flux-2-klein-base-4b.safetensors',
         clip_name='qwen_3_4b.safetensors',
         vae_name='flux2-vae.safetensors',
-        prompt='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
+        prompt='',
     )
     edited_2 = text_to_image_flux2_klein_4b_distilled(
-        value='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
-        value_1=None,
+        value=1024,
+        value_1=1024,
         unet_name='flux-2-klein-4b.safetensors',
         clip_name='qwen_3_4b.safetensors',
         vae_name='flux2-vae.safetensors',
-        prompt='A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n',
+        prompt='',
     )
     saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
     saveimage_2 = SaveImage(filename_prefix='Flux2-Klein', images=edited_2)

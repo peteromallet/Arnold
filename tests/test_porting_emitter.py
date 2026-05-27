@@ -540,6 +540,25 @@ def test_subgraph_call_site_uses_widget_fed_literals() -> None:
     assert "prompt=''" in call
 
 
+def test_subgraph_call_site_uses_proxy_widget_order_for_z_image() -> None:
+    text = _emit_ready_from_ui_json(
+        "workflow_corpus/official/image/z_image.json",
+        "image/z_image",
+    )
+
+    call = text[text.index("edited = text_to_image_z_image_base("):text.index("saveimage = SaveImage(")]
+    assert "width=1024" in call
+    assert "height=1024" in call
+    assert "unet_name='z_image_bf16.safetensors'" in call
+    assert "clip_name='qwen_3_4b.safetensors'" in call
+    assert "vae_name='ae.safetensors'" in call
+    assert "steps=25" in call
+    assert "cfg=4" in call
+    assert "width='A fashion photography" not in call
+    assert "steps=770044821593082" not in call
+    assert "cfg='randomize'" not in call
+
+
 def test_subgraph_signature_prefers_meaningful_labels_and_cleans_widgets() -> None:
     text = _emit_ready_from_ui_json(
         "workflow_corpus/official/image/flux2_klein_9b_t2i.json",

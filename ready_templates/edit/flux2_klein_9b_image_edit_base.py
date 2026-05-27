@@ -220,15 +220,15 @@ def build() -> VibeWorkflow:
     image_2, _ = LoadImage(image='comfy_logo_blue.png')
     edited = image_edit_flux2_klein_9b(
         unet_name='flux-2-klein-base-9b-fp8.safetensors',
-        clip_name=image,
+        clip_name='qwen_3_8b_fp8mixed.safetensors',
         vae_name='full_encoder_small_decoder.safetensors',
         prompt="Change the camera angle to a first-person driver's perspective looking through the steering wheel at the dashboard and windshield, maintaining the same white minimalist interior style and lighting\n",
         image=image,
     )
     edited_dual = image_edit_flux2_klein_9b_dual(
         unet_name='flux-2-klein-base-9b-fp8.safetensors',
-        clip_name=image,
-        vae_name=image_2,
+        clip_name='qwen_3_8b_fp8mixed.safetensors',
+        vae_name='full_encoder_small_decoder.safetensors',
         prompt='Apply the yellow "C" logo to the center hub of the steering wheel, and change the steering wheel color to royal blue matching the logo background, while maintaining the same interior style, lighting, camera angle, and all other elements unchanged',
         reference_image1=image,
         reference_image2=image_2,

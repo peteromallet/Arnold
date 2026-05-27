@@ -277,15 +277,15 @@ def build() -> VibeWorkflow:
     image_2, _ = LoadImage(image='comfy_logo_blue.png')
     edited = image_edit_flux2_klein_4b_distilled(
         unet_name='flux-2-klein-4b-fp8.safetensors',
-        clip_name=image,
+        clip_name='qwen_3_4b.safetensors',
         vae_name='flux2-vae.safetensors',
         prompt='Change the bag color to blue.',
         image=image,
     )
     edited_dual = image_edit_flux2_klein_4b_distilled_dual(
         unet_name='flux-2-klein-4b-fp8.safetensors',
-        clip_name=image,
-        vae_name=image_2,
+        clip_name='qwen_3_4b.safetensors',
+        vae_name='flux2-vae.safetensors',
         prompt='stylize the handbag in image1 with the colours and logo from image 2',
         reference_image1=image,
         reference_image2=image_2,

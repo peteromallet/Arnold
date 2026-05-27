@@ -45,9 +45,9 @@ PUBLIC_INPUT_METADATA = {
     'image': InputSpec(node='4', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'width': InputSpec(node='15', field='width', default=832, type='INT'),
     'height': InputSpec(node='15', field='height', default=480, type='INT'),
-    'frames': InputSpec(node='108', field='length', default=DEFAULT_FRAMES, type='INT'),
-    'seed': InputSpec(node='109', field='seed', default=DEFAULT_SEED, type='INT'),
-    'fps': InputSpec(node='113', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'frames': InputSpec(node='24', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'seed': InputSpec(node='25', field='seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node='29', field='fps', default=DEFAULT_FPS, type='FLOAT'),
     'prompt': InputSpec(node='8', field='text', default='low quality, blurry, distorted', type='STRING', required=True, media_semantics='text'),
 }
 

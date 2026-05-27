@@ -47,7 +47,7 @@ MODELS = {
 
 PUBLIC_INPUT_METADATA = {
     'image': InputSpec(node='4', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'seed': InputSpec(node='186', field='seed', default=DEFAULT_SEED, type='INT'),
+    'seed': InputSpec(node='31', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(

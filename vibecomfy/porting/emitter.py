@@ -2000,20 +2000,7 @@ def _widget_default_for_target(node: Mapping[str, Any], target_slot: int) -> Any
     if not isinstance(widget, Mapping):
         return None
     widget_name = str(widget.get("name") or target_input.get("name") or "")
-    values = node.get("widgets_values")
-    if isinstance(values, Mapping):
-        return values.get(widget_name)
-    if not isinstance(values, list):
-        return None
-    widget_names = [
-        str(item.get("widget", {}).get("name") or item.get("name") or "")
-        for item in input_items
-        if isinstance(item.get("widget"), Mapping)
-    ]
-    try:
-        return values[widget_names.index(widget_name)]
-    except (ValueError, IndexError):
-        return None
+    return _ui_widget_values_by_name(node).get(widget_name)
 
 
 def _apply_subgraph_names_to_prepared(prepared: dict[str, Any]) -> None:
@@ -2859,11 +2846,14 @@ def _subgraph_instance_port_candidate_names(node: Any, subgraph: _SubgraphDef) -
 
         add(port.name)
         add(port.source_name)
-        if index < len(input_items):
-            item = input_items[index]
+        for item in input_items:
             raw_name = str(item.get("name") or "")
+            label_slug = _slugify_identifier(str(item.get("label") or ""))
+            identity = {name for name in (raw_name, label_slug) if name}
+            if port.name not in identity and (port.source_name or "") not in identity:
+                continue
             add(raw_name)
-            add(_slugify_identifier(str(item.get("label") or "")))
+            add(label_slug)
             if not raw_name and item.get("link") is not None:
                 add(f"_un{item.get('link')}")
         out[index] = tuple(names)
@@ -2882,6 +2872,7 @@ def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
     ui = getattr(node, "metadata", {}).get("_ui")
     if not isinstance(ui, Mapping):
         return values
+    values.update(_ui_widget_values_by_name(ui))
     input_items = [item for item in ui.get("inputs") or () if isinstance(item, Mapping)]
     widgets_values = ui.get("widgets_values")
     if isinstance(widgets_values, Mapping):
@@ -2915,6 +2906,47 @@ def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
             if value_key in item:
                 values[input_name] = item[value_key]
                 break
+    return values
+
+
+def _ui_widget_values_by_name(ui_node: Mapping[str, Any]) -> dict[str, Any]:
+    raw_values = ui_node.get("widgets_values")
+    if isinstance(raw_values, Mapping):
+        return {str(key): value for key, value in raw_values.items()}
+    if not isinstance(raw_values, list):
+        return {}
+
+    values: dict[str, Any] = {}
+    properties = ui_node.get("properties")
+    proxy_widgets = properties.get("proxyWidgets") if isinstance(properties, Mapping) else None
+    if isinstance(proxy_widgets, list):
+        for index, item in enumerate(proxy_widgets):
+            if index >= len(raw_values) or not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            name = str(item[1] or "")
+            if name:
+                values[name] = raw_values[index]
+
+    class_type = str(ui_node.get("type") or ui_node.get("class_type") or "")
+    schema = WIDGET_SCHEMA.get(class_type)
+    if schema is not None:
+        for index, value in enumerate(raw_values):
+            if index >= len(schema):
+                continue
+            name = schema[index]
+            if name:
+                values.setdefault(str(name), value)
+
+    input_items = [item for item in ui_node.get("inputs") or () if isinstance(item, Mapping)]
+    widget_index = 0
+    for item in input_items:
+        widget = item.get("widget")
+        if not isinstance(widget, Mapping):
+            continue
+        input_name = str(item.get("name") or widget.get("name") or "")
+        if input_name and widget_index < len(raw_values):
+            values.setdefault(input_name, raw_values[widget_index])
+        widget_index += 1
     return values
 
 

@@ -220,15 +220,15 @@ def build() -> VibeWorkflow:
     image_2, _ = LoadImage(image='pink_tone_chair.png')
     edited = image_edit_flux2_klein_4b(
         unet_name='flux-2-klein-base-4b-fp8.safetensors',
-        clip_name=image,
+        clip_name='qwen_3_4b.safetensors',
         vae_name='full_encoder_small_decoder.safetensors',
         prompt="Change the background to a cozy, softly lit interior space with warm beige tones, soft natural window light filtering through, and a relaxed, intimate atmosphere similar to the original image's mood. Keep the person in the exact same position, scale, and pose. Maintain identical camera angle, framing, and perspective. The lighting should be soft, even, and warm - not harsh or bright. Only replace the room environment, preserving all facial features, hairstyle, expression, clothing, and pose exactly as they are.",
         image=image,
     )
     edited_2 = image_edit_flux2_klein_9b(
         unet_name='flux-2-klein-base-4b-fp8.safetensors',
-        clip_name=image,
-        vae_name=image_2,
+        clip_name='qwen_3_4b.safetensors',
+        vae_name='full_encoder_small_decoder.safetensors',
         prompt="A stylish young woman with dark skin wearing a plush deep emerald green bathrobe, light pink towel turban, and red heart-shaped sunglasses, seated on a light-colored rattan chair with soft pink cushions, positioned in front of a textured dusty rose pink wall with an arched alcove, large tropical plants with broad dark green leaves framing both sides, woven straw baskets on the floor, remove any existing shoes from the background, only the woman's beige woven sandals visible in the foreground, soft natural lighting casting gentle shadows, warm bohemian chic aesthetic, professional fashion photography",
         reference_image1=image,
         reference_image2=image_2,

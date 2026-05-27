@@ -238,15 +238,15 @@ def build() -> VibeWorkflow:
     image_2, _ = LoadImage(image='handbag_white.png')
     edited = image_edit_flux2_klein_9b_distilled(
         unet_name='flux-2-klein-9b-fp8.safetensors',
-        clip_name=image,
+        clip_name='qwen_3_8b_fp8mixed.safetensors',
         vae_name='full_encoder_small_decoder.safetensors',
         prompt='Replace the background with a quiet coastal cliff at overcast sunset. Remove all buildings and streets. Add wind-shaped grass and a distant ocean horizon. Keep the subject’s pose and framing unchanged.',
         image=image,
     )
     edited_dual = image_edit_flux2_klein_9b_distilled_dual(
         unet_name='flux-2-klein-9b-fp8.safetensors',
-        clip_name=image,
-        vae_name=image_2,
+        clip_name='qwen_3_8b_fp8mixed.safetensors',
+        vae_name='full_encoder_small_decoder.safetensors',
         prompt='Let this character hold the bag with both hands',
         reference_image1=image,
         reference_image2=image_2,
