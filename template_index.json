@@ -76,7 +76,7 @@
       "public_outputs": [
         {
           "name": "audio",
-          "node_id": "10",
+          "node_id": "59",
           "output_type": "SaveAudioMP3",
           "artifact_kind": "audio",
           "mime_type": "audio/mpeg",
@@ -90,7 +90,7 @@
       "artifact_expectations": [
         {
           "name": "audio",
-          "node_id": "10",
+          "node_id": "59",
           "output_type": "SaveAudioMP3",
           "artifact_kind": "audio",
           "mime_type": "audio/mpeg",
@@ -464,7 +464,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -478,7 +478,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -585,7 +585,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -599,7 +599,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -724,7 +724,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -738,7 +738,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -845,7 +845,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -859,7 +859,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -984,7 +984,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "60",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -998,7 +998,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "3",
+          "node_id": "60",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1188,7 +1188,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1202,7 +1202,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1289,7 +1289,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1303,7 +1303,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1390,7 +1390,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1404,7 +1404,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1545,7 +1545,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "14",
+          "node_id": "60",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1559,7 +1559,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "14",
+          "node_id": "60",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1646,7 +1646,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -1660,7 +1660,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "1",
+          "node_id": "9",
           "output_type": "SaveImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -2463,7 +2463,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "4995",
+          "node_id": "4823",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -2477,7 +2477,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "4995",
+          "node_id": "4823",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -2843,9 +2843,9 @@
           },
           "node_id": "165",
           "field": "text",
-          "value": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (“PNTR”), incorrect t-shirt slogan (“JUST DO IT”), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
+          "value": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (\u201cPNTR\u201d), incorrect t-shirt slogan (\u201cJUST DO IT\u201d), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
           "type": "STRING",
-          "default": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (“PNTR”), incorrect t-shirt slogan (“JUST DO IT”), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
+          "default": "blurry, out of focus, overexposed, underexposed, low contrast, washed out colors, excessive noise, grainy texture, poor lighting, flickering, motion blur, distorted proportions, unnatural skin tones, deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, wrong hand count, artifacts around text, unreadable text on shirt or hat, incorrect lettering on cap (\u201cPNTR\u201d), incorrect t-shirt slogan (\u201cJUST DO IT\u201d), missing microphone, misplaced microphone, inconsistent perspective, camera shake, incorrect depth of field, background too sharp, background clutter, distracting reflections, harsh shadows, inconsistent lighting direction, color banding, cartoonish rendering, 3D CGI look, unrealistic materials, uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, smiling, laughing, exaggerated sadness, wrong gaze direction, eyes looking at camera, mismatched lip sync, silent or muted audio, distorted voice, robotic voice, echo, background noise, off-sync audio, missing sniff sounds, incorrect dialogue, added dialogue, repetitive speech, jittery movement, awkward pauses, incorrect timing, unnatural transitions, inconsistent framing, tilted camera, missing door or shelves, missing shallow depth of field, flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, or AI artifacts.",
           "required": true,
           "range": null,
           "aliases": [],
@@ -2874,10 +2874,10 @@
         {
           "name": "steps",
           "target": {
-            "node_id": "24",
+            "node_id": "23",
             "field": "steps"
           },
-          "node_id": "24",
+          "node_id": "23",
           "field": "steps",
           "value": 8,
           "type": null,
@@ -2893,7 +2893,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "910",
+          "node_id": "190",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -2907,7 +2907,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "910",
+          "node_id": "190",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3086,7 +3086,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "10969",
+          "node_id": "4958",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3100,7 +3100,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "10969",
+          "node_id": "4958",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3209,10 +3209,10 @@
         {
           "name": "frames",
           "target": {
-            "node_id": "18",
+            "node_id": "17",
             "field": "length"
           },
-          "node_id": "18",
+          "node_id": "17",
           "field": "length",
           "value": 81,
           "type": "INT",
@@ -3227,10 +3227,10 @@
         {
           "name": "fps",
           "target": {
-            "node_id": "28",
+            "node_id": "27",
             "field": "fps"
           },
-          "node_id": "28",
+          "node_id": "27",
           "field": "fps",
           "value": 16.0,
           "type": "FLOAT",
@@ -3245,10 +3245,10 @@
         {
           "name": "prompt",
           "target": {
-            "node_id": "10",
+            "node_id": "9",
             "field": "text"
           },
-          "node_id": "10",
+          "node_id": "9",
           "field": "text",
           "value": "blurry, distorted, low quality",
           "type": "STRING",
@@ -3282,7 +3282,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "29",
+          "node_id": "28",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3296,7 +3296,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "29",
+          "node_id": "28",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3421,10 +3421,10 @@
         {
           "name": "frames",
           "target": {
-            "node_id": "27",
+            "node_id": "26",
             "field": "length"
           },
-          "node_id": "27",
+          "node_id": "26",
           "field": "length",
           "value": 81,
           "type": "INT",
@@ -3439,10 +3439,10 @@
         {
           "name": "fps",
           "target": {
-            "node_id": "46",
+            "node_id": "45",
             "field": "fps"
           },
-          "node_id": "46",
+          "node_id": "45",
           "field": "fps",
           "value": 16.0,
           "type": "FLOAT",
@@ -3494,7 +3494,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "47",
+          "node_id": "46",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3508,7 +3508,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "47",
+          "node_id": "46",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3685,7 +3685,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "26",
+          "node_id": "5109",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3699,7 +3699,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "26",
+          "node_id": "5109",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3916,7 +3916,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "36",
+          "node_id": "4852",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -3930,7 +3930,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "36",
+          "node_id": "4852",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4111,7 +4111,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "40",
+          "node_id": "4852",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4125,7 +4125,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "40",
+          "node_id": "4852",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4378,7 +4378,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "37",
+          "node_id": "4852",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4392,7 +4392,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "37",
+          "node_id": "4852",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4516,10 +4516,10 @@
         {
           "name": "model",
           "target": {
-            "node_id": "8",
+            "node_id": "7",
             "field": "model_name"
           },
-          "node_id": "8",
+          "node_id": "7",
           "field": "model_name",
           "value": "ltx-2.3-spatial-upscaler-x2-1.0.safetensors",
           "type": null,
@@ -4535,7 +4535,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "398",
+          "node_id": "140",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4549,7 +4549,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "398",
+          "node_id": "140",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4727,10 +4727,10 @@
         {
           "name": "model",
           "target": {
-            "node_id": "20",
+            "node_id": "17",
             "field": "model_name"
           },
-          "node_id": "20",
+          "node_id": "17",
           "field": "model_name",
           "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
           "type": null,
@@ -4746,7 +4746,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "60",
+          "node_id": "43",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4760,7 +4760,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "60",
+          "node_id": "43",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4815,10 +4815,10 @@
         {
           "name": "seed",
           "target": {
-            "node_id": "4",
+            "node_id": "3",
             "field": "noise_seed"
           },
-          "node_id": "4",
+          "node_id": "3",
           "field": "noise_seed",
           "value": 43,
           "type": "INT",
@@ -4833,10 +4833,10 @@
         {
           "name": "image",
           "target": {
-            "node_id": "6",
+            "node_id": "5",
             "field": "image"
           },
-          "node_id": "6",
+          "node_id": "5",
           "field": "image",
           "value": "",
           "type": "IMAGE",
@@ -4853,10 +4853,10 @@
         {
           "name": "input_image",
           "target": {
-            "node_id": "6",
+            "node_id": "5",
             "field": "image"
           },
-          "node_id": "6",
+          "node_id": "5",
           "field": "image",
           "value": "",
           "type": "IMAGE",
@@ -4871,12 +4871,12 @@
         {
           "name": "model",
           "target": {
-            "node_id": "9",
-            "field": "ckpt_name"
+            "node_id": "8",
+            "field": "model_name"
           },
-          "node_id": "9",
-          "field": "ckpt_name",
-          "value": "LTX23_audio_vae_bf16.safetensors",
+          "node_id": "8",
+          "field": "model_name",
+          "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
           "type": null,
           "default": null,
           "required": false,
@@ -4889,10 +4889,10 @@
         {
           "name": "prompt",
           "target": {
-            "node_id": "21",
+            "node_id": "17",
             "field": "text"
           },
-          "node_id": "21",
+          "node_id": "17",
           "field": "text",
           "value": "",
           "type": null,
@@ -4908,7 +4908,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "62",
+          "node_id": "54",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -4922,7 +4922,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "62",
+          "node_id": "54",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5112,10 +5112,10 @@
         {
           "name": "model",
           "target": {
-            "node_id": "22",
+            "node_id": "19",
             "field": "model_name"
           },
-          "node_id": "22",
+          "node_id": "19",
           "field": "model_name",
           "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
           "type": null,
@@ -5131,7 +5131,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "65",
+          "node_id": "43",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5145,7 +5145,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "65",
+          "node_id": "43",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5305,30 +5305,12 @@
         {
           "name": "model",
           "target": {
-            "node_id": "11",
+            "node_id": "10",
             "field": "model_name"
           },
-          "node_id": "11",
+          "node_id": "10",
           "field": "model_name",
           "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
-        },
-        {
-          "name": "steps",
-          "target": {
-            "node_id": "63",
-            "field": "steps"
-          },
-          "node_id": "63",
-          "field": "steps",
-          "value": 15,
           "type": null,
           "default": null,
           "required": false,
@@ -5342,7 +5324,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "887",
+          "node_id": "578",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5356,7 +5338,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "887",
+          "node_id": "578",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5554,10 +5536,10 @@
         {
           "name": "prompt",
           "target": {
-            "node_id": "25",
+            "node_id": "22",
             "field": "text"
           },
-          "node_id": "25",
+          "node_id": "22",
           "field": "text",
           "value": "low contrast, washed out, text, subtitles, logo, still image, still video, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth",
           "type": null,
@@ -5573,7 +5555,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "50",
+          "node_id": "5120",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5587,7 +5569,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "50",
+          "node_id": "5120",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5819,30 +5801,12 @@
         {
           "name": "model",
           "target": {
-            "node_id": "136",
+            "node_id": "135",
             "field": "model_name"
           },
-          "node_id": "136",
+          "node_id": "135",
           "field": "model_name",
           "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
-        },
-        {
-          "name": "steps",
-          "target": {
-            "node_id": "189",
-            "field": "steps"
-          },
-          "node_id": "189",
-          "field": "steps",
-          "value": 4,
           "type": null,
           "default": null,
           "required": false,
@@ -5856,7 +5820,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "72",
+          "node_id": "4709",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -5870,7 +5834,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "72",
+          "node_id": "4709",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -6026,30 +5990,12 @@
           "media_semantics": null,
           "status": "static",
           "source": "finalize_metadata"
-        },
-        {
-          "name": "steps",
-          "target": {
-            "node_id": "56",
-            "field": "steps"
-          },
-          "node_id": "56",
-          "field": "steps",
-          "value": 8,
-          "type": null,
-          "default": null,
-          "required": false,
-          "range": null,
-          "aliases": [],
-          "media_semantics": null,
-          "status": "static",
-          "source": "finalize_metadata"
         }
       ],
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "1943",
+          "node_id": "1837",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -6063,7 +6009,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "1943",
+          "node_id": "1837",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -6205,10 +6151,10 @@
         {
           "name": "model",
           "target": {
-            "node_id": "13",
+            "node_id": "12",
             "field": "model_name"
           },
-          "node_id": "13",
+          "node_id": "12",
           "field": "model_name",
           "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
           "type": null,
@@ -6223,10 +6169,10 @@
         {
           "name": "steps",
           "target": {
-            "node_id": "53",
+            "node_id": "48",
             "field": "steps"
           },
-          "node_id": "53",
+          "node_id": "48",
           "field": "steps",
           "value": 8,
           "type": null,
@@ -6242,7 +6188,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "574",
+          "node_id": "578",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -6256,7 +6202,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "574",
+          "node_id": "578",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -6509,7 +6455,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "4995",
+          "node_id": "4823",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -6523,7 +6469,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "4995",
+          "node_id": "4823",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7173,9 +7119,9 @@
           },
           "node_id": "7",
           "field": "text",
-          "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "value": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "type": "STRING",
-          "default": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "default": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "required": false,
           "range": null,
           "aliases": [
@@ -7193,9 +7139,9 @@
           },
           "node_id": "7",
           "field": "text",
-          "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "value": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "type": "STRING",
-          "default": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "default": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "required": false,
           "range": null,
           "aliases": [],
@@ -7225,7 +7171,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "14",
+          "node_id": "56",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7239,7 +7185,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "14",
+          "node_id": "56",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7402,9 +7348,9 @@
           },
           "node_id": "7",
           "field": "text",
-          "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "value": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "type": "STRING",
-          "default": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "default": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "required": false,
           "range": null,
           "aliases": [
@@ -7422,9 +7368,9 @@
           },
           "node_id": "7",
           "field": "text",
-          "value": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "value": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "type": "STRING",
-          "default": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+          "default": "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70",
           "required": false,
           "range": null,
           "aliases": [],
@@ -7472,7 +7418,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "11",
+          "node_id": "50",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7486,7 +7432,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "11",
+          "node_id": "50",
           "output_type": "SaveVideo",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7573,7 +7519,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "16",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7587,7 +7533,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "16",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7689,24 +7635,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "model",
           "target": {
             "node_id": "1",
@@ -7728,7 +7656,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "32",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7742,7 +7670,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "32",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -7903,7 +7831,7 @@
       "public_outputs": [
         {
           "name": "image",
-          "node_id": "57",
+          "node_id": "113",
           "output_type": "PreviewImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -7917,7 +7845,7 @@
       "artifact_expectations": [
         {
           "name": "image",
-          "node_id": "57",
+          "node_id": "113",
           "output_type": "PreviewImage",
           "artifact_kind": "image",
           "mime_type": "image/png",
@@ -8057,24 +7985,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "CG动画风格，一只蓝色的小鸟从地面起飞，煽动翅膀。小鸟羽毛细腻，胸前有独特的花纹，背景是蓝天白云，阳光明媚。镜跟随小鸟向上移动，展现出小鸟飞翔的姿态和天空的广阔。近景，仰视视角",
-          "type": "STRING",
-          "default": "CG动画风格，一只蓝色的小鸟从地面起飞，煽动翅膀。小鸟羽毛细腻，胸前有独特的花纹，背景是蓝天白云，阳光明媚。镜跟随小鸟向上移动，展现出小鸟飞翔的姿态和天空的广阔。近景，仰视视角",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "model",
           "target": {
             "node_id": "1",
@@ -8096,7 +8006,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "28",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8110,7 +8020,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "28",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8176,44 +8086,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "image",
-          "target": {
-            "node_id": "58",
-            "field": "image"
-          },
-          "node_id": "58",
-          "field": "image",
-          "value": "pasted/image (758).png",
-          "type": "IMAGE",
-          "default": "pasted/image (758).png",
-          "required": true,
-          "range": null,
-          "aliases": [
-            "input_image"
-          ],
-          "media_semantics": "image",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
-          "name": "input_image",
-          "target": {
-            "node_id": "58",
-            "field": "image"
-          },
-          "node_id": "58",
-          "field": "image",
-          "value": "pasted/image (758).png",
-          "type": "IMAGE",
-          "default": "pasted/image (758).png",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "image",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "width",
           "target": {
             "node_id": "75",
@@ -8228,24 +8100,6 @@
           "range": null,
           "aliases": [],
           "media_semantics": null,
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
           "status": "static",
           "source": "InputSpec"
         },
@@ -8271,7 +8125,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "31",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8285,7 +8139,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "31",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8425,24 +8279,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "model",
           "target": {
             "node_id": "1",
@@ -8464,7 +8300,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "108",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8478,7 +8314,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "108",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8618,24 +8454,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "model",
           "target": {
             "node_id": "1",
@@ -8657,7 +8475,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "21",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8671,7 +8489,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "21",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8773,24 +8591,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "model",
           "target": {
             "node_id": "1",
@@ -8812,7 +8612,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "18",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8826,7 +8626,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "18",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8913,7 +8713,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "30",
+          "node_id": "131",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -8927,7 +8727,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "30",
+          "node_id": "131",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9088,7 +8888,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "23",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9102,7 +8902,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "23",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9156,10 +8956,10 @@
         {
           "name": "image",
           "target": {
-            "node_id": "7",
+            "node_id": "6",
             "field": "image"
           },
-          "node_id": "7",
+          "node_id": "6",
           "field": "image",
           "value": "",
           "type": "IMAGE",
@@ -9176,10 +8976,10 @@
         {
           "name": "input_image",
           "target": {
-            "node_id": "7",
+            "node_id": "6",
             "field": "image"
           },
-          "node_id": "7",
+          "node_id": "6",
           "field": "image",
           "value": "",
           "type": "IMAGE",
@@ -9194,10 +8994,10 @@
         {
           "name": "width",
           "target": {
-            "node_id": "15",
+            "node_id": "12",
             "field": "width"
           },
-          "node_id": "15",
+          "node_id": "12",
           "field": "width",
           "value": 720,
           "type": "INT",
@@ -9212,10 +9012,10 @@
         {
           "name": "height",
           "target": {
-            "node_id": "15",
+            "node_id": "12",
             "field": "height"
           },
-          "node_id": "15",
+          "node_id": "12",
           "field": "height",
           "value": 720,
           "type": "INT",
@@ -9230,10 +9030,10 @@
         {
           "name": "seed",
           "target": {
-            "node_id": "23",
+            "node_id": "19",
             "field": "seed"
           },
-          "node_id": "23",
+          "node_id": "19",
           "field": "seed",
           "value": 43,
           "type": "INT",
@@ -9242,24 +9042,6 @@
           "range": null,
           "aliases": [],
           "media_semantics": null,
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
-          "name": "prompt",
-          "target": {
-            "node_id": "13",
-            "field": "text"
-          },
-          "node_id": "13",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
           "status": "static",
           "source": "InputSpec"
         },
@@ -9285,7 +9067,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "27",
+          "node_id": "23",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9299,7 +9081,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "27",
+          "node_id": "23",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9804,24 +9586,6 @@
           "source": "InputSpec"
         },
         {
-          "name": "prompt",
-          "target": {
-            "node_id": "49",
-            "field": "text"
-          },
-          "node_id": "49",
-          "field": "text",
-          "value": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "type": "STRING",
-          "default": "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall",
-          "required": true,
-          "range": null,
-          "aliases": [],
-          "media_semantics": "text",
-          "status": "static",
-          "source": "InputSpec"
-        },
-        {
           "name": "model",
           "target": {
             "node_id": "1",
@@ -9843,7 +9607,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "19",
+          "node_id": "92",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9857,7 +9621,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "19",
+          "node_id": "92",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9962,7 +9726,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "115",
+          "node_id": "92",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -9976,7 +9740,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "115",
+          "node_id": "92",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10155,7 +9919,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "21",
+          "node_id": "88",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10169,7 +9933,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "21",
+          "node_id": "88",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10274,7 +10038,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "111",
+          "node_id": "92",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10288,7 +10052,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "111",
+          "node_id": "92",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10449,7 +10213,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "31",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10463,7 +10227,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "31",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10624,7 +10388,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "36",
+          "node_id": "97",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10638,7 +10402,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "36",
+          "node_id": "97",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10734,10 +10498,10 @@
         {
           "name": "seed",
           "target": {
-            "node_id": "31",
+            "node_id": "30",
             "field": "seed"
           },
-          "node_id": "31",
+          "node_id": "30",
           "field": "seed",
           "value": 42,
           "type": "INT",
@@ -10771,7 +10535,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "23",
+          "node_id": "22",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10785,7 +10549,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "23",
+          "node_id": "22",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -10997,7 +10761,7 @@
       "public_outputs": [
         {
           "name": "video",
-          "node_id": "35",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",
@@ -11011,7 +10775,7 @@
       "artifact_expectations": [
         {
           "name": "video",
-          "node_id": "35",
+          "node_id": "30",
           "output_type": "VHS_VideoCombine",
           "artifact_kind": "video",
           "mime_type": "video/mp4",

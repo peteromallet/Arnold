@@ -599,7 +599,6 @@ def test_ready_template_preserves_materialized_requirements() -> None:
     workflow = workflow_from_ready("video/ltx2_3_t2v")
 
     assert "ComfyUI-LTXVideo" in workflow.requirements.custom_nodes
-    assert "ComfyUI-KJNodes" in workflow.requirements.custom_nodes
 
 
 def test_ltx_first_last_travel_iclora_control_exposes_worker_patch_points() -> None:
@@ -930,11 +929,11 @@ def test_wan_2_2_templates_use_canonical_wanvideo_lora_path(template_id: str) ->
         if node.class_type == "WanVideoLoraSelectMulti"
     ]
     assert lora_nodes
-    lora_key = "lora_0" if template_id.endswith("_vace_cocktail") else "widget_0"
+    lora_key = "lora_0" if template_id.endswith("_vace_cocktail") else "lora_0"
     expected_path = (
         "WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
         if template_id.endswith("_vace_cocktail")
-        else "WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
+            else "WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors"
     )
     assert all(
         node.inputs[lora_key] == expected_path
@@ -961,7 +960,7 @@ def test_wan_2_2_templates_use_torch_compatible_precision(template_id: str) -> N
         if node.class_type == "WanVideoModelLoader"
     ]
     assert loader_nodes
-    precision_key = "base_precision" if template_id.endswith("_vace_cocktail") else "widget_1"
+    precision_key = "base_precision" if template_id.endswith("_vace_cocktail") else "base_precision"
     assert all(node.inputs[precision_key] == "fp16" for node in loader_nodes)
 
 

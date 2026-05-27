@@ -3037,27 +3037,6 @@ def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
         return values
     values.update(_ui_widget_values_by_name(ui))
     input_items = [item for item in ui.get("inputs") or () if isinstance(item, Mapping)]
-    widgets_values = ui.get("widgets_values")
-    if isinstance(widgets_values, Mapping):
-        for item in input_items:
-            widget = item.get("widget")
-            if not isinstance(widget, Mapping):
-                continue
-            input_name = str(item.get("name") or widget.get("name") or "")
-            widget_name = str(widget.get("name") or input_name)
-            if input_name and widget_name in widgets_values:
-                values.setdefault(input_name, widgets_values[widget_name])
-        return values
-    if isinstance(widgets_values, list):
-        widget_index = 0
-        for item in input_items:
-            widget = item.get("widget")
-            if not isinstance(widget, Mapping):
-                continue
-            input_name = str(item.get("name") or widget.get("name") or "")
-            if input_name and widget_index < len(widgets_values):
-                values.setdefault(input_name, widgets_values[widget_index])
-            widget_index += 1
     for item in input_items:
         widget = item.get("widget")
         if not isinstance(widget, Mapping):
@@ -3072,6 +3051,90 @@ def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
     return values
 
 
+def _positional_ui_widget_names(ui_node: Mapping[str, Any], value_count: int) -> list[str | None]:
+    """Return authoritative names for positional ``widgets_values`` slots.
+
+    The list is intentionally keyed by widget-value position, not input-item
+    position.  Callers must only consume positions with a real non-empty name so
+    UI-only or anonymous widgets cannot shift later values into the wrong field.
+    """
+    names: list[str | None] = [None] * value_count
+    blocked_indices: set[int] = set()
+    class_type = str(ui_node.get("type") or ui_node.get("class_type") or "")
+
+    def set_name(index: int, raw_name: Any) -> None:
+        if index < 0 or index >= value_count:
+            return
+        if index in blocked_indices:
+            return
+        if names[index] is not None:
+            return
+        name = str(raw_name or "")
+        if name:
+            names[index] = name
+
+    explicit_widgets = ui_node.get("widgets")
+    if isinstance(explicit_widgets, list):
+        for index, item in enumerate(explicit_widgets):
+            if isinstance(item, Mapping):
+                set_name(index, item.get("name"))
+            else:
+                set_name(index, item)
+
+    explicit_inputs = ui_node.get("widget_inputs")
+    if isinstance(explicit_inputs, list):
+        for index, item in enumerate(explicit_inputs):
+            if isinstance(item, Mapping):
+                set_name(index, item.get("name"))
+            else:
+                set_name(index, item)
+
+    aliases = ui_node.get("input_aliases")
+    if not isinstance(aliases, (list, tuple)):
+        properties = ui_node.get("properties")
+        aliases = properties.get("input_aliases") if isinstance(properties, Mapping) else None
+    if isinstance(aliases, (list, tuple)):
+        for index, name in enumerate(aliases):
+            set_name(index, name)
+
+    properties = ui_node.get("properties")
+    proxy_widgets = properties.get("proxyWidgets") if isinstance(properties, Mapping) else None
+    if isinstance(proxy_widgets, list):
+        for index, item in enumerate(proxy_widgets):
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            set_name(index, item[1])
+
+    schema = WIDGET_SCHEMA.get(class_type)
+    if schema is not None:
+        for index, name in enumerate(schema):
+            if name is None and 0 <= index < value_count and names[index] is None:
+                blocked_indices.add(index)
+            else:
+                set_name(index, name)
+
+    try:
+        from vibecomfy.porting.object_info.consume import object_info_widget_order
+
+        object_info_names = object_info_widget_order(class_type)
+    except Exception:
+        object_info_names = []
+    for index, name in enumerate(object_info_names):
+        set_name(index, name)
+
+    input_items = [item for item in ui_node.get("inputs") or () if isinstance(item, Mapping)]
+    widget_index = 0
+    for item in input_items:
+        widget = item.get("widget")
+        if not isinstance(widget, Mapping):
+            continue
+        widget_name = widget.get("name")
+        if isinstance(widget_name, str) and widget_name:
+            set_name(widget_index, widget_name)
+            widget_index += 1
+    return names
+
+
 def _ui_widget_values_by_name(ui_node: Mapping[str, Any]) -> dict[str, Any]:
     raw_values = ui_node.get("widgets_values")
     if isinstance(raw_values, Mapping):
@@ -3080,36 +3143,9 @@ def _ui_widget_values_by_name(ui_node: Mapping[str, Any]) -> dict[str, Any]:
         return {}
 
     values: dict[str, Any] = {}
-    properties = ui_node.get("properties")
-    proxy_widgets = properties.get("proxyWidgets") if isinstance(properties, Mapping) else None
-    if isinstance(proxy_widgets, list):
-        for index, item in enumerate(proxy_widgets):
-            if index >= len(raw_values) or not isinstance(item, (list, tuple)) or len(item) < 2:
-                continue
-            name = str(item[1] or "")
-            if name:
-                values[name] = raw_values[index]
-
-    class_type = str(ui_node.get("type") or ui_node.get("class_type") or "")
-    schema = WIDGET_SCHEMA.get(class_type)
-    if schema is not None:
-        for index, value in enumerate(raw_values):
-            if index >= len(schema):
-                continue
-            name = schema[index]
-            if name:
-                values.setdefault(str(name), value)
-
-    input_items = [item for item in ui_node.get("inputs") or () if isinstance(item, Mapping)]
-    widget_index = 0
-    for item in input_items:
-        widget = item.get("widget")
-        if not isinstance(widget, Mapping):
-            continue
-        input_name = str(item.get("name") or widget.get("name") or "")
-        if input_name and widget_index < len(raw_values):
-            values.setdefault(input_name, raw_values[widget_index])
-        widget_index += 1
+    for index, name in enumerate(_positional_ui_widget_names(ui_node, len(raw_values))):
+        if name is not None:
+            values[name] = raw_values[index]
     return values
 
 

@@ -122,9 +122,6 @@ def build() -> VibeWorkflow:
         sampling_method='path',
         widget_12='',
         widget_13=None,
-        widget_2=640,
-        widget_3=640,
-        widget_4=81,
         bg_image=image_2,
     )
 
@@ -214,4 +211,3 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideoWrapper_I2V')
-

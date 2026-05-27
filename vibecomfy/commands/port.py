@@ -189,7 +189,10 @@ def _cmd_port_convert(args: argparse.Namespace) -> int:
                 fromfile=str(out),
                 tofile=f"{out} (emitted)",
             )
-            print(f"parity: {'ok' if result.validation and result.validation.parity_ok else 'unknown'}")
+            parity = "ok" if result.validation and result.validation.parity_ok is True else (
+                "failed" if result.validation and result.validation.parity_ok is False else "unknown"
+            )
+            print(f"parity: {parity}")
             print(f"LOC: {len(original.splitlines()) if original else 0} → {len(result.text.splitlines())} ({'+' if not original or len(result.text.splitlines()) >= len(original.splitlines()) else ''}{len(result.text.splitlines()) - (len(original.splitlines()) if original else 0)})")
             print("".join(diff_lines))
             return 0
@@ -263,7 +266,9 @@ def _run_convert_all(args: argparse.Namespace) -> None:
             print(f"{tpl['id']}: error: {type(exc).__name__}: {exc}")
             continue
 
-        parity = "ok" if result.validation and result.validation.parity_ok else ("unknown" if result.validation else "no-validation")
+        parity = "ok" if result.validation and result.validation.parity_ok is True else (
+            "failed" if result.validation and result.validation.parity_ok is False else ("unknown" if result.validation else "no-validation")
+        )
         original_loc = len([l for l in original.splitlines() if l.strip()])
         emitted_loc = len([l for l in result.text.splitlines() if l.strip()])
         delta = emitted_loc - original_loc

@@ -360,6 +360,57 @@ def test_parity_json_includes_widget_snapshots_and_output_counts() -> None:
         assert isinstance(result.validation.emitted_output_count, int)
 
 
+def test_convert_parity_exception_is_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Parity crashes fail validation instead of being swallowed."""
+    from vibecomfy.porting import convert as convert_module
+
+    def _raise_parity(*args: object, **kwargs: object) -> tuple[bool, list[str]]:
+        raise RuntimeError("synthetic parity crash")
+
+    monkeypatch.setattr(convert_module, "compile_equivalent", _raise_parity)
+
+    result = port_convert_workflow(
+        _sample_workflow(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:abc"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_provider(),
+    )
+
+    assert result.validation is not None
+    assert result.validation.ok is False
+    assert result.validation.parity_ok is False
+    assert result.validation.parity_diffs == []
+    assert result.validation.parity_error == "RuntimeError: synthetic parity crash"
+    assert result.validation.error == "parity check failed: RuntimeError: synthetic parity crash"
+    assert result.validation.to_json()["parity_error"] == "RuntimeError: synthetic parity crash"
+
+
+def test_convert_parity_mismatch_uses_diffs_not_parity_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real parity mismatches stay in parity_diffs without being reported as crashes."""
+    from vibecomfy.porting import convert as convert_module
+
+    def _return_parity_diff(*args: object, **kwargs: object) -> tuple[bool, list[str]]:
+        return False, ["synthetic parity diff"]
+
+    monkeypatch.setattr(convert_module, "compile_equivalent", _return_parity_diff)
+
+    result = port_convert_workflow(
+        _sample_workflow(),
+        source_path="workflow_corpus/official/image/z_image.json",
+        provenance={"source_hash": "sha256:abc"},
+        workflow_shape={"nodes": 2, "runtime_nodes": 2},
+        schema_provider=_provider(),
+    )
+
+    assert result.validation is not None
+    assert result.validation.ok is True
+    assert result.validation.parity_ok is False
+    assert result.validation.parity_diffs == ["synthetic parity diff"]
+    assert result.validation.parity_error is None
+    assert result.validation.error is None
+
+
 def test_parity_for_simple_image_z_image_produces_evidence(tmp_path: Path) -> None:
     """Simple image workflow (z_image) produces parity evidence through port_convert_workflow."""
     result = port_convert_workflow(
@@ -477,7 +528,9 @@ def test_opaque_component_conversion_produces_validation() -> None:
     assert result.validation is not None
     assert isinstance(result.validation.to_json(), dict)
     # Parity evidence fields are present even for opaque workflows
-    assert result.validation.parity_ok is not None or result.validation.parity_ok is True or result.validation.parity_ok is False
+    assert result.validation.parity_ok in {True, False}
+    assert result.validation.parity_error is None
+    assert isinstance(result.validation.parity_diffs, list)
 
 
 def test_port_convert_result_to_json_excludes_raw_text() -> None:
@@ -510,7 +563,7 @@ def test_port_convert_validation_to_json_contains_all_parity_fields() -> None:
     for field in [
         "ok", "import_ok", "build_ok", "compile_ok", "schema_ok",
         "issues", "api_node_count", "error",
-        "parity_ok", "parity_diffs",
+        "parity_ok", "parity_error", "parity_diffs",
         "source_output_count", "emitted_output_count",
         "source_class_type_counts", "emitted_class_type_counts",
         "source_widget_value_snapshot", "emitted_widget_value_snapshot",
@@ -1045,18 +1098,21 @@ def test_parity_duplicate_output_names_falls_back_to_numeric() -> None:
 
 _REAL_FIXTURE_PATHS: list[str] = [
     "workflow_corpus/official/image/z_image.json",
-    "workflow_corpus/official/edit/qwen_image_edit.json",
-    "workflow_corpus/official/audio/ace_step_1_5_t2a_song.json",
-    "workflow_corpus/official/video/wan_t2v.json",
-    "workflow_corpus/official/video/ltx2_3_t2v.json",
+    "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json",
 ]
 
 
 @pytest.mark.parametrize("fixture_path", _REAL_FIXTURE_PATHS)
-def test_real_fixture_parity_compile_equivalent(fixture_path: str) -> None:
-    """Real representative workflows produce compile_equivalent (True, [])."""
+def test_real_fixture_paths_exist(fixture_path: str) -> None:
+    """Real fixture coverage is pinned to repository paths that actually exist."""
+    assert Path(fixture_path).exists(), f"missing real fixture: {fixture_path}"
+
+
+def test_real_fixture_parity_compile_equivalent() -> None:
+    """The z_image fixture still round-trips through compile_equivalent cleanly."""
     from vibecomfy.porting.workbench import load_port_source
 
+    fixture_path = "workflow_corpus/official/image/z_image.json"
     loaded = load_port_source(fixture_path)
     result = port_convert_workflow(loaded.workflow)
 
@@ -1074,11 +1130,11 @@ def test_real_fixture_parity_compile_equivalent(fixture_path: str) -> None:
     )
 
 
-@pytest.mark.parametrize("fixture_path", _REAL_FIXTURE_PATHS)
-def test_real_fixture_parity_evidence_populated(fixture_path: str) -> None:
-    """Real fixtures populate parity evidence fields (counts, snapshots)."""
+def test_real_fixture_parity_evidence_populated() -> None:
+    """The z_image fixture populates parity evidence fields (counts, snapshots)."""
     from vibecomfy.porting.workbench import load_port_source
 
+    fixture_path = "workflow_corpus/official/image/z_image.json"
     loaded = load_port_source(fixture_path)
     result = port_convert_workflow(loaded.workflow)
     v = result.validation
@@ -1103,6 +1159,18 @@ def test_real_fixture_parity_evidence_populated(fixture_path: str) -> None:
     # Topology snapshot
     assert isinstance(v.source_topology_snapshot, int)
     assert isinstance(v.emitted_topology_snapshot, int)
+
+
+def test_real_fixture_talking_avatar_conversion_failure_is_loud() -> None:
+    """The talking-avatar fixture currently fails during helper resolution, not silently."""
+    from vibecomfy.errors import ConversionParityError
+    from vibecomfy.porting.workbench import load_port_source
+
+    fixture_path = "workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Talking_Avatar_Qwen_TTS.json"
+    loaded = load_port_source(fixture_path)
+
+    with pytest.raises(ConversionParityError, match="GetNode '413' has no broadcast name"):
+        port_convert_workflow(loaded.workflow)
 
 
 # ---------------------------------------------------------------------------

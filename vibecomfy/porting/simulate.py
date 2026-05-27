@@ -212,7 +212,11 @@ def simulate_rule(
                 validate=True,
             )
             if conv_result.validation is not None:
-                parity_ok = conv_result.validation.parity_ok is not False
+                parity_ok = (
+                    conv_result.validation.ok
+                    and conv_result.validation.parity_ok is True
+                    and conv_result.validation.parity_error is None
+                )
         except Exception as exc:
             parity_ok = False
             error_msg = f"{type(exc).__name__}: {exc}"

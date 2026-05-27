@@ -627,6 +627,99 @@ def test_subgraph_call_site_uses_instance_widget_values_and_warns_when_unbound()
     assert any(diag.code == "subgraph_input_unbound" for diag in diagnostics)
 
 
+def test_subgraph_widget_values_ignore_unnamed_input_widget_positions() -> None:
+    workflow = VibeWorkflow("widget_subgraph", WorkflowSource("widget_subgraph"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        metadata={
+            "_ui": {
+                "inputs": [
+                    {"name": "width", "type": "INT", "widget": {}, "link": None},
+                    {"name": "height", "type": "INT", "widget": {"name": "height"}, "link": None},
+                ],
+                "widgets_values": [768],
+            }
+        },
+    )
+    raw = {
+        "definitions": {
+            "subgraphs": [
+                {
+                    "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                    "name": "Widget Source",
+                    "inputs": [
+                        {"name": "width", "type": "INT"},
+                        {"name": "height", "type": "INT"},
+                    ],
+                    "outputs": [],
+                    "nodes": [],
+                    "links": [],
+                }
+            ]
+        }
+    }
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/widget_subgraph", "capability": "image"},
+        ready_requirements={},
+        template_id="image/widget_subgraph",
+        raw_workflow=raw,
+    )
+
+    assert "height=768" in text
+    assert "width=768" not in text
+    assert "width=None" in text
+
+
+def test_subgraph_widget_values_ignore_curated_ui_only_positions() -> None:
+    workflow = VibeWorkflow("widget_subgraph", WorkflowSource("widget_subgraph"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "KSampler",
+        metadata={
+            "_ui": {
+                "type": "KSampler",
+                "inputs": [],
+                "widgets_values": [123, "randomize", 25, 4.0, "euler", "normal", 1.0],
+            }
+        },
+    )
+    raw = {
+        "definitions": {
+            "subgraphs": [
+                {
+                    "id": "KSampler",
+                    "name": "Widget Source",
+                    "inputs": [
+                        {"name": "seed", "type": "INT"},
+                        {"name": "steps", "type": "INT"},
+                        {"name": "cfg", "type": "FLOAT"},
+                    ],
+                    "outputs": [],
+                    "nodes": [],
+                    "links": [],
+                }
+            ]
+        }
+    }
+
+    text = emit_ready_template_python(
+        workflow,
+        ready_metadata={"ready_template": "image/widget_subgraph", "capability": "image"},
+        ready_requirements={},
+        template_id="image/widget_subgraph",
+        raw_workflow=raw,
+    )
+
+    assert "seed=123" in text
+    assert "steps=25" in text
+    assert "cfg=4.0" in text
+    assert "steps='randomize'" not in text
+    assert "cfg=25" not in text
+
+
 def test_subgraph_slug_collision_disambiguated() -> None:
     text = _emit_ready_from_ui_json(
         "workflow_corpus/official/edit/flux2_klein_9b_image_edit_base.json",

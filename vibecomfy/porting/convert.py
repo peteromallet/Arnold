@@ -59,6 +59,7 @@ class PortConvertValidation:
 
     # Parity evidence (populated when source and emitted are both compiled)
     parity_ok: bool | None = None
+    parity_error: str | None = None
     parity_diffs: list[str] = field(default_factory=list)
     source_output_count: int = 0
     emitted_output_count: int = 0
@@ -108,6 +109,7 @@ class PortConvertValidation:
             "api_node_count": self.api_node_count,
             "error": self.error,
             "parity_ok": self.parity_ok,
+            "parity_error": self.parity_error,
             "parity_diffs": self.parity_diffs,
             "source_output_count": self.source_output_count,
             "emitted_output_count": self.emitted_output_count,
@@ -299,6 +301,9 @@ def port_convert_workflow(
                         if provider_aliases:
                             class_widget_aliases[ct] = provider_aliases
             except Exception:
+                # Alias collection is best-effort conversion evidence, not a
+                # parity failure. Keep this out of the loud parity-error path
+                # unless focused schema-provider tests prove it masks a bug.
                 pass
 
     result = PortConvertResult(mode=mode, text=text, ready_id=ready_id)
@@ -369,9 +374,13 @@ def port_convert_workflow(
                                     workflow,
                                     ready_id=ready_id,
                                 )
-            except Exception:
-                # Parity failure is non-fatal for the result; diffs are reported.
-                pass
+            except Exception as exc:
+                parity_error = f"{type(exc).__name__}: {exc}"
+                result.validation.ok = False
+                result.validation.parity_ok = False
+                result.validation.parity_error = parity_error
+                if result.validation.error is None:
+                    result.validation.error = f"parity check failed: {parity_error}"
 
     return result
 

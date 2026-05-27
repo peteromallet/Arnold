@@ -27,7 +27,7 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadaudio = LoadAudio(_id='1', audio=SPEECH_SMOKE_WAV, widget_0='speech_smoke.wav')
+    loadaudio = LoadAudio(_id='1', audio=SPEECH_SMOKE_WAV)
 
     ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
         _id='2',
@@ -46,4 +46,3 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveaudiomp3, output_type='SaveAudioMP3', name='audio', artifact_kind='audio', mime_type='audio/mpeg', expected_cardinality='one', filename_prefix='audio/qwen3_tts_voice_clone')
-

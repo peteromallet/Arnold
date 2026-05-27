@@ -124,7 +124,6 @@ def build() -> VibeWorkflow:
         _id='16',
         file=LTX_SMOKE_GUIDE_MP4,
         video='ltx_smoke_guide.mp4',
-        widget_0='ltx_smoke_guide.mp4',
     )
 
     # Conditioning
@@ -154,7 +153,6 @@ def build() -> VibeWorkflow:
         expression=A,
         variables='a,b',
         b=24.0,
-        widget_0='a',
         a=intconstant,
     )
 
@@ -362,4 +360,3 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='reigh_vibecomfy_ltx_raw_guide')
-

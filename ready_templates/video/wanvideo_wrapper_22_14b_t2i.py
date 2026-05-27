@@ -67,7 +67,6 @@ def build() -> VibeWorkflow:
         model=MODEL_NAME,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
-        widget_1='fp16',
     )
 
     wanvideovaeloader = WanVideoVAELoader(_id='3', model_name=VAE_NAME)
@@ -78,7 +77,6 @@ def build() -> VibeWorkflow:
         width=832,
         height=480,
         num_frames=DEFAULT_FRAMES,
-        widget_2=1,
     )
 
     wanvideomodelloader_2 = WanVideoModelLoader(
@@ -86,21 +84,18 @@ def build() -> VibeWorkflow:
         model=MODEL_NAME_2,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
-        widget_1='fp16',
     )
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
         _id='7',
         lora_0=LORA__NAME,
         merge_loras=False,
-        widget_0='WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
     )
 
     wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
         _id='8',
         lora_0=LORA__NAME,
         merge_loras=False,
-        widget_0='WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
@@ -169,4 +164,3 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
-
