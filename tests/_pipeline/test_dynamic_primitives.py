@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 import pytest
 
+import megaplan._pipeline.patterns as patterns_module
 from megaplan._pipeline.patterns import (
     dynamic_fanout,
     iterate_until_consensus,
@@ -422,3 +423,14 @@ class TestPairedRound:
     def test_empty_advocates_raises(self) -> None:
         with pytest.raises(ValueError):
             paired_round([], sees_other=True, name="empty")
+
+
+def test_patterns_facade_reexports_dynamic_private_helpers() -> None:
+    assert patterns_module._specialize_step is not None
+    assert patterns_module._read_specs_from_path is not None
+    assert patterns_module._extract_specs_from_result is not None
+    assert patterns_module._PanelFromArtifactStep is not None
+    assert patterns_module._DynamicFanoutStep is not None
+    assert patterns_module._agreement_ratio is not None
+    assert patterns_module._ConsensusStep is not None
+    assert patterns_module._PairedRoundStep is not None
