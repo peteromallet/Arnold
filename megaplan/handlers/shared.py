@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import megaplan.workers as worker_module
-from megaplan.execute.core import build_monitor_hint
+from megaplan.execute.batch import build_monitor_hint
 from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.receipts import build_receipt

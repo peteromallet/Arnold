@@ -806,7 +806,7 @@ def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] |
             state_data = json.load(handle)
         if not isinstance(state_data, dict):
             return {"reconciled": False, "reason": "state payload was not an object"}
-        from megaplan.execute.core import reconcile_latest_execution_batch
+        from megaplan.execute.merge import reconcile_latest_execution_batch
 
         return reconcile_latest_execution_batch(plan_dir, state_data)
     except Exception as error:

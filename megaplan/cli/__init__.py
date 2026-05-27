@@ -60,7 +60,7 @@ from megaplan._core import (
     subsystem_occurrence_total,
     humanize_seconds,
 )
-from megaplan.execute.core import build_monitor_hint
+from megaplan.execute.batch import build_monitor_hint
 from megaplan.forms import available_form_ids
 from megaplan.handlers import (
     handle_audit_verifiability,
