@@ -4146,6 +4146,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     introspect_parser.add_argument("--plan", required=True, help="Plan name")
 
+    cost_parser = subparsers.add_parser(
+        "cost",
+        help="Token usage and cost breakdown for a plan",
+    )
+    cost_parser.add_argument("--plan", required=True, help="Plan name")
+    cost_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    cost_parser.add_argument(
+        "--by-phase",
+        action="store_true",
+        default=False,
+        help="Break down cost and tokens by phase",
+    )
+
     trace_parser = subparsers.add_parser(
         "trace",
         help="Event stream over a plan's events.ndjson",
@@ -4209,6 +4227,12 @@ def _handle_introspect(root: Path, args: argparse.Namespace) -> int:
 
     print(_json.dumps(build_introspect_payload(plan_dir), indent=2))
     return 0
+
+
+def _handle_cost(root: Path, args: argparse.Namespace) -> int:
+    from megaplan.observability.cost import handle_cost
+
+    return handle_cost(root, args)
 
 
 def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
@@ -4525,6 +4549,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "audit-verifiability": handle_audit_verifiability,
     "tiebreaker-run": handle_tiebreaker_run,
     "introspect": _handle_introspect,
+    "cost": _handle_cost,
     "trace": _handle_trace,
     "doctor": _handle_doctor,
     "record-tag": _handle_record_tag,
@@ -5105,7 +5130,7 @@ def main(argv: list[str] | None = None) -> int:
         except CliError as error:
             return error_response(error, root=root)
 
-    if args.command in {"introspect", "trace", "doctor", "record-tag"}:
+    if args.command in {"introspect", "cost", "trace", "doctor", "record-tag"}:
         handler = COMMAND_HANDLERS.get(args.command)
         if handler is not None:
             return handler(root, args)
