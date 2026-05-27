@@ -23,13 +23,11 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='2', field='unet_name', default=UNET_NAME),
-    'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node='10', field='seed', default=DEFAULT_SEED),
-    'steps': InputSpec(node='10', field='steps', default=12),
-    'image': InputSpec(node='1', field='image', default='image_z_image_img2img_input.png', aliases=('input_image',)),
-    'width': InputSpec(node='8', field='width', default=1024),
-    'height': InputSpec(node='8', field='height', default=1024),
+    'image': InputSpec(node='1', field='image', default='image_z_image_img2img_input.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='8', field='width', default=1024, type='INT'),
+    'height': InputSpec(node='8', field='height', default=1024, type='INT'),
+    'seed': InputSpec(node='10', field='seed', default=DEFAULT_SEED, type='INT'),
+    'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(

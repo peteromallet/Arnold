@@ -55,7 +55,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example.png', unused_widget_1='image')
+    image, mask = LoadImage(image='example.png')
 
     # Sampling
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
@@ -142,7 +142,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale longer dimension',
         scale_method='lanczos',
-        unused_widget_1=1536,
         input=image,
     )
 

@@ -76,11 +76,7 @@ def prompt_enhancer(
         image=image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '486',
-        _outputs=('output',),
-        unused_widget_0='Style: realistic - cinematic - The Joker looks directly at the camera and speaks in a chilling, unsettling voice, "You know what clownheads. This scene is not from the movie. Its from LTX 2 point 3." He stands up, moving towards a hotel kitchen visible in the background. He opens a cabinet, revealing beer cans labeled "LTX." He grabs a can, turns towards the viewer, and holds it up so the "LTX" label is visible. He opens the can and drinks from it. He then says, "Ahhh... with a bit of LTX and Snickers, my mood changed. Lets all be friends. How about a little party at my place?" He laughs, a disturbing and unsettling sound.',
-        anything=textgenerateltx2prompt,
-    )
+    easy_showanything = raw_call('easy showAnything', '486', _outputs=('output',), anything=textgenerateltx2prompt)
 
     lazyswitchkj = LazySwitchKJ(
         switch=enabled,
@@ -263,7 +259,6 @@ def build() -> VibeWorkflow:
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=image_get,
     )
 
@@ -275,7 +270,6 @@ def build() -> VibeWorkflow:
     modelsamplingsd3 = ModelSamplingSD3(shift=13, model=ltx2samplingpreviewoverride)
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=cliptextencode_3,
         nag_cond_video=cliptextencode,

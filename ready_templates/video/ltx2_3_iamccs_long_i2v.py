@@ -8,6 +8,7 @@ from vibecomfy.nodes.core import AudioConcat, CFGGuider, CLIPTextEncode, Checkpo
 from vibecomfy.nodes.gguf import UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import VAELoaderKJ
 from vibecomfy.nodes.ltxvideo import LTXVGemmaCLIPModelLoader
+from vibecomfy.nodes.rgthree import Any_Switch_rgthree
 
 
 AFTER = 'after'
@@ -393,7 +394,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='z-image_00255_.png', unused_widget_1='image')
+    image, mask = LoadImage(image='z-image_00255_.png')
     ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
     latentupscalemodelloader = LatentUpscaleModelLoader(model_name=MODEL_NAME)
     unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
@@ -480,14 +481,17 @@ def build() -> VibeWorkflow:
         model=model,
     )
 
-    any_switch__rgthree__2 = raw_call('Any Switch (rgthree)', '5261', any_01=ltxvaudiovaeloader, any_02=vaeloaderkj_2)
+    any_switch__rgthree__2 = Any_Switch_rgthree(
+        any_01=ltxvaudiovaeloader,
+        any_02=vaeloaderkj_2,
+    )
 
-    any_switch__rgthree__3 = raw_call('Any Switch (rgthree)', '5262',
+    any_switch__rgthree__3 = Any_Switch_rgthree(
         any_01=ltxvgemmaclipmodelloader,
         any_02=dualcliploader,
     )
 
-    any_switch__rgthree__4 = raw_call('Any Switch (rgthree)', '5263', any_01=vae, any_02=vaeloaderkj)
+    any_switch__rgthree__4 = Any_Switch_rgthree(any_01=vae, any_02=vaeloaderkj)
 
     iamccs_autolinkconverter = raw_call('IAMCCS_AutoLinkConverter', '9025',
         widget_0=None,
@@ -542,12 +546,12 @@ def build() -> VibeWorkflow:
         positive=cliptextencode_2,
     )
 
-    any_switch__rgthree_ = raw_call('Any Switch (rgthree)', '5258',
+    any_switch__rgthree_ = Any_Switch_rgthree(
         any_01=iamccs_ltx2_lorastackmodelio.out(0),
         any_02=iamccs_gguf_accelerator.out(0),
     )
 
-    any_switch__rgthree__5 = raw_call('Any Switch (rgthree)', '5264',
+    any_switch__rgthree__5 = Any_Switch_rgthree(
         any_01=iamccs_ltx2_lorastackmodelio.out(0),
         any_02=iamccs_gguf_accelerator_2.out(0),
     )

@@ -80,7 +80,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='oldman_upscaled.png', unused_widget_1='image')
+    image, mask = LoadImage(image='oldman_upscaled.png')
     wanvideoeasycache = WanVideoEasyCache()
     wanvideoemptymmaudiolatents = WanVideoEmptyMMAudioLatents()
 
@@ -118,8 +118,6 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        unused_widget_0=False,
-        unused_widget_1=272,
         image=image_image,
         vae=wanvideovaeloader,
     )
@@ -136,7 +134,6 @@ def build() -> VibeWorkflow:
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
         rope_function='default',
-        unused_widget_4='fixed',
         cache_args=wanvideoeasycache,
         image_embeds=wanvideoemptyembeds,
         model=wanvideosetblockswap,

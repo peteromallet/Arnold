@@ -8,6 +8,7 @@ from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, Dual
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2_NAG, LTXVChunkFeedForward, LazySwitchKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VRAM_Debug
 from vibecomfy.nodes.qwentts import AILab_Qwen3TTSVoiceClone
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -61,10 +62,7 @@ def calculate_frames(
     """
 
     audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '1864', _outputs=('duration_ms',), audio=audio)
-
-    markdownnote = raw_call('MarkdownNote', '1921',
-        unused_widget_0='Simply calculate if the audio is longer than the given user input for seconds length, and if so override to use length of audio\n',
-    )
+    markdownnote = raw_call('MarkdownNote', '1921')
 
     float_simple, int_simple, boolean_simple = SimpleCalculatorKJ(
         expression='ceil(a/1000)',
@@ -108,7 +106,6 @@ def prompt_enhancer(
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -127,7 +124,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='17745317855d08.png', unused_widget_1='image')
+    image, mask = LoadImage(image='17745317855d08.png')
 
     # Loaders
     vaeloader = VAELoader(vae_name=VAE_NAME)
@@ -168,12 +165,7 @@ def build() -> VibeWorkflow:
 
     label__rgthree_ = raw_call('Label (rgthree)', '1923')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1937', model=MODEL_NAME_2)
-
-    loadaudio = LoadAudio(
-        audio='d1b26d5a32db420183fa17af9c699278.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
+    loadaudio = LoadAudio(audio='d1b26d5a32db420183fa17af9c699278.mp3')
 
     image_image, width, height, mask_image = ImageResizeKJv2(
         upscale_method='lanczos',
@@ -210,7 +202,6 @@ def build() -> VibeWorkflow:
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=image_image,
     )
 
@@ -239,11 +230,7 @@ def build() -> VibeWorkflow:
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(model=ltxvchunkfeedforward)
     cliptextencode = CLIPTextEncode(text=prompt_enhancer_result, clip=dualcliploader)
-
-    easy_showanything = raw_call('easy showAnything', '1625',
-        unused_widget_0='Style: realistic - cinematic - A male and female news anchor sit at a news desk, facing the camera. The woman, with a slightly confused expression, speaks in a clear, professional voice, "This is awkward! I guess the prompter ran out of ideas, and put us in this odd situation." The man, looking slightly embarrassed, responds with a chuckle, "But hey, just because we are here, in a new video, doesn\'t mean our voices change." The woman then speaks in German, "Aber ich möchte mit dir schlafen," before smiling warmly at the camera. The man laughs lightly, maintaining eye contact with the camera, and the two share a brief, polite smile before the scene fades.',
-        anything=prompt_enhancer_result,
-    )
+    easy_showanything = raw_call('easy showAnything', '1625', anything=prompt_enhancer_result)
 
     audionormalizelufs = raw_call('AudioNormalizeLUFS', '1916',
         target_lufs=-20,
@@ -259,14 +246,7 @@ def build() -> VibeWorkflow:
         positive=cliptextencode,
     )
 
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '1627',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={'on': False, 'lora': 'None', 'strength': 1, 'strengthTwo': None},
-        unused_widget_3={},
-        widget_4='',
-        model=ltx2attentiontunerpatch,
-    )
+    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
 
     audioenhancementnode = raw_call('AudioEnhancementNode', '1904',
         enhancement_mode='manual',
@@ -286,10 +266,7 @@ def build() -> VibeWorkflow:
         audio=audionormalizelufs.out(0),
     )
 
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '1858',
-        model=power_lora_loader__rgthree_.out(0),
-        vae=vaeloader_2,
-    )
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '1858', model=model, vae=vaeloader_2)
 
     ltxvaudiovaeencode = LTXVAudioVAEEncode(
         audio=audioenhancementnode.out(0),
@@ -306,7 +283,6 @@ def build() -> VibeWorkflow:
     )
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=negative,
         nag_cond_video=negative,

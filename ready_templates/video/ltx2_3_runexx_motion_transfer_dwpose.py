@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyAudio, EmptyLTXVLatentVideo, GetImageSize, ImageBlend, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecodeTiled, VAELoader
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyAudio, EmptyLTXVLatentVideo, GetImageSize, ImageBlend, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SetLatentNoiseMask, SimpleMath, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2_NAG, LTXVChunkFeedForward, LazySwitchKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
 from vibecomfy.nodes.ltxvideo import LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideoFFmpeg, VHS_VideoCombine
 
 
@@ -80,7 +81,6 @@ def prompt_enhancer(
 
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -101,7 +101,6 @@ def build() -> VibeWorkflow:
     # Inputs
     image, mask = LoadImage(
         image='fjf1oxsjnnrgphxxrnzx6dh4k9-nano-banana-gemini-3-pro-image-ultra-realistic-black-and-white-cinematic-fullbody-portrait-of-muhammad-ali-standing-side-lighting-strong-contrast-intense-mysterious-expression-sharp.jpg',
-        unused_widget_1='image',
     )
 
     # Sampling
@@ -147,16 +146,12 @@ def build() -> VibeWorkflow:
 
     unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME)
 
-    float_simple, int_simple, boolean_simple = SimpleCalculatorKJ(
+    float_simple_2, int_simple_2, boolean_simple = SimpleCalculatorKJ(
         expression='a',
         **{'variables.a': 24.0},
     )
 
-    loadaudio = LoadAudio(
-        audio='(Verse).mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
+    loadaudio = LoadAudio(audio='(Verse).mp3')
 
     # Decode
     vaedecodetiled_2 = VAEDecodeTiled(
@@ -171,7 +166,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='scale longer dimension',
         scale_method=LANCZOS,
-        unused_widget_1=1536,
         input=image,
     )
 
@@ -181,7 +175,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    float, int, boolean = SimpleCalculatorKJ(
+    float_simple, int_simple, boolean = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.b': 24.0, 'variables.a': intconstant},
     )
@@ -198,16 +192,15 @@ def build() -> VibeWorkflow:
         force_rate=24.0,
         video='m2-res_1890p.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'm2-res_1890p.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'start_time': 0}},
-        frame_load_cap=int,
+        frame_load_cap=int_simple,
     )
 
     resizeimagemasknode_4 = ResizeImageMaskNode(
         resize_type=SCALE_BY_MULTIPLIER,
-        unused_widget_1=0.5,
         input=resizeimagemasknode_2,
     )
 
-    simplemath_ = raw_call('SimpleMath+', '5034', value='a*32', a=latent_downscale_factor)
+    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     image_image, width_image, height_image, mask_image = ImageResizeKJv2(
         upscale_method=NEAREST_EXACT,
@@ -229,16 +222,11 @@ def build() -> VibeWorkflow:
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type=SCALE_BY_MULTIPLIER,
-        unused_widget_1=0.5,
         input=image_image,
     )
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
-
-    easy_showanything = raw_call('easy showAnything', '5238',
-        unused_widget_0='highly detailed, monochrime colors. Make this image come alive with fluid motion. \n\nA make boxer. \n\nHe is dancing in sync to the music ',
-        anything=prompt_enhancer_result,
-    )
+    easy_showanything = raw_call('easy showAnything', '5238', anything=prompt_enhancer_result)
 
     positive, negative = LTXVConditioning(
         frame_rate=24.0,
@@ -249,7 +237,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale shorter dimension',
         scale_method=LANCZOS,
-        unused_widget_1=544,
         input=resizeimagemasknode_3,
     )
 
@@ -272,13 +259,7 @@ def build() -> VibeWorkflow:
         image=resizeimagemasknode,
     )
 
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '5275',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={},
-        unused_widget_3='',
-        model=ltx2attentiontunerpatch,
-    )
+    model_power, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
 
     imageblend = ImageBlend(
         blend_mode='multiply',
@@ -286,13 +267,9 @@ def build() -> VibeWorkflow:
         image2=depthanythingpreprocessor.out(0),
     )
 
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '5187',
-        model=power_lora_loader__rgthree_.out(0),
-        vae=vaeloader_2,
-    )
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '5187', model=model_power, vae=vaeloader_2)
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=negative,
         nag_cond_video=negative,
@@ -317,7 +294,7 @@ def build() -> VibeWorkflow:
         device=CPU,
         width=width_get,
         height=height_get,
-        divisible_by=simplemath_.out(0),
+        divisible_by=int,
         image=comfyswitchnode_3,
     )
 
@@ -346,16 +323,16 @@ def build() -> VibeWorkflow:
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
         frames_number=batch_size,
-        frame_rate=int_simple,
+        frame_rate=int_simple_2,
         audio_vae=vaeloaderkj,
     )
 
-    float_simple_2, int_simple_2, boolean_simple_2 = SimpleCalculatorKJ(
+    float_simple_3, int_simple_3, boolean_simple_2 = SimpleCalculatorKJ(
         expression='a / b ',
         **{'variables.b': 24.0, 'variables.a': batch_size},
     )
 
-    float_simple_3, int_simple_3, boolean_simple_3 = SimpleCalculatorKJ(
+    float_simple_4, int_simple_4, boolean_simple_3 = SimpleCalculatorKJ(
         expression='a / b',
         **{'variables.b': 24.0, 'variables.a': batch_size},
     )
@@ -366,14 +343,13 @@ def build() -> VibeWorkflow:
         vae=vaeloader,
     )
 
-    trimaudioduration = TrimAudioDuration(duration=float_simple_2, audio=loadaudio)
-    emptyaudio = EmptyAudio(duration=float_simple_3)
+    trimaudioduration = TrimAudioDuration(duration=float_simple_3, audio=loadaudio)
+    emptyaudio = EmptyAudio(duration=float_simple_4)
 
     positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
         strength=0.7,
         crop=1,
         use_tiled_encode='disabled',
-        unused_widget_4=False,
         image=image_image_2,
         latent=ltxvimgtovideoconditiononly,
         latent_downscale_factor=latent_downscale_factor,

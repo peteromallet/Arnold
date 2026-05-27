@@ -7,6 +7,7 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as 
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAddGuideMulti, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoraLoaderModelOnly, ManualSigmas, PreviewAny, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVChunkFeedForward, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -23,7 +24,6 @@ DEFAULT_SEED_2 = 42
 FIXED = 'fixed'
 GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 1
-IMAGE = 'image'
 LANCZOS = 'lanczos'
 LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
 LTXV = 'ltxv'
@@ -73,17 +73,12 @@ def prompt_enhancer(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '486',
-        _outputs=('output',),
-        unused_widget_0='Style: cinematic\n\nA close-up shot of an LTX soda can with ice cubes around it. The camera smoothly pans up as an arm enters the frame and grabs the can, lifting it into view. A woman with a soft British voice appears, holding the can, and says, "An LTX a day keeps the doctor away." She smiles warmly, takes a sip from the can, and then looks directly at the camera. The sound of ice clinking in the can and a gentle fizzing sound accompany the scene.',
-        anything=textgenerateltx2prompt,
-    )
+    easy_showanything = raw_call('easy showAnything', '486', _outputs=('output',), anything=textgenerateltx2prompt)
 
     comfyswitchnode = ComfySwitchNode(
         switch=enabled,
@@ -104,19 +99,16 @@ def frames_split_view():
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.2,
         input=['2168', 0],
     )
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.2,
         input=['2083', 0],
     )
 
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.2,
         input=['2083', 0],
     )
 
@@ -161,8 +153,8 @@ def build() -> VibeWorkflow:
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image_load, mask_load = LoadImage(image='sodacan_01.png', unused_widget_1=IMAGE)
-    image_load_2, mask_load_2 = LoadImage(image='image (11).png', unused_widget_1=IMAGE)
+    image_load, mask_load = LoadImage(image='sodacan_01.png')
+    image_load_2, mask_load_2 = LoadImage(image='image (11).png')
     float, int, boolean = SimpleCalculatorKJ(expression='a', a=24.0)
 
     vaeloaderkj = VAELoaderKJ(
@@ -201,7 +193,7 @@ def build() -> VibeWorkflow:
     intconstant_2 = INTConstant(value=720)
     intconstant_3 = INTConstant(value=1280)
     frames_split_view_result = frames_split_view()
-    image_load_3, mask_load_3 = LoadImage(image='image (12).png', unused_widget_1=IMAGE)
+    image_load_3, mask_load_3 = LoadImage(image='image (12).png')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
@@ -341,14 +333,7 @@ def build() -> VibeWorkflow:
     )
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(model=ltxvchunkfeedforward)
-
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '2107',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={},
-        unused_widget_3='',
-        model=ltx2attentiontunerpatch,
-    )
+    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
 
     positive_ltxv_3, negative_ltxv_3, latent_ltxv_2 = LTXVAddGuideMulti(
         widget_0='3',
@@ -370,15 +355,10 @@ def build() -> VibeWorkflow:
         video_latent=latent_ltxv_2,
     )
 
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198',
-        model=power_lora_loader__rgthree_.out(0),
-        vae=vaeloader,
-    )
-
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198', model=model, vae=vaeloader)
     ltxvscheduler = LTXVScheduler(steps=8, latent=ltxvconcatavlatent)
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=cliptextencode,
         nag_cond_video=cliptextencode,

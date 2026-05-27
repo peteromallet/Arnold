@@ -65,8 +65,6 @@ def build() -> VibeWorkflow:
 
     loadaudio = LoadAudio(
         audio='NieR_ Automata - _Weight of the World_ ENG VER. by Lizz Robinett [CyOSTbel3AM].mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
     )
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
@@ -76,7 +74,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image_load, mask = LoadImage(image='2b.jpg', unused_widget_1='image')
+    image_load, mask = LoadImage(image='2b.jpg')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MODEL_NAME_4)
     wanvideocontextoptions = WanVideoContextOptions(context_schedule='uniform_standard')
     audio, duration = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
@@ -101,7 +99,6 @@ def build() -> VibeWorkflow:
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
-        unused_widget_8='<tr><td>Output: </td><td><b>1</b> x <b>960</b> x <b>640 | 7.03MB</b></td></tr>',
         image=image_load,
     )
 
@@ -129,8 +126,6 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        unused_widget_0=False,
-        unused_widget_1=272,
         image=image_image,
         vae=wanvideovaeloader,
     )
@@ -165,7 +160,6 @@ def build() -> VibeWorkflow:
         shift=4,
         seed=DEFAULT_SEED,
         scheduler='dpm++_sde',
-        unused_widget_4='fixed',
         context_options=wanvideocontextoptions,
         image_embeds=image_embeds,
         model=wanvideosetblockswap,

@@ -3,8 +3,8 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, VAEDecodeTiled
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath, VAEDecodeTiled
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVHDRDecodePostprocess
 
 
@@ -71,7 +71,7 @@ def build() -> VibeWorkflow:
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    loadvideo = LoadVideo(file='hdr_input_video (1).mp4', unused_widget_1='image')
+    loadvideo = LoadVideo(file='hdr_input_video (1).mp4')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text='HDR footage', clip=ltxavtextencoderloader)
@@ -100,14 +100,13 @@ def build() -> VibeWorkflow:
         model=model_ltxic_2,
     )
 
-    simplemath_ = raw_call('SimpleMath+', '5111', value='a*32', a=latent_downscale_factor)
+    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale to multiple',
         scale_method='lanczos',
-        unused_widget_1=32,
         input=images,
-        **{'resize_type.multiple': simplemath_.out(0)},
+        **{'resize_type.multiple': int},
     )
 
     width, height, batch_size = GetImageSize(image=resizeimagemasknode)
@@ -121,7 +120,6 @@ def build() -> VibeWorkflow:
     positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
         crop=1,
         use_tiled_encode='disabled',
-        unused_widget_4=False,
         image=resizeimagemasknode,
         latent=emptyltxvlatentvideo,
         negative=negative,

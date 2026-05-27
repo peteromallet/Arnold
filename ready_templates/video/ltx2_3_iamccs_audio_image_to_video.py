@@ -8,6 +8,7 @@ from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, Chec
 from vibecomfy.nodes.gguf import UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import ImageResizeKJv2, VAELoaderKJ
 from vibecomfy.nodes.ltxvideo import LTXVGemmaCLIPModelLoader
+from vibecomfy.nodes.rgthree import Seed_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -59,15 +60,10 @@ def build() -> VibeWorkflow:
     ksamplerselect = KSamplerSelect(sampler_name='lcm')
 
     # Inputs
-    image, mask = LoadImage(image='ComfyUI_00126_.png', unused_widget_1='image')
+    image, mask = LoadImage(image='ComfyUI_00126_.png')
+    loadaudio = LoadAudio(audio='man voice 1.mp3')
 
-    loadaudio = LoadAudio(
-        audio='man voice 1.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
-
-    seed__rgthree_ = raw_call('Seed (rgthree)', '290',
+    seed__rgthree_ = Seed_rgthree(
         seed=DEFAULT_SEED,
         widget_1='',
         widget_2='',
@@ -102,18 +98,8 @@ def build() -> VibeWorkflow:
         widget_5=0,
     )
 
-    loadaudio_2 = LoadAudio(
-        audio='man voice 2 LONG.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
-
-    loadaudio_3 = LoadAudio(
-        audio='EdgarLetfall.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
-
+    loadaudio_2 = LoadAudio(audio='man voice 2 LONG.mp3')
+    loadaudio_3 = LoadAudio(audio='EdgarLetfall.mp3')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '377', model=MODEL_NAME)
     cr_float_to_integer = raw_call('CR Float To Integer', '384', _float=25.0)
     load_whisper__mtb_ = raw_call('Load Whisper (mtb)', '405', widget_0=TINY, widget_1=True)

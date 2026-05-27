@@ -8,6 +8,7 @@ from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, Comf
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import BlockifyMask, GetImageSizeAndCount, INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVAudioVideoMask, LTXVChunkFeedForward, LazySwitchKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
 from vibecomfy.nodes.ltxvideo import LTXVAddLatentGuide, LTXVPreprocessMasks, LTXVSetVideoLatentNoiseMasks
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideoFFmpeg, VHS_VideoCombine, VHS_VideoInfo
 
 
@@ -36,7 +37,6 @@ UNET_NAME_2 = 'LTXVideo\\v2\\ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scal
 VAE_NAME = 'vae_approx\\taeltx2_3.safetensors'
 VAE_NAME_2 = 'LTX23_audio_vae_bf16_KJ.safetensors'
 VAE_NAME_3 = 'LTX23_video_vae_bf16_KJ.safetensors'
-V_8_375 = '8.375'
 
 
 PUBLIC_INPUT_METADATA = {
@@ -76,7 +76,6 @@ def prompt_enhancer(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -160,13 +159,7 @@ def build() -> VibeWorkflow:
 
     fast_groups_bypasser__rgthree__2 = raw_call('Fast Groups Bypasser (rgthree)', '788')
     fast_groups_bypasser__rgthree__3 = raw_call('Fast Groups Bypasser (rgthree)', '819')
-
-    loadaudio = LoadAudio(
-        audio='e9318ca1-5e2b-47aa-8397-f4538b0151b0.wav',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
-
+    loadaudio = LoadAudio(audio='e9318ca1-5e2b-47aa-8397-f4538b0151b0.wav')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '861', model=MODEL_NAME_2)
 
     # Conditioning
@@ -214,9 +207,9 @@ def build() -> VibeWorkflow:
         model=pathchsageattentionkj,
     )
 
-    easy_showanything = raw_call('easy showAnything', '857', unused_widget_0=V_8_375, anything=float_simple)
+    easy_showanything = raw_call('easy showAnything', '857', anything=float_simple)
     trimaudioduration = TrimAudioDuration(duration=float_simple, audio=loadaudio)
-    easy_showanything_2 = raw_call('easy showAnything', '875', unused_widget_0=V_8_375, anything=float_simple)
+    easy_showanything_2 = raw_call('easy showAnything', '875', anything=float_simple)
     image_get, width, height, count = GetImageSizeAndCount(image=lazyswitchkj)
 
     ltxvchunkfeedforward = LTXVChunkFeedForward(
@@ -248,19 +241,11 @@ def build() -> VibeWorkflow:
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type=SCALE_BY_MULTIPLIER,
-        unused_widget_1=0.5,
         input=image_image,
     )
 
     image, mask = GetImageRangeFromBatch(images=image_image)
-
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '660',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={},
-        unused_widget_3='',
-        model=ltx2attentiontunerpatch,
-    )
+    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
 
     image_get_2, width_get, height_get, count_get = GetImageSizeAndCount(
         image=image_image,
@@ -269,7 +254,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type=SCALE_BY_MULTIPLIER,
         scale_method=NEAREST_EXACT,
-        unused_widget_1=0.5,
         input=image_image,
     )
 
@@ -280,7 +264,7 @@ def build() -> VibeWorkflow:
 
     ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '368',
         preview_rate=19,
-        model=power_lora_loader__rgthree_.out(0),
+        model=model,
         vae=vaeloader_2,
     )
 
@@ -335,7 +319,6 @@ def build() -> VibeWorkflow:
     modelsamplingsd3 = ModelSamplingSD3(shift=13, model=ltx2samplingpreviewoverride)
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=cliptextencode,
         nag_cond_video=negative,
@@ -374,7 +357,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='match size',
         scale_method=NEAREST_EXACT,
-        unused_widget_1='center',
         input=blockifymask,
         **{'resize_type.match': image_get_3},
     )

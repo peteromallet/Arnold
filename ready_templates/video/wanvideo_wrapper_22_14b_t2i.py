@@ -35,17 +35,16 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='3', field='model_name', default=MODEL_NAME_3),
-    'seed': InputSpec(node='13', field='seed', default=DEFAULT_SEED),
-    'width': InputSpec(node='5', field='width', default=832),
-    'height': InputSpec(node='5', field='height', default=480),
+    'width': InputSpec(node='5', field='width', default=832, type='INT'),
+    'height': InputSpec(node='5', field='height', default=480, type='INT'),
+    'seed': InputSpec(node='13', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
     capability='text_to_image_single_frame',
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-WanVideoWrapper']},
+    requirements={'custom_nodes': ['ComfyUI-WanVideoWrapper'], 'custom_node_refs': [{'slug': 'ComfyUI-WanVideoWrapper', 'source': 'git', 'version': 'unknown', 'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}]},
     custom_node_packs={'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEmptyEmbeds', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncodeCached', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
     approach='Wan 2.2 14B high/low two-phase text-to-video graph decoded as one image frame',
     smoke_resolution='832x480x1_frame',
@@ -74,8 +73,6 @@ def build() -> VibeWorkflow:
     wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
-        width=832,
-        height=480,
         num_frames=DEFAULT_FRAMES,
         widget_0=832,
         widget_1=480,

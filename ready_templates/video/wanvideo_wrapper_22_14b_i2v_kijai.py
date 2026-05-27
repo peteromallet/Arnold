@@ -39,19 +39,18 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
-    'prompt': InputSpec(node='13', field='text', default=DEFAULT_PROMPT_2),
-    'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node='7', field='image', default='oldman_upscaled.png', aliases=('input_image',)),
-    'width': InputSpec(node='15', field='width', default=720),
-    'height': InputSpec(node='15', field='height', default=720),
+    'image': InputSpec(node='7', field='image', default='oldman_upscaled.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='15', field='width', default=720, type='INT'),
+    'height': InputSpec(node='15', field='height', default=720, type='INT'),
+    'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED, type='INT'),
+    'prompt': InputSpec(node='13', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
     capability='image_to_video',
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']},
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'version': 'unknown', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git', 'version': 'unknown', 'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}, {'slug': 'ComfyUI-WanVideoWrapper', 'source': 'git', 'version': 'unknown', 'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}]},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['CreateCFGScheduleFloatList', 'LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoImageToVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
     approach='Kijai WanVideoWrapper Wan 2.2 A14B I2V high/low two-phase workflow with Lightx2v LoRA',
     smoke_resolution='832x480x81_frames',

@@ -36,18 +36,17 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='2', field='model_name', default=MODEL_NAME_2),
-    'seed': InputSpec(node='18', field='seed', default=DEFAULT_SEED),
-    'width': InputSpec(node='13', field='width', default=832),
-    'height': InputSpec(node='13', field='height', default=480),
-    'image': InputSpec(node='4', field='image', default='vace_start.png', aliases=('input_image',)),
+    'image': InputSpec(node='4', field='image', default='vace_start.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='13', field='width', default=832, type='INT'),
+    'height': InputSpec(node='13', field='height', default=480, type='INT'),
+    'seed': InputSpec(node='18', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
     capability='video_vace_travel_join',
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper']},
+    requirements={'custom_nodes': ['ComfyUI-VideoHelperSuite', 'ComfyUI-WanVideoWrapper'], 'custom_node_refs': [{'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git', 'version': 'unknown', 'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}, {'slug': 'ComfyUI-WanVideoWrapper', 'source': 'git', 'version': 'unknown', 'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git'}]},
     custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncodeCached', 'WanVideoVACEEncode', 'WanVideoVACEModelSelect', 'WanVideoVACEStartToEndFrame', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'pinned'}},
     smoke_resolution='832x480x81_frames',
     approach='Wan 2.2 14B VACE high/high/low cocktail with first/last frame and optional control-video conditioning',
@@ -122,8 +121,6 @@ def build() -> VibeWorkflow:
     )
 
     wanvideovaceencode = WanVideoVACEEncode(
-        width=832,
-        height=480,
         input_frames=images,
         input_masks=masks,
         ref_images=image,

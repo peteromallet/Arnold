@@ -69,12 +69,7 @@ def build() -> VibeWorkflow:
     )
 
     audioencoderloader = AudioEncoderLoader(audio_encoder_name=AUDIO_ENCODER_NAME)
-
-    loadaudio = LoadAudio(
-        audio='0321. Alphaville - Big In Japan.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
+    loadaudio = LoadAudio(audio='0321. Alphaville - Big In Japan.mp3')
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
         model_name=MODEL_NAME_4,
@@ -83,7 +78,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image_load, mask = LoadImage(image='2b.jpg', unused_widget_1='image')
+    image_load, mask = LoadImage(image='2b.jpg')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '81', model=MODEL_NAME_3)
     audio, duration = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
     intconstant = INTConstant(value=640)
@@ -102,7 +97,6 @@ def build() -> VibeWorkflow:
         keep_proportion=CROP,
         divisible_by=16,
         device=CPU,
-        unused_widget_8='<tr><td>Output: </td><td><b>1</b> x <b>960</b> x <b>640 | 7.03MB</b></td></tr>',
         width=intconstant,
         height=intconstant_2,
         image=image_load,
@@ -147,8 +141,6 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        unused_widget_0=False,
-        unused_widget_1=272,
         image=image_image,
         vae=wanvideovaeloader,
     )
@@ -206,8 +198,6 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=0.5,
-        unused_widget_0=False,
-        unused_widget_1=272,
         image=image_image_3,
         vae=wanvideovaeloader,
     )
@@ -230,7 +220,6 @@ def build() -> VibeWorkflow:
         shift=4,
         seed=DEFAULT_SEED,
         scheduler='lcm',
-        unused_widget_4='fixed',
         image_embeds=image_embeds,
         model=wanvideosetblockswap,
         text_embeds=text_embeds,

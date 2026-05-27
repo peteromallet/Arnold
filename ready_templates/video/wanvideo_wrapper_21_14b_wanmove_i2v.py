@@ -10,24 +10,26 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoAddWanMoveTracks, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader, WanVideoWanDrawWanMoveTracks
 
 
+BF16 = 'bf16'
 CLIP_NAME = 'clip_vision_h.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_SEED = 1057359483639287
+DISABLED = 'disabled'
 GUIDE_STRENGTH = 1
 LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
-MODEL_NAME = 'umt5-xxl-enc-bf16.safetensors'
-MODEL_NAME_2 = 'WanVideo\\WanMove\\Wan21-WanMove_fp8_scaled_e4m3fn_KJ.safetensors'
+MODEL_NAME = 'WanVideo\\WanMove\\Wan21-WanMove_fp8_scaled_e4m3fn_KJ.safetensors'
+MODEL_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
 MODEL_NAME_3 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+OFFLOAD_DEVICE = 'offload_device'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 YUV420P = 'yuv420p'
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='1', field='model_name', default=MODEL_NAME),
-    'seed': InputSpec(node='18', field='seed', default=DEFAULT_SEED),
-    'image': InputSpec(node='6', field='image', default='oldman_upscaled.png', aliases=('input_image',)),
-    'width': InputSpec(node='10', field='width', default=640),
-    'height': InputSpec(node='10', field='height', default=640),
+    'seed': InputSpec(node='27', field='seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node='58', field='image', default='oldman_upscaled.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='68', field='width', default=640, type='INT'),
+    'height': InputSpec(node='68', field='height', default=640, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -35,24 +37,17 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoImageToVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
-    source_path='workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json',
-    source_id='wan21_14b_wanmove_i2v',
-    source_type='api',
-    source_workflow_path='workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json',
-    source_hash='sha256:9f4058bf31cf7c25f6cfe5fbb7a693113b8dfb68c89d09564ebbd43039723ccd',
-    output_mode='ready_template',
-    ready_id='video/wanvideo_wrapper_21_14b_wanmove_i2v',
-    provenance={'source_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json', 'source_id': 'wan21_14b_wanmove_i2v', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json', 'source_hash': 'sha256:9f4058bf31cf7c25f6cfe5fbb7a693113b8dfb68c89d09564ebbd43039723ccd', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_wanmove_i2v', 'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json'},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json', 'source_id': 'wan21_14b_wanmove_i2v', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_wanmove_i2v.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_wanmove_i2v'},
 )
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=MODEL_NAME_2)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_2,
+        model=MODEL_NAME,
         base_precision='fp16',
         attention_mode='sageattn',
     )
@@ -67,7 +62,7 @@ def build() -> VibeWorkflow:
     )
 
     # Inputs
-    image, mask = LoadImage(image='oldman_upscaled.png', unused_widget_1='image')
+    image, mask = LoadImage(image='oldman_upscaled.png')
 
     # Loaders
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME)
@@ -88,7 +83,6 @@ def build() -> VibeWorkflow:
         keep_proportion='crop',
         divisible_by=16,
         device='cpu',
-        unused_widget_8='<tr><td>Output: </td><td><b>1</b> x <b>640</b> x <b>640 | 4.69MB</b></td></tr>',
         image=image,
     )
 
@@ -148,13 +142,12 @@ def build() -> VibeWorkflow:
         seed=DEFAULT_SEED,
         scheduler='dpm++_sde',
         batched_cfg='',
-        unused_widget_4='fixed',
         image_embeds=image_embeds,
         model=wanvideosetblockswap,
         text_embeds=wanvideotextencode,
     )
 
-    wanvideowandrawwanmovetracks = WanVideoWanDrawWanMoveTracks(
+    wanvideowandrawwanmovetracks_2 = WanVideoWanDrawWanMoveTracks(
         images=repeatimagebatch,
         tracks=tracks,
     )
@@ -166,24 +159,6 @@ def build() -> VibeWorkflow:
     )
 
     # Outputs
-    vhs_videocombine = VHS_VideoCombine(
-        frame_rate=16,
-        filename_prefix='WanVideoWrapper_I2V',
-        format=VIDEO_H264_MP4,
-        save_output=False,
-        crf=19,
-        pix_fmt=YUV420P,
-        save_metadata=True,
-        trim_to_audio=False,
-        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_I2V_00024.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_I2V_00024.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideoWrapper_I2V_00024.mp4'}},
-        images=wanvideowandrawwanmovetracks,
-    )
-
-    wanvideowandrawwanmovetracks_2 = WanVideoWanDrawWanMoveTracks(
-        images=wanvideodecode,
-        tracks=tracks,
-    )
-
     vhs_videocombine_2 = VHS_VideoCombine(
         frame_rate=16,
         filename_prefix='WanVideoWrapper_I2V',
@@ -193,8 +168,26 @@ def build() -> VibeWorkflow:
         pix_fmt=YUV420P,
         save_metadata=True,
         trim_to_audio=False,
-        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_I2V_00019.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_I2V_00019.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideoWrapper_I2V_00019.mp4'}},
+        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_I2V_00024.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_I2V_00024.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideoWrapper_I2V_00024.mp4'}},
         images=wanvideowandrawwanmovetracks_2,
+    )
+
+    wanvideowandrawwanmovetracks = WanVideoWanDrawWanMoveTracks(
+        images=wanvideodecode,
+        tracks=tracks,
+    )
+
+    vhs_videocombine = VHS_VideoCombine(
+        frame_rate=16,
+        filename_prefix='WanVideoWrapper_I2V',
+        format=VIDEO_H264_MP4,
+        save_output=False,
+        crf=19,
+        pix_fmt=YUV420P,
+        save_metadata=True,
+        trim_to_audio=False,
+        videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'WanVideoWrapper_I2V_00019.mp4', 'subfolder': '', 'type': 'temp', 'format': 'video/h264-mp4', 'frame_rate': 16, 'workflow': 'WanVideoWrapper_I2V_00019.png', 'fullpath': 'N:\\AI\\ComfyUI\\temp\\WanVideoWrapper_I2V_00019.mp4'}},
+        images=wanvideowandrawwanmovetracks,
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideoWrapper_I2V')

@@ -17,23 +17,23 @@ DEFAULT_SEED = 43
 DEFAULT_SEED_2 = 42
 ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 FIXED = 'fixed'
-GUIDE_STRENGTH = 0.5
-GUIDE_STRENGTH_2 = 1
+GUIDE_STRENGTH = 1
+GUIDE_STRENGTH_2 = 0.5
 LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
+VALUE = ''
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='3', field='ckpt_name', default=CKPT_NAME),
-    'seed': InputSpec(node='6', field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node='16', field='text', default=DEFAULT_PROMPT_2),
-    'image': InputSpec(node='1', field='image', default='example.png', aliases=('input_image',)),
-    'width': InputSpec(node='2', field='width', default=960),
-    'height': InputSpec(node='2', field='height', default=544),
-    'frames': InputSpec(node='2', field='length', default=DEFAULT_FRAMES),
-    'fps': InputSpec(node='36', field='fps', default=DEFAULT_FPS),
-    'negative_prompt': InputSpec(node='17', field='text', default=DEFAULT_PROMPT, aliases=('negative',)),
+    'image': InputSpec(node='2004', field='image', default='example.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='3059', field='width', default=960, type='INT'),
+    'height': InputSpec(node='3059', field='height', default=544, type='INT'),
+    'frames': InputSpec(node='3059', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node='4849', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='2483', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -41,14 +41,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['euler_ancestral_cfg_pp', 'euler_cfg_pp', 'ltx-2.3-22b-dev.safetensors', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors']},
     custom_node_packs={'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVEmptyLatentAudio', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}},
-    source_path='workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json',
-    source_id='LTX-2.3_T2V_I2V_Two_Stage_Distilled',
-    source_type='api',
-    source_workflow_path='workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json',
-    source_hash='sha256:2ea553cfa291cae680ef2b5834cbdb0f7b3e7ef5a81fe431953a18402931a7ba',
-    output_mode='ready_template',
-    ready_id='video/ltx2_3_lightricks_two_stage',
-    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json', 'source_id': 'LTX-2.3_T2V_I2V_Two_Stage_Distilled', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json', 'source_hash': 'sha256:2ea553cfa291cae680ef2b5834cbdb0f7b3e7ef5a81fe431953a18402931a7ba', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_two_stage', 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json'},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json', 'source_id': 'LTX-2.3_T2V_I2V_Two_Stage_Distilled', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_T2V_I2V_Two_Stage_Distilled.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_two_stage'},
 )
 
 def build() -> VibeWorkflow:
@@ -56,7 +49,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example.png', unused_widget_1='image')
+    image, mask = LoadImage(image='example.png')
 
     # Sampling
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
@@ -77,12 +70,14 @@ def build() -> VibeWorkflow:
     gemmaapitextencode = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
         enhance_prompt=ENHANCE_PROMPT_NAME,
+        widget_0='',
     )
 
     gemmaapitextencode_2 = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
         enhance_prompt=False,
         prompt=DEFAULT_PROMPT,
+        widget_0='',
     )
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
@@ -110,14 +105,13 @@ def build() -> VibeWorkflow:
 
     loraloadermodelonly = LoraLoaderModelOnly(
         lora_name=LORA_NAME,
-        strength_model=GUIDE_STRENGTH,
+        strength_model=GUIDE_STRENGTH_2,
         model=model,
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale longer dimension',
         scale_method='lanczos',
-        unused_widget_1=1536,
         input=image,
     )
 
@@ -138,14 +132,14 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider = CFGGuider(
-        cfg=GUIDE_STRENGTH_2,
+        cfg=GUIDE_STRENGTH,
         model=loraloadermodelonly,
         negative=negative,
         positive=positive,
     )
 
     cfgguider_2 = CFGGuider(
-        cfg=GUIDE_STRENGTH_2,
+        cfg=GUIDE_STRENGTH,
         model=loraloadermodelonly,
         negative=negative,
         positive=positive,
@@ -205,8 +199,6 @@ def build() -> VibeWorkflow:
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
-        unused_widget_4='auto',
-        unused_widget_5='auto',
         latents=video_latent_ltxv,
         vae=vae,
     )

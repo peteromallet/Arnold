@@ -3,8 +3,8 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import ConditioningZeroOut, DualCLIPLoader, KSampler, ModelSamplingAuraFlow, SaveAudioMP3, UNETLoader, VAEDecodeAudio, VAELoader
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
+from vibecomfy.nodes.core import ConditioningZeroOut, DualCLIPLoader, EmptyAceStep1_5LatentAudio, KSampler, ModelSamplingAuraFlow, SaveAudioMP3, TextEncodeAceStepAudio1_5, UNETLoader, VAEDecodeAudio, VAELoader
 
 
 CLIP_NAME = 'qwen_0.6b_ace15.safetensors'
@@ -39,16 +39,15 @@ def build() -> VibeWorkflow:
     )
 
     vaeloader = VAELoader(vae_name=VAE_NAME)
-    emptyacestep1_5latentaudio = raw_call('EmptyAceStep1.5LatentAudio', '122', seconds=2.0)
+    emptyacestep1_5latentaudio = EmptyAceStep1_5LatentAudio(seconds=2.0, widget_0=2)
     unetloader = UNETLoader(unet_name=UNET_NAME)
     modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
 
-    textencodeacestepaudio1_5 = raw_call('TextEncodeAceStepAudio1.5', '124',
+    textencodeacestepaudio1_5 = TextEncodeAceStepAudio1_5(
         tags='synthwave, techno, synthpop, futuristic, electro, with liquid drum & bass drive.\nRestless, confident, dreamy mood at 128 BPM.\nAnalog bass, pulsating arps, percussive synth stabs, gated drums.\nQuick build,  then explosive drum burst, then clean fade.\nBreathy, rhythmic female vocals, minimal emotion, metallic echo.',
         lyrics='Verse\nNeon rain on my screen,\nDreams compile in silver sheen.\nNo weight, just motion,\nI’m plugged into emotion.\n\nChorus\nComfy Cloud — breathing light,\nCode and color, spark and wire.\nDrift through data, feel alive,\nIn your circuits, I arrive.',
         seed=DEFAULT_SEED,
         duration=2.0,
-        bpm=2,
         timesignature='4',
         language='en',
         keyscale='E minor',
@@ -75,7 +74,6 @@ def build() -> VibeWorkflow:
     # Outputs
     saveaudiomp3 = SaveAudioMP3(
         filename_prefix='audio/vibecomfy_ace_step_smoke',
-        audioUI='',
         audio=vaedecodeaudio,
     )
 

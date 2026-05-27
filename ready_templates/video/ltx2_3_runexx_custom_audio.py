@@ -7,6 +7,7 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as 
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2_NAG, LTXVChunkFeedForward, SimpleCalculatorKJ
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -57,10 +58,7 @@ def build() -> VibeWorkflow:
     ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
 
     # Inputs
-    image_load, mask_load = LoadImage(
-        image='liam-neeson-in-retribution-ra.jpg',
-        unused_widget_1='image',
-    )
+    image_load, mask_load = LoadImage(image='liam-neeson-in-retribution-ra.jpg')
 
     # Loaders
     vaeloader = VAELoader(vae_name=VAE_NAME_2)
@@ -100,13 +98,7 @@ def build() -> VibeWorkflow:
 
     fast_groups_bypasser__rgthree_ = raw_call('Fast Groups Bypasser (rgthree)', '354')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '370', model=MODEL_NAME_2)
-
-    loadaudio = LoadAudio(
-        audio='ComfyUI_00128_.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
-
+    loadaudio = LoadAudio(audio='ComfyUI_00128_.mp3')
     manualsigmas_2 = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
 
     manualsigmas_3 = ManualSigmas(
@@ -142,7 +134,6 @@ def build() -> VibeWorkflow:
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=image,
     )
 
@@ -171,20 +162,8 @@ def build() -> VibeWorkflow:
     cliptextencode_2 = CLIPTextEncode(text=textgenerateltx2prompt, clip=dualcliploader)
     ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
     width, height, batch_size = GetImageSize(image=resizeimagemasknode)
-
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '301',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={},
-        unused_widget_3='',
-        model=ltxvchunkfeedforward,
-    )
-
-    easy_showanything = raw_call('easy showAnything', '351',
-        unused_widget_0='Style: realistic - cinematic - The man stares intently at the viewer, his expression a mix of intensity and menace. He speaks in a low, gravelly voice, "If you say a bad word about LTX 2.3, I will find you.... and I will kill you." His hands clench into fists, and he takes a step forward, his body language conveying a palpable sense of threat. The background is dark and blurred, focusing all attention on the man\'s face and the intensity of his words.',
-        anything=textgenerateltx2prompt,
-    )
-
+    model, clip = Power_Lora_Loader_rgthree(model=ltxvchunkfeedforward)
+    easy_showanything = raw_call('easy showAnything', '351', anything=textgenerateltx2prompt)
     trimaudioduration = TrimAudioDuration(duration=float_simple_2, audio=loadaudio)
 
     positive, negative = LTXVConditioning(
@@ -194,11 +173,7 @@ def build() -> VibeWorkflow:
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(width=width, height=height, length=int)
-
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '337',
-        model=power_lora_loader__rgthree_.out(0),
-        vae=vaeloader_2,
-    )
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '337', model=model, vae=vaeloader_2)
 
     melbandroformersampler = raw_call('MelBandRoFormerSampler', '371',
         audio=trimaudioduration,
@@ -212,7 +187,6 @@ def build() -> VibeWorkflow:
     )
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=negative,
         nag_cond_video=negative,

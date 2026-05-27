@@ -30,19 +30,18 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED),
-    'model': InputSpec(node='5', field='ckpt_name', default=CKPT_NAME),
-    'prompt': InputSpec(node='13', field='text', default='blurry, distorted, low quality'),
-    'image': InputSpec(node='1', field='image', default='example_start.png', aliases=('input_image',)),
-    'frames': InputSpec(node='27', field='length', default=DEFAULT_FRAMES),
-    'fps': InputSpec(node='46', field='fps', default=DEFAULT_FPS),
+    'image': InputSpec(node='1', field='image', default='example_start.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'frames': InputSpec(node='27', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'fps': InputSpec(node='46', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='13', field='text', default='blurry, distorted, low quality', type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
     capability='first_last_frame_video',
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
-    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo']},
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'version': 'unknown', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-LTXVideo', 'source': 'git', 'version': 'unknown', 'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}]},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize', 'LTXVAddGuide'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'pinned'}},
     source_path='/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_lightricks_first_last_two_stage_lowvram.py',
     source_id='video/ltx2_3_lightricks_first_last_two_stage_lowvram',

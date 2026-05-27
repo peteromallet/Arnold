@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode
 
 
+AUTO = 'auto'
 CKPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 DEFAULT_FPS = 24.0
 DEFAULT_FRAMES = 121
@@ -15,22 +16,22 @@ DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
 DEFAULT_PROMPT_2 = 'Man on a small bycicle being chased by a police car. The sirens are blaring and the crowd of bystanders is cheering loudly. As he is pedaling away on the bike, he looks back at the police car and shouts in a taunting tone: "you can\'t catch me!" and waving his fist in the air. He then pedals away on his bike.'
 DEFAULT_SEED = 42
 ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
-GUIDE_STRENGTH = 0.5
-GUIDE_STRENGTH_2 = 1
+GUIDE_STRENGTH = 1
+GUIDE_STRENGTH_2 = 0.5
 LANCZOS = 'lanczos'
-LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
-LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors'
+LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors'
+LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
 TEXT_ENCODER_NAME = 'comfy_gemma_3_12B_it.safetensors'
+VALUE = ''
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='2', field='ckpt_name', default=CKPT_NAME),
-    'seed': InputSpec(node='5', field='noise_seed', default=DEFAULT_SEED),
-    'prompt': InputSpec(node='11', field='text', default=DEFAULT_PROMPT_2),
-    'image': InputSpec(node='1', field='image', default='motion_track_input.jpg', aliases=('input_image',)),
-    'frames': InputSpec(node='5059', field='length', default=DEFAULT_FRAMES),
-    'fps': InputSpec(node='5071', field='fps', default=DEFAULT_FPS),
-    'negative_prompt': InputSpec(node='12', field='text', default=DEFAULT_PROMPT, aliases=('negative',)),
+    'image': InputSpec(node='2004', field='image', default='motion_track_input.jpg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'frames': InputSpec(node='3059', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'fps': InputSpec(node='4849', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='2483', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -38,14 +39,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['euler_ancestral_cfg_pp', 'ltx-2.3-22b-dev.safetensors', 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors', 'ltxv/ltx2/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTXAVTextEncoderLoader', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVSeparateAVLatent'], 'pip_packages': [], 'status': 'discovered'}},
-    source_path='workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json',
-    source_id='LTX-2.3_ICLoRA_Motion_Track_Distilled',
-    source_type='api',
-    source_workflow_path='workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json',
-    source_hash='sha256:05546a69f72653f7ffc24dbc5f8815e44dcce34c39866943ad10a63c156db5c8',
-    output_mode='ready_template',
-    ready_id='video/ltx2_3_lightricks_iclora_motion_track',
-    provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json', 'source_id': 'LTX-2.3_ICLoRA_Motion_Track_Distilled', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json', 'source_hash': 'sha256:05546a69f72653f7ffc24dbc5f8815e44dcce34c39866943ad10a63c156db5c8', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_iclora_motion_track', 'source_workflow': 'workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json'},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json', 'source_id': 'LTX-2.3_ICLoRA_Motion_Track_Distilled', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/ltxvideo/lightricks_2_3/LTX-2.3_ICLoRA_Motion_Track_Distilled.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_lightricks_iclora_motion_track'},
 )
 
 def build() -> VibeWorkflow:
@@ -53,7 +47,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='motion_track_input.jpg', unused_widget_1='image')
+    image, mask = LoadImage(image='motion_track_input.jpg')
 
     # Loaders
     model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
@@ -67,11 +61,13 @@ def build() -> VibeWorkflow:
         ckpt_name=CKPT_NAME,
         enhance_prompt=False,
         prompt=DEFAULT_PROMPT,
+        widget_0='',
     )
 
     gemmaapitextencode_2 = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
         enhance_prompt=ENHANCE_PROMPT_NAME,
+        widget_0='',
     )
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
@@ -97,15 +93,14 @@ def build() -> VibeWorkflow:
     )
 
     loraloadermodelonly = LoraLoaderModelOnly(
-        lora_name=LORA_NAME,
-        strength_model=GUIDE_STRENGTH,
+        lora_name=LORA_NAME_2,
+        strength_model=GUIDE_STRENGTH_2,
         model=model,
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale shorter dimension',
         scale_method=LANCZOS,
-        unused_widget_1=544,
         input=image,
     )
 
@@ -116,22 +111,17 @@ def build() -> VibeWorkflow:
     )
 
     model_ltxic, latent_downscale_factor = LTXICLoRALoaderModelOnly(
-        lora_name=LORA_NAME_2,
+        lora_name=LORA_NAME,
         model=loraloadermodelonly,
     )
 
-    simplemath_ = raw_call('SimpleMath+', '5056',
-        _outputs=('INT', 'FLOAT'),
-        value='a*32',
-        a=latent_downscale_factor,
-    )
+    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='scale to multiple',
         scale_method=LANCZOS,
-        unused_widget_1=64,
         input=resizeimagemasknode,
-        **{'resize_type.multiple': simplemath_.out('INT')},
+        **{'resize_type.multiple': int},
     )
 
     ltxvsparsetrackeditor = raw_call('LTXVSparseTrackEditor', '5040',
@@ -144,6 +134,12 @@ def build() -> VibeWorkflow:
 
     width, height, batch_size = GetImageSize(image=resizeimagemasknode_2)
 
+    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        length=DEFAULT_FRAMES,
+        width=width,
+        height=height,
+    )
+
     ltxvdrawtracks = raw_call('LTXVDrawTracks', '5034',
         widget_0='',
         widget_1=512,
@@ -153,24 +149,17 @@ def build() -> VibeWorkflow:
         width=width,
     )
 
-    emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        length=DEFAULT_FRAMES,
-        width=width,
-        height=height,
-    )
-
     ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
         image=resizeimagemasknode_2,
         latent=emptyltxvlatentvideo,
         vae=vae,
     )
 
-    createvideo = CreateVideo(fps=DEFAULT_FPS, images=ltxvdrawtracks)
+    createvideo_2 = CreateVideo(fps=DEFAULT_FPS, images=ltxvdrawtracks)
 
     positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
         crop=1,
         use_tiled_encode='disabled',
-        unused_widget_4=False,
         image=ltxvdrawtracks,
         latent=ltxvimgtovideoconditiononly,
         latent_downscale_factor=latent_downscale_factor,
@@ -180,7 +169,7 @@ def build() -> VibeWorkflow:
     )
 
     # Outputs
-    savevideo = SaveVideo(filename_prefix='tracks', video=createvideo)
+    savevideo_2 = SaveVideo(filename_prefix='tracks', video=createvideo_2)
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
         audio_latent=ltxvemptylatentaudio,
@@ -188,7 +177,7 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider = CFGGuider(
-        cfg=GUIDE_STRENGTH_2,
+        cfg=GUIDE_STRENGTH,
         model=model_ltxic,
         negative=negative_ltx,
         positive=positive_ltx,
@@ -219,19 +208,17 @@ def build() -> VibeWorkflow:
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
-        unused_widget_4='auto',
-        unused_widget_5='auto',
         latents=latent_ltxv,
         vae=vae,
     )
 
-    createvideo_2 = CreateVideo(
+    createvideo = CreateVideo(
         fps=DEFAULT_FPS,
         audio=ltxvaudiovaedecode,
         images=ltxvtiledvaedecode,
     )
 
-    savevideo_2 = SaveVideo(filename_prefix='output', video=createvideo_2)
+    savevideo = SaveVideo(filename_prefix='output', video=createvideo)
 
-    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='tracks')
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='output')
 

@@ -8,7 +8,7 @@ from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlu
 
 READY_METADATA = ReadyMetadata.build(
     capability='unknown',
-    provenance={'source_path': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_id': 'flux2_klein_9b_gguf_t2i', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_hash': 'sha256:ac7513756f3bf72b49292a334c48315aa40e6c0e4ff8dd152773bb55dac17fff', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_9b_gguf_t2i'},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_id': 'flux2_klein_9b_gguf_t2i', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_9b_gguf_t2i'},
 )
 
 # === Subgraph functions ===
@@ -24,7 +24,7 @@ def text_to_image_flux2_klein_9b(
 ):
     """Text to Image (Flux.2 Klein 9B).
 
-    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json.
+    Materialized from subgraph 7b34ab90-36f9-45ba-a665-71d418f0df18 in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json.
     # vibecomfy source hash: sha256:24b6e274da9a4dc9cb71344032bb8cb28886bd7cf1d2a89d8ae9939a306b8739
     Inner nodes: KSamplerSelect, Flux2Scheduler, CFGGuider, SamplerCustomAdvanced, VAEDecode, EmptyFlux2LatentImage, CLIPTextEncodex2, RandomNoise, UNETLoader, CLIPLoader, VAELoader.
     """
@@ -65,17 +65,17 @@ def text_to_image_flux2_klein_9b(
 
 def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
-    with new_workflow(READY_METADATA, source_path=__file__) as wf:
+    wf = new_workflow(READY_METADATA, source_path=__file__)
 
-        edited = text_to_image_flux2_klein_9b(
-            width=None,
-            height=None,
-            unet_name='flux-2-klein-base-9b-fp8.safetensors',
-            clip_name='qwen_3_8b_fp8mixed.safetensors',
-            vae_name='full_encoder_small_decoder.safetensors',
-            prompt='',
-        )
-        saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
+    edited = text_to_image_flux2_klein_9b(
+        width=None,
+        height=None,
+        unet_name='flux-2-klein-base-9b-fp8.safetensors',
+        clip_name='qwen_3_8b_fp8mixed.safetensors',
+        vae_name='full_encoder_small_decoder.safetensors',
+        prompt='',
+    )
+    saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
 
-        return wf.finalize({}, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
+    return wf.finalize({}, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

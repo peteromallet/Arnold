@@ -7,6 +7,7 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as 
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, ImageScaleBy, KSamplerSelect, LTXVAddGuide, LTXVAudioVAEDecode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoraLoaderModelOnly, ManualSigmas, PreviewAny, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -22,7 +23,6 @@ DEFAULT_SEED_2 = 42
 FIXED = 'fixed'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.6
-IMAGE = 'image'
 LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
 LTXV = 'ltxv'
 MODEL_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
@@ -73,17 +73,12 @@ def prompt_enhancer(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '486',
-        _outputs=('output',),
-        unused_widget_0="Style: cinematic - A thick, swirling fog obscures the cobblestone streets and canal buildings of 1700s Amsterdam, illuminated by the warm glow of streetlights. The camera smoothly cranes down from a high angle, revealing a vampire's gloved hand gripping a walking cane, the sound of footsteps echoing softly on the wet cobblestones. The scene is moody and unsettling, with a palpable sense of unease hanging in the air.",
-        anything=textgenerateltx2prompt,
-    )
+    easy_showanything = raw_call('easy showAnything', '486', _outputs=('output',), anything=textgenerateltx2prompt)
 
     comfyswitchnode = ComfySwitchNode(
         switch=enabled,
@@ -104,13 +99,11 @@ def frames_split_view():
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.2,
         input=['49', 0],
     )
 
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.2,
         input=['2083', 0],
     )
 
@@ -153,8 +146,8 @@ def build() -> VibeWorkflow:
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image_load, mask_load = LoadImage(image='image (6).png', unused_widget_1=IMAGE)
-    image_load_2, mask_load_2 = LoadImage(image='0 (13).webp', unused_widget_1=IMAGE)
+    image_load, mask_load = LoadImage(image='image (6).png')
+    image_load_2, mask_load_2 = LoadImage(image='0 (13).webp')
     float, int, boolean = SimpleCalculatorKJ(expression='a', a=24.0)
 
     vaeloaderkj = VAELoaderKJ(
@@ -314,23 +307,11 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '2107',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={},
-        unused_widget_3='',
-        model=ltx2attentiontunerpatch,
-    )
-
+    model, clip = Power_Lora_Loader_rgthree(model=ltx2attentiontunerpatch)
     ltxvscheduler = LTXVScheduler(steps=8, latent=ltxvconcatavlatent)
-
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198',
-        model=power_lora_loader__rgthree_.out(0),
-        vae=vaeloader,
-    )
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '198', model=model, vae=vaeloader)
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=negative,
         nag_cond_video=negative,

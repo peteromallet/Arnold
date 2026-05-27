@@ -9,7 +9,7 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 
 READY_METADATA = ReadyMetadata.build(
     capability='video_enhance',
-    requirements={'custom_nodes': ['ComfyUI-VideoHelperSuite']},
+    requirements={'custom_nodes': ['ComfyUI-VideoHelperSuite'], 'custom_node_refs': [{'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git', 'version': 'unknown', 'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}]},
     custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}},
     approach='VHS_LoadVideo -> ImageScaleBy -> VHS_VideoCombine, avoiding gated model downloads.',
     runtime_note='Frame interpolation is intentionally not enabled in the default app-active route because the prior GIMM-VFI asset is license-gated without HF_TOKEN.',

@@ -6,6 +6,7 @@ from __future__ import annotations
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, ImageScaleBy, KSamplerSelect, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImagesByLongerEdge, SamplerCustomAdvanced, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VRAM_Debug
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -44,11 +45,9 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'seed': InputSpec(node='4', field='noise_seed', default=DEFAULT_SEED),
-    'model': InputSpec(node='9', field='ckpt_name', default=CKPT_NAME),
-    'prompt': InputSpec(node='21', field='text', default=DEFAULT_PROMPT),
-    'lastframe_strength': InputSpec(node='41', field='num_images.strength_2', default=1.0),
-    'image': InputSpec(node='6', field='image', default='image (6).png', aliases=('input_image',)),
+    'seed': InputSpec(node='4', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node='6', field='image', default='image (6).png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'prompt': InputSpec(node='21', field='text', default=DEFAULT_PROMPT, type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -56,7 +55,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     models=MODELS,
     output_prefix='video/ltx2_3_runexx_first_last_frame',
-    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy']},
+    requirements={'custom_nodes': ['ComfyUI-KJNodes', 'ComfyUI-LTXVideo', 'ComfyUI-VideoHelperSuite', 'rgthree-comfy'], 'custom_node_refs': [{'slug': 'ComfyUI-KJNodes', 'source': 'git', 'version': 'unknown', 'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git'}, {'slug': 'ComfyUI-LTXVideo', 'source': 'git', 'version': 'unknown', 'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git'}, {'slug': 'ComfyUI-VideoHelperSuite', 'source': 'git', 'version': 'unknown', 'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git'}, {'slug': 'rgthree-comfy', 'source': 'git', 'version': 'unknown', 'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git'}]},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize', 'INTConstant', 'ImageResizeKJv2', 'LTXVAddGuide', 'PathchSageAttentionKJ', 'ResizeImagesByLongerEdge', 'SimpleCalculatorKJ'], 'pip_packages': ['matplotlib'], 'status': 'pinned'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTX2AttentionTunerPatch', 'LTX2_NAG', 'LTXVAudioVAEDecode', 'LTXVAudioVAELoader', 'LTXVChunkFeedForward', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVEmptyLatentAudio', 'LTXVImgToVideoInplaceKJ', 'LTXVPreprocess', 'LTXVScheduler', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'pinned'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'pinned'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['GetNode', 'Power Lora Loader (rgthree)', 'SetNode'], 'pip_packages': [], 'status': 'pinned'}},
     source_path='/Users/peteromalley/Documents/reigh-workspace/vibecomfy/ready_templates/video/ltx2_3_runexx_first_last_raw_video_guide.py',
     source_id='video/ltx2_3_runexx_first_last_raw_video_guide',
@@ -235,18 +234,9 @@ def build() -> VibeWorkflow:
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '2107',
-        _outputs=('MODEL', 'CLIP'),
-        model=ltx2memoryefficientsageattentionpatch,
-    )
-
+    model, clip = Power_Lora_Loader_rgthree(model=ltx2memoryefficientsageattentionpatch)
     ltxvscheduler = LTXVScheduler(steps=1, latent=ltxvconcatavlatent)
-
-    ltx2_nag = LTX2_NAG(
-        model=power_lora_loader__rgthree_.out('MODEL'),
-        nag_cond_audio=negative,
-        nag_cond_video=negative,
-    )
+    ltx2_nag = LTX2_NAG(model=model, nag_cond_audio=negative, nag_cond_video=negative)
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH_2,

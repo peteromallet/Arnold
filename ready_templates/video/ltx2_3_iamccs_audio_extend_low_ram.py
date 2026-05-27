@@ -69,10 +69,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(
-        image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png',
-        unused_widget_1='image',
-    )
+    image, mask = LoadImage(image='ChatGPT Image Mar 27, 2026, 08_27_32 AM.png')
 
     audio, duration = VHS_LoadAudioUpload(
         audio='It’s only Rock and roll.mp3',
@@ -165,7 +162,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale dimensions',
         scale_method=1080,
-        unused_widget_1=1920,
         widget_3='center',
         widget_4='lanczos',
         input=image,

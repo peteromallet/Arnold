@@ -95,7 +95,6 @@ def build() -> VibeWorkflow:
         upscale_method=False,
         keep_proportion=16,
         divisible_by='center',
-        unused_widget_0=832,
         image=image_get,
     )
 
@@ -105,8 +104,6 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        unused_widget_0=False,
-        unused_widget_1=272,
         image=image,
         vae=wanvideovaeloader,
     )
@@ -168,7 +165,6 @@ def build() -> VibeWorkflow:
     samples, denoised_samples = WanVideoSampler(
         steps=20,
         seed=DEFAULT_SEED,
-        unused_widget_4='fixed',
         cache_args=wanvideoteacache,
         experimental_args=wanvideoexperimentalargs,
         image_embeds=camera_embeds,
@@ -187,7 +183,6 @@ def build() -> VibeWorkflow:
         font_color='black',
         label_color='FreeMonoBoldOblique.otf',
         font='input',
-        unused_widget_0=10,
         text=widgettostring,
         image=wanvideodecode,
     )

@@ -3,7 +3,7 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import ModelAsset, ReadyMetadata, new_workflow, node as raw_call
+from vibecomfy.templates import ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, EmptySD3LatentImage, KSampler, ModelSamplingAuraFlow, SaveImage, UNETLoader, VAEDecode, VAELoader
 
 
@@ -11,17 +11,9 @@ WIDGET__NAME = 'z_image_bf16.safetensors'
 WIDGET__NAME_2 = 'qwen_3_4b.safetensors'
 WIDGET__NAME_3 = 'ae.safetensors'
 
-
-MODELS = {
-    'text_encoder': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors', subdir='text_encoders'),
-    'vae': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors', subdir='vae'),
-    'diffusion_model': ModelAsset(url='https://huggingface.co/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_bf16.safetensors', subdir='diffusion_models'),
-}
-
 READY_METADATA = ReadyMetadata.build(
-    capability='text_to_image',
-    models=MODELS,
-    provenance={'source_workflow': 'workflow_corpus/official/image/z_image.json'},
+    capability='unknown',
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image'},
 )
 
 # === Subgraph functions ===
@@ -39,7 +31,7 @@ def text_to_image_z_image_base(
 ):
     """Text to Image(Z-Image-Base).
 
-    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in workflow_corpus/official/image/z_image.json.
+    Materialized from subgraph 9b9009e4-2d3d-445f-9be5-6063f465757e in /Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/z_image.json.
     # vibecomfy source hash: sha256:5093fca1fcee6f4d6df426c85d09324e14882805513ee68a85b0c3a84b5aa42b
     Inner nodes: CLIPTextEncodex2, EmptySD3LatentImage, VAELoader, CLIPLoader, VAEDecode, ModelSamplingAuraFlow, UNETLoader, KSampler, MarkdownNote.
     """
@@ -48,7 +40,7 @@ def text_to_image_z_image_base(
     vaeloader = VAELoader(vae_name=vae_name)
     unetloader = UNETLoader(unet_name=unet_name)
     emptysd3latentimage = EmptySD3LatentImage(width=width, height=height)
-    markdownnote = raw_call('MarkdownNote', '76', unused_widget_0='- Steps: 30～50\n- cfg:  3～5')
+    markdownnote = raw_call('MarkdownNote', '76')
     positive = CLIPTextEncode(text=prompt, clip=cliploader)
     modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
     negative = CLIPTextEncode(text='', clip=cliploader)
@@ -56,7 +48,6 @@ def text_to_image_z_image_base(
     ksampler = KSampler(
         seed=770044821593082,
         sampler_name='res_multistep',
-        unused_widget_1='randomize',
         steps=steps,
         cfg=cfg,
         latent_image=emptysd3latentimage,

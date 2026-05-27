@@ -7,6 +7,7 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as 
 from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, ModelSamplingSD3, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecode, VAELoader
 from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, LazySwitchKJ, LoadVideosFromFolder, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ, VRAM_Debug
+from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
@@ -23,7 +24,6 @@ DEFAULT_SEED_6 = 1050
 FIXED = 'fixed'
 GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 1
-IMAGE = 'image'
 LINEAR_QUADRATIC = 'linear_quadratic'
 LORA_NAME = 'LTX\\LTX-2\\ltx-2.3-22b-distilled-lora-384.safetensors'
 MODEL_NAME = 'MelBandRoformer\\MelBandRoformer_fp16.safetensors'
@@ -80,7 +80,6 @@ def prompt_enhancer_3bd4eeb9(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -114,7 +113,6 @@ def prompt_enhancer(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -166,7 +164,6 @@ def generate_video_c4106aee(
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=ref_image,
     )
 
@@ -176,12 +173,7 @@ def generate_video_c4106aee(
         audio=['1616', 0],
     )
 
-    easy_showanything = raw_call('easy showAnything', '2256',
-        _outputs=('output',),
-        unused_widget_0='10.92',
-        anything=float,
-    )
-
+    easy_showanything = raw_call('easy showAnything', '2256', _outputs=('output',), anything=float)
     ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
     prompt_enhancer_result = prompt_enhancer(
         clip=['1562', 0],
@@ -328,7 +320,6 @@ def prompt_enhancer_97b9884d(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -374,7 +365,6 @@ def generate_video(
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=ref_image,
     )
 
@@ -383,11 +373,7 @@ def generate_video(
         images=ref_image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '5031',
-        _outputs=('output',),
-        unused_widget_0='20.88',
-        anything=float_comfy,
-    )
+    easy_showanything = raw_call('easy showAnything', '5031', _outputs=('output',), anything=float_comfy)
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
         width=['1631', 0],
@@ -528,7 +514,6 @@ def prompt_enhancer_cc5ea718(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -574,7 +559,6 @@ def generate_video_a3fb563d(
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=ref_image,
     )
 
@@ -583,11 +567,7 @@ def generate_video_a3fb563d(
         images=ref_image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '5106',
-        _outputs=('output',),
-        unused_widget_0='38.84',
-        anything=float_comfy,
-    )
+    easy_showanything = raw_call('easy showAnything', '5106', _outputs=('output',), anything=float_comfy)
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
         width=['1631', 0],
@@ -728,7 +708,6 @@ def prompt_enhancer_50a3ed96(
     textgenerateltx2prompt = TextGenerateLTX2Prompt(
         sampling_mode='off',
         thinking=True,
-        unused_widget_3=False,
         prompt=stringconcatenate,
         clip=clip,
         image=image,
@@ -774,7 +753,6 @@ def generate_video_4acc9924(
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=ref_image,
     )
 
@@ -783,11 +761,7 @@ def generate_video_4acc9924(
         images=ref_image,
     )
 
-    easy_showanything = raw_call('easy showAnything', '5181',
-        _outputs=('output',),
-        unused_widget_0='53.92',
-        anything=float_comfy,
-    )
+    easy_showanything = raw_call('easy showAnything', '5181', _outputs=('output',), anything=float_comfy)
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
         width=['1631', 0],
@@ -913,7 +887,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='download (8).png', unused_widget_1=IMAGE)
+    image, mask = LoadImage(image='download (8).png')
     intconstant = INTConstant(value=1000)
 
     # Loaders
@@ -944,13 +918,7 @@ def build() -> VibeWorkflow:
     )
 
     intconstant_2 = INTConstant(value=480)
-
-    loadaudio = LoadAudio(
-        audio='ComfyUI_00152_.mp3',
-        unused_widget_1=None,
-        unused_widget_2=None,
-    )
-
+    loadaudio = LoadAudio(audio='ComfyUI_00152_.mp3')
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '1600', model=MODEL_NAME)
     intconstant_3 = INTConstant(value=832)
 
@@ -990,22 +958,10 @@ def build() -> VibeWorkflow:
         delimiter=VALUE,
     )
 
-    image_load, mask_load = LoadImage(image='download (1).png', unused_widget_1=IMAGE)
-
-    image_load_2, mask_load_2 = LoadImage(
-        image='download (6).png',
-        unused_widget_1=IMAGE,
-    )
-
-    image_load_3, mask_load_3 = LoadImage(
-        image='download (2).png',
-        unused_widget_1=IMAGE,
-    )
-
-    image_load_4, mask_load_4 = LoadImage(
-        image='download (12).png',
-        unused_widget_1=IMAGE,
-    )
+    image_load, mask_load = LoadImage(image='download (1).png')
+    image_load_2, mask_load_2 = LoadImage(image='download (6).png')
+    image_load_3, mask_load_3 = LoadImage(image='download (2).png')
+    image_load_4, mask_load_4 = LoadImage(image='download (12).png')
 
     image_image, width, height, mask_image = ImageResizeKJv2(
         upscale_method='lanczos',
@@ -1022,7 +978,7 @@ def build() -> VibeWorkflow:
         model=unetloader,
     )
 
-    easy_showanything = raw_call('easy showAnything', '1596', unused_widget_0='66.0', anything=total_duration_result)
+    easy_showanything = raw_call('easy showAnything', '1596', anything=total_duration_result)
 
     trimaudioduration = TrimAudioDuration(
         start_index=11,
@@ -1053,7 +1009,6 @@ def build() -> VibeWorkflow:
 
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale by multiplier',
-        unused_widget_1=0.5,
         input=image_image,
     )
 
@@ -1062,11 +1017,7 @@ def build() -> VibeWorkflow:
         images=image_image,
     )
 
-    easy_showanything_3 = raw_call('easy showAnything', '4744',
-        unused_widget_0='MusicVideo\\mynewvideo\\MusicVideo',
-        anything=stringconcatenate_2,
-    )
-
+    easy_showanything_3 = raw_call('easy showAnything', '4744', anything=stringconcatenate_2)
     ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
     ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
 
@@ -1098,11 +1049,7 @@ def build() -> VibeWorkflow:
     )
 
     trimaudioduration_2 = TrimAudioDuration(duration=11.0, audio=comfyswitchnode)
-
-    easy_showanything_2 = raw_call('easy showAnything', '2112',
-        unused_widget_0='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is walking through a mystical dreamy forrest, tracking camera as she walks towards the viewer. \nThe camera pulls away slowly keeping same distance to the woman. \n\nCinematic, volumetric lights, shadow play. \n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
-        anything=prompt_enhancer_3bd4eeb9_result,
-    )
+    easy_showanything_2 = raw_call('easy showAnything', '2112', anything=prompt_enhancer_3bd4eeb9_result)
 
     positive, negative = LTXVConditioning(
         negative=cliptextencode_2,
@@ -1114,15 +1061,9 @@ def build() -> VibeWorkflow:
         audio_vae=vaeloaderkj,
     )
 
-    power_lora_loader__rgthree_ = raw_call('Power Lora Loader (rgthree)', '2150',
-        unused_widget_0={},
-        unused_widget_1={'type': 'PowerLoraLoaderHeaderWidget'},
-        unused_widget_2={'on': False, 'lora': 'LTX\\LTX-2\\ID-Lora\\LTX-2.3-22b-AV-LoRA-talking-head-v1.safetensors', 'strength': 0.5, 'strengthTwo': None},
-        unused_widget_3={'on': False, 'lora': 'LTX\\LTX-2\\Ltx2.3-Licon-VBVR-I2V-96000-R32.safetensors', 'strength': 1, 'strengthTwo': None},
-        widget_4={'on': False, 'lora': 'LTX\\LTX-2\\LTX-2-Image2Vid-Adapter.safetensors', 'strength': 0.3, 'strengthTwo': None},
-        widget_5={'on': False, 'lora': 'LTX\\v2\\ltx-2-19b-lora-camera-control-dolly-out.safetensors', 'strength': 0.3, 'strengthTwo': None},
-        widget_6={},
-        widget_7='',
+    model, clip = Power_Lora_Loader_rgthree(
+        lora_1={'on': False, 'lora': 'LTX\\LTX-2\\LTX-2-Image2Vid-Adapter.safetensors', 'strength': 0.3, 'strengthTwo': None},
+        lora_2={'on': False, 'lora': 'LTX\\v2\\ltx-2-19b-lora-camera-control-dolly-out.safetensors', 'strength': 0.3, 'strengthTwo': None},
         model=ltx2attentiontunerpatch,
     )
 
@@ -1133,11 +1074,7 @@ def build() -> VibeWorkflow:
     )
 
     setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-
-    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '2188',
-        model=power_lora_loader__rgthree_.out(0),
-        vae=vaeloader_2,
-    )
+    ltx2samplingpreviewoverride = raw_call('LTX2SamplingPreviewOverride', '2188', model=model, vae=vaeloader_2)
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
         audio_latent=setlatentnoisemask,
@@ -1145,7 +1082,6 @@ def build() -> VibeWorkflow:
     )
 
     ltx2_nag = LTX2_NAG(
-        unused_widget_3=True,
         model=ltx2samplingpreviewoverride,
         nag_cond_audio=negative,
         nag_cond_video=negative,

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVSeparateAVLatent, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath
 from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXFloatToInt, LTXICLoRALoaderModelOnly, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode
 
 
@@ -16,7 +16,6 @@ DEFAULT_SEED = 42
 ENHANCE_PROMPT_NAME = 'ltx-2.3-22b-dev.safetensors'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.5
-IMAGE = 'image'
 LANCZOS = 'lanczos'
 LORA_NAME = 'ltxv/ltx2/ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors'
 LORA_NAME_2 = 'ltxv/ltx2/ltx-2.3-22b-distilled-lora-384-1.1.safetensors'
@@ -46,7 +45,7 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, mask = LoadImage(image='example.png', unused_widget_1=IMAGE)
+    image, mask = LoadImage(image='example.png')
 
     # Loaders
     model, clip, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
@@ -55,7 +54,7 @@ def build() -> VibeWorkflow:
     # Sampling
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate='fixed')
-    loadvideo = LoadVideo(file='buildings.mp4', unused_widget_1=IMAGE)
+    loadvideo = LoadVideo(file='buildings.mp4')
 
     gemmaapitextencode = GemmaAPITextEncode(
         ckpt_name=CKPT_NAME,
@@ -97,7 +96,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type='scale longer dimension',
         scale_method=LANCZOS,
-        unused_widget_1=1536,
         input=image,
     )
 
@@ -115,7 +113,6 @@ def build() -> VibeWorkflow:
     resizeimagemasknode = ResizeImageMaskNode(
         resize_type='scale shorter dimension',
         scale_method=LANCZOS,
-        unused_widget_1=544,
         input=images,
     )
 
@@ -132,7 +129,7 @@ def build() -> VibeWorkflow:
     )
 
     cannyedgepreprocessor = raw_call('CannyEdgePreprocessor', '4991', low_threshold=92, image=resizeimagemasknode)
-    simplemath_ = raw_call('SimpleMath+', '5034', value='a*32', a=latent_downscale_factor)
+    int, float = SimpleMath(value='a*32', a=latent_downscale_factor)
 
     videodepthanythingprocess = raw_call('VideoDepthAnythingProcess', '5061',
         widget_0=518,
@@ -145,9 +142,8 @@ def build() -> VibeWorkflow:
     resizeimagemasknode_2 = ResizeImageMaskNode(
         resize_type='scale to multiple',
         scale_method=LANCZOS,
-        unused_widget_1=32,
         input=cannyedgepreprocessor,
-        **{'resize_type.multiple': simplemath_.out(0)},
+        **{'resize_type.multiple': int},
     )
 
     videodepthanythingoutput = raw_call('VideoDepthAnythingOutput', '5062',
@@ -179,7 +175,6 @@ def build() -> VibeWorkflow:
     positive_ltx, negative_ltx, latent = LTXAddVideoICLoRAGuide(
         crop=1,
         use_tiled_encode='disabled',
-        unused_widget_4=False,
         image=resizeimagemasknode_2,
         latent=ltxvimgtovideoconditiononly,
         latent_downscale_factor=latent_downscale_factor,

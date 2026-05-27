@@ -7,25 +7,30 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as 
 from vibecomfy.nodes.core import CLIPVisionLoader, GetImageRangeFromBatch, LoadAudio, PreviewAny
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageConcatMulti, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
-from vibecomfy.nodes.wanvideowrapper import DownloadAndLoadWav2VecModel, MultiTalkModelLoader, MultiTalkWav2VecEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoEncode, WanVideoImageToVideoMultiTalk, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import DownloadAndLoadWav2VecModel, MultiTalkModelLoader, MultiTalkWav2VecEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoEncode, WanVideoImageToVideoMultiTalk, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader, Wav2VecModelLoader
 
 
+BF16 = 'bf16'
 CLIP_NAME = 'clip_vision_h.safetensors'
+DEFAULT_FRAMES = 1
 DEFAULT_NEGATIVE = 'bright tones, overexposed, static, blurred details, subtitles, style, works, paintings, images, static, overall gray, worst quality, low quality, JPEG compression residue, ugly, incomplete, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, misshapen limbs, fused fingers, still picture, messy background, three legs, many people in the background, walking backwards'
 DEFAULT_SEED = 2
+DISABLED = 'disabled'
+FP16 = 'fp16'
 GUIDE_STRENGTH = 1.0000000000000002
 LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
+MAIN_DEVICE = 'main_device'
 MODEL_NAME = 'WanVideo\\InfiniteTalk\\InfiniteTalk\\Wan2_1-InfiniteTalk_Single_Q8.gguf'
 MODEL_NAME_2 = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-MODEL_NAME_3 = 'TencentGameMate/chinese-wav2vec2-base'
-MODEL_NAME_4 = 'umt5-xxl-enc-bf16.safetensors'
+MODEL_NAME_3 = 'umt5-xxl-enc-bf16.safetensors'
+MODEL_NAME_4 = 'WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf'
 MODEL_NAME_5 = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
-MODEL_NAME_6 = 'WanVideo\\wan2.1-i2v-14b-480p-Q8_0.gguf'
+MODEL_NAME_6 = 'wav2vec2-chinese-base_fp16.safetensors'
+MODEL_NAME_7 = 'TencentGameMate/chinese-wav2vec2-base'
 
 
 PUBLIC_INPUT_METADATA = {
-    'model': InputSpec(node='3', field='model_name', default=MODEL_NAME_2),
-    'seed': InputSpec(node='315', field='seed', default=DEFAULT_SEED),
+    'seed': InputSpec(node='128', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -33,14 +38,7 @@ READY_METADATA = ReadyMetadata.build(
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageRangeFromBatch', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEncodeCached', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
-    source_path='workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json',
-    source_id='wan21_14b_v2v_infinitetalk',
-    source_type='api',
-    source_workflow_path='workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json',
-    source_hash='sha256:a0951c61b13ec6755772adfc5c13afe133284363e02053574a9fcbfd4c43817e',
-    output_mode='ready_template',
-    ready_id='video/wanvideo_wrapper_21_14b_v2v_infinitetalk',
-    provenance={'source_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json', 'source_id': 'wan21_14b_v2v_infinitetalk', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json', 'source_hash': 'sha256:a0951c61b13ec6755772adfc5c13afe133284363e02053574a9fcbfd4c43817e', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_v2v_infinitetalk', 'source_workflow': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json'},
+    provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json', 'source_id': 'wan21_14b_v2v_infinitetalk', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_v2v_infinitetalk.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_v2v_infinitetalk'},
 )
 
 def build() -> VibeWorkflow:
@@ -55,7 +53,7 @@ def build() -> VibeWorkflow:
 
     wanvideovaeloader = WanVideoVAELoader(model_name=MODEL_NAME_2)
     wanvideoblockswap = WanVideoBlockSwap(use_non_blocking=True, prefetch_blocks=1)
-    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_3)
+    downloadandloadwav2vecmodel = DownloadAndLoadWav2VecModel(model=MODEL_NAME_7)
     wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
     wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
 
@@ -63,7 +61,7 @@ def build() -> VibeWorkflow:
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME)
 
     text_embeds, negative_text_embeds, positive_prompt = WanVideoTextEncodeCached(
-        model_name=MODEL_NAME_4,
+        model_name=MODEL_NAME_3,
         positive_prompt='a woman is singing a lullaby',
         negative_prompt=DEFAULT_NEGATIVE,
         use_disk_cache=False,
@@ -73,14 +71,10 @@ def build() -> VibeWorkflow:
     intconstant_2 = INTConstant(value=640)
     intconstant_3 = INTConstant(value=1000)
     melbandroformermodelloader = raw_call('MelBandRoFormerModelLoader', '303', model=MODEL_NAME_5)
-
-    melbandroformersampler = raw_call('MelBandRoFormerSampler', '304',
-        audio=loadaudio,
-        model=melbandroformermodelloader.out(0),
-    )
+    wav2vecmodelloader = Wav2VecModelLoader(model=MODEL_NAME_6)
 
     wanvideomodelloader = WanVideoModelLoader(
-        model=MODEL_NAME_6,
+        model=MODEL_NAME_4,
         base_precision='fp16_fast',
         attention_mode='sageattn',
         block_swap_args=wanvideoblockswap,
@@ -88,7 +82,7 @@ def build() -> VibeWorkflow:
         multitalk_model=multitalkmodelloader,
     )
 
-    image, frame_count, audio, video_info = VHS_LoadVideo(
+    image, frame_count, audio_load, video_info = VHS_LoadVideo(
         video='10.mp4',
         format='Wan',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': '10.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': None, 'custom_height': 480, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
@@ -97,7 +91,12 @@ def build() -> VibeWorkflow:
         **{'choose video to upload': 'image'},
     )
 
-    multitalk_embeds, audio_multi, num_frames = MultiTalkWav2VecEmbeds(
+    melbandroformersampler = raw_call('MelBandRoFormerSampler', '304',
+        audio=loadaudio,
+        model=melbandroformermodelloader.out(0),
+    )
+
+    multitalk_embeds, audio, num_frames = MultiTalkWav2VecEmbeds(
         widget_0=True,
         widget_1=400,
         widget_2=25,
@@ -125,8 +124,6 @@ def build() -> VibeWorkflow:
         tile_y=128,
         tile_stride_x=0,
         tile_stride_y=1,
-        unused_widget_0=False,
-        unused_widget_1=272,
         image=image_image,
         vae=wanvideovaeloader,
     )
@@ -164,7 +161,6 @@ def build() -> VibeWorkflow:
         scheduler='dpm++_sde',
         start_step=2,
         add_noise_to_samples=True,
-        unused_widget_4='fixed',
         image_embeds=image_embeds,
         model=wanvideomodelloader,
         multitalk_embeds=multitalk_embeds,
@@ -188,9 +184,8 @@ def build() -> VibeWorkflow:
     )
 
     imageconcatmulti = ImageConcatMulti(
-        direction=False,
-        match_image_size=None,
-        unused_widget_1='left',
+        direction='left',
+        unused_3=None,
         image_1=image_get_4,
         image_2=image_image,
     )
@@ -210,5 +205,5 @@ def build() -> VibeWorkflow:
         images=imageconcatmulti,
     )
 
-    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=previewany)
+    return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='WanVideo2_1_InfiniteTalk')
 
