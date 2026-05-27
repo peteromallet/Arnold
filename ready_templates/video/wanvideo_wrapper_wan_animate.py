@@ -176,7 +176,6 @@ def build() -> VibeWorkflow:
     growmask = GrowMask(expand=10, mask=sam2segmentation)
 
     facemaskfromposekeypoints = FaceMaskFromPoseKeypoints(
-        widget_0=0,
         pose_kps=dwpreprocessor.out(1),
     )
 

@@ -128,7 +128,6 @@ def build() -> VibeWorkflow:
     )
 
     image_embeds, tracks = WanVideoAddWanMoveTracks(
-        widget_0=1,
         image_embeds=wanvideoimagetovideoencode,
         track_coords=coord_str,
     )

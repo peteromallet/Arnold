@@ -106,9 +106,6 @@ def build() -> VibeWorkflow:
     wanvideofuncameraembeds = WanVideoFunCameraEmbeds(
         start_percent=1,
         strength=0,
-        widget_0=832,
-        widget_1=480,
-        widget_2=1,
         height=height,
         poses=ade_cameraposebasic.out(0),
         width=width,

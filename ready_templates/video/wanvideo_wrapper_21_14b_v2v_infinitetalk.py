@@ -97,7 +97,6 @@ def build() -> VibeWorkflow:
     )
 
     multitalk_embeds, _, _ = MultiTalkWav2VecEmbeds(
-        widget_0=True,
         widget_1=400,
         widget_2=25,
         widget_3=1.5,
@@ -141,9 +140,6 @@ def build() -> VibeWorkflow:
         force_offload='disabled',
         frame_window_size=9,
         motion_frame=False,
-        widget_0=832,
-        widget_1=480,
-        widget_2=81,
         widget_7='infinitetalk',
         clip_embeds=wanvideoclipvisionencode,
         height=height_2,

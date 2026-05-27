@@ -150,7 +150,6 @@ def build() -> VibeWorkflow:
         frame_window_size=201,
         pose_end_percent=False,
         pose_start_percent=1,
-        widget_0=201,
         widget_1=1,
         audio_encoder_output=audioencoderencode,
         embeds=wanvideoemptyembeds,

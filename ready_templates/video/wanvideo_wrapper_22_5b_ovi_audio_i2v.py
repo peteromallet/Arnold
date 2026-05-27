@@ -88,7 +88,6 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoovicfg = WanVideoOviCFG(
-        widget_0=3,
         original_text_embeds=text_embeds,
         ovi_negative_text_embeds=negative_text_embeds_2,
     )

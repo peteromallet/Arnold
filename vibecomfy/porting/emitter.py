@@ -3630,8 +3630,10 @@ def _node_kwargs(
         if translated is None:
             continue
         value = _resolve_graph_field_get_string(value, workflow_nodes)
-        if translated != key and translated not in raw_inputs and translated not in static_inputs and translated not in incoming:
-            static_inputs[translated] = value
+        if translated != key and translated not in raw_inputs and translated not in static_inputs:
+            if translated not in incoming and translated not in incoming_exprs:
+                static_inputs[translated] = value
+            # else: translated name already connected via an edge — drop the shadow widget value
         else:
             static_inputs[key] = value
 

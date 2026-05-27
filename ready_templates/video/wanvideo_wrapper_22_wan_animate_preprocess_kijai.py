@@ -142,8 +142,6 @@ def build() -> VibeWorkflow:
         crop_position='top',
         divisible_by=16,
         device='cpu',
-        widget_0=832,
-        widget_1=480,
         width=intconstant,
         height=intconstant_2,
         image=image,
@@ -167,8 +165,6 @@ def build() -> VibeWorkflow:
     )
 
     pose_data, face_images, _, bboxes, _ = PoseAndFaceDetection(
-        widget_0=832,
-        widget_1=480,
         width=width_2,
         height=height_2,
         images=image_4,
@@ -181,13 +177,7 @@ def build() -> VibeWorkflow:
         sam2_model=downloadandloadsam2model,
     )
 
-    drawvitpose = DrawViTPose(
-        widget_0=832,
-        widget_1=480,
-        width=width_2,
-        height=height_2,
-        pose_data=pose_data,
-    )
+    drawvitpose = DrawViTPose(width=width_2, height=height_2, pose_data=pose_data)
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
@@ -234,9 +224,6 @@ def build() -> VibeWorkflow:
     wanvideoanimateembeds = WanVideoAnimateEmbeds(
         force_offload=False,
         unused_8=False,
-        widget_0=832,
-        widget_1=480,
-        widget_2=501,
         width=intconstant,
         height=intconstant_2,
         num_frames=frame_count,

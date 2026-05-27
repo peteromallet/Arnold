@@ -138,9 +138,6 @@ def build() -> VibeWorkflow:
     )
 
     ltxvdrawtracks = LTXVDrawTracks(
-        widget_0='',
-        widget_1=512,
-        widget_2=512,
         height=height,
         tracks=ltxvsparsetrackeditor,
         width=width,
