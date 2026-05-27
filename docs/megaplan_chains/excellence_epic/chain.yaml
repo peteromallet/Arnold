@@ -1,0 +1,120 @@
+# VibeComfy "make it excellent" epic — 10 sprints / ~9-10 weeks
+# Grounded in docs/structural_audit_2026-05.md (22-subagent audit, two sweeps).
+# Sequence principle: build the safety net first, then refactor safely behind it.
+# Tiers are differentiated by residual complexity + stakes (see megaplan-decision).
+# Shared prerequisites for every milestone: docs/structural_audit_2026-05.md and the previous milestone handoff.
+# Sprint docs carry the actual gates/artifacts; keep this YAML schema conservative.
+# Sprint branch convention: epic/excellence/<milestone-label>.
+# Handoff artifacts do not yet exist; each sprint creates its own.
+# Operator guide: docs/megaplan_chains/excellence_epic/START_HERE.md
+
+base_branch: fix/emitter-revert-block-a-regressions
+
+milestones:
+  - label: m1-net-correctness
+    idea: docs/megaplan_chains/excellence_epic/m1-net-and-correctness.md
+    branch: epic/excellence/m1-net-correctness
+    profile: premium            # premium/thorough/high +prep @codex — emitter desync + failing-first harness are high-stakes
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    notes: "Failing-first differential harness; fix emitter positional-desync; arm parity gate; re-emit corrupted templates. The keystone net."
+
+  - label: m2a-consistency-gate
+    idea: docs/megaplan_chains/excellence_epic/m2a-consistency-gate.md
+    branch: epic/excellence/m2a-consistency-gate
+    profile: partnered          # partnered/full/medium @codex — cross-artifact command + CI, but no deletion/schema contract yet
+    vendor: codex
+    robustness: full
+    depth: medium
+    notes: "Offline vibecomfy check command, stable JSON contract, data fixes, model-asset metadata checks, and CI wiring."
+
+  - label: m2b-node-spec-schema
+    idea: docs/megaplan_chains/excellence_epic/m2b-node-spec-and-schema-handoff.md
+    branch: epic/excellence/m2b-node-spec-schema
+    profile: partnered          # partnered/thorough/high +prep @codex — prep has narrowed the deletion/schema handoff decisions
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    notes: "Lazy node-pack catalog, stale node-spec deletion, generator cleanup, degraded runtime-lane follow-up, schema-provider handoff."
+
+  - label: m3-seams-ir
+    idea: docs/megaplan_chains/excellence_epic/m3-seams-and-ir-purity.md
+    branch: epic/excellence/m3-seams-ir
+    profile: premium            # premium/thorough/high @codex — the IR is the kernel everything funnels through
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    notes: "Breaking IR/runtime seam fixes behind a version bump. Highest-stakes sprint."
+
+  - label: m4a-dedup-helpers
+    idea: docs/megaplan_chains/excellence_epic/m4a-dedup-helpers.md
+    branch: epic/excellence/m4a-dedup-helpers
+    profile: directed           # directed/full/medium @codex — known clone consolidation behind existing nets
+    vendor: codex
+    robustness: full
+    depth: medium
+    notes: "Consolidate known j6 helper clones and prove targeted duplicate implementations are gone."
+
+  - label: m4b-schema-classification
+    idea: docs/megaplan_chains/excellence_epic/m4b-schema-classification.md
+    branch: epic/excellence/m4b-schema-classification
+    profile: partnered          # partnered/thorough/high +prep @codex — schema seam is specified; execution is cross-cutting but bounded
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    notes: "Introduce classify_node(), route priority substring sites, centralize unknown/fallback behavior, resolve schema-backed widget gaps."
+
+  - label: m5-decompose
+    idea: docs/megaplan_chains/excellence_epic/m5-decompose.md
+    branch: epic/excellence/m5-decompose
+    profile: directed           # directed/full/medium @codex — behavior-preserving refactor behind the net
+    vendor: codex
+    robustness: full
+    depth: medium
+    notes: "Split emitter.py / session.py / port.py / nodes.py. Zero behavior change."
+
+  - label: m6a-runtime-factory
+    idea: docs/megaplan_chains/excellence_epic/m6a-runtime-factory.md
+    branch: epic/excellence/m6a-runtime-factory
+    profile: partnered          # partnered/thorough/high +prep @codex — public protocol is locked; implementation is bounded by M5 handoff
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    notes: "VibeSession protocol, runtime registry, embedded/server/dry-run dispatch, RunResult shape, runtime/eval tests."
+
+  - label: m6b-runpod-session
+    idea: docs/megaplan_chains/excellence_epic/m6b-runpod-session.md
+    branch: epic/excellence/m6b-runpod-session
+    profile: premium            # premium/thorough/high +prep @codex — GPU spend, secrets, teardown, remote runtime
+    vendor: codex
+    robustness: thorough
+    depth: high
+    with_prep: true
+    notes: "RunPodSession through the runtime registry, fake/session tests, preflight, budget/env filtering, teardown, real-smoke blocker."
+
+  - label: m7-plugin-verbs-release
+    idea: docs/megaplan_chains/excellence_epic/m7-plugin-verbs-release.md
+    branch: epic/excellence/m7-plugin-verbs-release
+    profile: partnered          # partnered/full/high @codex — cross-cutting plugin semantics plus user-facing release hardening
+    vendor: codex
+    depth: high
+    notes: "Plugin collision policy, route/verb wiring, canonical user-journey smoke tests, packaging/version/release docs."
+
+on_failure:
+  abort: stop_chain             # halt on a failed gate; fix, then re-run to resume
+on_escalate:
+  abort: stop_chain
+merge_policy: auto              # successful milestones auto-merge, then the next milestone starts from updated main
+
+driver:
+  robustness: full              # default when a milestone doesn't override; cheap/mechanical sprints override down
+  auto_approve: true            # auto-approve agent iteration steps; merge_policy=auto advances after successful milestone PRs
+  on_escalate: abort            # step-level escalations halt the current sprint instead of force-proceeding
+  max_iterations: 60
+  poll_sleep: 8.0
