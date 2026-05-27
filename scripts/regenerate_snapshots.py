@@ -129,7 +129,6 @@ def main(argv: list[str] | None = None) -> int:
                 comparisons[suffix] = (committed, regenerated)
                 if committed != regenerated:
                     stem_has_drift = True
-
             if check_mode:
                 if stem_has_drift:
                     drift_detected = True

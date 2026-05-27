@@ -1,213 +1,463 @@
 {
   "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "handbag_white.png"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "comfy_logo_blue.png"
+    }
+  },
+  "7b34ab90:61": {
     "class_type": "KSamplerSelect",
     "inputs": {
       "sampler_name": "euler"
     }
   },
-  "2": {
+  "7b34ab90:70": {
     "class_type": "UNETLoader",
     "inputs": {
       "unet_name": "flux-2-klein-4b-fp8.safetensors"
     }
   },
-  "3": {
+  "7b34ab90:71": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_3_4b.safetensors",
       "type": "flux2"
     }
   },
-  "4": {
+  "7b34ab90:72": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "flux2-vae.safetensors"
     }
   },
-  "5": {
+  "7b34ab90:73": {
     "class_type": "RandomNoise",
     "inputs": {
       "noise_seed": 43301611940728
     }
   },
-  "6": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "handbag_white.png"
-    }
-  },
-  "7": {
-    "class_type": "LoadImage",
-    "inputs": {
-      "image": "comfy_logo_blue.png"
-    }
-  },
-  "8": {
-    "class_type": "CLIPTextEncode",
-    "inputs": {
-      "text": "Change the bag color to blue.",
-      "clip": [
-        "3",
-        0
-      ]
-    }
-  },
-  "9": {
+  "7b34ab90:80": {
     "class_type": "ImageScaleToTotalPixels",
     "inputs": {
       "upscale_method": "nearest-exact",
       "image": [
-        "6",
+        "1",
         0
       ]
     }
   },
-  "10": {
-    "class_type": "ConditioningZeroOut",
+  "7b34ab90:74": {
+    "class_type": "CLIPTextEncode",
     "inputs": {
-      "conditioning": [
-        "8",
+      "text": "Change the bag color to blue.",
+      "clip": [
+        "7b34ab90:71",
         0
       ]
     }
   },
-  "11": {
+  "7b34ab90:99": {
     "class_type": "GetImageSize",
     "inputs": {
       "image": [
-        "9",
+        "7b34ab90:80",
         0
       ]
     }
   },
-  "12": {
+  "7b34ab90:122": {
     "class_type": "VAEEncode",
     "inputs": {
       "pixels": [
-        "9",
+        "7b34ab90:80",
         0
       ],
       "vae": [
-        "4",
+        "7b34ab90:72",
         0
       ]
     }
   },
-  "13": {
+  "7b34ab90:62": {
     "class_type": "Flux2Scheduler",
     "inputs": {
       "steps": 4,
       "width": [
-        "11",
+        "7b34ab90:99",
         0
       ],
       "height": [
-        "11",
+        "7b34ab90:99",
         1
       ]
     }
   },
-  "14": {
+  "7b34ab90:66": {
     "class_type": "EmptyFlux2LatentImage",
     "inputs": {
       "width": [
-        "11",
+        "7b34ab90:99",
         0
       ],
       "height": [
-        "11",
+        "7b34ab90:99",
         1
       ]
     }
   },
-  "15": {
-    "class_type": "ReferenceLatent",
+  "7b34ab90:82": {
+    "class_type": "ConditioningZeroOut",
     "inputs": {
       "conditioning": [
-        "10",
-        0
-      ],
-      "latent": [
-        "12",
+        "7b34ab90:74",
         0
       ]
     }
   },
-  "16": {
+  "7b34ab90:123": {
     "class_type": "ReferenceLatent",
     "inputs": {
       "conditioning": [
-        "8",
+        "7b34ab90:74",
         0
       ],
       "latent": [
-        "12",
+        "7b34ab90:122",
         0
       ]
     }
   },
-  "17": {
+  "7b34ab90:121": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "7b34ab90:82",
+        0
+      ],
+      "latent": [
+        "7b34ab90:122",
+        0
+      ]
+    }
+  },
+  "7b34ab90:63": {
     "class_type": "CFGGuider",
     "inputs": {
       "cfg": 1,
       "model": [
-        "2",
+        "7b34ab90:70",
         0
       ],
       "positive": [
-        "16",
+        "7b34ab90:123",
         0
       ],
       "negative": [
-        "15",
+        "7b34ab90:121",
         0
       ]
     }
   },
-  "18": {
+  "7b34ab90:64": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
       "noise": [
-        "5",
+        "7b34ab90:73",
         0
       ],
       "guider": [
-        "17",
+        "7b34ab90:63",
         0
       ],
       "sampler": [
-        "1",
+        "7b34ab90:61",
         0
       ],
       "sigmas": [
-        "13",
+        "7b34ab90:62",
         0
       ],
       "latent_image": [
-        "14",
+        "7b34ab90:66",
         0
       ]
     }
   },
-  "19": {
+  "7b34ab90:65": {
     "class_type": "VAEDecode",
     "inputs": {
       "samples": [
-        "18",
+        "7b34ab90:64",
         0
       ],
       "vae": [
-        "4",
+        "7b34ab90:72",
         0
       ]
     }
   },
-  "20": {
+  "65c22b29:85": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "image": [
+        "2",
+        0
+      ]
+    }
+  },
+  "65c22b29:101": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "65c22b29:106": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 786795143695419
+    }
+  },
+  "65c22b29:107": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux-2-klein-4b-fp8.safetensors"
+    }
+  },
+  "65c22b29:108": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "flux2"
+    }
+  },
+  "65c22b29:110": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    }
+  },
+  "65c22b29:111": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "image": [
+        "1",
+        0
+      ]
+    }
+  },
+  "65c22b29:109": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "stylize the handbag in image1 with the colours and logo from image 2",
+      "clip": [
+        "65c22b29:108",
+        0
+      ]
+    }
+  },
+  "65c22b29:114": {
+    "class_type": "GetImageSize",
+    "inputs": {
+      "image": [
+        "65c22b29:111",
+        0
+      ]
+    }
+  },
+  "65c22b29:86": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "65c22b29:109",
+        0
+      ]
+    }
+  },
+  "65c22b29:102": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 4,
+      "width": [
+        "65c22b29:114",
+        0
+      ],
+      "height": [
+        "65c22b29:114",
+        1
+      ]
+    }
+  },
+  "65c22b29:113": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": {
+      "width": [
+        "65c22b29:114",
+        0
+      ],
+      "height": [
+        "65c22b29:114",
+        1
+      ]
+    }
+  },
+  "27eacb9f:116": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "65c22b29:111",
+        0
+      ],
+      "vae": [
+        "65c22b29:110",
+        0
+      ]
+    }
+  },
+  "27eacb9f:115": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "65c22b29:86",
+        0
+      ],
+      "latent": [
+        "27eacb9f:116",
+        0
+      ]
+    }
+  },
+  "27eacb9f:117": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "65c22b29:109",
+        0
+      ],
+      "latent": [
+        "27eacb9f:116",
+        0
+      ]
+    }
+  },
+  "93041a64:119": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "65c22b29:85",
+        0
+      ],
+      "vae": [
+        "65c22b29:110",
+        0
+      ]
+    }
+  },
+  "93041a64:118": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "27eacb9f:115",
+        0
+      ],
+      "latent": [
+        "93041a64:119",
+        0
+      ]
+    }
+  },
+  "93041a64:120": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "27eacb9f:117",
+        0
+      ],
+      "latent": [
+        "93041a64:119",
+        0
+      ]
+    }
+  },
+  "65c22b29:103": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "65c22b29:107",
+        0
+      ],
+      "positive": [
+        "93041a64:120",
+        0
+      ],
+      "negative": [
+        "93041a64:118",
+        0
+      ]
+    }
+  },
+  "65c22b29:104": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "65c22b29:106",
+        0
+      ],
+      "guider": [
+        "65c22b29:103",
+        0
+      ],
+      "sampler": [
+        "65c22b29:101",
+        0
+      ],
+      "sigmas": [
+        "65c22b29:102",
+        0
+      ],
+      "latent_image": [
+        "65c22b29:113",
+        0
+      ]
+    }
+  },
+  "65c22b29:105": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "65c22b29:104",
+        0
+      ],
+      "vae": [
+        "65c22b29:110",
+        0
+      ]
+    }
+  },
+  "3": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "Flux2-Klein",
       "images": [
-        "19",
+        "7b34ab90:65",
+        0
+      ]
+    }
+  },
+  "4": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "Flux2-Klein",
+      "images": [
+        "65c22b29:105",
         0
       ]
     }
