@@ -559,6 +559,49 @@ def _validate_ready_id(ready_id: str) -> None:
         raise ValueError("ready_id must have the form 'kind/name'")
 
 
+_SAGEATTENTION_CLASS_TYPES = frozenset({
+    "LTX2MemoryEfficientSageAttentionPatch",
+    "PathchSageAttentionKJ",
+})
+
+
+def _ensure_sageattention_runtime_package(
+    metadata: dict[str, Any],
+    workflow: VibeWorkflow,
+) -> None:
+    """Add ``sageattention`` to ``runtime_packages`` when SageAttention nodes are present.
+
+    Only mutates *metadata* when (a) the workflow references one of the known
+    SageAttention class types and (b) ``runtime_packages`` does not already
+    contain a ``sageattention`` entry.
+    """
+    has_sage_node = any(
+        node.class_type in _SAGEATTENTION_CLASS_TYPES
+        for node in workflow.nodes.values()
+    )
+    if not has_sage_node:
+        return
+    existing = metadata.get("runtime_packages")
+    if isinstance(existing, list) and any(
+        isinstance(pkg, dict) and pkg.get("name") == "sageattention"
+        for pkg in existing
+    ):
+        return
+    entry = {
+        "name": "sageattention",
+        "reason": (
+            "Required by LTX2MemoryEfficientSageAttentionPatch / "
+            "PathchSageAttentionKJ for memory-efficient attention on "
+            "compatible GPUs."
+        ),
+        "source": "SageAttention-ada",
+    }
+    if isinstance(existing, list):
+        metadata["runtime_packages"] = [*existing, entry]
+    else:
+        metadata["runtime_packages"] = [entry]
+
+
 def _ready_metadata(
     workflow: VibeWorkflow,
     *,
@@ -572,6 +615,7 @@ def _ready_metadata(
         metadata.setdefault("source_workflow", _repo_relative_provenance_path(source_path))
     if provenance:
         metadata.setdefault("provenance", _normalize_provenance_paths(provenance))
+    _ensure_sageattention_runtime_package(metadata, workflow)
     return metadata
 
 

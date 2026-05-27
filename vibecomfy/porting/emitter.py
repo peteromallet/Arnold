@@ -1430,6 +1430,37 @@ def emit_ready_template_python(
         for key, value in (apply_overrides.get("metadata_overrides") or {}).items():
             metadata[key] = value
 
+    # Ensure sageattention is declared when SageAttention nodes are present.
+    _sage_class_types = frozenset({
+        "LTX2MemoryEfficientSageAttentionPatch",
+        "PathchSageAttentionKJ",
+    })
+    if any(
+        node.class_type in _sage_class_types
+        for node in workflow.nodes.values()
+    ):
+        existing = metadata.get("runtime_packages")
+        if not (
+            isinstance(existing, list)
+            and any(
+                isinstance(pkg, dict) and pkg.get("name") == "sageattention"
+                for pkg in existing
+            )
+        ):
+            entry = {
+                "name": "sageattention",
+                "reason": (
+                    "Required by LTX2MemoryEfficientSageAttentionPatch / "
+                    "PathchSageAttentionKJ for memory-efficient attention on "
+                    "compatible GPUs."
+                ),
+                "source": "SageAttention-ada",
+            }
+            if isinstance(existing, list):
+                metadata["runtime_packages"] = [*existing, entry]
+            else:
+                metadata["runtime_packages"] = [entry]
+
     raw_workflow = raw_workflow or _raw_workflow_from_metadata(metadata)
     subgraph_definitions = _subgraph_definitions_from_raw(raw_workflow, source_path=_source_workflow_path(metadata))
     prepared = _prepare_workflow_for_emit(workflow, apply_overrides=apply_overrides)
