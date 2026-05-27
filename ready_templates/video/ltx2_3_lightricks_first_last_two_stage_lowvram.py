@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
 from vibecomfy.nodes.kjnodes import LTX2MemoryEfficientSageAttentionPatch, VRAM_Debug
 from vibecomfy.nodes.ltxvideo import LTXVTiledVAEDecode, LowVRAMCheckpointLoader
 
@@ -32,8 +32,8 @@ MODELS = {
 PUBLIC_INPUT_METADATA = {
     'image': InputSpec(node='1', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED, type='INT'),
-    'frames': InputSpec(node='27', field='length', default=DEFAULT_FRAMES, type='INT'),
-    'fps': InputSpec(node='46', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'frames': InputSpec(node='26', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'fps': InputSpec(node='45', field='fps', default=DEFAULT_FPS, type='FLOAT'),
     'prompt': InputSpec(node='13', field='text', default='blurry, distorted, low quality', type='STRING', required=True, media_semantics='text'),
 }
 
@@ -118,12 +118,6 @@ def build() -> VibeWorkflow:
         model=model,
     )
 
-    ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        frames_number=81,
-        frame_rate=16,
-        audio_vae=ltxvaudiovaeloader,
-    )
-
     resizeimagemasknode_3 = ResizeImageMaskNode(
         resize_type=SCALE_DIMENSIONS,
         scale_method=NEAREST_EXACT,
@@ -174,10 +168,7 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    ltxvconcatavlatent = LTXVConcatAVLatent(
-        audio_latent=ltxvemptylatentaudio,
-        video_latent=latent_2,
-    )
+    ltxvconcatavlatent = LTXVConcatAVLatent(video_latent=latent_2)
 
     cfgguider = CFGGuider(
         cfg=GUIDE_STRENGTH,
@@ -194,7 +185,7 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
+    video_latent, _ = LTXVSeparateAVLatent(av_latent=denoised_output)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
         samples=video_latent,
@@ -230,10 +221,7 @@ def build() -> VibeWorkflow:
         vae=vae,
     )
 
-    ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-        audio_latent=audio_latent,
-        video_latent=latent_5,
-    )
+    ltxvconcatavlatent_2 = LTXVConcatAVLatent(video_latent=latent_5)
 
     cfgguider_2 = CFGGuider(
         cfg=GUIDE_STRENGTH,

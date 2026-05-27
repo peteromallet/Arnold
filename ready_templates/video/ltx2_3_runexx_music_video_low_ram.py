@@ -4,8 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, ModelSamplingSD3, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecode, VAELoader
-from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, ComfyMathExpression, ComfySwitchNode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, KSamplerSelect, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadAudio, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, SetLatentNoiseMask, SolidMask, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecode, VAELoader
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2SamplingPreviewOverride, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, LazySwitchKJ, LoadVideosFromFolder, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ, VRAM_Debug
 from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
@@ -14,7 +13,6 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
-CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
 CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 DEFAULT_PROMPT = 'text, subtitles, logo, still image, still video, no motion, static, frozen, blurry, low quality, distorted, bad anatomy, oversaturated, pixelated, low resolution, grainy, compression artifacts, jpeg artifacts, glitches, watermark, signature, copyright,  distortedsound, saturated sound, loud sound , deformed facial features, asymmetrical face, missing facial features, extra limbs, disfigured hands, blurry teeth, disfigured teeth'
 DEFAULT_SEED = 420
@@ -26,13 +24,11 @@ DEFAULT_SEED_6 = 1050
 FIXED = 'fixed'
 GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 1
-LINEAR_QUADRATIC = 'linear_quadratic'
 LORA_NAME = 'LTX/LTX-2/ltx-2.3-22b-distilled-lora-384.safetensors'
 MEL_BAND_ROFORMER_NAME = 'MelBandRoformer/MelBandRoformer_fp16.safetensors'
 MYNEWVIDEO = 'mynewvideo'
 SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo/v2/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors'
-UNET_NAME_GGUF = 'LTXvideo/LTX-2/quantstack/LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx/taeltx2_3.safetensors'
 VALUE = '\\'
 VIDEO_H264_MP4 = 'video/h264-mp4'
@@ -56,7 +52,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='video',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['LTX23_audio_vae_bf16_KJ.safetensors', 'LTX23_video_vae_bf16_KJ.safetensors', 'LTXVideo/v2/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors', 'LTX/LTX-2/ltx-2.3-22b-distilled-lora-384.safetensors', 'LTXvideo/LTX-2/quantstack/LTX-2.3-distilled-Q4_K_S.gguf', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'vae_approx/taeltx2_3.safetensors']},
-    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['DualCLIPLoaderGGUF', 'UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2', 'PathchSageAttentionKJ', 'ResizeImagesByLongerEdge', 'SimpleCalculatorKJ', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTX2AttentionTunerPatch', 'LTX2_NAG', 'LTXVChunkFeedForward', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Power Lora Loader (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSize', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2', 'PathchSageAttentionKJ', 'ResizeImagesByLongerEdge', 'SimpleCalculatorKJ', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['EmptyLTXVLatentVideo', 'LTX2AttentionTunerPatch', 'LTX2_NAG', 'LTXVChunkFeedForward', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Power Lora Loader (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
     provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json', 'source_id': 'LTX-2.3_Music_Video_Creator_Low_RAM', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_Music_Video_Creator_Low_RAM.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_runexx_music_video_low_ram'},
     runtime_packages=[{'name': 'sageattention', 'reason': 'Required by LTX2MemoryEfficientSageAttentionPatch / PathchSageAttentionKJ for memory-efficient attention on compatible GPUs.', 'source': 'SageAttention-ada'}],
 )
@@ -1171,7 +1167,6 @@ def build() -> VibeWorkflow:
 
     # Inputs
     image, _ = LoadImage(image='download (8).png')
-    intconstant = INTConstant(value=1000)
 
     # Loaders
     vaeloader = VAELoader(vae_name=VIDEO_VAE_NAME)
@@ -1195,22 +1190,14 @@ def build() -> VibeWorkflow:
 
     vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
-
-    dualcliploadergguf = DualCLIPLoaderGGUF(
-        clip_name1=CLIP_NAME_GGUF,
-        clip_name2=CLIP_PROJECTION_NAME,
-        type_='sdxl',
-    )
-
-    intconstant_2 = INTConstant(value=480)
+    intconstant = INTConstant(value=480)
     loadaudio = LoadAudio(audio='ComfyUI_00152_.mp3')
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
         model=MEL_BAND_ROFORMER_NAME,
     )
 
-    intconstant_3 = INTConstant(value=832)
+    intconstant_2 = INTConstant(value=832)
 
     _, calc_int, _ = SimpleCalculatorKJ(
         expression='((round((a * b -1) / 8)) * 8) + 1 ',
@@ -1249,17 +1236,17 @@ def build() -> VibeWorkflow:
         delimiter=VALUE,
     )
 
-    image_5, _ = LoadImage(image='download (1).png')
-    image_6, _ = LoadImage(image='download (6).png')
-    image_7, _ = LoadImage(image='download (2).png')
-    image_8, _ = LoadImage(image='download (12).png')
+    image_4, _ = LoadImage(image='download (1).png')
+    image_5, _ = LoadImage(image='download (6).png')
+    image_6, _ = LoadImage(image='download (2).png')
+    image_7, _ = LoadImage(image='download (12).png')
 
     image_2, _, _, _ = ImageResizeKJv2(
         upscale_method='lanczos',
         keep_proportion='crop',
         device='cpu',
-        width=intconstant_3,
-        height=intconstant_2,
+        width=intconstant_2,
+        height=intconstant,
         image=image,
     )
 
@@ -1275,7 +1262,7 @@ def build() -> VibeWorkflow:
         audio=loadaudio,
     )
 
-    solidmask = SolidMask(value=0, width=intconstant_3, height=intconstant_2)
+    solidmask = SolidMask(value=0, width=intconstant_2, height=intconstant)
 
     # Conditioning
     cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
@@ -1385,21 +1372,11 @@ def build() -> VibeWorkflow:
         positive=positive,
     )
 
-    modelsamplingsd3 = ModelSamplingSD3(shift=13, model=ltx2_nag)
-
     cfgguider_2 = CFGGuider(
         cfg=GUIDE_STRENGTH_2,
         model=ltx2_nag,
         negative=negative,
         positive=positive,
-    )
-
-    modelsamplingsd3_2 = ModelSamplingSD3(shift=13, model=ltx2_nag)
-
-    basicscheduler = BasicScheduler(
-        scheduler=LINEAR_QUADRATIC,
-        steps=4,
-        model=modelsamplingsd3,
     )
 
     output, _ = SamplerCustomAdvanced(
@@ -1408,12 +1385,6 @@ def build() -> VibeWorkflow:
         noise=randomnoise_2,
         sampler=ksamplerselect_2,
         sigmas=manualsigmas_2,
-    )
-
-    basicscheduler_2 = BasicScheduler(
-        scheduler=LINEAR_QUADRATIC,
-        steps=10,
-        model=modelsamplingsd3_2,
     )
 
     video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output)
@@ -1448,7 +1419,6 @@ def build() -> VibeWorkflow:
 
     # Decode
     vaedecode = VAEDecode(samples=video_latent, vae=vaeloader)
-    GetImageSizeAndCount(image=vaedecode)
     _, image_pass, _, _, _ = VRAM_Debug(image_pass=vaedecode)
 
     # Outputs
@@ -1465,13 +1435,13 @@ def build() -> VibeWorkflow:
         images=vaedecode,
     )
 
-    _, _, _, count_2 = GetImageSizeAndCount(image=image_pass)
+    _, _, _, count = GetImageSizeAndCount(image=image_pass)
     int_2, output_1_2, audio_2 = generate_video_c4106aee(
         noise_seed=1021,
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is walking through a romantic greenhouse with flowers and warm light, tracking camera as she walks towards the viewer.\n\nShe sings the lyrics: "I type a whisper, watch it bloom. In pixel fog and quiet rooms. A hundred frames begin to breathe. While melodies I couldn’t weave" \n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=10.0,
-        frames_count=count_2,
-        ref_image=image_5,
+        frames_count=count,
+        ref_image=image_4,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1517,7 +1487,7 @@ def build() -> VibeWorkflow:
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is sitting down at the stage at an abandoned teather.  The camera slowly orbits around the woman, the woman is always looking at the viewer.\n\nShe sings the lyrics: "Now rise from weights, unchained and free.\nLike open doors for you and me.\nAnd every node connects the light. To hands that build without a figh.  No locked gates, just open skies.Where anyone can close their eyes…".\n\n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=18.0,
         frames_count=int_2,
-        ref_image=image_6,
+        ref_image=image_5,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1563,7 +1533,7 @@ def build() -> VibeWorkflow:
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is sitting down at a piece of drift-wood at the beach, at dusk. Soft light from a cloudy sky. \n\n\nShe sings the lyrics: " … and dream. Oh, AceStep XL, you paint my dreams. ComfyUI, you stitch the seams. Of every film, each trembling tone. Where lonely sparks now feel at home".\n\nShe sings for a bit before she stands up and walks towards the viewer. \n\nThe camera slowly pulls in closer to the woman singing. \n\n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=15.0,
         frames_count=int,
-        ref_image=image_7,
+        ref_image=image_6,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,
@@ -1609,7 +1579,7 @@ def build() -> VibeWorkflow:
         prompt='Make this image come alive with fluid motion. Cinematic music video shot of a red haired woman. \n\nShe sings with expressive motion and gesticulation. \nThe song she is singing is a sweet slow melancolic melody. Her lips moves in perfect lip-sync to the attached audio.  \n\nShe is standing on a rooftop balcony with the city behind her, at night. Camera slowly orbits around her, with her always looking towards the viewer as she sings. \n\nShe sings the lyrics: "Thank you, Kijai, for the quiet grace. That smoothed the path through digital space. We dream in code, we dream in blue. And every open door leads through.......". \n\nThe camera slowly pulls in closer to the woman singing. \n\n\nCinematic, volumetric lights, shadow play.\n\nIMPORTANT: The woman is singing, and her lips are moving with lip-sync to the lyrics of the song.',
         window_seconds=10.0,
         frames_count=int_3,
-        ref_image=image_8,
+        ref_image=image_7,
         upscale_model=latentupscalemodelloader,
         vae=vaeloader,
         clip=dualcliploader,

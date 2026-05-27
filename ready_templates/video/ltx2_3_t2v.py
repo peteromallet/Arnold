@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
-from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, MultimodalGuider
+from vibecomfy.nodes.ltxvideo import GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, MultimodalGuider
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.resolution import resolution
@@ -68,23 +68,10 @@ def build() -> VibeWorkflow:
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
     randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
-    gemmaapitextencode = GemmaAPITextEncode(
-        ckpt_name=CKPT_NAME,
-        enhance_prompt=CKPT_NAME,
-        widget_0='',
-    )
-
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
         text_encoder=TEXT_ENCODER_NAME,
         ckpt_name=CKPT_NAME,
         device='default',
-    )
-
-    gemmaapitextencode_2 = GemmaAPITextEncode(
-        ckpt_name=CKPT_NAME,
-        enhance_prompt=False,
-        prompt=DEFAULT_PROMPT,
-        widget_0='',
     )
 
     guiderparameters = GuiderParameters(

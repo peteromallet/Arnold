@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, LoadAudio, LoadImage
+from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, LoadImage
 from vibecomfy.nodes.gimm_vfi import DownloadAndLoadGIMMVFIModel, GIMMVFI_interpolate
-from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, ImageResizeKJv2, InsertLatentToIndexed
+from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, ImageResizeKJv2
 from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.videohelpersuite import VHS_LoadAudio, VHS_SelectEveryNthImage, VHS_SplitImages, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import NormalizeAudioLoudness, WanVideoAddS2VEmbeds, WanVideoBlockSwap, WanVideoContextOptions, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoEncode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
@@ -63,10 +63,6 @@ def build() -> VibeWorkflow:
     )
 
     audioencoderloader = AudioEncoderLoader(audio_encoder_name=AUDIO_ENCODER_NAME)
-
-    loadaudio = LoadAudio(
-        audio='NieR_ Automata - _Weight of the World_ ENG VER. by Lizz Robinett [CyOSTbel3AM].mp3',
-    )
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
         model_name=CLIP_NAME,
@@ -172,12 +168,6 @@ def build() -> VibeWorkflow:
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
-    )
-
-    insertlatenttoindexed = InsertLatentToIndexed(
-        widget_0=0,
-        destination=samples,
-        source=wanvideoencode,
     )
 
     image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)

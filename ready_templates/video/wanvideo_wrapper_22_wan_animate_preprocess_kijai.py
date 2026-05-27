@@ -9,7 +9,7 @@ from vibecomfy.nodes.kjnodes import BlockifyMask, DrawMaskOnImage, GetImageSizeA
 from vibecomfy.nodes.sam2 import DownloadAndLoadSAM2Model, Sam2Segmentation
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wananimatepreprocess import DrawViTPose, OnnxDetectionModelLoader, PoseAndFaceDetection
-from vibecomfy.nodes.wanvideowrapper import WanVideoAnimateEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoContextOptions, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import WanVideoAnimateEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
 CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
@@ -46,7 +46,7 @@ MODELS = {
 
 PUBLIC_INPUT_METADATA = {
     'image': InputSpec(node='4', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'seed': InputSpec(node='31', field='seed', default=DEFAULT_SEED, type='INT'),
+    'seed': InputSpec(node='30', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -98,11 +98,6 @@ def build() -> VibeWorkflow:
         model=MODEL_NAME,
         segmentor='video',
         device='cuda',
-    )
-
-    wanvideocontextoptions = WanVideoContextOptions(
-        context_schedule='static_standard',
-        context_overlap=32,
     )
 
     intconstant = INTConstant(value=832)

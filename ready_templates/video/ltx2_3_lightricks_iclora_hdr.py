@@ -5,12 +5,11 @@ from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, KSamplerSelect, LTXAVTextEncoderLoader, LTXVConditioning, LTXVCropGuides, LoadVideo, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo, SimpleMath_2, VAEDecodeTiled
-from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVHDRDecodePostprocess
+from vibecomfy.nodes.ltxvideo import LTXAddVideoICLoRAGuide, LTXICLoRALoaderModelOnly, LTXVHDRDecodePostprocess
 
 
 CKPT_NAME = 'ltx-2.3-22b-dev.safetensors'
-DEFAULT_PROMPT = 'pc game, console game, video game, cartoon, childish, ugly'
-DEFAULT_PROMPT_2 = 'pc game, console game, video game, ugly, still, static, slow'
+DEFAULT_PROMPT = 'pc game, console game, video game, ugly, still, static, slow'
 DEFAULT_SEED = 42
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.5
@@ -23,7 +22,7 @@ PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='4832', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'fps': InputSpec(node='5108', field='fps', default=30, type='FLOAT'),
     'prompt': InputSpec(node='2483', field='text', default='HDR footage', type='STRING', required=True, media_semantics='text'),
-    'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT_2, type='STRING', aliases=('negative',), media_semantics='text'),
+    'negative_prompt': InputSpec(node='2612', field='text', default=DEFAULT_PROMPT, type='STRING', aliases=('negative',), media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -45,19 +44,6 @@ def build() -> VibeWorkflow:
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral')
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate='fixed')
 
-    gemmaapitextencode = GemmaAPITextEncode(
-        ckpt_name=CKPT_NAME,
-        enhance_prompt=False,
-        prompt=DEFAULT_PROMPT,
-        widget_0='',
-    )
-
-    gemmaapitextencode_2 = GemmaAPITextEncode(
-        ckpt_name=CKPT_NAME,
-        enhance_prompt=CKPT_NAME,
-        widget_0='',
-    )
-
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
         text_encoder=TEXT_ENCODER_NAME,
         ckpt_name=CKPT_NAME,
@@ -72,12 +58,7 @@ def build() -> VibeWorkflow:
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text='HDR footage', clip=ltxavtextencoderloader)
-
-    cliptextencode_2 = CLIPTextEncode(
-        text=DEFAULT_PROMPT_2,
-        clip=ltxavtextencoderloader,
-    )
-
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
     images, audio, fps = GetVideoComponents(video=loadvideo)
 
     model_3, _ = LTXICLoRALoaderModelOnly(

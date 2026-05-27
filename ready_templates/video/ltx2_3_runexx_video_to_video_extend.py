@@ -3,9 +3,8 @@
 """Auto-generated ready_template — use python -m vibecomfy.cli copy-to-recipe <id> for hand-editing."""
 from __future__ import annotations
 
-from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import AudioConcat, BasicScheduler, CFGGuider, CLIPTextEncode, DualCLIPLoader, GetImageRangeFromBatch, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoraLoaderModelOnly, ManualSigmas, ModelSamplingSD3, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecode, VAEDecodeTiled, VAEEncode, VAELoader
-from vibecomfy.nodes.gguf import DualCLIPLoaderGGUF, UnetLoaderGGUF
+from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
+from vibecomfy.nodes.core import AudioConcat, BasicScheduler, CFGGuider, CLIPTextEncode, DualCLIPLoader, GetImageRangeFromBatch, KSamplerSelect, LTXVAudioVAEDecode, LTXVAudioVAEEncode, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVImgToVideoInplace, LTXVLatentUpsampler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoraLoaderModelOnly, ManualSigmas, ModelSamplingSD3, RandomNoise, ResizeImageMaskNode, ResizeImagesByLongerEdge, SamplerCustomAdvanced, StringConcatenate, TextGenerateLTX2Prompt, TrimAudioDuration, UNETLoader, VAEDecode, VAEEncode, VAELoader
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageBatchExtendWithOverlap, ImageBatchMulti, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2SamplingPreviewOverride, LTX2_NAG, LTXVAudioVideoMask, LTXVChunkFeedForward, LazySwitchKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VAELoaderKJ
 from vibecomfy.nodes.ltxvideo import LTXVAddLatentGuide
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine, VHS_VideoInfo
@@ -14,7 +13,6 @@ from vibecomfy.nodes.wanvideowrapper import NormalizeAudioLoudness
 
 AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16_KJ.safetensors'
 CLIP_NAME = 'gemma_3_12B_it_fp8_scaled.safetensors'
-CLIP_NAME_GGUF = 'gemma-3-12b-it-Q2_K.gguf'
 CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 DEFAULT_FRAMES_2 = 4096
 DEFAULT_PROMPT = ' distorted sound, saturated sound, loud sound'
@@ -25,10 +23,8 @@ FIXED = 'fixed'
 GUIDE_STRENGTH = 1
 GUIDE_STRENGTH_2 = 0.6
 LORA_NAME = 'LTX/LTX-2/ltx-2.3-22b-distilled-lora-384.safetensors'
-ROUND_A_B_1_8_8_1 = '((round((a * b -1) / 8)) * 8) + 1 '
 SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'LTXVideo/v2/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors'
-UNET_NAME_GGUF = 'LTXvideo/LTX-2/quantstack/LTX-2.3-distilled-Q4_K_S.gguf'
 VAE_TAESD_NAME = 'vae_approx/taeltx2_3.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 VIDEO_VAE_NAME = 'LTX23_video_vae_bf16_KJ.safetensors'
@@ -46,7 +42,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='video',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['LTX23_audio_vae_bf16_KJ.safetensors', 'LTX23_video_vae_bf16_KJ.safetensors', 'LTXVideo/v2/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors', 'LTX/LTX-2/ltx-2.3-22b-distilled-lora-384.safetensors', 'LTXvideo/LTX-2/quantstack/LTX-2.3-distilled-Q4_K_S.gguf', 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors', 'vae_approx/taeltx2_3.safetensors']},
-    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['DualCLIPLoaderGGUF', 'UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageRangeFromBatch', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2', 'PathchSageAttentionKJ', 'ResizeImagesByLongerEdge', 'SimpleCalculatorKJ', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['LTX2AttentionTunerPatch', 'LTX2_NAG', 'LTXVAudioVAEDecode', 'LTXVChunkFeedForward', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVPreprocess', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Fast Groups Bypasser (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
+    custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageRangeFromBatch', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2', 'PathchSageAttentionKJ', 'ResizeImagesByLongerEdge', 'SimpleCalculatorKJ', 'VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['LTX2AttentionTunerPatch', 'LTX2_NAG', 'LTXVAudioVAEDecode', 'LTXVChunkFeedForward', 'LTXVConcatAVLatent', 'LTXVConditioning', 'LTXVCropGuides', 'LTXVSeparateAVLatent', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}},
     provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json', 'source_id': 'LTX-2.3_V2V_Extend_Any_Video', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/runexx/LTX-2.3_V2V_Extend_Any_Video.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_runexx_video_to_video_extend'},
     runtime_packages=[{'name': 'sageattention', 'reason': 'Required by LTX2MemoryEfficientSageAttentionPatch / PathchSageAttentionKJ for memory-efficient attention on compatible GPUs.', 'source': 'SageAttention-ada'}],
 )
@@ -96,9 +92,6 @@ def build() -> VibeWorkflow:
 
     randomnoise = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
-    # Decode
-    vaedecodetiled = VAEDecodeTiled(temporal_size=4096)
-
     # Sampling
     ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral')
     intconstant = INTConstant(value=10)
@@ -135,30 +128,11 @@ def build() -> VibeWorkflow:
 
     vaeloader_2 = VAELoader(vae_name=VAE_TAESD_NAME)
     unetloader = UNETLoader(unet_name=UNET_NAME)
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
-
-    dualcliploadergguf = DualCLIPLoaderGGUF(
-        clip_name1=CLIP_NAME_GGUF,
-        clip_name2=CLIP_PROJECTION_NAME,
-        type_='sdxl',
-    )
-
     manualsigmas = ManualSigmas(sigmas='0.85, 0.7250, 0.4219, 0.0')
-
-    manualsigmas_2 = ManualSigmas(
-        sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
-    )
-
     intconstant_3 = INTConstant(value=832)
-    fast_groups_bypasser__rgthree_ = raw_call('Fast Groups Bypasser (rgthree)', '515')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=dualcliploader)
-
-    SimpleCalculatorKJ(
-        expression=ROUND_A_B_1_8_8_1,
-        **{'variables.b': 24.0, 'variables.a': intconstant},
-    )
 
     _, _, _, _, _, loaded_fps_, _, loaded_duration_, _, _ = VHS_VideoInfo(
         video_info=video_info,
@@ -181,19 +155,19 @@ def build() -> VibeWorkflow:
         images=image_2,
     )
 
-    _, calc_int_6, _ = SimpleCalculatorKJ(
-        expression=ROUND_A_B_1_8_8_1,
+    _, calc_int_5, _ = SimpleCalculatorKJ(
+        expression='((round((a * b -1) / 8)) * 8) + 1 ',
         **{'variables.b': 24.0, 'variables.a': intconstant_2},
     )
 
     cliptextencode_3 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=dualcliploader)
 
-    calc_float_3, _, _ = SimpleCalculatorKJ(
+    calc_float_2, _, _ = SimpleCalculatorKJ(
         expression='a / b',
-        **{'variables.a': calc_int_6, 'variables.b': loaded_fps_},
+        **{'variables.a': calc_int_5, 'variables.b': loaded_fps_},
     )
 
-    _, _, calc_bool_5 = SimpleCalculatorKJ(
+    _, _, calc_bool_4 = SimpleCalculatorKJ(
         expression='(a > c) or (b > c) ',
         **{'variables.a': loaded_width__2, 'variables.b': loaded_height__2, 'variables.c': intconstant_3},
     )
@@ -203,17 +177,17 @@ def build() -> VibeWorkflow:
         model=loraloadermodelonly,
     )
 
-    calc_float_2, _, _ = SimpleCalculatorKJ(
-        **{'variables.a': intconstant, 'variables.b': calc_float_3},
+    calc_float, _, _ = SimpleCalculatorKJ(
+        **{'variables.a': intconstant, 'variables.b': calc_float_2},
     )
 
-    calc_float_4, _, _ = SimpleCalculatorKJ(
+    calc_float_3, _, _ = SimpleCalculatorKJ(
         expression='a - b',
-        **{'variables.a': loaded_duration_, 'variables.b': calc_float_3},
+        **{'variables.a': loaded_duration_, 'variables.b': calc_float_2},
     )
 
     lazyswitchkj = LazySwitchKJ(
-        switch=calc_bool_5,
+        switch=calc_bool_4,
         on_false=image_2,
         on_true=resizeimagesbylongeredge_2,
     )
@@ -223,8 +197,8 @@ def build() -> VibeWorkflow:
     )
 
     trimaudioduration = TrimAudioDuration(
-        start_index=calc_float_4,
-        duration=calc_float_3,
+        start_index=calc_float_3,
+        duration=calc_float_2,
         audio=normalizeaudioloudness,
     )
 
@@ -258,7 +232,7 @@ def build() -> VibeWorkflow:
 
     image_3, _ = GetImageRangeFromBatch(
         start_index=-1,
-        num_frames=calc_int_6,
+        num_frames=calc_int_5,
         images=image_6,
     )
 
@@ -290,7 +264,6 @@ def build() -> VibeWorkflow:
         model=modelsamplingsd3,
     )
 
-    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagesbylongeredge)
     image_7, _ = GetImageRangeFromBatch(start_index=-1, images=resizeimagemasknode)
     vaeencode_2 = VAEEncode(pixels=resizeimagemasknode, vae=vaeloader)
     prompt_enhancer_result = prompt_enhancer(
@@ -303,10 +276,10 @@ def build() -> VibeWorkflow:
     video_latent_2, audio_latent_2 = LTXVAudioVideoMask(
         video_fps=24.0,
         max_length='pad',
-        video_start_time=calc_float_3,
-        video_end_time=calc_float_2,
-        audio_start_time=calc_float_3,
-        audio_end_time=calc_float_2,
+        video_start_time=calc_float_2,
+        video_end_time=calc_float,
+        audio_start_time=calc_float_2,
+        audio_end_time=calc_float,
         audio_latent=ltxvaudiovaeencode,
         video_latent=vaeencode_2,
     )
@@ -400,15 +373,16 @@ def build() -> VibeWorkflow:
 
     trimaudioduration_2 = TrimAudioDuration(
         duration=2048,
-        start_index=calc_float_3,
+        start_index=calc_float_2,
         audio=ltxvaudiovaedecode,
     )
 
+    # Decode
     vaedecode = VAEDecode(samples=latent_3, vae=vaeloader)
 
     image, _ = GetImageRangeFromBatch(
         num_frames=DEFAULT_FRAMES_2,
-        start_index=calc_int_6,
+        start_index=calc_int_5,
         images=vaedecode,
     )
 
@@ -416,7 +390,7 @@ def build() -> VibeWorkflow:
 
     _, _, extended_images = ImageBatchExtendWithOverlap(
         overlap_mode='perceptual_crossfade',
-        overlap=calc_int_6,
+        overlap=calc_int_5,
         new_images=vaedecode,
         source_images=image_6,
     )

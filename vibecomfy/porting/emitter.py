@@ -1211,6 +1211,11 @@ def _filename_is_url_derived(filename: str, url: Any) -> bool:
     return Path(path).name == filename
 
 
+def _apply_ready_template_metadata_defaults(metadata: dict[str, Any], template_id: str) -> None:
+    if template_id == "video/ltx2_3_runexx_first_last_frame":
+        metadata.setdefault("comfy_configuration", {"memory_profile": 3, "fp8_e4m3fn_text_enc": True})
+
+
 def _metadata_extras_for_emit(metadata: Mapping[str, Any]) -> dict[str, Any]:
     derived_keys = {
         "ready_template",
@@ -1429,6 +1434,7 @@ def emit_ready_template_python(
     if apply_overrides:
         for key, value in (apply_overrides.get("metadata_overrides") or {}).items():
             metadata[key] = value
+    _apply_ready_template_metadata_defaults(metadata, template_id)
 
     # Ensure sageattention is declared when SageAttention nodes are present.
     _sage_class_types = frozenset({
@@ -1740,11 +1746,13 @@ def _prune_dead_branches_for_emit(
 
 
 def _is_dead_optional_output_input(node: Any, input_name: str, template_id: str | None) -> bool:
-    if str(getattr(node, "class_type", "")) != "VHS_VideoCombine" or input_name != "audio":
-        return False
+    class_type = str(getattr(node, "class_type", ""))
     if not _ltx_travel_template_omits_synthetic_audio(template_id):
         return False
-    return True
+    return (
+        (class_type == "VHS_VideoCombine" and input_name == "audio")
+        or (class_type == "LTXVConcatAVLatent" and input_name == "audio_latent")
+    )
 
 
 def _ltx_travel_template_omits_synthetic_audio(template_id: str | None) -> bool:
@@ -2503,6 +2511,8 @@ def _emit_build_function(
                 all_args = []
                 if is_subgraph_function and node_id_prefix is not None:
                     all_args.append(("_id", repr(_subgraph_emitted_node_id(node_id_prefix, nid))))
+                elif not is_subgraph_function:
+                    all_args.append(("_id", repr(str(nid))))
                 all_args.extend((_wrapper_kwarg_name(key), expr) for key, expr in ready_kwargs)
                 # v2.6.4 Fix 3: drop _outputs= for schema-known typed wrappers.
                 # The wrapper class already knows its output names from the

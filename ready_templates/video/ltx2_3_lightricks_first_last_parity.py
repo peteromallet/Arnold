@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, LTXAVTextEncoderLoader, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SamplerEulerAncestral, SaveVideo, VAEDecodeTiled
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, GetImageSize, LTXAVTextEncoderLoader, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVPreprocess, LTXVSeparateAVLatent, LoadImage, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SamplerEulerAncestral, SaveVideo, VAEDecodeTiled
 
 
 CENTER = 'center'
@@ -28,9 +28,9 @@ MODELS = {
 PUBLIC_INPUT_METADATA = {
     'image': InputSpec(node='1', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED, type='INT'),
-    'frames': InputSpec(node='18', field='length', default=DEFAULT_FRAMES, type='INT'),
-    'fps': InputSpec(node='28', field='fps', default=DEFAULT_FPS, type='FLOAT'),
-    'prompt': InputSpec(node='10', field='text', default='blurry, distorted, low quality', type='STRING', required=True, media_semantics='text'),
+    'frames': InputSpec(node='17', field='length', default=DEFAULT_FRAMES, type='INT'),
+    'fps': InputSpec(node='27', field='fps', default=DEFAULT_FPS, type='FLOAT'),
+    'prompt': InputSpec(node='9', field='text', default='blurry, distorted, low quality', type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -79,12 +79,6 @@ def build() -> VibeWorkflow:
 
     # Loaders
     model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
-
-    ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        frames_number=81,
-        frame_rate=16,
-        audio_vae=ltxvaudiovaeloader,
-    )
 
     # Conditioning
     cliptextencode = CLIPTextEncode(
@@ -149,10 +143,7 @@ def build() -> VibeWorkflow:
         positive=positive_3,
     )
 
-    ltxvconcatavlatent = LTXVConcatAVLatent(
-        audio_latent=ltxvemptylatentaudio,
-        video_latent=latent_2,
-    )
+    ltxvconcatavlatent = LTXVConcatAVLatent(video_latent=latent_2)
 
     _, denoised_output = SamplerCustomAdvanced(
         guider=cfgguider,

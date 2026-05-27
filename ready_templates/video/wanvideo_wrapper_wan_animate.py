@@ -9,7 +9,7 @@ from vibecomfy.nodes.core import CLIPVisionLoader, GrowMask, LoadImage, PixelPer
 from vibecomfy.nodes.kjnodes import BlockifyMask, DrawMaskOnImage, GetImageSizeAndCount, INTConstant, ImageConcatMulti, ImageCropByMaskAndResize, ImageResizeKJv2, PointsEditor
 from vibecomfy.nodes.sam2 import DownloadAndLoadSAM2Model, Sam2Segmentation
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
-from vibecomfy.nodes.wanvideowrapper import FaceMaskFromPoseKeypoints, WanVideoAnimateEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoContextOptions, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import FaceMaskFromPoseKeypoints, WanVideoAnimateEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
 BBOX_DETECTOR_NAME = 'yolox_l.torchscript.pt'
@@ -74,11 +74,6 @@ def build() -> VibeWorkflow:
         model=MODEL_NAME,
         segmentor='video',
         device='cuda',
-    )
-
-    wanvideocontextoptions = WanVideoContextOptions(
-        context_schedule='static_standard',
-        context_overlap=32,
     )
 
     intconstant = INTConstant(value=832)

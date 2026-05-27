@@ -4,18 +4,15 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, LoadImage
+from vibecomfy.nodes.core import LoadImage
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
-from vibecomfy.nodes.wanvideowrapper import CreateCFGScheduleFloatList, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import CreateCFGScheduleFloatList, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncode, WanVideoVAELoader
 
 
 CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
-CLIP_NAME_2 = 'umt5_xxl_fp16.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = 'old man gets up and jumps into the lake'
-DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
-DEFAULT_PROMPT_3 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_SEED = 43
 DPM_SDE = 'dpm++_sde'
 FP16 = 'fp16'
@@ -38,11 +35,10 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='7', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
-    'width': InputSpec(node='15', field='width', default=720, type='INT'),
-    'height': InputSpec(node='15', field='height', default=720, type='INT'),
-    'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED, type='INT'),
-    'prompt': InputSpec(node='13', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
+    'image': InputSpec(node='6', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'width': InputSpec(node='12', field='width', default=720, type='INT'),
+    'height': InputSpec(node='12', field='height', default=720, type='INT'),
+    'seed': InputSpec(node='19', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -73,9 +69,6 @@ def build() -> VibeWorkflow:
     wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
     wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
 
-    # Loaders
-    cliploader = CLIPLoader(clip_name=CLIP_NAME_2, type_='wan')
-
     wanvideoloraselect = WanVideoLoraSelect(
         lora=LORA_NAME,
         strength=3,
@@ -100,10 +93,6 @@ def build() -> VibeWorkflow:
         negative_prompt=DEFAULT_NEGATIVE,
         t5=loadwanvideot5textencoder,
     )
-
-    # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
 
     image_2, width, height, _ = ImageResizeKJv2(
         width=720,
@@ -130,11 +119,6 @@ def build() -> VibeWorkflow:
         cfg_scale_end=2,
         end_percent=0.01,
         steps=intconstant_2,
-    )
-
-    wanvideotextembedbridge = WanVideoTextEmbedBridge(
-        negative=cliptextencode_2,
-        positive=cliptextencode,
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
