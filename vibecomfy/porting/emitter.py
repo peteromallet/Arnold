@@ -3295,12 +3295,10 @@ def _compute_output_variable_names(
             base = _safe_output_var_name(str(name), shadow_prefix)
             candidate = base
             if candidate in used:
-                candidate = f"{base}_{suffix}"
-            if candidate in used:
                 ordinal = 2
-                while f"{candidate}_{ordinal}" in used:
+                while f"{base}_{ordinal}" in used:
                     ordinal += 1
-                candidate = f"{candidate}_{ordinal}"
+                candidate = f"{base}_{ordinal}"
             used.add(candidate)
             slot_vars[index] = candidate
         output_vars[nid] = slot_vars
