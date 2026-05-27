@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,6 @@ from megaplan.orchestration.evaluation import build_gate_artifact, build_gate_si
 from megaplan.orchestration.parallel_critique import run_parallel_critique
 from megaplan.profiles import apply_profile_expansion
 from megaplan.types import (
-    AdaptiveCritiqueDegradedError,
     CliError,
     FLAG_BLOCKING_STATUSES,
     PlanState,
@@ -27,7 +26,6 @@ from megaplan.types import (
 from megaplan.workers import WorkerResult, validate_payload
 from megaplan._core import (
     atomic_write_json,
-    adaptive_critique_enabled,
     configured_robustness,
     is_creative_mode,
     latest_plan_meta_path,
@@ -48,42 +46,8 @@ from megaplan._core import (
 )
 
 from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
-from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_gate_json, _write_plan_version
-
-"""Critique handler — pre-execute plan-quality pass.
-
-Critique runs *before* execute and evaluates plan quality, proposed
-approach, and completeness.  It is the counterpart to review (which
-runs *after* execute and evaluates implementation evidence).  These
-two passes are distinct: critique judges the *plan*, review judges
-the *work product*.  Do not rename or conflate them.
-"""
-
-log = logging.getLogger("megaplan")
+from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
-
-def _safe_roster_rank(model: str, *, warn: bool = False) -> int:
-    """Roster rank for *model* (1 = strongest), or a large rank if unknown.
-
-    Used to collapse the evaluator's per-lens critic assignments to the
-    strongest (cheapest-capable-of-all) model for the single critique run.
-    Unknown specs sort last so a recognised assignment always wins.
-
-    When *warn* is True, logs M3A_WARN_CRITIQUE_RANK_PARSE on fallback.
-    """
-    from megaplan.audits.critique_evaluator import roster_rank
-
-    try:
-        return roster_rank(model)
-    except ValueError:
-        if warn:
-            log.warning(
-                "M3A_WARN_CRITIQUE_RANK_PARSE critique rank fallback (model=%r)",
-                model,
-                exc_info=True,
-            )
-        return 999
-
 
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
@@ -99,31 +63,53 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "bare robustness skips critique entirely; the workflow routes plan -> finalize directly. "
                 "Run `megaplan finalize` instead, or use --robustness light if you want a critique pass.",
             )
-        adaptive_path = adaptive_critique_enabled(state) and not is_creative_mode(state)
+        # Adaptive critique (the evaluator) is the only critique path. The
+        # static robustness->lens mapping has been removed. Creative modes
+        # (joke/storytelling) are the sole exception: they still select
+        # provocations via select_active_checks rather than the evaluator.
+        adaptive_path = not is_creative_mode(state)
         critic_model_override: str | None = None
         _verified_flag_ids_set: set[str] = set()
         _selection_why: dict[str, str] = {}
         if adaptive_path:
-            from megaplan.audits.critique_evaluator import (
-                CRITIC_MODEL_ROSTER,
-                validate_evaluator_verdict,
-            )
-            from megaplan.audits.robustness import CRITIQUE_CHECKS, checks_for_robustness
+            from megaplan.audits.critique_evaluator import validate_evaluator_verdict
+            from megaplan.audits.robustness import CRITIQUE_CHECKS
+
+            from megaplan.types import AgentMode as _AgentMode
 
             resolved = _pkg.resolve_agent_mode("critique", args)
-            _ce_agent, _ce_mode, _ce_refreshed, _ce_model = _agent_mode_parts(resolved)
-            _rank_input = _ce_model or _ce_agent
-            _current_rank = _safe_roster_rank(_rank_input, warn=True)
-            if _current_rank > 1:
-                _run_vendor = (state["config"].get("vendor") or "").strip().lower()
-                if _run_vendor == "codex":
-                    _eval_agent, evaluator_model = "codex", "gpt-5.5"
-                else:
-                    _eval_agent, evaluator_model = "claude", CRITIC_MODEL_ROSTER[0].model
-                evaluator_resolved: Any = (_eval_agent, _ce_mode, _ce_refreshed, evaluator_model)
-            else:
-                evaluator_model = _rank_input
-                evaluator_resolved = resolved
+            # The evaluator runs on its OWN routing slot (`critique_evaluator`),
+            # declared per profile, at its own depth (default medium) — it is NOT
+            # escalated off the critic slot. Each profile routes the evaluator to
+            # the vendor it wants: premium profiles -> claude/codex; all-DeepSeek
+            # /open profiles -> their own family, so those profiles stay
+            # premium-free instead of silently pulling a premium model into the
+            # critique phase. --vendor and --phase-model flow through resolution;
+            # a bare config with no profile falls back to
+            # DEFAULT_AGENT_ROUTING["critique_evaluator"] (claude, or codex under
+            # --vendor codex). The rater >= dispatchee invariant is enforced
+            # downstream by validate_evaluator_verdict — a too-weak evaluator
+            # simply can't assign stronger critics, and an invalid verdict
+            # triggers the retry-then-block path below. Depth is medium by
+            # default and never touched by --depth; override with
+            # `--phase-model critique_evaluator=<agent>:<depth>`.
+            _eval_slot = _pkg.resolve_agent_mode("critique_evaluator", args)
+            _ev_agent, _ev_mode, _ev_refreshed, _ev_model = _agent_mode_parts(_eval_slot)
+            _ev_resolved_model = (
+                _eval_slot.resolved_model if isinstance(_eval_slot, _AgentMode) else _ev_model
+            ) or _ev_model
+            _eval_effort = (
+                _eval_slot.effort if isinstance(_eval_slot, _AgentMode) else None
+            ) or "medium"
+            evaluator_model = _ev_resolved_model or _ev_agent
+            evaluator_resolved: Any = _AgentMode(
+                agent=_ev_agent,
+                mode=_ev_mode,
+                refreshed=_ev_refreshed,
+                model=_ev_model,
+                effort=_eval_effort,
+                resolved_model=_ev_resolved_model,
+            )
             _eval_prompt_kwargs: dict[str, Any] | None = None
             # Prep context — feed the evaluator the prep research record (dossier +
             # coverage metrics) so it selects lenses knowing what was investigated
@@ -167,128 +153,179 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     "revise_resolutions": _resolved,
                     "plan_diff": _diff if _diff else None,
                 }
-            try:
-                eval_worker, _, _, _ = _pkg._run_worker(
-                    "critique_evaluator",
-                    state,
-                    plan_dir,
-                    args,
-                    root=root,
-                    resolved=evaluator_resolved,
-                    prompt_kwargs=_eval_prompt_kwargs,
-                )
-                validate_evaluator_verdict(eval_worker.payload, evaluator_model=evaluator_model)
-                verdict = eval_worker.payload
-                selections = verdict.get("selections", [])
-                # The critique phase runs a single model across all selected
-                # lenses, but the evaluator assigns a (cheapest-capable) critic
-                # per lens. Collapse those per-lens assignments to the *strongest*
-                # one — the cheapest single model still capable of every selected
-                # lens. Picking the first (arbitrary) or cheapest assignment would
-                # under-power any lens the evaluator escalated to premium; picking
-                # the strongest honours "cheapest capable" jointly: cheap when the
-                # evaluator routed everything cheap, premium only when it escalated.
-                _assigned_models = [s["critic_model"] for s in selections if s.get("critic_model")]
-                if _assigned_models:
-                    critic_model_override = min(
-                        _assigned_models,
-                        key=lambda m: _safe_roster_rank(m),
+            # Adaptive critique is the ONLY critique path: there is no static
+            # lens fallback. If the evaluator fails we retry once, then block
+            # the milestone loudly rather than degrade to a hand-curated lens
+            # set. One transient failure (flaky API, malformed first parse) is
+            # absorbed; a persistent wiring fault surfaces as a hard error.
+            _MAX_EVAL_ATTEMPTS = 2  # one initial attempt + one retry
+            _eval_last_exc: Exception | None = None
+            for _eval_attempt in range(1, _MAX_EVAL_ATTEMPTS + 1):
+                try:
+                    eval_worker, _, _, _ = _pkg._run_worker(
+                        "critique_evaluator",
+                        state,
+                        plan_dir,
+                        args,
+                        root=root,
+                        resolved=evaluator_resolved,
+                        prompt_kwargs=_eval_prompt_kwargs,
                     )
-                else:
+                    # Persist the raw evaluator response BEFORE validation so a
+                    # rejected/deduped verdict is inspectable post-hoc (the parsed
+                    # verdict alone hid the root cause of past failures).
+                    _raw_eval = getattr(eval_worker, "raw_output", None)
+                    if _raw_eval:
+                        # Write a per-iteration copy (_v{n}) so a multi-iteration
+                        # plan keeps every iteration's evaluator reasoning, plus
+                        # the canonical fixed-path file as the "latest" pointer
+                        # that existing readers consume unchanged.
+                        (plan_dir / f"critique_evaluator_raw_v{iteration}.txt").write_text(
+                            _raw_eval, encoding="utf-8"
+                        )
+                        (plan_dir / "critique_evaluator_raw.txt").write_text(
+                            _raw_eval, encoding="utf-8"
+                        )
+                    _vendor = state["config"].get("vendor")
+                    _eval_warnings = validate_evaluator_verdict(
+                        eval_worker.payload,
+                        evaluator_model=evaluator_model,
+                        vendor=_vendor if _vendor in ("claude", "codex") else None,
+                    )
+                    if _eval_warnings:
+                        _append_to_meta(state, "critique_evaluator_warnings", {
+                            "iteration": iteration,
+                            "deduped": _eval_warnings,
+                        })
+                        print(
+                            f"[megaplan] NOTE: critique_evaluator verdict had "
+                            f"{len(_eval_warnings)} recoverable issue(s), deduped: "
+                            f"{'; '.join(_eval_warnings)}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    verdict = eval_worker.payload
+                    selections = verdict.get("selections", [])
+                    # The evaluator decides only WHICH lenses fire — not which
+                    # model runs them. The critic model comes from the profile's
+                    # `critique` slot (resolved into `model` below): solo/partnered
+                    # -> deepseek-v4-pro, premium -> claude, apex -> codex. The
+                    # only override is the operator pin (`execution.critic_model`,
+                    # applied further down). We deliberately do NOT read any
+                    # per-lens `critic_model` the evaluator may emit.
                     critic_model_override = None
-                selected_ids = {sel["check_id"] for sel in selections}
-                active_checks = [c for c in CRITIQUE_CHECKS if c["id"] in selected_ids]
-                atomic_write_json(plan_dir / "evaluator_verdict.json", verdict)
-                # Apply flag verifications BEFORE the critic runs so it sees fresh statuses.
-                _fv_list = verdict.get("flag_verifications", [])
-                if _fv_list:
-                    _verified_flag_ids_set = apply_flag_verifications(plan_dir, _fv_list)
-                # Build check_id->why map for per-lens targeting notes in the critic prompt.
-                _selection_why = {sel["check_id"]: sel.get("why", "") for sel in selections}
-            # Narrow except: structural / wiring errors (KeyError on the step
-            # dispatch, ImportError on a missing module, AttributeError on a
-            # misshapen worker payload) MUST bubble — these are bugs, not
-            # runtime conditions, and they should fail the run loudly so the
-            # operator sees them. Swallowing them is exactly how the
-            # original silent-fallback bug hid for every adaptive run.
-            #
-            # Runtime-recoverable exceptions (ValueError from
-            # validate_evaluator_verdict against a well-formed schema,
-            # RuntimeError from a worker/LLM call, OSError from IO) are still
-            # caught here and downgraded to static lenses — those represent
-            # an LLM that produced bad output or a transient infra issue,
-            # not a config/wiring incident.
-            except (ValueError, RuntimeError, OSError) as exc:
-                # Strict mode: refuse the silent downgrade. Raise loudly so
-                # production / CI / important runs cannot quietly lose
-                # adaptive critique to a transient LLM glitch.
-                _strict = bool(state["config"].get("strict_adaptive_critique", False))
-                if _strict:
-                    raise AdaptiveCritiqueDegradedError(
-                        f"adaptive critique evaluator failed under strict mode "
-                        f"({type(exc).__name__}: {exc}); refusing to silently "
-                        f"downgrade to static lenses. Disable strict mode "
-                        f"(execution.strict_adaptive_critique = false) to allow "
-                        f"the fallback, or fix the underlying critique_evaluator "
-                        f"failure.",
-                        reason=str(exc),
-                    ) from exc
-                fallback_checks = checks_for_robustness(robustness) or checks_for_robustness("standard")
-                active_checks = list(fallback_checks)
-                fallback_check_ids = [c["id"] for c in active_checks]
-                _append_to_meta(state, "critique_evaluator_warnings", {
-                    "error": str(exc),
-                    "fallback": "static_checks_for_robustness",
-                    "robustness": robustness,
-                })
-                atomic_write_json(plan_dir / "evaluator_verdict.json", {
+                    selected_ids = {sel["check_id"] for sel in selections}
+                    active_checks = [c for c in CRITIQUE_CHECKS if c["id"] in selected_ids]
+                    # Synthesize a check spec for each bespoke "other" custom area
+                    # so it runs like a lens: its `why` becomes the critic's
+                    # question/probe. These are additive (the validator keeps them
+                    # out of the 9-lens coverage union). Build a unique id per area
+                    # so two "other" entries don't collide on the key.
+                    _selection_why = {}
+                    for c in active_checks:
+                        _selection_why[c["id"]] = next(
+                            (sel.get("why", "") for sel in selections
+                             if sel.get("check_id") == c["id"]),
+                            "",
+                        )
+                    _used_ids = {c["id"] for c in active_checks}
+                    for sel in selections:
+                        if sel.get("check_id") != "other":
+                            continue
+                        area = sel.get("area", "")
+                        slug = re.sub(r"[^a-z0-9]+", "_", area.lower()).strip("_") or "custom"
+                        oid = f"other_{slug}"
+                        if oid in _used_ids:
+                            n = 2
+                            while f"{oid}_{n}" in _used_ids:
+                                n += 1
+                            oid = f"{oid}_{n}"
+                        _used_ids.add(oid)
+                        active_checks.append({
+                            "id": oid,
+                            "question": sel.get("why", ""),
+                            "tier": "extended",
+                            "category": "custom",
+                            "guidance": (
+                                "Custom critique area added by the evaluator for "
+                                f"this plan: {area}."
+                            ),
+                        })
+                        _selection_why[oid] = sel.get("why", "")
+                    # Per-iteration copy (_v{n}) preserves each pass's verdict
+                    # (stage-1 lens selections/skips + stage-3 flag_verifications
+                    # on iteration >=2) for audit; the canonical file is the
+                    # "latest" pointer for existing downstream readers.
+                    atomic_write_json(plan_dir / f"evaluator_verdict_v{iteration}.json", verdict)
+                    atomic_write_json(plan_dir / "evaluator_verdict.json", verdict)
+                    # Apply flag verifications BEFORE the critic runs so it sees fresh statuses.
+                    _fv_list = verdict.get("flag_verifications", [])
+                    if _fv_list:
+                        _verified_flag_ids_set = apply_flag_verifications(plan_dir, _fv_list)
+                    break
+                except Exception as exc:
+                    _eval_last_exc = exc
+                    _append_to_meta(state, "critique_evaluator_warnings", {
+                        "iteration": iteration,
+                        "attempt": _eval_attempt,
+                        "error": str(exc),
+                    })
+                    print(
+                        f"[megaplan] WARNING: critique_evaluator attempt "
+                        f"{_eval_attempt}/{_MAX_EVAL_ATTEMPTS} failed "
+                        f"({type(exc).__name__}: {exc}).",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+            else:
+                # Every attempt failed. There is no static lens fallback — block
+                # the milestone rather than critique with a degraded lens set.
+                _blocked_verdict = {
                     "evaluator_model": evaluator_model,
-                    "fallback": True,
-                    "fallback_reason": str(exc),
-                    "static_checks_used": fallback_check_ids,
-                })
-                # Loudly surface the downgrade. Until this branch printed to
-                # stderr the adaptive critique could silently degrade to a
-                # static lens list for the entire run with no operator-visible
-                # signal (the warning was written only to state.meta, which is
-                # never read interactively). When this fires the premium
-                # evaluator never ran, so every iteration's critique uses the
-                # same hand-curated robustness checks regardless of plan
-                # content. Treat it as a real config/wiring incident, not a
-                # routine fallback.
-                print(
-                    f"[megaplan] ADAPTIVE CRITIQUE FALLBACK: critique_evaluator failed "
-                    f"({type(exc).__name__}: {exc}); falling back to static "
-                    f"{robustness!r} lens set ({len(fallback_check_ids)} lenses: "
-                    f"{', '.join(fallback_check_ids)}). The premium evaluator did NOT run "
-                    f"and will NOT run on subsequent iterations of this plan.\n"
-                    f"[megaplan] This usually indicates a misconfiguration. "
-                    f"Run: megaplan doctor --adaptive-critique",
-                    file=sys.stderr,
-                    flush=True,
+                    "blocked": True,
+                    "attempts": _MAX_EVAL_ATTEMPTS,
+                    "failure_reason": str(_eval_last_exc),
+                }
+                # Preserve the failed iteration's blocked verdict per-iteration
+                # too, then write the canonical "latest" pointer.
+                atomic_write_json(
+                    plan_dir / f"evaluator_verdict_v{iteration}.json", _blocked_verdict
+                )
+                atomic_write_json(plan_dir / "evaluator_verdict.json", _blocked_verdict)
+                raise CliError(
+                    "critique_evaluator_failed",
+                    f"critique_evaluator failed after {_MAX_EVAL_ATTEMPTS} attempts "
+                    f"({type(_eval_last_exc).__name__}: {_eval_last_exc}). Adaptive "
+                    "critique is the only critique path and there is no static fallback, "
+                    "so the plan cannot be critiqued. Investigate the critique_evaluator "
+                    "wiring (profile slot, schema, prompt) and re-run `megaplan critique`.",
                 )
             expected_ids = [check["id"] for check in active_checks]
         else:
             active_checks = select_active_checks(state, robustness, plan_dir=plan_dir)
             expected_ids = [check["id"] for check in active_checks]
             resolved = _pkg.resolve_agent_mode("critique", args)
-        # Operator pin: when execution.critic_model is set, the Opus evaluator
-        # still selects lenses, but every farmed-out critic is forced to the
-        # pinned model instead of the evaluator's (possibly escalated) per-lens
-        # assignment. Overrides both the verdict's collapsed pick and the
-        # static-fallback path. "" leaves the dynamic assignment untouched.
+        # Operator pin: when execution.critic_model is set, the evaluator still
+        # selects which lenses fire, but every farmed-out critic is forced to
+        # the pinned model instead of the profile's `critique` slot. "" leaves
+        # the profile slot in force.
         if adaptive_path:
             _pin = pinned_critic_model(state)
             if _pin:
                 critic_model_override = _pin
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
+        # Thinking depth for the critic: carry the resolved effort (set by
+        # --depth or an explicit suffix on the `critique` slot) so the parallel
+        # critic forwards it to its reasoning config. Captured before the
+        # operator-pin branch below rebinds `resolved` to a plain tuple.
+        _critique_effort = getattr(resolved, "effort", None)
         if adaptive_path and critic_model_override:
-            # The evaluator emits a bare roster token (e.g. "deepseek-v4-pro").
-            # Resolve it to a full agent spec so the critic dispatches to the
-            # right vendor/provider instead of (a) running under whatever agent
-            # the `critique` slot happened to resolve to, or (b) falling through
-            # to OpenRouter for an unprefixed DeepSeek name. DeepSeek critics
-            # route to DeepSeek's direct API.
+            # Operator pin only: the pinned `critic_model` is a bare roster
+            # token (e.g. "deepseek-v4-pro"). Resolve it to a full agent spec so
+            # the critic dispatches to the right vendor/provider instead of (a)
+            # running under whatever agent the `critique` slot resolved to, or
+            # (b) falling through to OpenRouter for an unprefixed DeepSeek name.
+            # DeepSeek critics route to DeepSeek's direct API.
             from megaplan.audits.critique_evaluator import roster_dispatch_spec
             from megaplan.types import parse_agent_spec
 
@@ -322,15 +359,11 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             run_id = set_active_step(state, step="critique", agent="hermes", mode="persistent", model=model)
             save_state_merge_meta(plan_dir, state)
             try:
-                worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks)
+                worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks, effort=_critique_effort)
                 agent, mode, refreshed = "hermes", "persistent", True
             except Exception as exc:
                 clear_active_step(state, run_id=run_id)
                 save_state_merge_meta(plan_dir, state)
-                log.warning(
-                    "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK parallel critique fallback",
-                    exc_info=True,
-                )
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
                 worker, agent, mode, refreshed = _pkg._run_worker(
@@ -432,7 +465,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "preflight_results": {},
                 "orchestrator_guidance": "Light robustness routes critique to one revision pass.",
             }
-            _write_gate_json(plan_dir, minimal_gate)
+            atomic_write_json(plan_dir / "gate.json", minimal_gate)
             _write_gate_carry(plan_dir, minimal_gate, iteration=iteration)
             state["last_gate"] = {"recommendation": "ITERATE"}
         scope_flags_list = scope_creep_flags(registry, statuses=FLAG_BLOCKING_STATUSES)
@@ -639,7 +672,7 @@ def _validate_tiebreaker(
     missing = [f for f in required_fields if not gate_summary.get(f)]
     if missing:
         gate_summary["recommendation"] = "ITERATE"
-        gate_summary["rationale"] += " [TIEBREAKER_DOWNGRADED_MISSING_FIELDS: Auto-downgraded; missing required fields: " + ", ".join(missing) + "]"
+        gate_summary["rationale"] += f" [Auto-downgraded: missing required fields {missing}]"
         state["current_state"] = STATE_CRITIQUED
         return "tiebreaker_rejected_missing_fields", "revise", summary_base
 

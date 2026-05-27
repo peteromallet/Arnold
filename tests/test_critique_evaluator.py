@@ -698,6 +698,91 @@ def test_flag_verifications_optional_field_absent_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Vendor gate: hallucinated out-of-vendor critic model rejection
+# ---------------------------------------------------------------------------
+
+
+def test_out_of_vendor_premium_critic_rejected_under_codex() -> None:
+    """A Claude critic model (claude-sonnet-4-6) is rejected under --vendor codex."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude-sonnet-4-6"), ("scope", "claude")],
+        evaluator_model="gpt-5.5",
+    )
+    with pytest.raises(ValueError, match="not available under --vendor codex"):
+        validate_evaluator_verdict(verdict, evaluator_model="gpt-5.5", vendor="codex")
+
+
+def test_out_of_vendor_premium_critic_rejected_under_claude() -> None:
+    """A Codex critic model (gpt-5.5) is rejected under --vendor claude."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "gpt-5.5"), ("scope", "claude")],
+        evaluator_model="claude-opus-4-7",
+    )
+    with pytest.raises(ValueError, match="not available under --vendor claude"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor="claude")
+
+
+def test_alias_resolving_to_same_vendor_passes() -> None:
+    """The alias 'claude' resolves to claude-opus-4-7 and passes under --vendor claude."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude"), ("scope", "claude")],
+        evaluator_model="claude-opus-4-7",
+    )
+    # Does not raise — alias "claude" → "claude-opus-4-7" is owned by "claude"
+    validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor="claude")
+
+
+def test_same_vendor_premium_passes() -> None:
+    """A same-vendor premium critic (gpt-5.5 under codex) is accepted."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "gpt-5.5"), ("scope", "gpt-5.5")],
+        evaluator_model="gpt-5.5",
+    )
+    # Does not raise
+    validate_evaluator_verdict(verdict, evaluator_model="gpt-5.5", vendor="codex")
+
+
+def test_deepseek_critic_passes_under_either_vendor() -> None:
+    """DeepSeek tiers are vendor-independent — they pass under any vendor."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "deepseek-v4-pro"), ("scope", "deepseek-v4-pro")],
+        evaluator_model="deepseek-v4-pro",
+    )
+    validate_evaluator_verdict(verdict, evaluator_model="deepseek-v4-pro", vendor="codex")
+    validate_evaluator_verdict(verdict, evaluator_model="deepseek-v4-pro", vendor="claude")
+
+
+def test_no_vendor_gate_when_vendor_none() -> None:
+    """When vendor=None, no gate is applied (backward-compatible default)."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude-sonnet-4-6"), ("scope", "claude")],
+        evaluator_model="claude-opus-4-7",
+    )
+    # No vendor gate — passes even though claude-sonnet-4-6 might be cross-vendor
+    validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor=None)
+
+
+def test_spec_alias_resolves_correctly_under_vendor_gate() -> None:
+    """A fully-qualified spec like 'claude:claude-opus-4-7' resolves to
+    claude-opus-4-7 and passes under --vendor claude."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude:claude-opus-4-7"), ("scope", "claude")],
+        evaluator_model="claude-opus-4-7",
+    )
+    validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7", vendor="claude")
+
+
+def test_effort_alias_resolves_correctly_under_vendor_gate() -> None:
+    """An effort alias like 'codex:high' resolves to gpt-5.5 and passes under
+    --vendor codex."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "codex:high"), ("scope", "codex")],
+        evaluator_model="gpt-5.5",
+    )
+    validate_evaluator_verdict(verdict, evaluator_model="gpt-5.5", vendor="codex")
+
+
+# ---------------------------------------------------------------------------
 # Wiring regression: STEP_SCHEMA_FILENAMES must register critique_evaluator
 # ---------------------------------------------------------------------------
 
