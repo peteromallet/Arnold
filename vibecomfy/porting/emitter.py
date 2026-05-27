@@ -121,7 +121,9 @@ GENERATED_HEADER = (
     "# For hand-editing, run: python -m vibecomfy.cli copy-to-recipe <id>\n"
 )
 
-UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset({"Note", "MarkdownNote"})
+UI_ONLY_CLASS_TYPES: frozenset[str] = frozenset(
+    {"Note", "MarkdownNote", "Label (rgthree)", "PreviewAny"}
+)
 FALLBACK_CLASS_TYPES: frozenset[str] = frozenset({
     "Note",
     "MarkdownNote",
@@ -436,6 +438,36 @@ def _constant_name_for_string_value(value: str) -> str:
     return sanitized
 
 
+def _constant_name_for_model_value(field: str, value: str) -> str | None:
+    """Return a semantic model constant name from the field and filename hints."""
+    field_base = _constant_name_base_for_category("model", field)
+    lower = str(value).lower()
+    format_suffix = "_GGUF" if lower.endswith(".gguf") else ""
+
+    if "audio_vae" in lower:
+        return f"AUDIO_VAE_NAME{format_suffix}"
+    if "video_vae" in lower:
+        return f"VIDEO_VAE_NAME{format_suffix}"
+    if "taesd" in lower or "vae_approx" in lower:
+        return f"VAE_TAESD_NAME{format_suffix}"
+    if "text_projection" in lower:
+        prefix = "CLIP" if field_base.startswith("CLIP") else field_base.removesuffix("_NAME")
+        return f"{prefix}_PROJECTION_NAME{format_suffix}"
+
+    if field_base != "MODEL_NAME":
+        return f"{field_base}{format_suffix}"
+
+    path_leaf = re.split(r"[\\/]", str(value))[-1]
+    leaf_slug = _constant_name_for_string_value(path_leaf)
+    if "clip" in lower or "text_encoder" in lower or "gemma" in lower or "t5" in lower:
+        return f"CLIP_NAME{format_suffix}"
+    if "unet" in lower or "diffusion" in lower:
+        return f"UNET_NAME{format_suffix}"
+    if "vae" in lower or leaf_slug.startswith("TAE"):
+        return f"VAE_NAME{format_suffix}"
+    return None
+
+
 def _build_section_groups(
     workflow_nodes: dict[str, Any],
     edges_in: dict[str, list[Any]],
@@ -538,7 +570,12 @@ def _hoist_constants(
         if not should_hoist:
             continue
 
-        base = _constant_name_base_for_category(category, field)
+        if category == "model" and isinstance(value, str):
+            base = _constant_name_for_model_value(field, value)
+        else:
+            base = _constant_name_base_for_category(category, field)
+        if base is None:
+            base = _constant_name_base_for_category(category, field)
         value_key = (base, category, str(value))
         if value_key in value_to_name:
             name = value_to_name[value_key]
@@ -1443,6 +1480,9 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
     defaults = _subgraph_default_args(raw, inputs)
 
     for node_id, node in api.items():
+        class_type = str(node.get("class_type", "Unknown"))
+        if class_type in UI_ONLY_CLASS_TYPES:
+            continue
         raw_inputs = dict(node.get("inputs", {}))
         static_inputs: dict[str, Any] = {}
         widgets: dict[str, Any] = {}
@@ -1460,7 +1500,7 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
         output_names = _ui_output_names(metadata.get("_ui"))
         if output_names:
             metadata.setdefault("output_names", output_names)
-        nodes[str(node_id)] = _Node(str(node_id), str(node.get("class_type", "Unknown")), inputs=static_inputs, widgets=widgets, metadata=metadata)
+        nodes[str(node_id)] = _Node(str(node_id), class_type, inputs=static_inputs, widgets=widgets, metadata=metadata)
 
     for node_id, node in api.items():
         if not isinstance(node, Mapping):
@@ -1473,6 +1513,8 @@ def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str |
                 if 0 <= from_slot < len(inputs):
                     input_refs[(str(node_id), str(key))] = inputs[from_slot].name
             else:
+                if from_node not in nodes or str(node_id) not in nodes:
+                    continue
                 edge = _Edge(from_node, str(from_slot), str(node_id), str(key))
                 edges_in.setdefault(str(node_id), []).append(edge)
 
@@ -1808,12 +1850,13 @@ def _emit_build_function(
     public_preserve_fields: dict[str, set[str]] = {}
     for spec in public_inputs or []:
         node_ref = spec.node_ref
-        if not node_ref.startswith("ref("):
-            continue
-        try:
-            ref_name = ast.literal_eval(node_ref[4:-1])
-        except Exception:
-            continue
+        if node_ref.startswith("ref("):
+            try:
+                ref_name = ast.literal_eval(node_ref[4:-1])
+            except Exception:
+                continue
+        else:
+            ref_name = node_ref
         nid = var_to_nid.get(str(ref_name))
         if nid is not None:
             public_preserve_fields.setdefault(nid, set()).add(spec.field)
@@ -2772,9 +2815,10 @@ def _compute_output_variable_names(
     for nid, names in unpackable.items():
         node = workflow_nodes[nid]
         suffix = _class_collision_suffix(str(node.class_type))
+        shadow_prefix = _shadowing_output_prefix(str(node.class_type))
         slot_vars: dict[int, str] = {}
         for index, name in enumerate(names):
-            base = _safe_var(str(name).lower())
+            base = _safe_output_var_name(str(name), shadow_prefix)
             candidate = base
             if candidate in used:
                 candidate = f"{base}_{suffix}"
@@ -2787,6 +2831,45 @@ def _compute_output_variable_names(
             slot_vars[index] = candidate
         output_vars[nid] = slot_vars
     return output_vars
+
+
+_SHADOWING_OUTPUT_NAMES: frozenset[str] = frozenset(
+    {
+        "int",
+        "float",
+        "bool",
+        "boolean",
+        "str",
+        "list",
+        "bytes",
+        "dict",
+        "set",
+        "type",
+        "id",
+        "input",
+    }
+)
+
+
+_SHADOWING_OUTPUT_ALIASES: dict[str, str] = {
+    "boolean": "bool",
+}
+
+
+def _shadowing_output_prefix(class_type: str) -> str:
+    if class_type == "SimpleCalculatorKJ":
+        return "calc"
+    if class_type in {"SimpleMath", "SimpleMath+"}:
+        return "math"
+    return _class_collision_suffix(class_type)
+
+
+def _safe_output_var_name(output_name: str, prefix: str) -> str:
+    normalized = str(output_name).lower()
+    base = _safe_var(normalized)
+    if base in _SHADOWING_OUTPUT_NAMES:
+        return f"{prefix}_{_SHADOWING_OUTPUT_ALIASES.get(base, base)}"
+    return base
 
 
 def _schema_output_names_for_unpack(node: Any) -> list[str]:
