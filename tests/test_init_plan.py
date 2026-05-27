@@ -763,9 +763,11 @@ def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert recorded_steps == [
         "prep",
         "plan",
+        "critique_evaluator",
         "critique",
         "gate",
         "revise",
+        "critique_evaluator",
         "critique",
         "gate",
         "finalize",
@@ -813,7 +815,7 @@ def test_workflow_light_robustness_single_pass(
     assert execute["next_step"] is None
     assert "review.json" in execute["artifacts"]
     assert stored_review["review_verdict"] == "approved"
-    assert recorded_steps == ["plan", "critique", "revise", "finalize", "execute"]
+    assert recorded_steps == ["plan", "critique_evaluator", "critique", "revise", "finalize", "execute"]
     assert [entry["step"] for entry in state["history"]] == [
         "init",
         "plan",
