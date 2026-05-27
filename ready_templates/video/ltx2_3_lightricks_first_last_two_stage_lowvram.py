@@ -30,7 +30,7 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='1', field='image', default='example_start.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='1', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED, type='INT'),
     'frames': InputSpec(node='27', field='length', default=DEFAULT_FRAMES, type='INT'),
     'fps': InputSpec(node='46', field='fps', default=DEFAULT_FPS, type='FLOAT'),

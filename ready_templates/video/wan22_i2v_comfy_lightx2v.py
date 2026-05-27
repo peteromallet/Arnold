@@ -9,10 +9,8 @@ from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, CreateVideo, LoadIm
 
 CLIP_NAME = 'umt5_xxl_fp8_e4m3fn_scaled.safetensors'
 DEFAULT_FPS = 16
-DEFAULT_FRAMES = 81
 DEFAULT_PROMPT = 'A felt-style little eagle cashier greeting, waving, and smiling at the camera.'
 DEFAULT_PROMPT_2 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
-DEFAULT_SEED = 0
 EULER = 'euler'
 GUIDE_STRENGTH = 1.0000000000000002
 GUIDE_STRENGTH_2 = 1
@@ -36,13 +34,13 @@ MODELS = {
 PUBLIC_INPUT_METADATA = {
     'model': InputSpec(node='4', field='unet_name', default=UNET_NAME),
     'prompt': InputSpec(node='6', field='text', default=DEFAULT_PROMPT),
-    'seed': InputSpec(node='130:110', field='noise_seed', default=DEFAULT_SEED),
+    'seed': InputSpec(node='130:110', field='noise_seed', default=0),
     'steps': InputSpec(node='130:110', field='steps', default=4),
     'image': InputSpec(node='1', field='image', default='03_video_wan2_2_14B_i2v_subgraphed_input_image.png', aliases=('input_image',)),
     'fps': InputSpec(node='14', field='fps', default=DEFAULT_FPS),
     'width': InputSpec(node='12', field='width', default=720),
     'height': InputSpec(node='12', field='height', default=720),
-    'frames': InputSpec(node='12', field='length', default=DEFAULT_FRAMES),
+    'frames': InputSpec(node='12', field='length', default=81),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -109,7 +107,7 @@ def build() -> VibeWorkflow:
 
     positive, negative, latent = WanImageToVideo(
         height=720,
-        length=DEFAULT_FRAMES,
+        length=81,
         width=720,
         negative=cliptextencode_2,
         positive=cliptextencode,
@@ -120,7 +118,7 @@ def build() -> VibeWorkflow:
     # Sampling
     ksampleradvanced = raw_call('KSamplerAdvanced', '130:110',
         add_noise='enable',
-        noise_seed=DEFAULT_SEED,
+        noise_seed=0,
         steps=4,
         cfg=GUIDE_STRENGTH_2,
         sampler_name=EULER,

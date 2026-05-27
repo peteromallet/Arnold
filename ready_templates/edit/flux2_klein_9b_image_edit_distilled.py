@@ -8,11 +8,11 @@ from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, Conditio
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='76', field='image', default='bold_outfit_woman.jpeg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='76', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='image',
     inputs=PUBLIC_INPUT_METADATA,
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json', 'source_id': 'flux2_klein_9b_image_edit_distilled', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/flux2_klein_9b_image_edit_distilled.json', 'output_mode': 'ready_template', 'ready_id': 'edit/flux2_klein_9b_image_edit_distilled'},
 )

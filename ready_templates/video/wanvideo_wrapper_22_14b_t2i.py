@@ -18,10 +18,10 @@ FP16 = 'fp16'
 FP8_E4M3FN_SCALED = 'fp8_e4m3fn_scaled'
 GUIDE_STRENGTH = 3.0
 GUIDE_STRENGTH_2 = 1.0
-LORA__NAME = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
-MODEL_NAME = 'WanVideo\\2_2\\Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
-VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+LORA__NAME = 'WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors'
+MODEL_NAME = 'WanVideo/2_2/Wan2_2-T2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_2 = 'WanVideo/2_2/Wan2_2-T2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 
 
 MODELS = {
@@ -88,13 +88,13 @@ def build() -> VibeWorkflow:
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
         lora_0=LORA__NAME,
         merge_loras=False,
-        widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
+        widget_0='WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
     )
 
     wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
         lora_0=LORA__NAME,
         merge_loras=False,
-        widget_0='WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
+        widget_0='WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
     )
 
     wanvideosetloras = WanVideoSetLoRAs(

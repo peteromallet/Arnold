@@ -12,7 +12,7 @@ WIDGET__NAME_2 = 'qwen_3_4b.safetensors'
 WIDGET__NAME_3 = 'ae.safetensors'
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='image',
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/z_image.json', 'source_id': 'z_image', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/z_image.json', 'output_mode': 'ready_template', 'ready_id': 'image/z_image'},
 )
 

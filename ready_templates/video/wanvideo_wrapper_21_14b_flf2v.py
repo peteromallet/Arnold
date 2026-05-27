@@ -10,16 +10,13 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import LoadWanVideoClipTextEncoder, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
-BF16 = 'bf16'
 BLACK = 'black'
-CENTER = 'center'
 CLIP_NAME = 'umt5_xxl_fp16.safetensors'
 CLIP_NAME_2 = 'umt5-xxl-enc-bf16.safetensors'
 CLIP_NAME_3 = 'open-clip-xlm-roberta-large-vit-huge-14_visual_fp16.safetensors'
 CLIP_NAME_4 = 'clip_vision_h.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
-DEFAULT_FRAMES = 81
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT_2 = 'CG动画风格，一只蓝色的小鸟从地面起飞，煽动翅膀。小鸟羽毛细腻，胸前有独特的花纹，背景是蓝天白云，阳光明媚。镜跟随小鸟向上移动，展现出小鸟飞翔的姿态和天空的广阔。近景，仰视视角'
@@ -28,11 +25,9 @@ FREEMONO_TTF = 'FreeMono.ttf'
 GUIDE_STRENGTH = 1.0000000000000002
 LANCZOS = 'lanczos'
 LORA_NAME = 'Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank32.safetensors'
-MODEL_NAME = 'WanVideo\\Wan2_1-FLF2V-14B-720P_fp8_e4m3fn.safetensors'
-OFFLOAD_DEVICE = 'offload_device'
+MODEL_NAME = 'WanVideo/Wan2_1-FLF2V-14B-720P_fp8_e4m3fn.safetensors'
 UP = 'up'
-VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-V_0_0_0 = '0, 0, 0'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 WHITE = 'white'
 
 
@@ -45,9 +40,9 @@ PUBLIC_INPUT_METADATA = {
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='video',
     inputs=PUBLIC_INPUT_METADATA,
-    requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors']},
+    requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSizeAndCount', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoImageToVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json', 'source_id': 'wan21_14b_flf2v', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_flf2v.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_flf2v'},
 )

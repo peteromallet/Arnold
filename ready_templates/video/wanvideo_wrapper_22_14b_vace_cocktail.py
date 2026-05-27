@@ -36,7 +36,7 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='4', field='image', default='vace_start.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='4', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'width': InputSpec(node='13', field='width', default=832, type='INT'),
     'height': InputSpec(node='13', field='height', default=480, type='INT'),
     'seed': InputSpec(node='18', field='seed', default=DEFAULT_SEED, type='INT'),

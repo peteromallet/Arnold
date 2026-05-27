@@ -11,7 +11,6 @@ from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoControlEmbeds, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoEncode, WanVideoExperimentalArgs, WanVideoImageToVideoEncode, WanVideoModelLoader, WanVideoSampler, WanVideoTeaCache, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader, WanVideoVRAMManagement
 
 
-BF16 = 'bf16'
 CENTER = 'center'
 CLIP_NAME = 'umt5_xxl_fp16.safetensors'
 CLIP_NAME_2 = 'clip_vision_h.safetensors'
@@ -22,11 +21,8 @@ DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on
 DEFAULT_PROMPT_3 = "high quality nature video of a red fox in an autumnal forest, there's a waterfall in the background"
 DEFAULT_SEED = 42
 DEPTH_ANYTHING_NAME = 'depth_anything_v2_vitl_fp16.safetensors'
-DISABLED = 'disabled'
-GUIDE_STRENGTH = 6
-MODEL_NAME = 'WanVideo\\wan2.1_fun_control_1.3B_bf16.safetensors'
-OFFLOAD_DEVICE = 'offload_device'
-VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+MODEL_NAME = 'WanVideo/wan2.1_fun_control_1.3B_bf16.safetensors'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 YUV420P = 'yuv420p'
 
@@ -39,9 +35,9 @@ PUBLIC_INPUT_METADATA = {
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='video',
     inputs=PUBLIC_INPUT_METADATA,
-    requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors']},
+    requirements={'models': ['clip_vision_h.safetensors', 'umt5-xxl-enc-bf16.safetensors', 'umt5_xxl_fp16.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors']},
     custom_node_packs={'ComfyUI-DepthAnythingV2': {'commit': '553187872eeb1d52e50dc53209fa57e569609a72', 'url': 'https://github.com/kijai/ComfyUI-DepthAnythingV2.git', 'class_schema_sha256': 'f4e181ab42ca179eda161acba5121e999cb54b1dbee0dc087a22bd42af7241ae', 'classes_used': ['DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model'], 'pip_packages': ['opencv-python-headless', 'transformers'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageSizeAndCount'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoControlEmbeds', 'WanVideoDecode', 'WanVideoEmptyEmbeds', 'WanVideoEncode', 'WanVideoExperimentalArgs', 'WanVideoImageToVideoEncode', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEmbedBridge', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json', 'source_id': 'wan21_14b_fun_control', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan21_14b_fun_control.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_21_14b_fun_control'},
 )

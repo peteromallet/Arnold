@@ -41,7 +41,7 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='4', field='image', default='reference_image.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='4', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'width': InputSpec(node='15', field='width', default=832, type='INT'),
     'height': InputSpec(node='15', field='height', default=480, type='INT'),
     'frames': InputSpec(node='108', field='length', default=DEFAULT_FRAMES, type='INT'),

@@ -22,7 +22,7 @@ FIXED = 'fixed'
 GUIDE_STRENGTH = 0.6
 GUIDE_STRENGTH_2 = 2.5
 LANCZOS = 'lanczos'
-LORA_NAME = 'LTX\\v2\\ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
+LORA_NAME = 'LTX/v2/ltx-2.3-22b-distilled-1.1_lora-dynamic_fro09_avg_rank_111_bf16.safetensors'
 LTX_SMOKE_GUIDE_MP4 = 'ltx_smoke_guide.mp4'
 NEAREST_EXACT = 'nearest-exact'
 SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
@@ -44,7 +44,7 @@ MODELS = {
 
 PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='4', field='noise_seed', default=DEFAULT_SEED, type='INT'),
-    'image': InputSpec(node='6', field='image', default='image (6).png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='6', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
 }
 
 READY_METADATA = ReadyMetadata.build(

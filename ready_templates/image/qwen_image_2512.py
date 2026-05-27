@@ -11,7 +11,6 @@ CLIP_NAME = 'qwen_2.5_vl_7b_fp8_scaled.safetensors'
 DEFAULT_PROMPT = 'Urban alleyway at dusk. Tall, statuesque high-fashion model striding elegantly, mid distant full body shot from an angular perspective, cinematic/editorial with bold contrasts and tactile materials. They wear a rose-gold metallic trench coat with deconstructed elements over a black long-sleeved turtleneck with subtle texture; paired with forest-green pleated pants with raw hems and a soft texture. Long braided dark hair, medium complexion. They carry a vibrant yellow designer handbag with geometric details and a structured silhouette. White architectural sneakers with bold geometric cutouts. Bold, high-contrast, tactile, urban-grit meets high-fashion impact, extreme clarity, extreme layering, post-processing with transparent light-transmitting ultra-smooth high-definition film effect, removing all noise and grain, removing all blur, removing all vintage feel, removing all roughness, drawn with 32K pixel precision, unparalleled fine line drawing of every single detail, the entire image like a brand new photograph, photorealistic\n'
 DEFAULT_PROMPT_2 = '低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲'
 DEFAULT_SEED = 464857551335368
-GUIDE_STRENGTH = 1
 LORA_NAME = 'Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors'
 UNET_NAME = 'qwen_image_2512_fp8_e4m3fn.safetensors'
 VAE_NAME = 'qwen_image_vae.safetensors'
@@ -25,9 +24,9 @@ PUBLIC_INPUT_METADATA = {
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='image',
     inputs=PUBLIC_INPUT_METADATA,
-    requirements={'models': ['Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors', 'euler', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_image_2512_fp8_e4m3fn.safetensors', 'qwen_image_vae.safetensors']},
+    requirements={'models': ['Qwen-Image-2512-Lightning-4steps-V1.0-fp32.safetensors', 'qwen_2.5_vl_7b_fp8_scaled.safetensors', 'qwen_image_2512_fp8_e4m3fn.safetensors', 'qwen_image_vae.safetensors']},
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/qwen_image_2512.json', 'source_id': 'qwen_image_2512', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/qwen_image_2512.json', 'output_mode': 'ready_template', 'ready_id': 'image/qwen_image_2512'},
 )
 

@@ -7,7 +7,7 @@ from vibecomfy.templates import ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import CFGGuider, CLIPLoader, CLIPTextEncode, EmptyFlux2LatentImage, Flux2Scheduler, KSamplerSelect, RandomNoise, SamplerCustomAdvanced, SaveImage, UNETLoader, VAEDecode, VAELoader
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='image',
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'source_id': 'flux2_klein_9b_gguf_t2i', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/flux2/flux2_klein_9b_gguf_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_9b_gguf_t2i'},
 )
 

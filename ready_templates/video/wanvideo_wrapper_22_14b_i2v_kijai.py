@@ -21,10 +21,10 @@ DPM_SDE = 'dpm++_sde'
 FP16 = 'fp16'
 FP8_E4M3FN_SCALED = 'fp8_e4m3fn_scaled'
 GUIDE_STRENGTH = 1
-LORA_NAME = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
-MODEL_NAME = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
-MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
-VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+LORA_NAME = 'WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
+MODEL_NAME = 'WanVideo/2_2/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors'
+MODEL_NAME_2 = 'WanVideo/2_2/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 
 
 MODELS = {
@@ -38,7 +38,7 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='7', field='image', default='oldman_upscaled.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='7', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'width': InputSpec(node='15', field='width', default=720, type='INT'),
     'height': InputSpec(node='15', field='height', default=720, type='INT'),
     'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED, type='INT'),

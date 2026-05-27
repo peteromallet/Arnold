@@ -14,7 +14,7 @@ WIDGET__NAME_3 = 'flux2-vae.safetensors'
 WIDGET__NAME_4 = 'flux-2-klein-4b.safetensors'
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='image',
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/flux2_klein_4b_t2i.json', 'source_id': 'flux2_klein_4b_t2i', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/image/flux2_klein_4b_t2i.json', 'output_mode': 'ready_template', 'ready_id': 'image/flux2_klein_4b_t2i'},
 )
 

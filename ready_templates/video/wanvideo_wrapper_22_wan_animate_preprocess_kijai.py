@@ -19,14 +19,14 @@ DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕
 DEFAULT_PROMPT = 'man is walking, style is soft 3D render style, night time, moonlight'
 DEFAULT_SEED = 42
 GUIDE_STRENGTH = 1
-LORA__NAME = 'WanVideo\\WanAnimate_relight_lora_fp16.safetensors'
-LORA__NAME_2 = 'WanVideo\\Lightx2v\\lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
+LORA__NAME = 'WanVideo/WanAnimate_relight_lora_fp16.safetensors'
+LORA__NAME_2 = 'WanVideo/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors'
 MODEL_NAME = 'sam2.1_hiera_base_plus.safetensors'
-MODEL_NAME_2 = 'WanVideo\\2_2\\Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'
-VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
+MODEL_NAME_2 = 'WanVideo/2_2/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 VIDEO_H264_MP4 = 'video/h264-mp4'
 VITPOSE_MODEL_NAME = 'vitpose-l-wholebody.onnx'
-YOLO_MODEL_NAME = 'onnx\\yolov10m.onnx'
+YOLO_MODEL_NAME = 'onnx/yolov10m.onnx'
 YUV420P = 'yuv420p'
 
 
@@ -46,7 +46,7 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='4', field='image', default='refer.jpeg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='4', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'seed': InputSpec(node='186', field='seed', default=DEFAULT_SEED, type='INT'),
 }
 

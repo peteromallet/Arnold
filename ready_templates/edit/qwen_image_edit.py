@@ -12,7 +12,7 @@ PUBLIC_INPUT_METADATA = {
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='image',
     inputs=PUBLIC_INPUT_METADATA,
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/qwen_image_edit.json', 'source_id': 'qwen_image_edit', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/official/edit/qwen_image_edit.json', 'output_mode': 'ready_template', 'ready_id': 'edit/qwen_image_edit'},
 )

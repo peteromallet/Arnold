@@ -12,9 +12,7 @@ from vibecomfy.nodes.wanvideowrapper import NormalizeAudioLoudness, WanVideoAddS
 
 AUDIO_ENCODER_NAME = 'wav2vec_xlsr_53_english_fp32.safetensors'
 BBOX_DETECTOR_NAME = 'yolox_l.torchscript.pt'
-BF16 = 'bf16'
 BILINEAR = 'bilinear'
-CENTER = 'center'
 CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
 CPU = 'cpu'
 CROP = 'crop'
@@ -25,26 +23,25 @@ DEFAULT_SEED = 45
 GPU = 'gpu'
 GUIDE_STRENGTH = 1
 IMAGE = 'image'
-LORA__NAME = 'WanVideo\\Lightx2v\\lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors'
-MEL_BAND_ROFORMER_NAME = 'MelBandRoFormer\\MelBandRoformer_fp16.safetensors'
-MODEL_NAME = 'WanVideo\\S2V\\Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors'
+LORA__NAME = 'WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16_.safetensors'
+MEL_BAND_ROFORMER_NAME = 'MelBandRoFormer/MelBandRoformer_fp16.safetensors'
+MODEL_NAME = 'WanVideo/S2V/Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors'
 POSE_ESTIMATOR_NAME = 'dw-ll_ucoco_384_bs5.torchscript.pt'
-VAE_NAME = 'wanvideo\\Wan2_1_VAE_bf16.safetensors'
-V_0_0_0 = '0, 0, 0'
+VAE_NAME = 'wanvideo/Wan2_1_VAE_bf16.safetensors'
 WAN = 'Wan'
 
 
 PUBLIC_INPUT_METADATA = {
     'seed': InputSpec(node='27', field='seed', default=DEFAULT_SEED, type='INT'),
-    'image': InputSpec(node='73', field='image', default='2b.jpg', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='73', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
     'width': InputSpec(node='111', field='width', default=640, type='INT'),
     'height': InputSpec(node='111', field='height', default=640, type='INT'),
 }
 
 READY_METADATA = ReadyMetadata.build(
-    capability='unknown',
+    capability='video',
     inputs=PUBLIC_INPUT_METADATA,
-    requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'wanvideo\\Wan2_1_VAE_bf16.safetensors']},
+    requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors']},
     custom_node_packs={'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageRangeFromBatch', 'GetImageSizeAndCount', 'INTConstant', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoEmptyEmbeds', 'WanVideoEncode', 'WanVideoLoraSelectMulti', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoSetBlockSwap', 'WanVideoSetLoRAs', 'WanVideoTextEncodeCached', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}, 'comfyui_controlnet_aux': {'commit': 'e8b689a513c3e6b63edc44066560ca5919c0576e', 'url': 'https://github.com/Fannovel16/comfyui_controlnet_aux.git', 'class_schema_sha256': 'e485b148824d72ef7af7e90f711eefb511ffe73b25cd1c6053e1e5c7bd3bbd62', 'classes_used': ['DWPreprocessor'], 'pip_packages': ['onnxruntime', 'opencv-python-headless'], 'status': 'discovered'}},
     provenance={'source_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json', 'source_id': 'wan22_s2v_framepack_pose', 'source_type': 'api', 'source_workflow_path': '/Users/peteromalley/Documents/reigh-workspace/vibecomfy/workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan22_s2v_framepack_pose.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_22_s2v_framepack_pose'},
 )

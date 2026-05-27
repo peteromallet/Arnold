@@ -8,7 +8,7 @@ from vibecomfy.nodes.core import ImageScaleBy, LoadImage, SaveImage
 
 
 PUBLIC_INPUT_METADATA = {
-    'image': InputSpec(node='1', field='image', default='image_upscale_input.png', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'image': InputSpec(node='1', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
 }
 
 READY_METADATA = ReadyMetadata.build(
