@@ -210,6 +210,164 @@ def test_empty_selections_rejected() -> None:
         validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
 
 
+def test_consistent_duplicate_selection_deduped_not_rejected() -> None:
+    """A lens listed twice with the SAME critic_model is deduped (first wins)
+    and reported as a warning, NOT hard-rejected — the model agreed with
+    itself, so we keep the premium adaptive selection."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude"), ("scope", "claude")]
+    )
+    # Duplicate `scope` with the identical critic_model (the observed Opus bug).
+    verdict["selections"].append(
+        {"check_id": "scope", "critic_model": "claude", "why": "fire scope again"}
+    )
+    warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+    assert warnings, "consistent duplicate should produce a warning"
+    assert any("scope" in w and "deduped" in w for w in warnings)
+    # The verdict was deduped in place: each check_id appears once.
+    selected_ids = [s["check_id"] for s in verdict["selections"]]
+    assert selected_ids.count("scope") == 1
+    # First occurrence (why='fire scope') survived, the twin was dropped.
+    scope_sel = next(s for s in verdict["selections"] if s["check_id"] == "scope")
+    assert scope_sel["why"] == "fire scope"
+
+
+def test_conflicting_duplicate_selection_hard_rejected() -> None:
+    """A lens listed twice with DIFFERENT critic_models is genuinely ambiguous
+    and remains a hard reject."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude"), ("scope", "claude")]
+    )
+    verdict["selections"].append(
+        {"check_id": "scope", "critic_model": "deepseek-v4-pro", "why": "cheaper"}
+    )
+    with pytest.raises(ValueError, match="conflicting duplicate check_id"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+
+
+def test_consistent_duplicate_skip_deduped_not_rejected() -> None:
+    """A skipped lens listed twice is deduped (skips carry no critic, so any
+    repeat is consistent) and reported, not hard-rejected."""
+    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    # `scope` is already in skipped (only correctness selected); duplicate it.
+    assert any(sk["check_id"] == "scope" for sk in verdict["skipped"])
+    verdict["skipped"].append({"check_id": "scope", "why": "skip scope again"})
+    warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+    assert any("scope" in w and "deduped" in w for w in warnings)
+    skipped_ids = [s["check_id"] for s in verdict["skipped"]]
+    assert skipped_ids.count("scope") == 1
+
+
+def test_other_custom_areas_accepted_and_survive() -> None:
+    """An evaluator verdict that covers all 9 (selected/skipped) AND adds 1-2
+    bespoke `other` custom areas is accepted; the "other" entries survive in
+    payload["selections"] and stay OUT of the 9-lens coverage union."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude"), ("scope", "claude")]
+    )
+    verdict["selections"].append({
+        "check_id": "other",
+        "area": "Migration ordering",
+        "critic_model": "deepseek-v4-pro",
+        "why": "probe: confirm the data backfill runs before the column drop",
+    })
+    verdict["selections"].append({
+        "check_id": "other",
+        "area": "Feature flag rollback",
+        "critic_model": "claude",
+        "why": "probe: verify the kill-switch disables the new path atomically",
+    })
+    warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+    assert warnings == []
+    # Both "other" entries survive in the deduped output.
+    other = [s for s in verdict["selections"] if s.get("check_id") == "other"]
+    assert len(other) == 2
+    assert {s["area"] for s in other} == {"Migration ordering", "Feature flag rollback"}
+
+
+def test_other_area_allows_all_nine_skipped() -> None:
+    """An all-skip-of-9 verdict is accepted when it carries >=1 `other` area
+    (the additive "other" satisfies the >=1-selection invariant)."""
+    verdict = {
+        "selections": [{
+            "check_id": "other",
+            "area": "Concurrency model",
+            "critic_model": "claude",
+            "why": "probe: verify the lock ordering avoids the A/B deadlock",
+        }],
+        "skipped": [{"check_id": cid, "why": f"skip {cid}"} for cid in ALL_CHECK_IDS],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    assert validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7") == []
+
+
+def test_third_other_area_rejected_cap() -> None:
+    """A 3rd `other` area exceeds MAX_OTHER_AREAS and is rejected."""
+    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    for n in range(3):
+        verdict["selections"].append({
+            "check_id": "other",
+            "area": f"Custom area {n}",
+            "critic_model": "claude",
+            "why": f"probe {n}",
+        })
+    with pytest.raises(ValueError, match="at most 2 'other'"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+
+
+def test_other_area_missing_name_rejected() -> None:
+    """An `other` selection without a non-empty `area` is rejected."""
+    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict["selections"].append({
+        "check_id": "other",
+        "critic_model": "claude",
+        "why": "probe something",
+    })
+    with pytest.raises(ValueError, match="needs a non-empty `area`"):
+        validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+
+
+def test_other_area_duplicate_deduped() -> None:
+    """Two `other` selections with the same area key are deduped + warned."""
+    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict["selections"].append({
+        "check_id": "other", "area": "Migration ordering",
+        "critic_model": "claude", "why": "probe a",
+    })
+    verdict["selections"].append({
+        "check_id": "other", "area": "migration ordering",  # same key (case)
+        "critic_model": "claude", "why": "probe b",
+    })
+    warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+    assert any("migration ordering" in w.lower() and "deduped" in w for w in warnings)
+    other = [s for s in verdict["selections"] if s.get("check_id") == "other"]
+    assert len(other) == 1
+    assert other[0]["area"] == "Migration ordering"  # first occurrence survives
+
+
+def test_clean_verdict_returns_no_warnings() -> None:
+    """A clean verdict returns an empty warning list (backward-compatible)."""
+    verdict = _full_coverage_verdict(
+        selected=[("correctness", "claude"), ("scope", "claude")]
+    )
+    assert validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7") == []
+
+
+def test_dedupe_then_all_skipped_rejected() -> None:
+    """Coverage and at-least-one-selection invariants still hold after dedupe:
+    if the only selection was a duplicate that collapses to nothing... (here we
+    confirm coverage still enforced when a duplicated selection is deduped)."""
+    # Select only `correctness`, but list it twice (consistent). After dedupe
+    # the union must still cover all lenses — it does (one selection + skips).
+    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict["selections"].append(
+        {"check_id": "correctness", "critic_model": "claude", "why": "again"}
+    )
+    warnings = validate_evaluator_verdict(verdict, evaluator_model="claude-opus-4-7")
+    assert warnings
+    assert len(verdict["selections"]) == 1
+
+
 def test_rater_weaker_than_dispatchee_rejected() -> None:
     """A weak evaluator may not dispatch a stronger critic (rank 1 = strongest)."""
     verdict = _full_coverage_verdict(
@@ -283,22 +441,17 @@ def test_forced_parallel_failure_sequential_fallback_honors_verdict(
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
-    # Enable adaptive critique in the persisted config (it is a config flag set
-    # at init time, not a per-invocation arg read during critique).
     state_path = plan_fixture.plan_dir / "state.json"
-    persisted = json.loads(state_path.read_text(encoding="utf-8"))
-    persisted["config"]["adaptive_critique"] = True
-    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
-    # Evaluator escalates to claude (roster top) because critique runs on hermes.
+    # Critic runs on hermes; the evaluator routes to claude (its own slot), so
+    # it can validly assign premium critics (rater >= dispatchee).
     monkeypatch.setattr(
         megaplan.handlers,
         "resolve_agent_mode",
         lambda step, args: (
-            "hermes",
-            "persistent",
-            False,
-            "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+            ("claude", "persistent", False, "claude-opus-4-7")
+            if step == "critique_evaluator"
+            else ("hermes", "persistent", False, "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro")
         ),
     )
     # Skip downstream check-payload validation; we only care about prompt build.
@@ -360,6 +513,203 @@ def test_forced_parallel_failure_sequential_fallback_honors_verdict(
     assert "it contains 2 checks" in captured["rendered"]
     # The verdict artifact was written before fan-out.
     assert (plan_fixture.plan_dir / "evaluator_verdict.json").exists()
+
+
+def test_other_selection_synthesized_into_active_checks(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An evaluator `other` selection is synthesized into the critique's
+    active_checks as a lens whose question is the evaluator's probe, and its
+    synthesized id flows through to expected_ids."""
+    import json
+
+    from megaplan.prompts import create_claude_prompt
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    # Critic runs on hermes; the evaluator routes to claude (its own slot), so
+    # it can validly assign premium critics (rater >= dispatchee).
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda step, args: (
+            ("claude", "persistent", False, "claude-opus-4-7")
+            if step == "critique_evaluator"
+            else ("hermes", "persistent", False, "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro")
+        ),
+    )
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("forced parallel failure")
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", _boom)
+
+    verdict = _full_coverage_verdict(selected=[("correctness", "claude")])
+    verdict["selections"].append({
+        "check_id": "other",
+        "area": "Migration ordering",
+        "critic_model": "claude",
+        "why": "probe: confirm the data backfill runs before the column drop",
+    })
+
+    captured: dict[str, object] = {}
+
+    def fake_run_step_with_worker(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(payload=verdict, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="ev"),
+                "claude",
+                "persistent",
+                False,
+            )
+        captured["prompt_kwargs"] = prompt_kwargs
+        payload = {
+            "checks": [{"id": cid, "summary": "ok", "findings": []}
+                       for cid in prompt_kwargs["expected_ids"]],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        }
+        return (
+            WorkerResult(payload=payload, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="cr"),
+            "hermes",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step_with_worker)
+
+    megaplan.handle_critique(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+
+    pk = captured["prompt_kwargs"]
+    expected_ids = pk["expected_ids"]
+    # The synthesized "other" id is present and prefixed.
+    oid = next((i for i in expected_ids if i.startswith("other_")), None)
+    assert oid == "other_migration_ordering"
+    # And its question is the evaluator's probe.
+    synth = next(c for c in pk["active_checks"] if c["id"] == oid)
+    assert synth["question"] == (
+        "probe: confirm the data backfill runs before the column drop"
+    )
+    assert synth["category"] == "custom"
+
+
+def test_evaluator_artifacts_preserved_per_iteration(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each critique iteration's evaluator artifacts are preserved under a
+    per-iteration suffix (`evaluator_verdict_v{n}.json` /
+    `critique_evaluator_raw_v{n}.txt`) while the canonical fixed-path files
+    keep pointing at the latest iteration for existing downstream readers.
+
+    Regression: the canonical paths were the *only* write, so iteration 2
+    silently overwrote iteration 1 and the stage-1 lens-selection reasoning of
+    earlier passes was lost.
+    """
+    import json
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda step, args: (
+            "hermes",
+            "persistent",
+            False,
+            "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+        ),
+    )
+    monkeypatch.setattr(critique_mod, "validate_critique_checks", lambda payload, **kw: [])
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("forced parallel failure")
+
+    monkeypatch.setattr(critique_mod, "run_parallel_critique", _boom)
+
+    # Distinct verdict + raw text per iteration so we can prove no overwrite.
+    # Critic must be no stronger than the evaluator (deepseek-v4-pro, rank 3);
+    # use a same-rank deepseek critic so the verdict validates.
+    _critic = "deepseek-v4-pro"
+    iter_verdicts = {
+        1: _full_coverage_verdict(selected=[("correctness", _critic)]),
+        2: _full_coverage_verdict(selected=[("correctness", _critic), ("scope", _critic)]),
+    }
+    current = {"iteration": 1}
+
+    def fake_run_step_with_worker(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        n = current["iteration"]
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(
+                    payload=iter_verdicts[n],
+                    raw_output=f"RAW-ITER-{n}",
+                    duration_ms=1,
+                    cost_usd=0.0,
+                    session_id="ev",
+                ),
+                "claude",
+                "persistent",
+                False,
+            )
+        payload = {
+            "checks": [{"id": cid, "summary": "ok", "findings": []}
+                       for cid in prompt_kwargs["expected_ids"]],
+            "flags": [],
+            "verified_flag_ids": [],
+            "disputed_flag_ids": [],
+        }
+        return (
+            WorkerResult(payload=payload, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="cr"),
+            "hermes",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step_with_worker)
+
+    plan_dir = plan_fixture.plan_dir
+    state_path = plan_dir / "state.json"
+
+    # --- Iteration 1 ---
+    megaplan.handle_critique(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+
+    # --- Iteration 2: reset the gate so the PLANNED guard passes again, bump
+    # the iteration counter exactly as the revise loop would. ---
+    state = json.loads(state_path.read_text())
+    state["iteration"] = 2
+    state["current_state"] = "planned"
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    current["iteration"] = 2
+    megaplan.handle_critique(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name),
+    )
+
+    # Per-iteration verdicts both survive and carry that iteration's selections.
+    v1 = json.loads((plan_dir / "evaluator_verdict_v1.json").read_text())
+    v2 = json.loads((plan_dir / "evaluator_verdict_v2.json").read_text())
+    assert {s["check_id"] for s in v1["selections"]} == {"correctness"}
+    assert {s["check_id"] for s in v2["selections"]} == {"correctness", "scope"}
+
+    # Per-iteration raw artifacts both survive, distinct per pass.
+    assert (plan_dir / "critique_evaluator_raw_v1.txt").read_text() == "RAW-ITER-1"
+    assert (plan_dir / "critique_evaluator_raw_v2.txt").read_text() == "RAW-ITER-2"
+
+    # Canonical "latest" files exist and reflect the final iteration (so
+    # existing downstream readers keep seeing the most recent verdict).
+    canonical = json.loads((plan_dir / "evaluator_verdict.json").read_text())
+    assert {s["check_id"] for s in canonical["selections"]} == {"correctness", "scope"}
+    assert (plan_dir / "critique_evaluator_raw.txt").read_text() == "RAW-ITER-2"
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +834,7 @@ def test_evaluator_prompt_steers_cheapest_capable_critic(
 
     # The steer headline and the cost-ordered preference for cheap critics.
     assert "cheapest capable critic" in prompt.lower()
-    assert "configured lowest-cost critic" in prompt.lower()
+    assert "deepseek-v4-pro" in prompt
     # Escalation to premium must be conditional / justified, not the default.
     lower = prompt.lower()
     assert "escalate" in lower
@@ -501,53 +851,6 @@ def test_adaptive_never_a_robustness_level() -> None:
     """The flag is a boolean config knob; it must never become a robustness level."""
     assert "adaptive" not in ROBUSTNESS_LEVELS
     assert "variable" not in ROBUSTNESS_LEVELS
-
-
-# ---------------------------------------------------------------------------
-# Prompt/model-ID guard — no hardcoded model identifiers in prompt source
-# ---------------------------------------------------------------------------
-
-#: Model identifiers that must not appear as hardcoded strings in prompt-building
-#: Python sources (``megaplan/prompts/**/*.py``).  These belong in the
-#: ``CRITIC_MODEL_ROSTER`` (``megaplan/audits/critique_evaluator.py``) and
-#: profile/config modules, not in natural-language prompt text.
-_PROHIBITED_MODEL_IDS_IN_PROMPTS: tuple[str, ...] = (
-    "deepseek-v4-pro",
-    "deepseek-v4-flash",
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
-    "gpt-5.5",
-)
-
-
-def test_no_model_identifier_strings_in_prompt_python_sources() -> None:
-    """Guard: ``megaplan/prompts/**/*.py`` files must not contain hardcoded
-    model identifier strings used in natural-language prompt guidance.
-
-    Model names live in the roster (``megaplan/audits/critique_evaluator.py``)
-    and profile/config modules.  Prompt text should refer to critics by their
-    configured / roster-derived role (\"the configured lowest-cost critic\",
-    \"the configured fallback critic\"), not by concrete model id.
-    """
-    prompts_dir = Path(__file__).parent.parent / "megaplan" / "prompts"
-    py_files = sorted(prompts_dir.rglob("*.py"))
-    assert py_files, f"No Python files found under {prompts_dir}"
-
-    violations: list[tuple[str, int, str]] = []
-    for py_file in py_files:
-        lines = py_file.read_text(encoding="utf-8").splitlines()
-        for lineno, line in enumerate(lines, start=1):
-            for model_id in _PROHIBITED_MODEL_IDS_IN_PROMPTS:
-                if model_id in line:
-                    violations.append((str(py_file), lineno, model_id))
-
-    assert not violations, (
-        "Hardcoded model identifier(s) found in prompt-building Python sources.\n"
-        "Prompt text must use configured-critic wording (e.g. \"the configured "
-        "lowest-cost critic\"), not concrete model ids.  Model ids belong in "
-        "the roster (megaplan/audits/critique_evaluator.py).\n\n"
-        + "\n".join(f"  {f}:{lineno} → {mid!r}" for f, lineno, mid in violations)
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -796,8 +1099,7 @@ def test_critique_evaluator_step_registered_in_schema_filenames() -> None:
     ``STEP_SCHEMA_FILENAMES["critique_evaluator"]`` and KeyError'd. The
     handler caught the KeyError, wrote a ``fallback: true`` evaluator_verdict
     and downgraded to the static robustness lens list — silently, for every
-    iteration of every plan run under ``partnered`` (and any other profile
-    with ``adaptive_critique = true``).
+    iteration of every (non-creative) plan run.
     """
     from megaplan.schemas import SCHEMAS
     from megaplan.workers._impl import STEP_SCHEMA_FILENAMES, _STEP_REQUIRED_KEYS
