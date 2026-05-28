@@ -392,6 +392,166 @@ def test_parse_shannon_output_empty_transcript_uses_last_dict() -> None:
     # Last message dict is returned
     assert payload == {"content": "hi"}
 
+
+# ---------------------------------------------------------------------------
+# stream-json (NDJSON) parsing — the liveness output format
+#
+# Sample events mirror @dexh/shannon's stream-json emission shape (one JSON
+# object per line): system/init after session discovery, per-turn
+# assistant + result, and a trailing shannon_session metadata row on cleanup.
+# The final structured-output payload lives in the type=result event's
+# `result` field, identical to the legacy buffered json-array path.
+# ---------------------------------------------------------------------------
+
+
+def _shannon_stream_json(events: list[dict]) -> str:
+    """Render *events* as Shannon stream-json stdout (one JSON object per line)."""
+    return "\n".join(json.dumps(e) for e in events) + "\n"
+
+
+def test_parse_shannon_stream_json_prefers_result_event() -> None:
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    raw = _shannon_stream_json([
+        {"type": "system", "subtype": "init", "session_id": "sess-stream", "model": "claude-opus"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "working..."}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": json.dumps(payload),
+            "session_id": "sess-stream",
+            "total_cost_usd": 0.05,
+            "usage": {"input_tokens": 20, "output_tokens": 10},
+        },
+        # Trailing cleanup metadata row, last line — must be skipped in favour
+        # of the result event above.
+        {"type": "shannon_session", "subtype": "metadata", "session_id": "sess-stream"},
+    ])
+    envelope, parsed = _parse_shannon_output(raw)
+    assert parsed == payload
+    assert envelope["session_id"] == "sess-stream"
+    assert envelope["total_cost_usd"] == 0.05
+
+
+def test_parse_shannon_stream_json_matches_buffered_array() -> None:
+    """The NDJSON path must extract the SAME payload the legacy json array does."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    payload = {"plan": "# Plan", "questions": [], "success_criteria": ["ok"], "assumptions": []}
+    events = [
+        {"type": "system", "subtype": "init", "session_id": "s1", "model": "claude-opus"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "thinking"}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": json.dumps(payload),
+            "session_id": "s1",
+            "total_cost_usd": 0.03,
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+        },
+    ]
+    # Buffered (--output-format=json): one JSON array on a single line.
+    _, buffered_payload = _parse_shannon_output(json.dumps(events))
+    # Streamed (--output-format=stream-json): one object per line (NDJSON).
+    _, streamed_payload = _parse_shannon_output(_shannon_stream_json(events))
+    assert streamed_payload == buffered_payload == payload
+
+
+def test_parse_shannon_stream_json_result_markdown_fenced() -> None:
+    """Fenced JSON in the streamed result event must still recover via _extract_json_object."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    payload = {"plan": "P", "questions": [], "success_criteria": [], "assumptions": []}
+    fenced = "```json\n" + json.dumps(payload) + "\n```"
+    raw = _shannon_stream_json([
+        {"type": "system", "subtype": "init", "session_id": "s2"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "..."}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": fenced,
+            "session_id": "s2",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        },
+    ])
+    _, parsed = _parse_shannon_output(raw)
+    assert parsed == payload
+
+
+def test_parse_shannon_stream_json_falls_back_to_assistant_structured_output() -> None:
+    """With no result event, the NDJSON path walks back to an assistant message."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    raw = _shannon_stream_json([
+        {"type": "system", "subtype": "init", "session_id": "s3"},
+        {"type": "assistant", "message": {
+            "structured_output": {"plan": "# From assistant"},
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }},
+    ])
+    _, parsed = _parse_shannon_output(raw)
+    assert parsed == {"plan": "# From assistant"}
+
+
+def test_parse_shannon_single_line_json_array_unchanged() -> None:
+    """A single-line JSON array (legacy buffered shape) must still use the
+    single-document path, not be misread as NDJSON."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    payload = {"output": "ok"}
+    transcript = [
+        {"type": "result", "subtype": "success", "result": json.dumps(payload), "session_id": "s4"},
+    ]
+    # Single line, no trailing newline split -> not NDJSON.
+    _, parsed = _parse_shannon_output(json.dumps(transcript))
+    assert parsed == payload
+
+
+def test_parse_shannon_single_result_line_parses_as_object() -> None:
+    """A degenerate one-event stream (just the result line) parses via the
+    single-object dict path — len(lines) < 2 declines the NDJSON branch."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    payload = {"output": "single"}
+    raw = json.dumps({
+        "type": "result",
+        "subtype": "success",
+        "result": json.dumps(payload),
+        "session_id": "s5",
+        "total_cost_usd": 0.0,
+    }) + "\n"
+    envelope, parsed = _parse_shannon_output(raw)
+    assert parsed == payload
+    assert envelope["session_id"] == "s5"
+
+
+def test_parse_shannon_stream_json_pretty_array_not_misread() -> None:
+    """A pretty-printed (multi-line) JSON array is NOT NDJSON: its lines are not
+    independently parseable, so the parser must fall back to the single-document
+    path and still decode the whole array."""
+    from megaplan.workers.shannon import _parse_shannon_output
+
+    payload = {"output": "pretty"}
+    transcript = [
+        {"type": "result", "subtype": "success", "result": json.dumps(payload), "session_id": "s6"},
+    ]
+    pretty = json.dumps(transcript, indent=2)  # spans many lines, lines aren't valid JSON alone
+    assert "\n" in pretty
+    _, parsed = _parse_shannon_output(pretty)
+    assert parsed == payload
+
 def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
     tmp_path: Path,
 ) -> None:
@@ -464,7 +624,11 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     command = run_command.call_args.args[0]
     assert command[0:2] == ["shannon", "-p"]
     assert "Read the full megaplan phase prompt from this file" in command[2]
-    assert "--output-format=json" in command
+    # Shannon is launched with stream-json so it emits incremental NDJSON
+    # events that reset the _impl.py idle-output watchdog (real liveness),
+    # instead of the fully buffered single-array --output-format=json.
+    assert "--output-format=stream-json" in command
+    assert "--output-format=json" not in command
     assert "--json-schema" not in command
     assert "--add-dir" not in command
     assert "--permission-mode" in command
