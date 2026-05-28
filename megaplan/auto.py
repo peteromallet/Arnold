@@ -120,6 +120,20 @@ DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
 # only synthesize a stub note, and if even that fails twice the only
 # remaining safe escape valve is force-proceed.
 DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
+# Auto-ESCALATE-up: after this many consecutive execute failures with no
+# forward progress, the driver pins execute to the next *more capable* tier
+# model and retries with a fresh session. It keeps climbing on further
+# failures until it reaches the ceiling (the most powerful distinct model in
+# ``tier_models.execute``); once at the ceiling and still failing, control
+# falls through to the existing state-stall ``manual_review`` halt — there is
+# nothing stronger left to try. Deliberately small: a model that fails a task
+# twice is unlikely to succeed a third time, and a stronger model is the
+# cheapest high-leverage lever before giving up. Reaching for a bigger model
+# also means a slower run, so the trigger is gated on *failure* (timeout,
+# internal_error, blocked) — not on a pure latency stall, which is handled
+# separately by stall detection and is not, on its own, evidence the model is
+# too weak.
+DEFAULT_ESCALATE_AFTER_FAILS = 2
 DEFAULT_PHASE_HEARTBEAT_SECONDS = 60.0
 ESCALATE_ACTIONS = ("force-proceed", "abort", "fail")
 PHASE_TIMEOUT_EXIT_CODE = 124  # conventional; matches GNU `timeout`
@@ -148,6 +162,8 @@ class DriverOutcome:
     blocked_retries_used: int = 0
     max_blocked_retries: int | None = None
     blocking_reasons: list[str] = field(default_factory=list)
+    tier_escalations_used: int = 0
+    escalation_tier_pin: int | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -168,6 +184,8 @@ class DriverOutcome:
                 "blocked_retries_used": self.blocked_retries_used,
                 "max_blocked_retries": self.max_blocked_retries,
                 "blocking_reasons": self.blocking_reasons,
+                "tier_escalations_used": self.tier_escalations_used,
+                "escalation_tier_pin": self.escalation_tier_pin,
             },
             indent=2,
         )
@@ -691,6 +709,121 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
     return round(total, 6)
 
 
+def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
+    """Best-effort read of ``state.json`` as a dict (None on any failure)."""
+    if plan_dir is None:
+        return None
+    try:
+        with (plan_dir / "state.json").open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _read_execute_tier_ladder(plan_dir: Path | None) -> dict[int, str]:
+    """Return ``{tier_number: spec_string}`` for ``tier_models.execute``.
+
+    Read from the plan's persisted ``state.json`` config (written by init when
+    a tier-routed profile is active). Returns an empty dict when the run is not
+    tier-routed (flat execute pin / no tiers) — the escalate path treats that
+    as "nothing to escalate to" and no-ops gracefully.
+    """
+    state_data = _read_state_data(plan_dir)
+    if state_data is None:
+        return {}
+    config = state_data.get("config")
+    if not isinstance(config, dict):
+        return {}
+    tier_models = config.get("tier_models")
+    if not isinstance(tier_models, dict):
+        return {}
+    execute_tiers = tier_models.get("execute")
+    if not isinstance(execute_tiers, dict) or not execute_tiers:
+        return {}
+    ladder: dict[int, str] = {}
+    for raw_tier, spec in execute_tiers.items():
+        try:
+            tier_num = int(raw_tier)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(spec, str) and spec.strip():
+            ladder[tier_num] = spec
+    return ladder
+
+
+def _latest_execute_max_tier(plan_dir: Path | None) -> int | None:
+    """Highest ``batch_complexity`` tier the most recent execute phase routed.
+
+    The execute aggregate history entry records ``batch_to_tier`` — one entry
+    per batch with the complexity-derived tier. The highest such tier is the
+    most capable model the failing execute actually used, and therefore the
+    correct baseline to escalate *above*. Returns None when no tier-routed
+    execute entry is found (caller falls back to climbing from the bottom).
+    """
+    state_data = _read_state_data(plan_dir)
+    if state_data is None:
+        return None
+    history = state_data.get("history")
+    if not isinstance(history, list):
+        return None
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("step") != "execute":
+            continue
+        batch_to_tier = entry.get("batch_to_tier")
+        if not isinstance(batch_to_tier, list) or not batch_to_tier:
+            return None
+        tiers = [
+            int(b["batch_complexity"])
+            for b in batch_to_tier
+            if isinstance(b, dict)
+            and isinstance(b.get("batch_complexity"), int)
+        ]
+        return max(tiers) if tiers else None
+    return None
+
+
+def _next_escalation_tier(
+    ladder: dict[int, str],
+    *,
+    current_tier: int | None,
+) -> tuple[int, str] | None:
+    """Pick the next tier whose spec is a *distinct* model above ``current_tier``.
+
+    "Escalate up" means moving toward the highest (most capable) tier number.
+    Tiers whose spec string equals the current tier's spec are skipped — they
+    are the *same* model (e.g. premium tiers 4 and 5 are both Opus), so
+    escalating onto them would waste an escalation as a no-op. Returns
+    ``(tier_number, spec)`` for the next distinct-model tier above
+    ``current_tier``, or None when the ceiling is already reached / there is no
+    more-capable distinct model left (caller then defers to manual_review).
+    """
+    if not ladder:
+        return None
+    sorted_tiers = sorted(ladder)
+    ceiling = sorted_tiers[-1]
+    # Baseline: the tier we are escalating *above*. When unknown, treat the
+    # bottom of the ladder as the baseline so the first escalation climbs to
+    # the next distinct model up from the weakest tier.
+    if current_tier is None:
+        current_tier = sorted_tiers[0]
+    if current_tier >= ceiling:
+        return None
+    current_spec = ladder.get(current_tier)
+    for tier in sorted_tiers:
+        if tier <= current_tier:
+            continue
+        spec = ladder[tier]
+        # Skip same-model steps (no-op escalation) — keep climbing until a
+        # genuinely more capable distinct model appears.
+        if current_spec is not None and spec == current_spec:
+            continue
+        return tier, spec
+    return None
+
+
 def _get_review_marker(plan_dir: Path | None) -> float | None:
     """Return a monotonically-advancing marker for the current review cycle.
 
@@ -1074,6 +1207,7 @@ def drive(
     max_external_retries: int = DEFAULT_MAX_EXTERNAL_RETRIES,
     max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
     max_add_note_attempts: int = DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
+    escalate_after_fails: int = DEFAULT_ESCALATE_AFTER_FAILS,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
@@ -1104,6 +1238,24 @@ def drive(
     # Reset on any successful add-note OR when the next_step changes — only a
     # repeating add-note→fail loop should trip the escalation.
     add_note_failures = 0
+
+    # ── Auto-ESCALATE-up state ─────────────────────────────────────────
+    # Consecutive execute failures (timeout / internal_error / quality-block)
+    # since the last forward progress. Per-execute and reset on progress or a
+    # different next_step — never a global counter that accumulates across
+    # unrelated phases/batches. When it reaches escalate_after_fails the driver
+    # pins execute to the next more-capable distinct tier model.
+    execute_fail_streak = 0
+    # Forward-progress signature: (tasks_done + tasks_skipped). When it
+    # advances the streak resets — a stronger model isn't warranted while the
+    # current one is still making progress.
+    last_execute_progress: int | None = None
+    # The tier we have climbed the execute pin to (None = not yet escalated).
+    escalation_tier_pin: int | None = None
+    # The spec we are currently pinning execute to (None = configured routing).
+    escalation_pin_spec: str | None = None
+    # Total escalations performed, surfaced in the run summary.
+    tier_escalations_used = 0
 
     # Rework-cycle tracking. When review returns `needs_rework`, the plan
     # ping-pongs `finalized ↔ executed ↔ finalized` while execute re-runs
@@ -1226,6 +1378,8 @@ def drive(
             blocked_retries_used=blocked_retry_count,
             max_blocked_retries=max_blocked_retries,
             blocking_reasons=list(blocking_reasons or []),
+            tier_escalations_used=tier_escalations_used,
+            escalation_tier_pin=escalation_tier_pin,
         )
 
     iteration = 0
@@ -1756,6 +1910,18 @@ def drive(
             add_note_failures = 0
             cmd = _phase_command(next_step) + ["--plan", plan]
             last_phase = next_step
+            # Apply an active execute-tier escalation pin. The pin overrides
+            # tier_models.execute via --phase-model and forces a *fresh*
+            # session: the failed worker's session must not be resumed, or the
+            # stronger model would never actually run (a tier change is a no-op
+            # if the batch --resume's the old session on the old model).
+            if next_step == "execute" and escalation_pin_spec is not None:
+                cmd = [
+                    *cmd,
+                    "--phase-model",
+                    f"execute={escalation_pin_spec}",
+                    "--fresh",
+                ]
         log(f"running: megaplan {' '.join(cmd)}", phase=next_step, timeout=phase_timeout)
         if plan_dir is not None:
             try:
@@ -2212,6 +2378,143 @@ def drive(
                 )
             # timeout, context_exhausted, internal_error already handled above.
 
+        # ── Auto-ESCALATE-up: respond to repeated execute failures ───────
+        # Only execute is escalated (it is the phase routed by tier_models),
+        # and only *failures* count — a pure latency stall is not, on its own,
+        # evidence the model is too weak (and a bigger model is slower), so we
+        # gate on hard failures: timeout, internal_error, and quality/prereq
+        # blocks. Forward progress or moving off execute resets the streak so
+        # the counter is per-execute, never a global accumulator.
+        if next_step == "execute":
+            progress = status.get("progress") or {}
+            try:
+                progress_sig = int(progress.get("tasks_done", 0) or 0) + int(
+                    progress.get("tasks_skipped", 0) or 0
+                )
+            except (TypeError, ValueError):
+                progress_sig = last_execute_progress or 0
+            ek = getattr(result, "exit_kind", None) if result is not None else None
+            execute_failed = (
+                code not in (0, None)
+                or ek
+                in {
+                    ExitKind.timeout.value,
+                    ExitKind.internal_error.value,
+                    ExitKind.blocked_by_quality.value,
+                    ExitKind.blocked_by_prereq.value,
+                }
+            )
+            made_progress = (
+                last_execute_progress is not None
+                and progress_sig > last_execute_progress
+            )
+            if made_progress or not execute_failed:
+                # Forward progress (or a clean execute) — the current model is
+                # working; reset the streak so we don't escalate prematurely.
+                if execute_fail_streak:
+                    log(
+                        "execute made progress — resetting escalate-up failure "
+                        f"streak (was {execute_fail_streak})",
+                        execute_fail_streak=execute_fail_streak,
+                    )
+                execute_fail_streak = 0
+            else:
+                execute_fail_streak += 1
+                log(
+                    f"execute failed — escalate-up streak {execute_fail_streak}"
+                    f"/{escalate_after_fails}",
+                    execute_fail_streak=execute_fail_streak,
+                    escalate_after_fails=escalate_after_fails,
+                )
+                if (
+                    escalate_after_fails > 0
+                    and execute_fail_streak >= escalate_after_fails
+                ):
+                    ladder = _read_execute_tier_ladder(plan_dir)
+                    # Baseline tier to escalate *above*: the highest tier the
+                    # failing execute actually routed to, unless we have
+                    # already climbed higher via a prior escalation.
+                    observed_tier = _latest_execute_max_tier(plan_dir)
+                    baseline_tier = escalation_tier_pin
+                    if baseline_tier is None:
+                        baseline_tier = observed_tier
+                    elif observed_tier is not None:
+                        baseline_tier = max(baseline_tier, observed_tier)
+                    nxt = _next_escalation_tier(ladder, current_tier=baseline_tier)
+                    if nxt is None:
+                        # At the ceiling / no distinct stronger model / not
+                        # tier-routed — nothing to escalate to. Leave the streak
+                        # to feed the existing state-stall manual_review halt
+                        # (the genuine last resort).
+                        log(
+                            "execute at escalation ceiling (no more-capable "
+                            "distinct tier model) — deferring to state-stall "
+                            "manual_review halt",
+                            escalation_tier_pin=escalation_tier_pin,
+                            baseline_tier=baseline_tier,
+                        )
+                    else:
+                        new_tier, new_spec = nxt
+                        from_spec = (
+                            escalation_pin_spec
+                            if escalation_pin_spec is not None
+                            else (
+                                ladder.get(baseline_tier)
+                                if baseline_tier is not None
+                                else None
+                            )
+                        )
+                        tier_escalations_used += 1
+                        log(
+                            f"escalating execute UP: tier {baseline_tier}→{new_tier} "
+                            f"({from_spec}→{new_spec}) after "
+                            f"{execute_fail_streak} consecutive failures — "
+                            "next execute will run fresh on the stronger model",
+                            from_tier=baseline_tier,
+                            to_tier=new_tier,
+                            from_spec=from_spec,
+                            to_spec=new_spec,
+                            execute_fail_streak=execute_fail_streak,
+                            tier_escalations_used=tier_escalations_used,
+                        )
+                        if plan_dir is not None:
+                            try:
+                                emit_event(
+                                    EventKind.TIER_ESCALATED,
+                                    plan_dir=plan_dir,
+                                    phase="execute",
+                                    payload={
+                                        "from_tier": baseline_tier,
+                                        "to_tier": new_tier,
+                                        "from_model": from_spec,
+                                        "to_model": new_spec,
+                                        "failure_count": execute_fail_streak,
+                                        "escalations_used": tier_escalations_used,
+                                    },
+                                )
+                            except Exception:
+                                _warn_best_effort_emit_failure(
+                                    "M3A_WARN_EMIT_AUTO_TIER_ESCALATED",
+                                    action="auto-tier-escalated",
+                                    plan_dir=plan_dir,
+                                    phase="execute",
+                                    event_kind="tier_escalated",
+                                    context={
+                                        "from_tier": baseline_tier,
+                                        "to_tier": new_tier,
+                                    },
+                                )
+                        escalation_tier_pin = new_tier
+                        escalation_pin_spec = new_spec
+                        # Reset the streak: the next execute gets a fresh budget
+                        # on the stronger model before we consider climbing more.
+                        execute_fail_streak = 0
+            last_execute_progress = progress_sig
+        elif next_step in PHASE_NAMES:
+            # Moving off execute to another phase — the execute failure streak
+            # is per-execute and must not leak across phases.
+            execute_fail_streak = 0
+
         if poll_sleep > 0:
             time.sleep(poll_sleep)
 
@@ -2335,6 +2638,21 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--escalate-after-fails",
+        type=_non_negative_int,
+        default=DEFAULT_ESCALATE_AFTER_FAILS,
+        help=(
+            f"Consecutive execute failures (with no forward progress) before "
+            f"the driver escalates UP to the next more-capable distinct model "
+            f"in tier_models.execute and retries with a fresh session "
+            f"(default {DEFAULT_ESCALATE_AFTER_FAILS}; 0 disables). It keeps "
+            "climbing on further failures and caps at the most powerful "
+            "distinct tier; once at that ceiling and still failing, control "
+            "falls through to the state-stall manual_review halt. No-ops on "
+            "runs without tier_models.execute."
+        ),
+    )
+    auto_parser.add_argument(
         "--on-escalate",
         choices=ESCALATE_ACTIONS,
         default="force-proceed",
@@ -2433,6 +2751,11 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         ),
         max_blocked_retries=args.max_blocked_retries,
         max_add_note_attempts=args.max_add_note_attempts,
+        escalate_after_fails=getattr(
+            args,
+            "escalate_after_fails",
+            DEFAULT_ESCALATE_AFTER_FAILS,
+        ),
         on_escalate=args.on_escalate,
         poll_sleep=args.poll_sleep,
         phase_timeout=args.phase_timeout,
