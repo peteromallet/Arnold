@@ -45,19 +45,20 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, _ = LoadImage(image='image_z_image_img2img_input.png')
+    image, _ = LoadImage(_id='1', image='image_z_image_img2img_input.png')
 
     # Loaders
-    unetloader = UNETLoader(unet_name=UNET_NAME)
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='lumina2')
-    vaeloader = VAELoader(vae_name=VAE_NAME)
-    modelsamplingauraflow = ModelSamplingAuraFlow(shift=3, model=unetloader)
+    unetloader = UNETLoader(_id='2', unet_name=UNET_NAME)
+    cliploader = CLIPLoader(_id='3', clip_name=CLIP_NAME, type_='lumina2')
+    vaeloader = VAELoader(_id='4', vae_name=VAE_NAME)
+    modelsamplingauraflow = ModelSamplingAuraFlow(_id='5', shift=3, model=unetloader)
 
     # Conditioning
-    positive = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
-    negative = CLIPTextEncode(text='', clip=cliploader)
+    positive = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT, clip=cliploader)
+    negative = CLIPTextEncode(_id='7', text='', clip=cliploader)
 
     imagescale = ImageScale(
+        _id='8',
         upscale_method='lanczos',
         width=1024,
         height=1024,
@@ -65,10 +66,11 @@ def build() -> VibeWorkflow:
         image=image,
     )
 
-    vaeencode = VAEEncode(pixels=imagescale, vae=vaeloader)
+    vaeencode = VAEEncode(_id='9', pixels=imagescale, vae=vaeloader)
 
     # Sampling
     ksampler = KSampler(
+        _id='10',
         seed=DEFAULT_SEED,
         steps=12,
         cfg=GUIDE_STRENGTH,
@@ -81,10 +83,10 @@ def build() -> VibeWorkflow:
     )
 
     # Decode
-    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+    vaedecode = VAEDecode(_id='11', samples=ksampler, vae=vaeloader)
 
     # Outputs
-    saveimage = SaveImage(filename_prefix='z-image-img2img', images=vaedecode)
+    saveimage = SaveImage(_id='12', filename_prefix='z-image-img2img', images=vaedecode)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='z-image-img2img')
 

@@ -56,22 +56,25 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
+        _id='1',
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='2',
         model=MODEL_NAME,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
         widget_1='fp16',
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoblockswap = WanVideoBlockSwap(blocks_to_swap=30)
+    wanvideovaeloader = WanVideoVAELoader(_id='3', model_name=VAE_NAME)
+    wanvideoblockswap = WanVideoBlockSwap(_id='4', blocks_to_swap=30)
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
+        _id='5',
         width=832,
         height=480,
         num_frames=DEFAULT_FRAMES,
@@ -79,6 +82,7 @@ def build() -> VibeWorkflow:
     )
 
     wanvideomodelloader_2 = WanVideoModelLoader(
+        _id='6',
         model=MODEL_NAME_2,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
@@ -86,38 +90,45 @@ def build() -> VibeWorkflow:
     )
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
+        _id='7',
         lora_0=LORA__NAME,
         merge_loras=False,
         widget_0='WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
     )
 
     wanvideoloraselectmulti_2 = WanVideoLoraSelectMulti(
+        _id='8',
         lora_0=LORA__NAME,
         merge_loras=False,
         widget_0='WanVideo/Lightx2v/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors',
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
+        _id='9',
         lora=wanvideoloraselectmulti_2,
         model=wanvideomodelloader,
     )
 
     wanvideosetloras_2 = WanVideoSetLoRAs(
+        _id='10',
         lora=wanvideoloraselectmulti,
         model=wanvideomodelloader_2,
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='11',
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras,
     )
 
     wanvideosetblockswap_2 = WanVideoSetBlockSwap(
+        _id='12',
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras_2,
     )
 
     samples, _ = WanVideoSampler(
+        _id='13',
         steps=6,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -130,6 +141,7 @@ def build() -> VibeWorkflow:
     )
 
     samples_2, _ = WanVideoSampler(
+        _id='14',
         steps=6,
         cfg=GUIDE_STRENGTH_2,
         seed=DEFAULT_SEED,
@@ -143,13 +155,18 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='15',
         normalization='default',
         samples=samples_2,
         vae=wanvideovaeloader,
     )
 
     # Outputs
-    saveimage = SaveImage(filename_prefix='Wan-2-2-T2I', images=wanvideodecode)
+    saveimage = SaveImage(
+        _id='16',
+        filename_prefix='Wan-2-2-T2I',
+        images=wanvideodecode,
+    )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Wan-2-2-T2I')
 

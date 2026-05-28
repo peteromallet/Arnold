@@ -49,7 +49,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='video',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['LTX-2-dev-Q5_K_S.gguf', 'LTX2_audio_vae_bf16.safetensors', 'LTX2_video_vae_2_bf16.safetensors', 'ltx-2-19b-distilled.safetensors', 'ltx-2-spatial-upscaler-x2-1.0.safetensors']},
-    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['LTXVAudioVAELoader', 'LTXVConditioning', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Any Switch (rgthree)', 'Fast Groups Muter (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
+    custom_node_packs={'ComfyUI-GGUF': {'commit': '6ea2651e7df66d7585f6ffee804b20e92fb38b8a', 'url': 'https://github.com/city96/ComfyUI-GGUF.git', 'class_schema_sha256': '1336fad984841444a9559b602c34ef11d1dd4b68a9a902437aaee6771ab5d2d3', 'classes_used': ['UnetLoaderGGUF'], 'pip_packages': ['gguf'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['VAELoaderKJ'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-LTXVideo': {'commit': '229437c6b65796d6a7a63ae34be2bd5ba31fa543', 'url': 'https://github.com/Lightricks/ComfyUI-LTXVideo.git', 'class_schema_sha256': '82e0b1f31509a969cf441c45e2517d0cd93f31b5390cc16f4a0ffa244421f39e', 'classes_used': ['LTXVAudioVAELoader', 'LTXVConditioning', 'LatentUpscaleModelLoader'], 'pip_packages': [], 'status': 'discovered'}, 'rgthree-comfy': {'commit': '738105af5fb14e96fbecaf406dc356e284797e8c', 'url': 'https://github.com/rgthree/rgthree-comfy.git', 'class_schema_sha256': '2b52072e02c59cb05ce83e5c45e1c7fd5b1273fee9b62eaaa0e66a81a4c07872', 'classes_used': ['Any Switch (rgthree)'], 'pip_packages': [], 'status': 'discovered'}},
     provenance={'source_path': 'workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json', 'source_id': 'IAMCCS_LTX2_I2V_LONG_LENGTH', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/ltxvideo/iamccs/IAMCCS_LTX2_I2V_LONG_LENGTH.json', 'output_mode': 'ready_template', 'ready_id': 'video/ltx2_3_iamccs_long_i2v'},
 )
 
@@ -79,20 +79,14 @@ def samplers(
     """
 
     imagescaleby = ImageScaleBy(
-        _id='3eaa20c4:5075',
         upscale_method='bicubic',
         scale_by=0.5,
         image=empty_latent_image,
     )
 
-    randomnoise = RandomNoise(
-        _id='3eaa20c4:5097',
-        noise_seed=420,
-        control_after_generate='fixed',
-    )
-
-    ksamplerselect = KSamplerSelect(_id='3eaa20c4:5099', sampler_name='euler')
-    ksamplerselect_2 = KSamplerSelect(_id='3eaa20c4:5109', sampler_name='euler')
+    randomnoise = RandomNoise(noise_seed=420, control_after_generate='fixed')
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    ksamplerselect_2 = KSamplerSelect(sampler_name='euler')
 
     randomnoise_2 = RandomNoise(
         _id='3eaa20c4:5111',
@@ -101,21 +95,16 @@ def samplers(
     )
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        _id='3eaa20c4:5152',
         frames_number=length,
         frame_rate=frame_rate,
         audio_vae=audio_vae,
     )
 
     manualsigmas = ManualSigmas(
-        _id='3eaa20c4:5232',
         sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    manualsigmas_2 = ManualSigmas(
-        _id='3eaa20c4:5233',
-        sigmas='0.909375, 0.725, 0.421875, 0.0',
-    )
+    manualsigmas_2 = ManualSigmas(sigmas='0.909375, 0.725, 0.421875, 0.0')
 
     impactexecutionordercontroller = raw_call('ImpactExecutionOrderController', '3eaa20c4:5239',
         _outputs=('signal', 'value'),
@@ -123,10 +112,9 @@ def samplers(
         value=images,
     )
 
-    width, height, _ = GetImageSize(_id='3eaa20c4:5069', image=imagescaleby)
+    width, height, _ = GetImageSize(image=imagescaleby)
 
     cfgguider = CFGGuider(
-        _id='3eaa20c4:5098',
         cfg=1,
         model=model_stage_2,
         negative=negative,
@@ -134,7 +122,6 @@ def samplers(
     )
 
     cfgguider_2 = CFGGuider(
-        _id='3eaa20c4:5110',
         cfg=1,
         model=model_stage_1,
         negative=negative,
@@ -142,23 +129,17 @@ def samplers(
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
-        _id='3eaa20c4:5244',
         longer_edge=1536,
         images=impactexecutionordercontroller.out('value'),
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        _id='3eaa20c4:5138',
         width=width,
         height=height,
         length=length,
     )
 
-    ltxvpreprocess = LTXVPreprocess(
-        _id='3eaa20c4:5240',
-        img_compression=33,
-        image=resizeimagesbylongeredge,
-    )
+    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
 
     iamccs_ltx2_ensureframes8nplus1 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '3eaa20c4:10658',
         _outputs=('images', 'frames', 'report'),
@@ -175,7 +156,6 @@ def samplers(
     )
 
     ltxvimgtovideoinplace_2 = LTXVImgToVideoInplace(
-        _id='3eaa20c4:5254',
         strength=image_strength,
         image=iamccs_ltx2_ensureframes8nplus1_2.out('images'),
         latent=emptyltxvlatentvideo,
@@ -183,13 +163,11 @@ def samplers(
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
-        _id='3eaa20c4:5108',
         audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoinplace_2,
     )
 
     _, denoised_output_2 = SamplerCustomAdvanced(
-        _id='3eaa20c4:5107',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -197,33 +175,26 @@ def samplers(
         sigmas=manualsigmas,
     )
 
-    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
-        _id='3eaa20c4:5114',
-        av_latent=denoised_output_2,
-    )
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=denoised_output_2)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
-        _id='3eaa20c4:5255',
         samples=video_latent_2,
         upscale_model=upscale_model,
         vae=vae,
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
-        _id='3eaa20c4:5251',
         image=iamccs_ltx2_ensureframes8nplus1.out('images'),
         latent=ltxvlatentupsampler,
         vae=vae,
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-        _id='3eaa20c4:5112',
         audio_latent=audio_latent_2,
         video_latent=ltxvimgtovideoinplace,
     )
 
     _, denoised_output = SamplerCustomAdvanced(
-        _id='3eaa20c4:5100',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -231,19 +202,10 @@ def samplers(
         sigmas=manualsigmas_2,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(
-        _id='3eaa20c4:5104',
-        av_latent=denoised_output,
-    )
-
-    ltxvaudiovaedecode = LTXVAudioVAEDecode(
-        _id='3eaa20c4:5103',
-        audio_vae=audio_vae,
-        samples=audio_latent,
-    )
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
+    ltxvaudiovaedecode = LTXVAudioVAEDecode(audio_vae=audio_vae, samples=audio_latent)
 
     ltxvspatiotemporaltiledvaedecode = LTXVSpatioTemporalTiledVAEDecode(
-        _id='3eaa20c4:5245',
         widget_0=4,
         widget_1=4,
         widget_2=16,
@@ -282,43 +244,27 @@ def samplers_8b36a85a(
     """
 
     imagescaleby = ImageScaleBy(
-        _id='8b36a85a:5075',
         upscale_method='bicubic',
         scale_by=0.5,
         image=empty_latent_image,
     )
 
-    randomnoise = RandomNoise(
-        _id='8b36a85a:5097',
-        noise_seed=420,
-        control_after_generate='fixed',
-    )
-
-    ksamplerselect = KSamplerSelect(_id='8b36a85a:5099', sampler_name='euler')
-    ksamplerselect_2 = KSamplerSelect(_id='8b36a85a:5109', sampler_name='euler')
-
-    randomnoise_2 = RandomNoise(
-        _id='8b36a85a:5111',
-        control_after_generate='fixed',
-        noise_seed=noise_seed,
-    )
+    randomnoise = RandomNoise(noise_seed=420, control_after_generate='fixed')
+    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    ksamplerselect_2 = KSamplerSelect(sampler_name='euler')
+    randomnoise_2 = RandomNoise(control_after_generate='fixed', noise_seed=noise_seed)
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        _id='8b36a85a:5152',
         frames_number=length,
         frame_rate=frame_rate,
         audio_vae=audio_vae,
     )
 
     manualsigmas = ManualSigmas(
-        _id='8b36a85a:5232',
         sigmas='1., 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    manualsigmas_2 = ManualSigmas(
-        _id='8b36a85a:5233',
-        sigmas='0.909375, 0.725, 0.421875, 0.0',
-    )
+    manualsigmas_2 = ManualSigmas(sigmas='0.909375, 0.725, 0.421875, 0.0')
 
     impactexecutionordercontroller = raw_call('ImpactExecutionOrderController', '8b36a85a:5239',
         _outputs=('signal', 'value'),
@@ -326,10 +272,9 @@ def samplers_8b36a85a(
         value=images,
     )
 
-    width, height, _ = GetImageSize(_id='8b36a85a:5069', image=imagescaleby)
+    width, height, _ = GetImageSize(image=imagescaleby)
 
     cfgguider = CFGGuider(
-        _id='8b36a85a:5098',
         cfg=1,
         model=model_stage_2,
         negative=negative,
@@ -337,7 +282,6 @@ def samplers_8b36a85a(
     )
 
     cfgguider_2 = CFGGuider(
-        _id='8b36a85a:5110',
         cfg=1,
         model=model_stage_1,
         negative=negative,
@@ -345,23 +289,17 @@ def samplers_8b36a85a(
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
-        _id='8b36a85a:5244',
         longer_edge=1536,
         images=impactexecutionordercontroller.out('value'),
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        _id='8b36a85a:5138',
         width=width,
         height=height,
         length=length,
     )
 
-    ltxvpreprocess = LTXVPreprocess(
-        _id='8b36a85a:5240',
-        img_compression=33,
-        image=resizeimagesbylongeredge,
-    )
+    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=resizeimagesbylongeredge)
 
     iamccs_ltx2_ensureframes8nplus1 = raw_call('IAMCCS_LTX2_EnsureFrames8nPlus1', '8b36a85a:10660',
         _outputs=('images', 'frames', 'report'),
@@ -378,7 +316,6 @@ def samplers_8b36a85a(
     )
 
     ltxvimgtovideoinplace_2 = LTXVImgToVideoInplace(
-        _id='8b36a85a:5254',
         strength=image_strength,
         image=iamccs_ltx2_ensureframes8nplus1_2.out('images'),
         latent=emptyltxvlatentvideo,
@@ -386,13 +323,11 @@ def samplers_8b36a85a(
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
-        _id='8b36a85a:5108',
         audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoinplace_2,
     )
 
     _, denoised_output_2 = SamplerCustomAdvanced(
-        _id='8b36a85a:5107',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -400,33 +335,26 @@ def samplers_8b36a85a(
         sigmas=manualsigmas,
     )
 
-    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
-        _id='8b36a85a:5114',
-        av_latent=denoised_output_2,
-    )
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=denoised_output_2)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
-        _id='8b36a85a:5255',
         samples=video_latent_2,
         upscale_model=upscale_model,
         vae=vae,
     )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
-        _id='8b36a85a:5251',
         image=iamccs_ltx2_ensureframes8nplus1.out('images'),
         latent=ltxvlatentupsampler,
         vae=vae,
     )
 
     ltxvconcatavlatent_2 = LTXVConcatAVLatent(
-        _id='8b36a85a:5112',
         audio_latent=audio_latent_2,
         video_latent=ltxvimgtovideoinplace,
     )
 
     _, denoised_output = SamplerCustomAdvanced(
-        _id='8b36a85a:5100',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
@@ -434,19 +362,10 @@ def samplers_8b36a85a(
         sigmas=manualsigmas_2,
     )
 
-    video_latent, audio_latent = LTXVSeparateAVLatent(
-        _id='8b36a85a:5104',
-        av_latent=denoised_output,
-    )
-
-    ltxvaudiovaedecode = LTXVAudioVAEDecode(
-        _id='8b36a85a:5103',
-        audio_vae=audio_vae,
-        samples=audio_latent,
-    )
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=denoised_output)
+    ltxvaudiovaedecode = LTXVAudioVAEDecode(audio_vae=audio_vae, samples=audio_latent)
 
     ltxvspatiotemporaltiledvaedecode = LTXVSpatioTemporalTiledVAEDecode(
-        _id='8b36a85a:5245',
         widget_0=4,
         widget_1=4,
         widget_2=16,
@@ -465,22 +384,24 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(_id='5176', ckpt_name=CKPT_NAME)
 
     ltxvgemmaclipmodelloader = LTXVGemmaCLIPModelLoader(
+        _id='5178',
         gemma_path=CLIP_NAME,
         ltxv_path=CKPT_NAME,
     )
 
     # Inputs
-    image, _ = LoadImage(image='z-image_00255_.png')
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    image, _ = LoadImage(_id='5180', image='z-image_00255_.png')
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='5188', ckpt_name=CKPT_NAME)
 
     latentupscalemodelloader = LatentUpscaleModelLoader(
+        _id='5210',
         model_name=SPATIAL_UPSCALER_NAME,
     )
 
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
+    unetloadergguf = UnetLoaderGGUF(_id='5215', unet_name=UNET_NAME_GGUF)
 
     iamccs_ltx2_lorastackstaged = raw_call('IAMCCS_LTX2_LoRAStackStaged', '5218',
         widget_0=WIDGET__NAME,
@@ -495,18 +416,21 @@ def build() -> VibeWorkflow:
     )
 
     vaeloaderkj = VAELoaderKJ(
+        _id='5220',
         vae_name=VIDEO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
     vaeloaderkj_2 = VAELoaderKJ(
+        _id='5221',
         vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
     dualcliploader = DualCLIPLoader(
+        _id='5222',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_NAME_2,
         type_='ltxv',
@@ -514,32 +438,7 @@ def build() -> VibeWorkflow:
     )
 
     iamccs_ltx2_frameratesync = raw_call('IAMCCS_LTX2_FrameRateSync', '5225', widget_0=24, widget_1='fixed')
-    fast_groups_muter__rgthree_ = raw_call('Fast Groups Muter (rgthree)', '5265')
-
-    iamccs_autolinkarguments = raw_call('IAMCCS_AutoLinkArguments', '9026',
-        widget_0=False,
-        widget_1=False,
-        widget_10='Red',
-        widget_11='Orange',
-        widget_12='Black',
-        widget_13='',
-        widget_14='',
-        widget_15='both',
-        widget_16=None,
-        widget_17='',
-        widget_18=None,
-        widget_19='',
-        widget_2=False,
-        widget_3=True,
-        widget_4='None',
-        widget_5='',
-        widget_6='TopToDown',
-        widget_7='AvoidAll',
-        widget_8='',
-        widget_9=True,
-    )
-
-    emptyimage = EmptyImage(width=1332, height=720)
+    emptyimage = EmptyImage(_id='10955', width=1332, height=720)
 
     iamccs_ltx2_timeframecount = raw_call('IAMCCS_LTX2_TimeFrameCount', '10956',
         widget_0=10,
@@ -565,32 +464,38 @@ def build() -> VibeWorkflow:
     )
 
     any_switch__rgthree__2 = Any_Switch_rgthree(
+        _id='5261',
         any_01=ltxvaudiovaeloader,
         any_02=vaeloaderkj_2,
     )
 
     any_switch__rgthree__3 = Any_Switch_rgthree(
+        _id='5262',
         any_01=ltxvgemmaclipmodelloader,
         any_02=dualcliploader,
     )
 
-    any_switch__rgthree__4 = Any_Switch_rgthree(any_01=vae, any_02=vaeloaderkj)
-
-    iamccs_autolinkconverter = raw_call('IAMCCS_AutoLinkConverter', '9025',
-        widget_0=None,
-        widget_1=None,
-        arg=iamccs_autolinkarguments.out(0),
+    any_switch__rgthree__4 = Any_Switch_rgthree(
+        _id='5263',
+        any_01=vae,
+        any_02=vaeloaderkj,
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=any_switch__rgthree__3)
+    cliptextencode = CLIPTextEncode(
+        _id='5174',
+        text=DEFAULT_PROMPT,
+        clip=any_switch__rgthree__3,
+    )
 
     cliptextencode_2 = CLIPTextEncode(
+        _id='5233',
         text=DEFAULT_PROMPT_2,
         clip=any_switch__rgthree__3,
     )
 
     cliptextencode_3 = CLIPTextEncode(
+        _id='9002',
         text=DEFAULT_PROMPT_3,
         clip=any_switch__rgthree__3,
     )
@@ -618,28 +523,33 @@ def build() -> VibeWorkflow:
     )
 
     positive, negative = LTXVConditioning(
+        _id='5173',
         frame_rate=iamccs_ltx2_frameratesync.out(1),
         negative=cliptextencode,
         positive=cliptextencode,
     )
 
     positive_2, negative_2 = LTXVConditioning(
+        _id='5234',
         frame_rate=iamccs_ltx2_frameratesync.out(1),
         negative=cliptextencode_2,
         positive=cliptextencode_2,
     )
 
     any_switch__rgthree_ = Any_Switch_rgthree(
+        _id='5258',
         any_01=iamccs_ltx2_lorastackmodelio.out(0),
         any_02=iamccs_gguf_accelerator.out(0),
     )
 
     any_switch__rgthree__5 = Any_Switch_rgthree(
+        _id='5264',
         any_01=iamccs_ltx2_lorastackmodelio.out(0),
         any_02=iamccs_gguf_accelerator_2.out(0),
     )
 
     positive_3, negative_3 = LTXVConditioning(
+        _id='9003',
         frame_rate=iamccs_ltx2_frameratesync.out(1),
         negative=cliptextencode_3,
         positive=cliptextencode_3,
@@ -662,6 +572,7 @@ def build() -> VibeWorkflow:
     )
 
     createvideo = CreateVideo(
+        _id='5190',
         fps=iamccs_ltx2_frameratesync.out(1),
         audio=audio_3,
         images=images_3,
@@ -682,6 +593,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     savevideo = SaveVideo(
+        _id='4958',
         filename_prefix='IAMCCS(LTX2_LL_1',
         format=MP4,
         codec=H264,
@@ -705,12 +617,13 @@ def build() -> VibeWorkflow:
     )
 
     createvideo_2 = CreateVideo(
+        _id='5236',
         fps=iamccs_ltx2_frameratesync.out(1),
         audio=audio,
         images=images,
     )
 
-    audioconcat = AudioConcat(audio1=audio_3, audio2=audio)
+    audioconcat = AudioConcat(_id='5252', audio1=audio_3, audio2=audio)
 
     iamccs_ltx2_extensionmodule = raw_call('IAMCCS_LTX2_ExtensionModule', '9015',
         widget_0=10,
@@ -734,6 +647,7 @@ def build() -> VibeWorkflow:
     )
 
     savevideo_2 = SaveVideo(
+        _id='5237',
         filename_prefix='IAMCCS(LTX2_LL_2',
         format=MP4,
         codec=H264,
@@ -757,12 +671,13 @@ def build() -> VibeWorkflow:
     )
 
     createvideo_4 = CreateVideo(
+        _id='9005',
         fps=iamccs_ltx2_frameratesync.out(1),
         audio=audio_2,
         images=images_2,
     )
 
-    audioconcat_2 = AudioConcat(audio1=audioconcat, audio2=audio_2)
+    audioconcat_2 = AudioConcat(_id='9008', audio1=audioconcat, audio2=audio_2)
 
     iamccs_ltx2_extensionmodule_2 = raw_call('IAMCCS_LTX2_ExtensionModule', '9016',
         widget_0=10,
@@ -786,12 +701,14 @@ def build() -> VibeWorkflow:
     )
 
     createvideo_3 = CreateVideo(
+        _id='5254',
         fps=iamccs_ltx2_frameratesync.out(1),
         audio=audioconcat_2,
         images=iamccs_ltx2_extensionmodule_2.out(2),
     )
 
     savevideo_4 = SaveVideo(
+        _id='9006',
         filename_prefix='IAMCCS(LTX2_LL_3',
         format=MP4,
         codec=H264,
@@ -799,6 +716,7 @@ def build() -> VibeWorkflow:
     )
 
     savevideo_3 = SaveVideo(
+        _id='5255',
         filename_prefix='IAMCCS(LTX2_LL_FULL',
         format=MP4,
         codec=H264,

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
-from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVPreprocess, LTXVSeparateAVLatent, LoadAudio, LoadImage, PreviewAudio, PreviewImage, RandomNoise, SamplerCustomAdvanced, SaveAudioMP3, SetLatentNoiseMask, SolidMask, TrimAudioDuration
+from vibecomfy.nodes.core import BasicScheduler, CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, DualCLIPLoader, EmptyLTXVLatentVideo, KSamplerSelect, LTXVAudioVAEEncode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVImgToVideoInplace, LTXVPreprocess, LTXVSeparateAVLatent, LoadAudio, LoadImage, PreviewAudio, PreviewImage, RandomNoise, SaveAudioMP3, SetLatentNoiseMask, SolidMask, TrimAudioDuration
 from vibecomfy.nodes.custom_scripts import MathExpression_pysssss, ShowText_pysssss
 from vibecomfy.nodes.gguf import UnetLoaderGGUF
 from vibecomfy.nodes.kjnodes import ImageResizeKJv2, VAELoaderKJ
@@ -26,8 +26,6 @@ GUIDE_STRENGTH = 1
 MAIN_DEVICE = 'main_device'
 MEL_BAND_ROFORMER_NAME = 'MelBandRoformer_fp32.safetensors'
 NO = 'no'
-NONE = 'none'
-TINY = 'tiny'
 UNET_NAME_GGUF = 'LTX-2-dev-Q4_K_S.gguf'
 VIDEO_VAE_NAME = 'LTX2_video_vae_2_bf16.safetensors'
 V_1_7B = '1.7B'
@@ -56,13 +54,14 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Sampling
-    ksamplerselect = KSamplerSelect(sampler_name='lcm')
+    ksamplerselect = KSamplerSelect(_id='154', sampler_name='lcm')
 
     # Inputs
-    image, _ = LoadImage(image='ComfyUI_00126_.png')
-    loadaudio = LoadAudio(audio='man voice 1.mp3')
+    image, _ = LoadImage(_id='240', image='ComfyUI_00126_.png')
+    loadaudio = LoadAudio(_id='243', audio='man voice 1.mp3')
 
     seed__rgthree_ = Seed_rgthree(
+        _id='290',
         seed=DEFAULT_SEED,
         widget_1='',
         widget_2='',
@@ -70,10 +69,11 @@ def build() -> VibeWorkflow:
     )
 
     text_multiline = raw_call('Text Multiline', '293', widget_0='video of a goblin talking to the camera')
-    unetloadergguf = UnetLoaderGGUF(unet_name=UNET_NAME_GGUF)
+    unetloadergguf = UnetLoaderGGUF(_id='301', unet_name=UNET_NAME_GGUF)
 
     # Loaders
     dualcliploader = DualCLIPLoader(
+        _id='303',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_NAME_2,
         type_='ltxv',
@@ -81,12 +81,14 @@ def build() -> VibeWorkflow:
     )
 
     vaeloaderkj = VAELoaderKJ(
+        _id='305',
         vae_name=VIDEO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
     )
 
     vaeloaderkj_2 = VAELoaderKJ(
+        _id='311',
         vae_name=AUDIO_VAE_NAME,
         device=MAIN_DEVICE,
         weight_dtype=BF16,
@@ -101,101 +103,34 @@ def build() -> VibeWorkflow:
         widget_5=0,
     )
 
-    loadaudio_2 = LoadAudio(audio='man voice 2 LONG.mp3')
-    loadaudio_3 = LoadAudio(audio='EdgarLetfall.mp3')
+    loadaudio_2 = LoadAudio(_id='347', audio='man voice 2 LONG.mp3')
+    loadaudio_3 = LoadAudio(_id='376', audio='EdgarLetfall.mp3')
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
+        _id='377',
         model=MEL_BAND_ROFORMER_NAME,
     )
 
     cr_float_to_integer = raw_call('CR Float To Integer', '384', _float=25.0)
-    load_whisper__mtb_ = raw_call('Load Whisper (mtb)', '405', widget_0=TINY, widget_1=True)
-    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    load_whisper__mtb_ = raw_call('Load Whisper (mtb)', '405', widget_0='tiny', widget_1=True)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='411', ckpt_name=CKPT_NAME)
 
     ltxvgemmaclipmodelloader = LTXVGemmaCLIPModelLoader(
+        _id='412',
         gemma_path=CLIP_NAME,
         ltxv_path=CKPT_NAME,
     )
 
-    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
-    load_whisper__mtb__2 = raw_call('Load Whisper (mtb)', '433', widget_0=TINY, widget_1=True)
+    model, _, vae = CheckpointLoaderSimple(_id='413', ckpt_name=CKPT_NAME)
 
-    iamccs_bus_group = raw_call('IAMCCS_bus_group', '448',
-        widget_0='both',
-        widget_1=False,
-        widget_10=None,
-        widget_11=None,
-        widget_12=None,
-        widget_13=None,
-        widget_14=None,
-        widget_15=None,
-        widget_16=None,
-        widget_17=None,
-        widget_18=None,
-        widget_19=None,
-        widget_2=True,
-        widget_20={'mute': False, 'solo': False},
-        widget_21={'mute': False, 'solo': False},
-        widget_22={'mute': False, 'solo': False},
-        widget_23={'mute': False, 'solo': False},
-        widget_3='',
-        widget_4='',
-        widget_5=False,
-        widget_6=None,
-        widget_7='',
-        widget_8=NONE,
-        widget_9=False,
+    randomnoise = RandomNoise(
+        _id='178',
+        control_after_generate='fixed',
+        noise_seed=seed__rgthree_,
     )
-
-    iamccs_bus_group_2 = raw_call('IAMCCS_bus_group', '450',
-        widget_0='groups',
-        widget_1=True,
-        widget_10=False,
-        widget_11=False,
-        widget_12=False,
-        widget_13=None,
-        widget_14=None,
-        widget_15=None,
-        widget_16=None,
-        widget_17={'mute': False, 'solo': True},
-        widget_18={'mute': False, 'solo': False},
-        widget_2=False,
-        widget_3='models',
-        widget_4='',
-        widget_5=False,
-        widget_6=None,
-        widget_7='',
-        widget_8=NONE,
-        widget_9=None,
-    )
-
-    iamccs_autolinkarguments = raw_call('IAMCCS_AutoLinkArguments', '457',
-        widget_0=False,
-        widget_1=False,
-        widget_10='Orange',
-        widget_11='Green',
-        widget_12='Gray',
-        widget_13='White',
-        widget_14='',
-        widget_15='',
-        widget_16='both',
-        widget_17=None,
-        widget_18='',
-        widget_19=None,
-        widget_2=False,
-        widget_3=True,
-        widget_4=False,
-        widget_5='None',
-        widget_6='',
-        widget_7='TopToDown',
-        widget_8='AvoidAll',
-        widget_9=True,
-    )
-
-    SamplerCustomAdvanced()
-    randomnoise = RandomNoise(control_after_generate='fixed', noise_seed=seed__rgthree_)
 
     image_2, width, height, _ = ImageResizeKJv2(
+        _id='241',
         width=720,
         height=1280,
         upscale_method='lanczos',
@@ -224,10 +159,10 @@ def build() -> VibeWorkflow:
         audio_prompt=loadaudio_2,
     )
 
-    trimaudioduration = TrimAudioDuration(duration=20, audio=loadaudio_3)
+    trimaudioduration = TrimAudioDuration(_id='366', duration=20, audio=loadaudio_3)
 
     audio_to_text__mtb_ = raw_call('Audio To Text (mtb)', '406',
-        widget_0=AUTO,
+        widget_0='auto',
         widget_1=False,
         audio=loadaudio_3,
         pipeline=load_whisper__mtb_.out(0),
@@ -267,18 +202,19 @@ def build() -> VibeWorkflow:
         input_02=dualcliploader,
     )
 
-    iamccs_autolinkconverter = raw_call('IAMCCS_AutoLinkConverter', '456',
-        widget_0=None,
-        widget_1=None,
-        arg=iamccs_autolinkarguments.out(0),
-    )
-
-    ltxvpreprocess = LTXVPreprocess(img_compression=33, image=image_2)
+    ltxvpreprocess = LTXVPreprocess(_id='269', img_compression=33, image=image_2)
 
     # Outputs
-    previewimage = PreviewImage(images=image_2)
-    saveaudiomp3 = SaveAudioMP3(audio=fl_chatterboxturbotts.out(0))
-    solidmask = SolidMask(value=0, width=width, height=height)
+    previewimage = PreviewImage(_id='275', images=image_2)
+    saveaudiomp3 = SaveAudioMP3(_id='350', audio=fl_chatterboxturbotts.out(0))
+
+    solidmask = SolidMask(
+        _id='388',
+        value=0,
+        width=width,
+        height=height,
+    )
+
     easy_cleangpuused = raw_call('easy cleanGpuUsed', '407', anything=audio_to_text__mtb_.out(0))
 
     iamccs_multiswitch_2 = raw_call('IAMCCS_MultiSwitch', '451',
@@ -289,7 +225,8 @@ def build() -> VibeWorkflow:
         input_02=iamccs_modelwithlora_ltx2.out(0),
     )
 
-    showtext_pysssss_2 = ShowText_pysssss(
+    showtext_pysssss = ShowText_pysssss(
+        _id='373',
         widget_0=' How are you? I am from metallurgia, Elfica, a fantasy tale from our dear. Welcome to our show. And sit down and listen carefully.',
         text=easy_cleangpuused.out(0),
     )
@@ -308,17 +245,17 @@ def build() -> VibeWorkflow:
     fb_qwen3ttsvoicecloneprompt = raw_call('FB_Qwen3TTSVoiceClonePrompt', '379',
         widget_0='',
         widget_1=V_1_7B,
-        widget_2='auto',
+        widget_2=AUTO,
         widget_3='fp32',
         widget_4='sage_attn',
         widget_5=True,
         widget_6=True,
         ref_audio=trimaudioduration,
-        ref_text=showtext_pysssss_2.out(0),
+        ref_text=showtext_pysssss.out(0),
     )
 
     iamccs_hwsupporter = raw_call('IAMCCS_HwSupporter', '893',
-        widget_0=AUTO,
+        widget_0='auto',
         widget_1=True,
         widget_10='auto',
         widget_11=False,
@@ -343,14 +280,20 @@ def build() -> VibeWorkflow:
     )
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=iamccs_hwsupporter.out(1))
+    cliptextencode = CLIPTextEncode(
+        _id='165',
+        text=DEFAULT_PROMPT,
+        clip=iamccs_hwsupporter.out(1),
+    )
 
     cliptextencode_2 = CLIPTextEncode(
+        _id='169',
         text=text_multiline.out(0),
         clip=iamccs_hwsupporter.out(1),
     )
 
     basicscheduler = BasicScheduler(
+        _id='238',
         scheduler='simple',
         steps=8,
         model=iamccs_hwsupporter.out(0),
@@ -376,9 +319,8 @@ def build() -> VibeWorkflow:
         input=fb_qwen3ttsvoicecloneprompt.out(0),
     )
 
-    showtext_pysssss_3 = ShowText_pysssss(text=iamccs_hwsupporter.out(3))
-
     positive, negative = LTXVConditioning(
+        _id='164',
         negative=cliptextencode,
         positive=cliptextencode_2,
     )
@@ -392,7 +334,7 @@ def build() -> VibeWorkflow:
         widget_13=True,
         widget_14='auto',
         widget_15=True,
-        widget_2='auto',
+        widget_2=AUTO,
         widget_3='bf16',
         widget_4='Auto',
         widget_5='',
@@ -401,11 +343,12 @@ def build() -> VibeWorkflow:
         widget_8=2048,
         widget_9=0.8,
         ref_audio=trimaudioduration,
-        ref_text=showtext_pysssss_2.out(0),
+        ref_text=showtext_pysssss.out(0),
         voice_clone_prompt=iamccs_hwsupporterany.out(0),
     )
 
     cfgguider = CFGGuider(
+        _id='153',
         cfg=GUIDE_STRENGTH,
         model=iamccs_hwsupporter.out(0),
         negative=negative,
@@ -424,52 +367,49 @@ def build() -> VibeWorkflow:
     audio_duration__mtb_ = raw_call('Audio Duration (mtb)', '363', audio=iamccs_multiswitch.out(0))
 
     melbandroformersampler = MelBandRoFormerSampler(
+        _id='365',
         audio=iamccs_multiswitch.out(0),
         model=melbandroformermodelloader.out(0),
     )
 
     mathexpression_pysssss = MathExpression_pysssss(
+        _id='364',
         widget_0='((a*0.001)*b)',
         a=audio_duration__mtb_.out(0),
         b=cr_float_to_integer.out(0),
     )
 
-    previewaudio = PreviewAudio(audio=melbandroformersampler.out(0))
+    previewaudio = PreviewAudio(_id='380', audio=melbandroformersampler.out(0))
 
     ltxvaudiovaeencode = LTXVAudioVAEEncode(
+        _id='387',
         audio=melbandroformersampler.out(0),
         audio_vae=iamccs_multiswitch_3.out(0),
     )
 
-    audio_to_text__mtb__2 = raw_call('Audio To Text (mtb)', '409',
-        widget_0=AUTO,
-        widget_1=False,
-        audio=melbandroformersampler.out(0),
-        pipeline=load_whisper__mtb__2.out(0),
-    )
-
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
+        _id='162',
         width=width,
         height=height,
         length=mathexpression_pysssss.out(0),
     )
 
-    setlatentnoisemask = SetLatentNoiseMask(mask=solidmask, samples=ltxvaudiovaeencode)
-    easy_cleangpuused_2 = raw_call('easy cleanGpuUsed', '410', anything=audio_to_text__mtb__2.out(0))
+    setlatentnoisemask = SetLatentNoiseMask(
+        _id='389',
+        mask=solidmask,
+        samples=ltxvaudiovaeencode,
+    )
 
     ltxvimgtovideoinplace = LTXVImgToVideoInplace(
+        _id='239',
         strength=0.8,
         image=ltxvpreprocess,
         latent=emptyltxvlatentvideo,
         vae=iamccs_hwsupporter.out(2),
     )
 
-    showtext_pysssss = ShowText_pysssss(
-        widget_0=" Hey, how are you? Well, I suppose you already know me, but wait a moment. Are human? I mean, I am not. So I've been thinking about it all day. Believe me.",
-        text=easy_cleangpuused_2.out(0),
-    )
-
     ltxvconcatavlatent = LTXVConcatAVLatent(
+        _id='166',
         audio_latent=setlatentnoisemask,
         video_latent=ltxvimgtovideoinplace,
     )
@@ -485,6 +425,7 @@ def build() -> VibeWorkflow:
     )
 
     video_latent, _ = LTXVSeparateAVLatent(
+        _id='245',
         av_latent=iamccs_sampleradvancedversion1.out(0),
     )
 
@@ -505,6 +446,7 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine = VHS_VideoCombine(
+        _id='190',
         frame_rate=25,
         filename_prefix='IAMCCS/LTX2_AU+IMG2V',
         format='video/h264-mp4',

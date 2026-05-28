@@ -40,23 +40,25 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    unetloader = UNETLoader(unet_name=UNET_NAME)
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
-    vaeloader = VAELoader(vae_name=VAE_NAME)
+    unetloader = UNETLoader(_id='37', unet_name=UNET_NAME)
+    cliploader = CLIPLoader(_id='38', clip_name=CLIP_NAME, type_='wan')
+    vaeloader = VAELoader(_id='39', vae_name=VAE_NAME)
 
     # Sampling
     emptyhunyuanlatentvideo = EmptyHunyuanLatentVideo(
+        _id='40',
         width=832,
         height=480,
         length=DEFAULT_FRAMES,
     )
 
     # Conditioning
-    positive = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-    negative = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
-    modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
+    positive = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT_2, clip=cliploader)
+    negative = CLIPTextEncode(_id='7', text=DEFAULT_PROMPT, clip=cliploader)
+    modelsamplingsd3 = ModelSamplingSD3(_id='48', shift=8, model=unetloader)
 
     ksampler = KSampler(
+        _id='3',
         seed=DEFAULT_SEED,
         steps=30,
         cfg=GUIDE_STRENGTH,
@@ -68,11 +70,11 @@ def build() -> VibeWorkflow:
     )
 
     # Decode
-    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
-    createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
+    vaedecode = VAEDecode(_id='8', samples=ksampler, vae=vaeloader)
+    createvideo = CreateVideo(_id='49', fps=DEFAULT_FPS, images=vaedecode)
 
     # Outputs
-    savevideo = SaveVideo(video=createvideo)
+    savevideo = SaveVideo(_id='50', video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/ComfyUI')
 

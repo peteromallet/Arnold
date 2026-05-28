@@ -4,18 +4,15 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CLIPLoader, CLIPTextEncode, LoadImage
+from vibecomfy.nodes.core import LoadImage
 from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, INTConstant, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
-from vibecomfy.nodes.wanvideowrapper import CreateCFGScheduleFloatList, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEmbedBridge, WanVideoTextEncode, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import CreateCFGScheduleFloatList, LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoImageToVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncode, WanVideoVAELoader
 
 
 CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
-CLIP_NAME_2 = 'umt5_xxl_fp16.safetensors'
 DEFAULT_NEGATIVE = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_PROMPT = 'old man gets up and jumps into the lake'
-DEFAULT_PROMPT_2 = "high quality nature video featuring a red panda balancing on a bamboo stem while a bird lands on it's head, on the background there is a waterfall"
-DEFAULT_PROMPT_3 = '色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走'
 DEFAULT_SEED = 43
 DPM_SDE = 'dpm++_sde'
 FP16 = 'fp16'
@@ -42,7 +39,6 @@ PUBLIC_INPUT_METADATA = {
     'width': InputSpec(node='15', field='width', default=720, type='INT'),
     'height': InputSpec(node='15', field='height', default=720, type='INT'),
     'seed': InputSpec(node='23', field='seed', default=DEFAULT_SEED, type='INT'),
-    'prompt': InputSpec(node='13', field='text', default=DEFAULT_PROMPT_2, type='STRING', required=True, media_semantics='text'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -62,50 +58,53 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(_id='1', model_name=CLIP_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='2',
         model=MODEL_NAME,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
-    wanvideoblockswap = WanVideoBlockSwap(vace_blocks_to_swap=1)
-
-    # Loaders
-    cliploader = CLIPLoader(clip_name=CLIP_NAME_2, type_='wan')
+    wanvideovaeloader = WanVideoVAELoader(_id='3', model_name=VAE_NAME)
+    wanvideoblockswap = WanVideoBlockSwap(_id='4', vace_blocks_to_swap=1)
 
     wanvideoloraselect = WanVideoLoraSelect(
+        _id='6',
         lora=LORA_NAME,
         strength=3,
         merge_loras=False,
     )
 
     # Inputs
-    image, _ = LoadImage(image='oldman_upscaled.png')
+    image, _ = LoadImage(_id='7', image='oldman_upscaled.png')
 
     wanvideomodelloader_2 = WanVideoModelLoader(
+        _id='8',
         model=MODEL_NAME_2,
         base_precision=FP16,
         quantization=FP8_E4M3FN_SCALED,
     )
 
-    intconstant = INTConstant(value=3)
-    intconstant_2 = INTConstant(value=6)
-    wanvideoloraselect_2 = WanVideoLoraSelect(lora=LORA_NAME, merge_loras=False)
+    intconstant = INTConstant(_id='9', value=3)
+    intconstant_2 = INTConstant(_id='10', value=6)
+
+    wanvideoloraselect_2 = WanVideoLoraSelect(
+        _id='11',
+        lora=LORA_NAME,
+        merge_loras=False,
+    )
 
     wanvideotextencode = WanVideoTextEncode(
+        _id='12',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         t5=loadwanvideot5textencoder,
     )
 
-    # Conditioning
-    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
-    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_3, clip=cliploader)
-
     image_2, width, height, _ = ImageResizeKJv2(
+        _id='15',
         width=720,
         height=720,
         upscale_method='lanczos',
@@ -116,38 +115,39 @@ def build() -> VibeWorkflow:
     )
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='16',
         block_swap_args=wanvideoblockswap,
         model=wanvideomodelloader,
     )
 
     wanvideosetblockswap_2 = WanVideoSetBlockSwap(
+        _id='17',
         block_swap_args=wanvideoblockswap,
         model=wanvideomodelloader_2,
     )
 
     createcfgschedulefloatlist = CreateCFGScheduleFloatList(
+        _id='18',
         cfg_scale_start=2,
         cfg_scale_end=2,
         end_percent=0.01,
         steps=intconstant_2,
     )
 
-    wanvideotextembedbridge = WanVideoTextEmbedBridge(
-        negative=cliptextencode_2,
-        positive=cliptextencode,
-    )
-
     wanvideosetloras = WanVideoSetLoRAs(
+        _id='20',
         lora=wanvideoloraselect_2,
         model=wanvideosetblockswap_2,
     )
 
     wanvideosetloras_2 = WanVideoSetLoRAs(
+        _id='21',
         lora=wanvideoloraselect,
         model=wanvideosetblockswap,
     )
 
     wanvideoimagetovideoencode = WanVideoImageToVideoEncode(
+        _id='22',
         fun_or_fl2v_model=False,
         width=width,
         height=height,
@@ -156,6 +156,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='23',
         shift=8,
         seed=DEFAULT_SEED,
         scheduler=DPM_SDE,
@@ -169,6 +170,7 @@ def build() -> VibeWorkflow:
     )
 
     samples_2, _ = WanVideoSampler(
+        _id='24',
         cfg=GUIDE_STRENGTH,
         shift=8,
         seed=DEFAULT_SEED,
@@ -183,15 +185,17 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='25',
         normalization='default',
         samples=samples_2,
         vae=wanvideovaeloader,
     )
 
-    image_3, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_3, _, _, _ = GetImageSizeAndCount(_id='26', image=wanvideodecode)
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='27',
         frame_rate=16,
         filename_prefix='WanVideo2_2_I2V',
         format='video/h264-mp4',

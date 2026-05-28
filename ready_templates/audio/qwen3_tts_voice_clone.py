@@ -27,9 +27,10 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadaudio = LoadAudio(audio=SPEECH_SMOKE_WAV, widget_0='speech_smoke.wav')
+    loadaudio = LoadAudio(_id='1', audio=SPEECH_SMOKE_WAV, widget_0='speech_smoke.wav')
 
     ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
+        _id='2',
         target_text='This Qwen voice clone template uses a tiny bundled reference clip and runs as a reusable audio smoke test.',
         model_size='0.6B',
         language='English',
@@ -39,6 +40,7 @@ def build() -> VibeWorkflow:
     )
 
     saveaudiomp3 = SaveAudioMP3(
+        _id='3',
         filename_prefix='audio/qwen3_tts_voice_clone',
         audio=ailab_qwen3ttsvoiceclone,
     )

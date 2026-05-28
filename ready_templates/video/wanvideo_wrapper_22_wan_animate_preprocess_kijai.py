@@ -9,7 +9,7 @@ from vibecomfy.nodes.kjnodes import BlockifyMask, DrawMaskOnImage, GetImageSizeA
 from vibecomfy.nodes.sam2 import DownloadAndLoadSAM2Model, Sam2Segmentation
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
 from vibecomfy.nodes.wananimatepreprocess import DrawViTPose, OnnxDetectionModelLoader, PoseAndFaceDetection
-from vibecomfy.nodes.wanvideowrapper import WanVideoAnimateEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoContextOptions, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import WanVideoAnimateEmbeds, WanVideoBlockSwap, WanVideoClipVisionEncode, WanVideoDecode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
 CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
@@ -73,19 +73,21 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
-    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='1')
+    wanvideovaeloader = WanVideoVAELoader(_id='2', model_name=VAE_NAME)
 
     wanvideoblockswap = WanVideoBlockSwap(
+        _id='3',
         blocks_to_swap=25,
         use_non_blocking=True,
         prefetch_blocks=1,
     )
 
     # Inputs
-    image, _ = LoadImage(image='refer.jpeg')
+    image, _ = LoadImage(_id='4', image='refer.jpeg')
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
+        _id='5',
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
@@ -93,23 +95,20 @@ def build() -> VibeWorkflow:
     )
 
     # Loaders
-    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
+    clipvisionloader = CLIPVisionLoader(_id='6', clip_name=CLIP_NAME_2)
 
     downloadandloadsam2model = DownloadAndLoadSAM2Model(
+        _id='7',
         model=MODEL_NAME,
         segmentor='video',
         device='cuda',
     )
 
-    wanvideocontextoptions = WanVideoContextOptions(
-        context_schedule='static_standard',
-        context_overlap=32,
-    )
-
-    intconstant = INTConstant(value=832)
-    intconstant_2 = INTConstant(value=480)
+    intconstant = INTConstant(_id='9', value=832)
+    intconstant_2 = INTConstant(_id='10', value=480)
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
+        _id='11',
         lora_0=LORA__NAME,
         lora_1=LORA__NAME_2,
         strength_1=1.2,
@@ -117,17 +116,20 @@ def build() -> VibeWorkflow:
     )
 
     onnxdetectionmodelloader = OnnxDetectionModelLoader(
+        _id='12',
         vitpose_model=VITPOSE_MODEL_NAME,
         yolo_model=YOLO_MODEL_NAME,
     )
 
     wanvideomodelloader = WanVideoModelLoader(
+        _id='13',
         model=MODEL_NAME_2,
         base_precision='fp16',
         compile_args=wanvideotorchcompilesettings,
     )
 
     image_2, frame_count, audio, _ = VHS_LoadVideo(
+        _id='14',
         video='raw.mp4',
         force_rate=16,
         videopreview={'hidden': False, 'params': {'custom_height': 544, 'custom_width': 960, 'filename': 'raw.mp4', 'force_rate': 16, 'format': 'video/mp4', 'frame_load_cap': 0, 'select_every_nth': 1, 'skip_first_frames': 0, 'type': 'input'}, 'paused': False},
@@ -137,38 +139,39 @@ def build() -> VibeWorkflow:
     )
 
     image_3, _, _, _ = ImageResizeKJv2(
+        _id='15',
         upscale_method='lanczos',
         keep_proportion='pad_edge_pixel',
         crop_position='top',
         divisible_by=16,
         device='cpu',
-        widget_0=832,
-        widget_1=480,
         width=intconstant,
         height=intconstant_2,
         image=image,
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
+        _id='16',
         lora=wanvideoloraselectmulti,
         model=wanvideomodelloader,
     )
 
     wanvideoclipvisionencode = WanVideoClipVisionEncode(
+        _id='17',
         clip_vision=clipvisionloader,
         image_1=image_3,
     )
 
-    image_4, width_2, height_2, _ = GetImageSizeAndCount(image=image_2)
+    image_4, width_2, height_2, _ = GetImageSizeAndCount(_id='18', image=image_2)
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
+        _id='19',
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras,
     )
 
     pose_data, face_images, _, bboxes, _ = PoseAndFaceDetection(
-        widget_0=832,
-        widget_1=480,
+        _id='20',
         width=width_2,
         height=height_2,
         images=image_4,
@@ -176,14 +179,14 @@ def build() -> VibeWorkflow:
     )
 
     sam2segmentation = Sam2Segmentation(
+        _id='21',
         bboxes=bboxes,
         image=image_4,
         sam2_model=downloadandloadsam2model,
     )
 
     drawvitpose = DrawViTPose(
-        widget_0=832,
-        widget_1=480,
+        _id='22',
         width=width_2,
         height=height_2,
         pose_data=pose_data,
@@ -191,6 +194,7 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
+        _id='23',
         frame_rate=16,
         filename_prefix='vitpose',
         format=VIDEO_H264_MP4,
@@ -204,6 +208,7 @@ def build() -> VibeWorkflow:
     )
 
     imageconcatmulti = ImageConcatMulti(
+        _id='24',
         inputcount=4,
         direction='down',
         match_image_size=True,
@@ -215,6 +220,7 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine_2 = VHS_VideoCombine(
+        _id='25',
         frame_rate=16,
         filename_prefix='WanVideo2_1_T2V',
         format=VIDEO_H264_MP4,
@@ -227,16 +233,20 @@ def build() -> VibeWorkflow:
         images=drawvitpose,
     )
 
-    mask_3, _ = GrowMaskWithBlur(expand=10, unused_7=False, mask=sam2segmentation)
-    blockifymask = BlockifyMask(masks=mask_3)
-    drawmaskonimage = DrawMaskOnImage(image=image_2, mask=blockifymask)
+    mask_3, _ = GrowMaskWithBlur(
+        _id='26',
+        expand=10,
+        unused_7=False,
+        mask=sam2segmentation,
+    )
+
+    blockifymask = BlockifyMask(_id='27', masks=mask_3)
+    drawmaskonimage = DrawMaskOnImage(_id='28', image=image_2, mask=blockifymask)
 
     wanvideoanimateembeds = WanVideoAnimateEmbeds(
+        _id='29',
         force_offload=False,
         unused_8=False,
-        widget_0=832,
-        widget_1=480,
-        widget_2=501,
         width=intconstant,
         height=intconstant_2,
         num_frames=frame_count,
@@ -250,6 +260,7 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine_3 = VHS_VideoCombine(
+        _id='30',
         frame_rate=16,
         filename_prefix='WanVideo2_1_T2V',
         format=VIDEO_H264_MP4,
@@ -263,6 +274,7 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
+        _id='31',
         steps=4,
         cfg=GUIDE_STRENGTH,
         seed=DEFAULT_SEED,
@@ -274,14 +286,16 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
+        _id='32',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
     )
 
-    image_5, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_5, _, _, _ = GetImageSizeAndCount(_id='33', image=wanvideodecode)
 
     imageconcatmulti_2 = ImageConcatMulti(
+        _id='34',
         direction='left',
         match_image_size=True,
         unused_3=None,
@@ -290,6 +304,7 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine_4 = VHS_VideoCombine(
+        _id='35',
         frame_rate=16,
         filename_prefix='Wanimate',
         format=VIDEO_H264_MP4,

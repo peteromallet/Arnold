@@ -2501,19 +2501,27 @@ def _emit_build_function(
         if use_shared_helpers:
             subgraph = (prepared.get("subgraph_definitions") or {}).get(str(node.class_type))
             if subgraph is not None:
-                out_lines.extend(
-                    _emit_subgraph_call_statement(
-                        node,
-                        subgraph,
-                        edges_in,
-                        var_names,
-                        output_var_names,
-                        workflow_nodes,
-                        body_indent=body_indent,
-                        continuation_indent=continuation_indent,
-                        diagnostics=diagnostics,
-                    )
+                stmt_lines = _emit_subgraph_call_statement(
+                    node,
+                    subgraph,
+                    edges_in,
+                    var_names,
+                    output_var_names,
+                    workflow_nodes,
+                    body_indent=body_indent,
+                    continuation_indent=continuation_indent,
+                    diagnostics=diagnostics,
                 )
+                # Subgraph calls share the node-call blank-line rhythm: multi-line
+                # statements are surrounded by blank lines, single-line ones pack.
+                is_multiline = len(stmt_lines) > 1
+                if is_multiline:
+                    prev = out_lines[-1] if out_lines else ""
+                    if out_lines and prev != "" and not prev.lstrip().startswith("# "):
+                        out_lines.append("")
+                out_lines.extend(stmt_lines)
+                if is_multiline:
+                    out_lines.append("")
                 continue
 
             use_wrapper = wrapper_module is not None
