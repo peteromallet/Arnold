@@ -1386,6 +1386,77 @@
             }
           }
         },
+        "cost": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "plan",
+              "help": "Plan name",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--plan"
+              ],
+              "required": true,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": [
+                "table",
+                "json"
+              ],
+              "const": null,
+              "default": "table",
+              "dest": "format",
+              "help": "Output format (default: table)",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--format"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "by_phase",
+              "help": "Break down cost and tokens by phase",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--by-phase"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {}
+        },
         "critique": {
           "mutually_exclusive_groups": [],
           "options": [
