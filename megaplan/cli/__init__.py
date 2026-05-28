@@ -842,7 +842,7 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
             source_home=Path(args.source_home).expanduser(),
             source_project=args.source_project,
             all_projects=bool(args.all_projects),
-            target_project_dir=Path(args.target_project_dir).expanduser(),
+            target_project_dir=Path(args.project_dir).expanduser(),
             mode=args.mode,
             dry_run=bool(args.dry_run),
         )

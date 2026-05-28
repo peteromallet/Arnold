@@ -7,34 +7,8 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan.auto import DriverOutcome
 from megaplan.types import CliError
-
-
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -62,8 +36,8 @@ def _load_state(root: Path, plan_name: str) -> dict:
     return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
 
 
-def test_init_reads_idea_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+def test_init_reads_idea_file(tmp_path: Path, bootstrap_fixture: tuple[Path, Path]) -> None:
+    root, project_dir = bootstrap_fixture
     idea_file = tmp_path / "idea.txt"
     idea_file.write_text("  file-backed idea  \n", encoding="utf-8")
 
@@ -79,9 +53,9 @@ def test_init_reads_idea_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 def test_init_rejects_both_positional_and_idea_file(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     idea_file = tmp_path / "idea.txt"
     idea_file.write_text("from file\n", encoding="utf-8")
 
@@ -94,8 +68,8 @@ def test_init_rejects_both_positional_and_idea_file(
     assert info.value.code == "invalid_args"
 
 
-def test_init_rejects_empty_idea_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+def test_init_rejects_empty_idea_file(tmp_path: Path, bootstrap_fixture: tuple[Path, Path]) -> None:
+    root, project_dir = bootstrap_fixture
     idea_file = tmp_path / "empty.txt"
     idea_file.write_text(" \n\t", encoding="utf-8")
 
@@ -111,9 +85,9 @@ def test_init_rejects_empty_idea_file(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_init_slugify_uses_resolved_idea_text(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     idea_file = tmp_path / "slug-source.txt"
     idea_file.write_text("Ship Search Results Faster\n", encoding="utf-8")
 
@@ -127,9 +101,9 @@ def test_init_slugify_uses_resolved_idea_text(
 
 def test_init_state_idea_is_file_contents(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     idea_file = tmp_path / "state-idea.txt"
     idea_file.write_text("  keep trimmed content  \n", encoding="utf-8")
 
@@ -144,9 +118,10 @@ def test_init_state_idea_is_file_contents(
 
 def test_init_auto_start_invokes_drive(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     idea_file = tmp_path / "auto-start.txt"
     idea_file.write_text("auto start from file\n", encoding="utf-8")
     calls: list[tuple[str, Path]] = []

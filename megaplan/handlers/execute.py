@@ -221,7 +221,7 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
                 attach_agent_fallback(response, args)
                 return response
             from megaplan.audits.capabilities import get_worker_capabilities
-            from megaplan.audits.verifiability import classify_criteria
+            from megaplan.orchestration.verifiability import classify_criteria
 
             plan_meta = read_json(latest_plan_meta_path(plan_dir, state))
             success_criteria = plan_meta.get("success_criteria", [])

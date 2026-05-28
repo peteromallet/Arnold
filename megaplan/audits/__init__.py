@@ -21,7 +21,7 @@ from megaplan.audits.audit_engine import (
     render_audit_report,
     resolve_plan_dir,
 )
-from megaplan.audits.verifiability import (
+from megaplan.orchestration.verifiability import (
     ALL_CAPABILITIES as _AUDITS_ALL_CAPABILITIES,  # re-export also lives in .capabilities
     CriterionAudit,
     HUMAN_CAPABILITIES as _AUDITS_HUMAN_CAPABILITIES,

@@ -9,14 +9,13 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan.runtime.doc_assembly import assemble_doc, extract_sections
 from megaplan.orchestration.evaluation import validate_execution_evidence
 from megaplan.execute.timeout import _merge_timeout_checkpoint, _reset_timeout_invalid_tasks
 from megaplan.schemas import SCHEMAS, get_execution_schema_key, strict_schema
 from megaplan.types import CliError
+
+from tests.conftest import make_args_factory
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -25,53 +24,9 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def _make_args(project_dir: Path, **overrides: object) -> Namespace:
-    data = {
-        "plan": None,
-        "idea": "test idea",
-        "name": "test-plan",
-        "project_dir": str(project_dir),
-        "auto_approve": None,
-        "robustness": None,
-        "agent": None,
-        "ephemeral": False,
-        "fresh": False,
-        "persist": False,
-        "confirm_destructive": True,
-        "user_approved": False,
-        "confirm_self_review": False,
-        "batch": None,
-        "override_action": None,
-        "note": None,
-        "reason": "",
-        "mode": "code",
-        "output": None,
-        "hermes": None,
-    }
-    data.update(overrides)
-    return Namespace(**data)
-
-
-def _init_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-    monkeypatch.setenv("MEGAPLAN_MOCK_WORKERS", "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
+    defaults: dict[str, object] = {"mode": "code", "output": None, "hermes": None}
+    defaults.update(overrides)
+    return make_args_factory(project_dir)(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -80,9 +35,9 @@ def _init_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pa
 
 
 def test_handle_init_doc_mode_produces_correct_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _init_env(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     args = _make_args(project_dir, mode="doc", output="docs/plan.md")
     response = megaplan.handle_init(root, args)
     assert response["success"] is True
@@ -99,9 +54,9 @@ def test_handle_init_doc_mode_produces_correct_state(
 
 
 def test_handle_init_doc_mode_requires_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _init_env(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     args = _make_args(project_dir, mode="doc", output=None)
     with pytest.raises(CliError, match="--output is required"):
         megaplan.handle_init(root, args)
@@ -113,9 +68,9 @@ def test_handle_init_doc_mode_requires_output(
 
 
 def test_handle_init_doc_mode_rejects_absolute_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _init_env(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     args = _make_args(project_dir, mode="doc", output="/absolute/path.md")
     with pytest.raises(CliError, match="relative path"):
         megaplan.handle_init(root, args)
@@ -127,9 +82,9 @@ def test_handle_init_doc_mode_rejects_absolute_output(
 
 
 def test_handle_init_doc_mode_rejects_traversal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _init_env(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     args = _make_args(project_dir, mode="doc", output="../escape/path.md")
     with pytest.raises(CliError, match="path traversal"):
         megaplan.handle_init(root, args)

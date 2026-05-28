@@ -19,6 +19,19 @@ from megaplan.types import PlanState
 from ._shared import _gate_summary_or_skipped
 from .review import _settled_decisions_block, _settled_decisions_instruction
 
+# TODO(M6a): _review_joke_prompt and _review_doc_prompt share significant
+# structural similarity (data loading, flag reverify construction, pre-check
+# blocks, extra_sections assembly, criteria priority rules, rework_items
+# shape) but have intentional semantic differences that prevent a shared
+# helper with byte-identical output: (a) artifact terminology ("Approved
+# scene canvas" / "Output scene content" vs "Approved plan" / "Output
+# document content"), (b) the full JSON example block (criteria names,
+# evidence text, task/sense-check verdicts, summary), (c) the
+# primary-criterion section present only in joke mode, (d) the
+# flag-reverify instruction text ("scene" vs "document"), and (e) the
+# requirements intro sentence.  The duplication is intentionally retained
+# until a future milestone provides a cleaner parameterization boundary.
+
 
 def _primary_criterion(state: PlanState) -> str:
     criterion = state.get("config", {}).get("primary_criterion", "")

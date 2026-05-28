@@ -18,28 +18,39 @@ _MEGAPLAN = Path(__file__).resolve().parent.parent / ".venv-decomp" / "bin" / "m
 
 @pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_list_shows_builtin_pipelines() -> None:
+    """``megaplan run --list`` shows registered pipelines.
+
+    Demo pipelines (doc-critique, judges) are no longer registered as
+    built-ins; only planning and discovered pipelines appear.
+    """
     proc = subprocess.run(
         [str(_MEGAPLAN), "run", "--list"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
-    assert "doc-critique" in proc.stdout
-    assert "judges" in proc.stdout
     assert "planning" in proc.stdout
 
 
 @pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_describe_returns_description() -> None:
+    """``megaplan run <name> --describe`` for a registered pipeline."""
     proc = subprocess.run(
-        [str(_MEGAPLAN), "run", "doc-critique", "--describe"],
+        [str(_MEGAPLAN), "run", "planning", "--describe"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "critique" in proc.stdout.lower()
+    assert "planning" in proc.stdout.lower() or "production" in proc.stdout.lower()
 
 
-@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
-def test_run_doc_critique_end_to_end(tmp_path: Path) -> None:
+def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
+    """The doc-critique demo is runnable directly from its Python module.
+
+    Since demo pipelines are no longer registered as built-ins, invoke
+    via ``from megaplan._pipeline.demos.doc_critique import run_demo``
+    instead of the CLI registry.
+    """
+    from megaplan._pipeline.demos.doc_critique import run_demo
+
     fixture = tmp_path / "fixture.md"
     fixture.write_text(
         "This is the doc the critique loop reads.\n"
@@ -47,20 +58,10 @@ def test_run_doc_critique_end_to_end(tmp_path: Path) -> None:
     )
     plan_dir = tmp_path / "out"
 
-    proc = subprocess.run(
-        [
-            str(_MEGAPLAN), "run", "doc-critique",
-            "--inputs", f"doc={fixture}",
-            "--plan-dir", str(plan_dir),
-            "--state", '{"critique_iter": 0}',
-        ],
-        capture_output=True, text=True,
-    )
-    assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
-    assert payload["pipeline"] == "doc-critique"
-    assert payload["final_stage"] == "critique"
-    assert payload["state"]["critique_iter"] == 3
+    result = run_demo(fixture_path=fixture, artifact_root=plan_dir, mode="code")
+
+    assert result["final_stage"] == "critique"
+    assert result["state"]["critique_iter"] == 3
 
     # Exact artifact set landed.
     assert (plan_dir / "critique_versions" / "critique_v1.json").exists()
@@ -120,6 +121,18 @@ def test_registered_pipelines_includes_epic_blitz() -> None:
     from megaplan._pipeline.registry import registered_pipelines
     names = registered_pipelines()
     assert "epic-blitz" in names
+
+
+def test_registered_pipelines_does_not_expose_demo_pipelines() -> None:
+    """Demo pipelines (doc-critique, judges) are not in the production registry."""
+    from megaplan._pipeline.registry import registered_pipelines
+    names = registered_pipelines()
+    assert "doc-critique" not in names, (
+        f"doc-critique must not appear in registered_pipelines(); got {names!r}"
+    )
+    assert "judges" not in names, (
+        f"judges must not appear in registered_pipelines(); got {names!r}"
+    )
 
 
 def test_describe_pipeline_writing_panel_strict(capsys) -> None:

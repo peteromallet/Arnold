@@ -507,15 +507,7 @@ def _execute_batch_prompt(
     prerequisite_block, resolution_guidance_block = _format_user_action_guidance(
         finalize_data, resolutions, batch_task_ids
     )
-    approval_note = (
-        "Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations."
-        if state["config"].get("auto_approve")
-        else (
-            "Note: User explicitly approved this plan at the gate checkpoint."
-            if state["meta"].get("user_approved_gate")
-            else "Note: Review mode is enabled. Execute should only be running after explicit gate approval."
-        )
-    )
+    approval_note = _execute_approval_note(state)
     debt_watch_items = _debt_watch_lines(plan_dir, root)
     debt_watch_block = (
         "\n".join(

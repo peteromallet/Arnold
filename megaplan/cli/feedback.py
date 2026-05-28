@@ -365,8 +365,6 @@ def handle_feedback(root: Path, args: argparse.Namespace) -> StepResponse:
         _collect_feedback_rows._actor_override = actor_override  # type: ignore[attr-defined]
 
     operation = getattr(args, "operation", "edit")
-    if getattr(args, "show", False):
-        operation = "show"
 
     # --- search: scan plans across backends, apply filters, render
     if operation == "search":

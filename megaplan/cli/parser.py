@@ -68,6 +68,16 @@ def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
         "'direct' uses hermes:deepseek:deepseek-v4-pro and DEEPSEEK_API_KEY. "
         "Defaults to 'direct'. Non-DeepSeek slots are untouched.",
     )
+
+
+def _add_workflow_shape_args(parser: argparse.ArgumentParser) -> None:
+    """Wire workflow-shape flags (--with-prep, --with-feedback) onto a subparser.
+
+    These flags are only exposed on ``init`` because they determine the
+    workflow shape stored in state.config during plan creation.  Step,
+    loop, and tiebreaker commands recover the workflow shape from the
+    persisted state and do not re-expose these flags.
+    """
     parser.add_argument(
         "--with-prep",
         action="store_true",
@@ -233,7 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument(
         "--auto-start",
         action="store_true",
-        help="Immediately run the in-process auto driver after initializing the plan.",
+        help="Immediately run the auto driver after initializing the plan.",
     )
     init_parser.add_argument(
         "--hermes",
@@ -254,6 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Named preset from profiles.toml; see 'megaplan config profiles list'.",
     )
     _add_vendor_critic_args(init_parser)
+    _add_workflow_shape_args(init_parser)
     init_parser.add_argument(
         "--prep-direction",
         default=None,
@@ -495,7 +506,7 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_local_parser.add_argument("--source-home", default=str(Path.home()))
     migrate_local_parser.add_argument("--source-project", default=None)
     migrate_local_parser.add_argument("--all-projects", action="store_true")
-    migrate_local_parser.add_argument("--target-project-dir", required=True)
+    migrate_local_parser.add_argument("--project-dir", required=True)
     migrate_local_parser.add_argument(
         "--mode", choices=["orphan", "legacy-epic"], default="orphan"
     )
@@ -524,11 +535,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     feedback_parser.add_argument(
         "--plan", required=False, help="Plan name (required for edit/show)"
-    )
-    feedback_parser.add_argument(
-        "--show",
-        action="store_true",
-        help="(legacy alias) equivalent to: feedback show --plan <name>",
     )
     feedback_parser.add_argument(
         "--no-edit",
@@ -1092,6 +1098,11 @@ def build_parser() -> argparse.ArgumentParser:
     tb_run_parser.add_argument("--fresh", action="store_true")
     tb_run_parser.add_argument("--persist", action="store_true")
     tb_run_parser.add_argument("--ephemeral", action="store_true")
+    tb_run_parser.add_argument(
+        "--work-dir",
+        default=None,
+        help="Override the source-code working directory for subprocess workers (default: CWD)",
+    )
 
     introspect_parser = subparsers.add_parser(
         "introspect",

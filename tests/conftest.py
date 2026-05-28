@@ -138,6 +138,35 @@ def _make_plan_fixture_with_robustness(
 
 
 @pytest.fixture
+def bootstrap_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Lightweight env bootstrap: monkeypatches ``shutil.which``, config dir, and
+    creates ``root`` / ``project_dir`` (with ``.git``).  Returns ``(root, project_dir)``
+    **without** initializing a plan — callers that need a plan must still call
+    ``megaplan.handle_init`` themselves.
+    """
+    root = tmp_path / "root"
+    project_dir = tmp_path / "project"
+    config_path = tmp_path / "config"
+    root.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+
+    def _config_dir(home: Path | None = None) -> Path:
+        del home
+        return config_path
+
+    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
+    monkeypatch.setattr(
+        megaplan._core.shutil,
+        "which",
+        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
+    )
+    monkeypatch.setattr(io_module, "config_dir", _config_dir)
+    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
+    return root, project_dir
+
+
+@pytest.fixture
 def db_store_factory(request: pytest.FixtureRequest):
     """Factory fixture for DBStore; skips if --backend db not passed or SUPABASE_DB_URL not set."""
     backend = request.config.getoption("--backend", default=None)

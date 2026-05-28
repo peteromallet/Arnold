@@ -165,7 +165,7 @@ def test_ops_missing_blob_export_and_partial_legacy_conflict(tmp_path: Path, mon
         str(home),
         "--source-project",
         "old",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ]
     assert megaplan.cli.main(args) == 0

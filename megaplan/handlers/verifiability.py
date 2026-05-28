@@ -31,7 +31,7 @@ def get_human_verification_status(
 
     # --- classify deferred human criteria -----------------------------------
     if worker_caps is not None:
-        from megaplan.audits.verifiability import classify_criteria
+        from megaplan.orchestration.verifiability import classify_criteria
         _, human_deferred = classify_criteria(success_criteria, worker_caps)
     else:
         # Without worker caps we cannot classify – treat everything as
@@ -301,7 +301,7 @@ def handle_audit_verifiability(root: Path, args: argparse.Namespace) -> StepResp
     success_criteria = plan_meta.get("success_criteria", [])
 
     from megaplan.audits.capabilities import get_worker_capabilities
-    from megaplan.audits.verifiability import audit_criteria, validate_requires
+    from megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     worker_caps = get_worker_capabilities(state)
     audits = audit_criteria(success_criteria, worker_caps)
