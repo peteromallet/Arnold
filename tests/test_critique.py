@@ -254,6 +254,66 @@ def test_critique_evaluator_model_assignment_does_not_drive_dispatch(
     assert not any("M3A_WARN_CRITIQUE_RANK_PARSE" in record.getMessage() for record in caplog.records)
 
 
+def test_critique_dispatch_carries_effort_into_agentmode(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (specfix): the non-adaptive critique dispatch must forward the
+    resolved effort to the worker. Previously it rebuilt a bare 4-tuple
+    ``(agent, mode, refreshed, model)`` and dropped effort, so a `critique`
+    slot's effort never reached the codex-effort gate. The handler now hands
+    ``_run_worker`` an :class:`AgentMode` carrying ``effort`` and
+    ``resolved_model``."""
+    from megaplan.types import AgentMode
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    monkeypatch.setattr(megaplan.handlers.critique, "adaptive_critique_enabled", lambda state: False)
+    monkeypatch.setattr(megaplan.handlers.critique, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda step, args: AgentMode(
+            agent="codex",
+            mode="persistent",
+            refreshed=False,
+            model="gpt-5.5",
+            effort="high",
+            resolved_model="gpt-5.5",
+        ),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_run_worker(step, state, plan_dir, args, *, root=None, resolved=None, prompt_kwargs=None, **kwargs):
+        captured["resolved"] = resolved
+        return (
+            WorkerResult(
+                payload={"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            ),
+            "codex",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.handlers, "_run_worker", fake_run_worker)
+
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    resolved = captured["resolved"]
+    assert isinstance(resolved, AgentMode), "dispatch must pass an AgentMode, not a bare tuple that drops effort"
+    assert resolved.effort == "high"
+    assert resolved.resolved_model == "gpt-5.5"
+
+
 def test_critique_prompt_contains_robustness_instruction(plan_fixture: PlanFixture) -> None:
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
     _, state = load_plan(plan_fixture.root, plan_fixture.plan_name)
@@ -796,9 +856,12 @@ def test_handle_critique_pin_forces_critic_model_over_evaluator_assignment(
             "checks": [{"id": selected_cid, "summary": "ok", "findings": []}],
             "flags": [], "verified_flag_ids": [], "disputed_flag_ids": [],
         }
+        # ``resolved`` is now an AgentMode (carries effort/resolved_model) — it
+        # is iterable as (agent, mode, refreshed, model) but not subscriptable.
+        resolved_agent = next(iter(resolved)) if resolved else "hermes"
         return (
             WorkerResult(payload=payload, raw_output="{}", duration_ms=1, cost_usd=0.0, session_id="cr"),
-            resolved[0] if resolved else "hermes", "persistent", False,
+            resolved_agent, "persistent", False,
         )
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)

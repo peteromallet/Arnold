@@ -788,6 +788,7 @@ def build_parser() -> argparse.ArgumentParser:
             "set-robustness",
             "set-profile",
             "set-model",
+            "set-vendor",
         ],
     )
     override_parser.add_argument("--plan")
@@ -800,6 +801,11 @@ def build_parser() -> argparse.ArgumentParser:
     override_parser.add_argument("--phase", default=None)
     override_parser.add_argument("--model", default=None)
     override_parser.add_argument("--effort", default=None)
+    override_parser.add_argument(
+        "--vendor",
+        default=None,
+        help="(set-vendor) Target premium vendor for the phase: claude or codex.",
+    )
     # strict-notes plumbing. Only meaningful for specific override_action values, but
     # the override parser is flat (single positional + flags), so the flags live here.
     override_parser.add_argument(
