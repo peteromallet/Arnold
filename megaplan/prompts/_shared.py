@@ -289,6 +289,25 @@ def _render_prep_block(plan_dir: Path) -> tuple[str, str]:
         or "No suggested approach provided."
     )
 
+    open_questions = prep.get("open_questions", [])
+    open_questions_section = ""
+    if isinstance(open_questions, list) and open_questions:
+        oq_lines = []
+        for item in open_questions:
+            if not isinstance(item, dict):
+                continue
+            severity = str(item.get("severity", "")).strip()
+            question = str(item.get("question", "")).strip()
+            assumption = str(item.get("assumption", "")).strip()
+            if not question:
+                continue
+            if severity == "assume_and_proceed" and assumption:
+                oq_lines.append(f"- [{severity}] {question} _(assumption: {assumption})_")
+            else:
+                oq_lines.append(f"- [{severity}] {question}")
+        if oq_lines:
+            open_questions_section = "\n### Open Questions\n" + "\n".join(oq_lines)
+
     prep_block = textwrap.dedent(
         f"""
         Engineering brief produced from the codebase and task details:
@@ -310,6 +329,7 @@ def _render_prep_block(plan_dir: Path) -> tuple[str, str]:
 
         ### Suggested Approach
         {suggested_approach}
+        {open_questions_section}
         """
     ).strip()
     prep_instruction = (

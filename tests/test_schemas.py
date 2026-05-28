@@ -752,3 +752,92 @@ def test_complexity_missing_rejected() -> None:
     del payload["tasks"][0]["complexity"]
     errors = list(Draft7Validator(schema).iter_errors(payload))
     assert len(errors) > 0
+
+
+# ---------------------------------------------------------------------------
+# T12(d): open_questions schema validation (prep.json)
+# ---------------------------------------------------------------------------
+
+def _minimal_prep_payload(**overrides: object) -> dict:
+    payload: dict[str, object] = {
+        "skip": False,
+        "task_summary": "Test prep.",
+        "key_evidence": [],
+        "relevant_code": [],
+        "test_expectations": [],
+        "constraints": [],
+        "suggested_approach": "Proceed.",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_prep_schema_validates_populated_open_questions() -> None:
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload(
+        open_questions=[
+            {
+                "severity": "blocking",
+                "question": "Which auth library?",
+            },
+            {
+                "severity": "assume_and_proceed",
+                "question": "Which cache backend?",
+                "assumption": "Redis is fine.",
+            },
+        ],
+    )
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors == [], f"Expected no errors, got: {errors}"
+
+
+def test_prep_schema_validates_absent_open_questions() -> None:
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload()
+    assert "open_questions" not in payload
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors == [], f"Expected no errors, got: {errors}"
+
+
+def test_prep_schema_validates_empty_open_questions() -> None:
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload(open_questions=[])
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors == [], f"Expected no errors, got: {errors}"
+
+
+def test_prep_schema_rejects_open_question_missing_severity() -> None:
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload(
+        open_questions=[{"question": "Missing severity."}],
+    )
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
+
+
+def test_prep_schema_rejects_open_question_missing_question() -> None:
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload(
+        open_questions=[{"severity": "blocking"}],
+    )
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
+
+
+def test_prep_schema_rejects_open_question_invalid_severity() -> None:
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload(
+        open_questions=[{"severity": "critical", "question": "Bad severity."}],
+    )
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert len(errors) > 0
+
+
+def test_prep_schema_validates_open_questions_without_assumption() -> None:
+    """assumption is optional — only severity and question are required."""
+    schema = SCHEMAS["prep.json"]
+    payload = _minimal_prep_payload(
+        open_questions=[{"severity": "blocking", "question": "No assumption field."}],
+    )
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors == [], f"Expected no errors, got: {errors}"

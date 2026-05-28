@@ -189,6 +189,12 @@ def _prep_context_sections(state: PlanState, plan_dir: Path) -> tuple[Path, Path
 def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
+    if prep_instruction:
+        prep_instruction += (
+            " Open questions in the brief are candidate concerns, not mandates —"
+            " act on ones that materially affect the plan, dismiss immaterial or"
+            " already-resolved ones with a brief reason, and treat question count as noise."
+        )
     from_doc = state["config"].get("from_doc")
     imported_decisions = state["meta"].get("imported_decisions", [])
     clarification = state.get("clarification", {})
@@ -515,10 +521,15 @@ def _prep_distill_prompt(
 
         Produce:
         - A `prep.json` payload that keeps the public compatibility contract unchanged:
-          `skip`, `task_summary`, `key_evidence`, `relevant_code`, `test_expectations`, `constraints`, `suggested_approach`.
+          required: `skip`, `task_summary`, `key_evidence`, `relevant_code`, `test_expectations`, `constraints`, `suggested_approach`;
+          optional: `open_questions`.
         - Distilled evidence only. Treat the area findings as evidence to adjudicate, not as text to copy blindly.
         - Resolve overlaps across areas into one coherent prep view instead of duplicating them.
         - Clear contradiction or gap notes when the findings disagree, time out, error, or leave concrete uncertainty.
+        - For each gap or contradiction, classify it as an `open_questions[]` item:
+          - `"blocking"` — genuine ambiguity that would materially change the plan and cannot be responsibly resolved alone.
+          - `"assume_and_proceed"` — resolvable by a stated `assumption`; include the assumption text.
+          Omit `open_questions` entirely when no genuine gaps or contradictions exist.
 
         Rules:
         - Do not add new required fields to the compatible `prep.json` payload.

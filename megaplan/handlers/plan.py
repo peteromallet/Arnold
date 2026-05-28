@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan import handlers as _pkg
-from megaplan.types import CliError, MOCK_ENV_VAR, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
+from megaplan.types import CliError, MOCK_ENV_VAR, STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED, StepResponse
 from megaplan._core import load_plan_locked, require_state
 
 from .shared import (
@@ -16,6 +16,31 @@ from .shared import (
     _write_plan_version,
     phase_result_guard,
 )
+
+def _apply_prep_clarify_gate(state: dict, payload: dict) -> str:
+    """Decide whether prep should halt for human clarification.
+
+    Returns STATE_AWAITING_HUMAN when prep_clarify is enabled and at least one
+    blocking open_question exists; otherwise returns STATE_PREPPED.  Mutates
+    state['clarification'] as a side effect on the halt path.
+    """
+    if not state["config"].get("prep_clarify", True):
+        return STATE_PREPPED
+    open_questions = payload.get("open_questions") or []
+    blocking = [q for q in open_questions if isinstance(q, dict) and q.get("severity") == "blocking"]
+    if not blocking:
+        return STATE_PREPPED
+    n = len(blocking)
+    state["clarification"] = {
+        "intent_summary": (
+            f"prep surfaced {n} blocking {'ambiguity' if n == 1 else 'ambiguities'}; "
+            "answer and run `megaplan override resume-clarify`"
+        ),
+        "questions": [f"[blocking] {q['question']}" for q in blocking],
+        "source": "prep",
+    }
+    return STATE_AWAITING_HUMAN
+
 
 def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="plan") as (plan_dir, state):
@@ -98,12 +123,21 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                         state["config"]["primary_criterion"] = primary_criterion.strip()
                 code_refs = len(worker.payload.get("relevant_code", []))
                 test_refs = len(worker.payload.get("test_expectations", []))
-                state["current_state"] = STATE_PREPPED
+                next_state = _apply_prep_clarify_gate(state, worker.payload)
+                state["current_state"] = next_state
+                if next_state == STATE_AWAITING_HUMAN:
+                    blocking_count = len(state["clarification"]["questions"])
+                    summary = (
+                        f"Prep halted: {blocking_count} blocking "
+                        f"{'question' if blocking_count == 1 else 'questions'} require clarification before planning can proceed."
+                    )
+                else:
+                    summary = f"Prep complete: captured {code_refs} relevant code reference(s) and {test_refs} test expectation(s)."
                 return _finish_step(
                     plan_dir, state, args,
                     step="prep",
                     worker=worker, agent=agent, mode=mode, refreshed=refreshed,
-                    summary=f"Prep complete: captured {code_refs} relevant code reference(s) and {test_refs} test expectation(s).",
+                    summary=summary,
                     artifacts=[prep_filename],
                     output_file=prep_filename,
                     artifact_hash=artifact_hash,
@@ -120,7 +154,16 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 primary_criterion = worker.payload.get("primary_criterion")
                 if isinstance(primary_criterion, str) and primary_criterion.strip():
                     state["config"]["primary_criterion"] = primary_criterion.strip()
-            state["current_state"] = STATE_PREPPED
+            next_state = _apply_prep_clarify_gate(state, worker.payload)
+            state["current_state"] = next_state
+            if next_state == STATE_AWAITING_HUMAN:
+                blocking_count = len(state["clarification"]["questions"])
+                summary = (
+                    f"Prep halted: {blocking_count} blocking "
+                    f"{'question' if blocking_count == 1 else 'questions'} require clarification before planning can proceed."
+                )
+            else:
+                summary = orchestration.summary
             return _finish_step(
                 plan_dir, state, args,
                 step="prep",
@@ -128,7 +171,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 agent=orchestration.agent,
                 mode=orchestration.mode,
                 refreshed=orchestration.refreshed,
-                summary=orchestration.summary,
+                summary=summary,
                 artifacts=orchestration.artifacts,
                 output_file=prep_filename,
                 artifact_hash=artifact_hash,

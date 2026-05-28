@@ -296,24 +296,28 @@ def test_apex_vendor_and_critic_are_silent_noops(
 
 def test_with_prep_adds_prep_to_standard_workflow() -> None:
     """At --robustness standard, STATE_INITIALIZED normally jumps
-    straight to plan. --with-prep should restore the prep transition."""
+    straight to plan. --with-prep should restore the prep transition(s).
+    prep can land in PREPPED or AWAITING_HUMAN, so there may be multiple
+    transitions — all must have next_step == 'prep'."""
     workflow = _workflow_for_robustness("standard", with_prep=True)
     transitions = workflow[STATE_INITIALIZED]
     next_steps = [t.next_step for t in transitions]
-    assert next_steps == ["prep"], (
+    assert next_steps and set(next_steps) == {"prep"}, (
         f"with_prep=True at standard should run prep first; got {next_steps}"
     )
 
 
 def test_with_prep_adds_prep_to_light_workflow() -> None:
     workflow = _workflow_for_robustness("light", with_prep=True)
-    assert [t.next_step for t in workflow[STATE_INITIALIZED]] == ["prep"]
+    next_steps = [t.next_step for t in workflow[STATE_INITIALIZED]]
+    assert next_steps and set(next_steps) == {"prep"}
 
 
 def test_with_prep_is_noop_at_robust() -> None:
     """robust already includes prep; with_prep=True must not break it."""
     workflow = _workflow_for_robustness("robust", with_prep=True)
-    assert [t.next_step for t in workflow[STATE_INITIALIZED]] == ["prep"]
+    next_steps = [t.next_step for t in workflow[STATE_INITIALIZED]]
+    assert next_steps and set(next_steps) == {"prep"}
 
 
 def test_without_with_prep_standard_skips_prep() -> None:
