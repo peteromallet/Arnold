@@ -313,12 +313,18 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             _pin = pinned_critic_model(state)
             if _pin:
                 critic_model_override = _pin
+        from megaplan.types import AgentMode as _AgentMode
+
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
         # Thinking depth for the critic: carry the resolved effort (set by
         # --depth or an explicit suffix on the `critique` slot) so the parallel
         # critic forwards it to its reasoning config. Captured before the
-        # operator-pin branch below rebinds `resolved` to a plain tuple.
+        # operator-pin branch below rebinds `resolved`.
         _critique_effort = getattr(resolved, "effort", None)
+        # Resolved model (the materialized model the worker should launch with).
+        # For an AgentMode this is .resolved_model (with the vendor default
+        # applied); fall back to the bare model otherwise.
+        _critique_resolved_model = getattr(resolved, "resolved_model", None) or model
         if adaptive_path and critic_model_override:
             # Operator pin only: the pinned `critic_model` is a bare roster
             # token (e.g. "deepseek-v4-pro"). Resolve it to a full agent spec so
@@ -332,7 +338,21 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             _override_parsed = parse_agent_spec(roster_dispatch_spec(critic_model_override))
             agent_type = _override_parsed.agent
             model = _override_parsed.model
-            resolved = (agent_type, mode, refreshed, model)
+            _critique_effort = _override_parsed.effort
+            _critique_resolved_model = model
+        # Reconstruct an AgentMode (NOT a bare 4-tuple) so the effort and
+        # resolved_model survive the hop into run_step_with_worker. A plain
+        # 4-tuple drops both: that is the effort-drop bug where a `critique`
+        # slot's effort never reached the codex-effort gate (and a bad
+        # ``model=`` rode through verbatim to ``-c model='...'``).
+        resolved = _AgentMode(
+            agent=agent_type,
+            mode=mode,
+            refreshed=refreshed,
+            model=model,
+            effort=_critique_effort,
+            resolved_model=_critique_resolved_model,
+        )
         # Compute revise_context for adaptive path iterations >= 2
         _revise_ctx = ""
         if adaptive_path and iteration >= 2:
@@ -376,7 +396,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     plan_dir,
                     args,
                     root=root,
-                    resolved=(agent_type, mode, refreshed, model),
+                    resolved=resolved,
                     prompt_kwargs=_seq_prompt_kwargs,
                 )
             else:
@@ -388,7 +408,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 plan_dir,
                 args,
                 root=root,
-                resolved=(agent_type, mode, refreshed, model),
+                resolved=resolved,
                 prompt_kwargs={"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None,
             )
         invalid_checks = validate_critique_checks(worker.payload, expected_ids=expected_ids)

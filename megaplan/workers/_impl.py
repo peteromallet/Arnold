@@ -1654,6 +1654,32 @@ _VALID_CLAUDE_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 _VALID_CODEX_EFFORTS = ("minimal", "low", "medium", "high")
 
 
+def _codex_model_flag(model: str | None) -> list[str]:
+    """Build the ``-c model='...'`` codex flag, validating *model* first.
+
+    Last-line-of-defense gate at the dispatch site: an upstream mis-parse
+    (e.g. the historical ``codex:claude:sonnet`` bug, which yielded
+    ``model='claude'``) must never be passed verbatim to the codex CLI as
+    ``-c model='claude'``. ``parse_agent_spec`` now rejects such specs at the
+    chokepoint, but this guard ensures the invariant holds even for callers
+    that build a model string by another path. Returns an empty list when
+    *model* is ``None`` (codex uses its configured default).
+    """
+    if model is None:
+        return []
+    from megaplan.types import _is_codex_model_name
+
+    if not _is_codex_model_name(model):
+        raise CliError(
+            "invalid_codex_model",
+            f"Refusing to launch codex with model={model!r}: not a recognised "
+            f"codex/GPT-5.x model. This usually means a malformed agent spec "
+            f"(e.g. 'codex:claude:sonnet') reached dispatch. Fix the phase_model "
+            f"pin (e.g. via `megaplan override set-model` / `set-vendor`).",
+        )
+    return ["-c", f"model='{model}'"]
+
+
 def run_claude_step(
     step: str,
     state: PlanState,
@@ -1757,8 +1783,7 @@ def run_codex_step(
         command = ["codex", "exec", "resume"]
         if _trusted_container():
             command.append("--dangerously-bypass-approvals-and-sandbox")
-        if model is not None:
-            command.extend(["-c", f"model='{model}'"])
+        command.extend(_codex_model_flag(model))
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
         command.extend(_codex_exec_mode_flags(step))
@@ -1829,8 +1854,7 @@ def run_codex_step(
             "-o",
             str(output_path),
         ])
-        if model is not None:
-            command.extend(["-c", f"model='{model}'"])
+        command.extend(_codex_model_flag(model))
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
         if not persistent:
@@ -2210,8 +2234,7 @@ def run_codex_prep_step(
         "-o",
         str(output_path),
     ]
-    if model is not None:
-        command.extend(["-c", f"model='{model}'"])
+    command.extend(_codex_model_flag(model))
     if effort is not None:
         command.extend(["-c", f"model_reasoning_effort={effort}"])
     command.extend(["--output-schema", str(schema_file), "-"])
