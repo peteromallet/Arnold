@@ -93,14 +93,7 @@ By hand, I'd budget this as multiple engineer-weeks — call it **4–8 weeks of
 
 ## What it actually cost: ~$12
 
-Real published API prices, May 2026:
-
-| Model | Input (cache-miss) | Cached input | Output |
-|---|---|---|---|
-| **DeepSeek V4 Pro** | $0.435 / M | $0.003625 / M | $0.87 / M |
-| **GPT-5.5** | $5.00 / M | $0.50 / M | $30.00 / M |
-
-![Cost: realized vs all-premium counterfactual](assets/scribble-cost-comparison.png)
+![Cost: realized DeepSeek bill vs. the same work and the whole epic priced on a premium API](assets/scribble-cost-comparison.png)
 
 **First, what the $12 is and isn't.** It's the real DeepSeek API bill for the work DeepSeek did — the ~78% of tokens that ran on it. The premium work (all planning and critique, plus M2 end-to-end) ran on a flat Codex/ChatGPT subscription I was already paying for, so its *marginal* cost was near zero — but a subscription I'd hold anyway isn't a true $0. So read $12 as the **DeepSeek line item**, and the honest like-for-like below as **DeepSeek API cost vs. the same work priced on a premium API** — both figures you can check against published rates.
 
