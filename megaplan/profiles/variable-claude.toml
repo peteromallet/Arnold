@@ -15,15 +15,23 @@
 #   4 = cross-cutting change with architecture implications
 #   5 = fundamental system change with high regression risk
 #
+# Tiers 4–5 use concrete model pins (``claude:claude-sonnet-4-6`` and
+# ``claude:claude-opus-4-7``) rather than effort suffixes (``claude:low``,
+# ``claude``).  This is intentional because ``vendor_locked=true`` disables
+# ``--vendor`` and ``--depth`` rewriting on locked profiles, so effort
+# suffixes provide no benefit.  Concrete pins guarantee the exact model used
+# regardless of future vendor defaults — a reproducibility safeguard for
+# the highest-complexity tiers.
+#
 # Flag interactions:
 #   * `--vendor codex` — silently ignored (vendor_locked=true).
 #   * `--critic cross` — silently ignored (vendor_locked=true).
-#   * `--depth <level>` — honored; depth is independent of vendor lock.
+#   * `--depth <level>` — honored for effort-suffix entries (flat phases
+#     and tiers 1–3); concrete model pins (tiers 4–5) are unaffected.
 #   * `--phase-model execute=...` — disables tier routing; explicit spec wins.
 #   * `--deepseek-provider direct` — flips hermes:fireworks:… DeepSeek specs
 #     to hermes:deepseek:… (tiers 1-3).
 [profiles.variable-claude]
-default = "partnered"
 vendor_locked = true
 plan                  = "claude"
 prep                  = "claude"

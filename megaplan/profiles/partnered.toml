@@ -35,7 +35,6 @@
 #
 # See docs/megaplan-decision.md for the full rubric.
 [profiles.partnered]
-default = "partnered"
 # Adaptive critique on by default: this profile carries a premium model, so
 # the critique-evaluator can force a premium evaluator to direct the cheap
 # critic. Open-only profiles deliberately omit this field (default False) to

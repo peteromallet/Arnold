@@ -1,6 +1,5 @@
 # DeepSeek V4 Pro direct API for every megaplan phase.
 [profiles.all-deepseek-pro-direct]
-default = "partnered"
 plan     = "hermes:deepseek:deepseek-v4-pro"
 prep     = "hermes:deepseek:deepseek-v4-pro"
 critique = "hermes:deepseek:deepseek-v4-pro"

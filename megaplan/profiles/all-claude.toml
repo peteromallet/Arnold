@@ -5,7 +5,6 @@
 # which model has done better on similar work.
 # (Personality: Adrian Monk — solo virtuoso obsessed with thoroughness.)
 [profiles.all-claude]
-default = "partnered"
 plan                  = "claude"
 prep                  = "claude"
 critique              = "claude"

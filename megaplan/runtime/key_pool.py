@@ -264,6 +264,12 @@ def _is_codex_model_name(name: str) -> bool:
     return lowered.startswith("gpt-5")
 
 
+def _is_deepseek_model_name(name: str) -> bool:
+    """Match bare deepseek model names (case-insensitive)."""
+    lowered = name.lower()
+    return lowered.startswith("deepseek-") or lowered.startswith("deepseek/")
+
+
 def _raise_codex_via_openrouter_blocked(reason: str) -> None:
     """Refuse to silently route codex/gpt-5.x through OpenRouter.
 
@@ -290,6 +296,34 @@ def _raise_codex_via_openrouter_blocked(reason: str) -> None:
         valid_next=[
             "rerun with --agent codex",
             "rerun with --hermes openrouter:gpt-5.5 (explicit)",
+        ],
+    )
+
+
+def _raise_generic_openrouter_blocked(reason: str) -> None:
+    """Refuse to silently route an unrecognised model through OpenRouter.
+
+    Any model not matching a known provider prefix or bare model guard
+    MUST NOT silently fall through to OpenRouter.  The caller must use
+    an explicit ``openrouter:`` prefix if they genuinely want OpenRouter.
+    """
+    from megaplan.types import CliError
+
+    raise CliError(
+        code="openrouter_blocked",
+        message=(
+            "Refusing to silently route an unrecognised model through OpenRouter. "
+            + reason
+            + " "
+            "To use OpenRouter, prefix the model with ``openrouter:``. "
+            "To use a native provider, use the appropriate prefix "
+            "(``deepseek:``, ``fireworks:``, ``google:``, ``zhipu:``, "
+            "``minimax:``) or the ``hermes:`` agent."
+        ),
+        valid_next=[
+            "rerun with --hermes openrouter:<model>",
+            "rerun with --hermes deepseek:<model>",
+            "rerun with --agent claude / --agent codex / --agent shannon",
         ],
     )
 
@@ -337,11 +371,10 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
             agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["openrouter"]
             agent_kwargs["api_key"] = acquire_key("openrouter")
     else:
-        # Non-prefixed models (e.g. "qwen/qwen3.5-27b") → route through OpenRouter.
-        # Exception: Claude models (anthropic/claude-*) are refused here to
-        # prevent silently consuming OpenRouter quotas when the user has a
-        # Claude Code subscription. Use ``openrouter:anthropic/claude-...`` to
-        # opt in explicitly, or ``--agent shannon`` to go through Claude Code.
+        # Non-prefixed models (e.g. "qwen/qwen3.5-27b") — historically
+        # routed through OpenRouter, but we now refuse all silent
+        # OpenRouter fallbacks.  Recognised bare model families are
+        # routed to their native provider APIs; everything else errors.
         if _is_claude_model_name(resolved_model):
             _raise_claude_via_openrouter_blocked(
                 f"Model {resolved_model!r} would silently route to OpenRouter."
@@ -350,8 +383,16 @@ def resolve_model(model: str | None) -> tuple[str, dict[str, str]]:
             _raise_codex_via_openrouter_blocked(
                 f"Model {resolved_model!r} would silently route to OpenRouter."
             )
-        or_key = acquire_key("openrouter")
-        if or_key:
-            agent_kwargs["base_url"] = _DEFAULT_BASE_URLS["openrouter"]
-            agent_kwargs["api_key"] = or_key
+        if _is_deepseek_model_name(resolved_model):
+            # Bare deepseek-v4-pro / deepseek/... → direct DeepSeek API.
+            agent_kwargs["base_url"] = (
+                _get_api_credential(_PROVIDER_BASE_URL_VARS["deepseek"])
+                or _DEFAULT_BASE_URLS["deepseek"]
+            )
+            agent_kwargs["api_key"] = acquire_key("deepseek")
+        else:
+            _raise_generic_openrouter_blocked(
+                f"Model {resolved_model!r} has no provider prefix and is not "
+                f"a recognised bare model (claude-*, gpt-5.*, deepseek-*)."
+            )
     return resolved_model, agent_kwargs
