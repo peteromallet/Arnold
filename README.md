@@ -1,8 +1,14 @@
-# Megaplan
+# Arnold — Intelligence Coordination System
 
-A planning and execution harness that breaks building software into structured, independently-checked phases — making intelligent-but-unreliable LLMs systematically robust, and letting each phase run on the cheapest model that can do it well.
+Arnold is a tool for building intelligence systems out of many coordinated models. Today you can experience one slice of that through its first tool, **Megaplan** — a planning and execution harness for software. More on building and sharing your own pipelines soon.
 
-## Philosophy
+---
+
+## Megaplan
+
+It breaks building software into structured, independently-checked phases — making intelligent-but-unreliable LLMs systematically robust, and letting each phase run on the cheapest model that can do it well.
+
+## Megaplan's philosophy
 
 Two ideas, and they reinforce each other.
 
@@ -66,6 +72,14 @@ megaplan init --project-dir . "Fix the authentication bug in login.py"
 
 In subagent mode (the default for Claude Code and Codex) the agent drives the phases and returns at breakpoints. To run them by hand: `megaplan plan|critique|gate|finalize|execute --plan <name>`.
 
+## Development
+
+Run the focused CI-equivalent suite locally:
+
+```bash
+pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
+```
+
 ## Some other features
 
 - **Epics** — chain many sprints into one long-running effort. Megaplan runs them in sequence with carried context, so it can deliver the equivalent of months of work reliably instead of one sprint at a time.
@@ -76,7 +90,7 @@ In subagent mode (the default for Claude Code and Codex) the agent drives the ph
 - **Robustness levels** — `--robustness light|standard|robust|superrobust` dials critique depth and parallelism, from a single critique pass up to parallel critique + parallel review.
 - **Database mode** — keep state in Supabase Postgres instead of `.megaplan/` for shared state across machines and cloud runs (`pip install 'megaplan-harness[db]'`, then set `MEGAPLAN_ACTOR_ID`).
 - **Observability** — `megaplan status --plan <name>` shows the active step, cost, execute progress, and next-step guidance.
-- **Configuration** — `megaplan config show | set <key> <value> | reset` tunes timeouts, critique concurrency, and per-phase agents.
+- **Configuration** — `megaplan config show | set <key> <value> | reset` tunes timeouts, critique concurrency, and per-phase agents. See [docs/configuration.md](docs/configuration.md) for the full config and environment map.
 - **Adaptive critique defense** — `megaplan doctor --adaptive-critique` probes the adaptive critique wiring; `[execution] strict_adaptive_critique = true` refuses silent fallback to static lenses on production runs. See [docs/critique.md](docs/critique.md).
 
 ## Code health
