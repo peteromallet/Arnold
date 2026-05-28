@@ -1129,6 +1129,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     introspect_parser.add_argument("--plan", required=True, help="Plan name")
 
+    cost_parser = subparsers.add_parser(
+        "cost",
+        help="Token usage and cost breakdown for a plan",
+    )
+    cost_parser.add_argument("--plan", required=True, help="Plan name")
+    cost_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
+    cost_parser.add_argument(
+        "--by-phase",
+        action="store_true",
+        default=False,
+        help="Break down cost and tokens by phase",
+    )
+
     trace_parser = subparsers.add_parser(
         "trace",
         help="Event stream over a plan's events.ndjson",

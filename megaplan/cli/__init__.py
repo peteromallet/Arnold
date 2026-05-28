@@ -988,6 +988,12 @@ def _handle_introspect(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_cost(root: Path, args: argparse.Namespace) -> int:
+    from megaplan.observability.cost import handle_cost
+
+    return handle_cost(root, args)
+
+
 def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
     from megaplan._core import find_plan_dir
     from megaplan.observability.events import EventKind, emit
@@ -1037,6 +1043,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "audit-verifiability": handle_audit_verifiability,
     "tiebreaker-run": handle_tiebreaker_run,
     "introspect": _handle_introspect,
+    "cost": _handle_cost,
     "trace": _handle_trace,
     "doctor": _handle_doctor,
     "record-tag": _handle_record_tag,
