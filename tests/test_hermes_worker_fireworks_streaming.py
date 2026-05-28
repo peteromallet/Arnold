@@ -289,7 +289,7 @@ def test_run_check_does_not_force_streaming_for_other_providers(
         state=state,
         plan_dir=plan_dir,
         root=tmp_path,
-        model="openrouter/anthropic/claude-opus-4.6",
+        model="openrouter:anthropic/claude-opus-4.6",
         schema=schema,
         project_dir=project_dir,
     )

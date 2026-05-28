@@ -107,7 +107,7 @@ def test_parallel_critique_sets_and_clears_active_step(
 
     observed: dict[str, str] = {}
 
-    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None):
+    def fake_parallel(state, plan_dir, *, root, model, checks, max_concurrent=None, **kwargs):
         persisted = load_state(plan_dir)
         observed.update(persisted["active_step"])
         return WorkerResult(
@@ -172,7 +172,7 @@ def test_parallel_critique_fallback_logs_warning(
     assert any("M3A_WARN_PARALLEL_CRITIQUE_FALLBACK" in record.getMessage() for record in caplog.records)
 
 
-def test_critique_rank_parse_logs_warning(
+def test_critique_evaluator_model_assignment_does_not_drive_dispatch(
     plan_fixture: PlanFixture,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -195,7 +195,26 @@ def test_critique_rank_parse_logs_warning(
         if step == "critique_evaluator":
             return (
                 WorkerResult(
-                    payload={"selections": [], "flag_verifications": []},
+                    payload={
+                        "selections": [
+                            {
+                                "check_id": "correctness",
+                                "critic_model": "unknown-model",
+                                "why": "exercise rank parse fallback",
+                            }
+                        ],
+                        "skipped": [
+                            {"check_id": "scope", "why": "test"},
+                            {"check_id": "integration", "why": "test"},
+                            {"check_id": "risks", "why": "test"},
+                            {"check_id": "acceptance", "why": "test"},
+                            {"check_id": "human_actions", "why": "test"},
+                            {"check_id": "source_touch", "why": "test"},
+                            {"check_id": "adjacent_calls", "why": "test"},
+                            {"check_id": "overreach", "why": "test"},
+                        ],
+                        "flag_verifications": [],
+                    },
                     raw_output="{}",
                     duration_ms=1,
                     cost_usd=0.0,
@@ -232,7 +251,7 @@ def test_critique_rank_parse_logs_warning(
     response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     assert response["success"] is True
-    assert any("M3A_WARN_CRITIQUE_RANK_PARSE" in record.getMessage() for record in caplog.records)
+    assert not any("M3A_WARN_CRITIQUE_RANK_PARSE" in record.getMessage() for record in caplog.records)
 
 
 def test_critique_prompt_contains_robustness_instruction(plan_fixture: PlanFixture) -> None:

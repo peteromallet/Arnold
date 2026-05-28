@@ -33,6 +33,7 @@ adaptive_critique = true
 plan                  = "claude:low"
 prep                  = "claude:low"
 critique              = "claude:low"
+critique_evaluator    = "claude:low"
 revise                = "claude:low"
 gate                  = "claude:low"
 finalize              = "claude:low"

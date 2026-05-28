@@ -25,7 +25,7 @@ def test_cloud_chain_dependency_resolution_uses_profile_despite_cloud_default(
     assert result["cloud_default_agent"] == "codex"
     assert result["warning"] == AGENTS_DEFAULT_WARNING
     assert result["runtime_commands"] == ["bun", "claude", "shannon", "tmux"]
-    assert result["env_hints"] == ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"]
+    assert result["env_hints"] == ["ANTHROPIC_API_KEY"]
     assert result["milestones"][0]["profile"] == "premium"
     assert result["milestones"][0]["resolved_phase_map"]["execute"] == "claude:low"
 

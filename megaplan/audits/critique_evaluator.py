@@ -582,3 +582,107 @@ def validate_evaluator_verdict(
             seen_fv.add(fid)
 
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Wiring probes — used by init-time startup validation and `megaplan doctor
+# --adaptive-critique`. Each probe returns a 3-tuple
+# (label, passed, detail) so callers can render either a green/red status
+# line (doctor) or assemble a structured AdaptiveCritiqueMisconfiguredError
+# (init). The probes are deliberately offline + read-only.
+# ---------------------------------------------------------------------------
+
+
+def probe_adaptive_critique_wiring() -> list[tuple[str, bool, str]]:
+    """Probe every load-bearing piece of the adaptive critique path."""
+    results: list[tuple[str, bool, str]] = []
+
+    try:
+        from megaplan.workers._impl import STEP_SCHEMA_FILENAMES
+    except ImportError as exc:  # pragma: no cover - defensive
+        results.append((
+            "STEP_SCHEMA_FILENAMES importable",
+            False,
+            f"ImportError: {exc}",
+        ))
+        return results
+
+    if "critique_evaluator" not in STEP_SCHEMA_FILENAMES:
+        results.append((
+            "critique_evaluator registered in STEP_SCHEMA_FILENAMES",
+            False,
+            "missing key - adaptive critique will KeyError at dispatch",
+        ))
+        return results
+    schema_filename = STEP_SCHEMA_FILENAMES["critique_evaluator"]
+    results.append((
+        "critique_evaluator registered in STEP_SCHEMA_FILENAMES",
+        True,
+        f"-> {schema_filename}",
+    ))
+
+    try:
+        from megaplan.schemas import SCHEMAS
+    except ImportError as exc:  # pragma: no cover - defensive
+        results.append(("SCHEMAS importable", False, f"ImportError: {exc}"))
+        return results
+
+    if schema_filename not in SCHEMAS:
+        results.append((
+            f"{schema_filename} registered in SCHEMAS",
+            False,
+            "schema is dispatched-to but not registered",
+        ))
+    else:
+        results.append((f"{schema_filename} registered in SCHEMAS", True, ""))
+
+    try:
+        from megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+    except ImportError as exc:
+        results.append((
+            "critique_evaluator prompt template importable",
+            False,
+            f"ImportError: {exc}",
+        ))
+        return results
+    results.append((
+        "critique_evaluator prompt template importable",
+        bool(callable(_critique_evaluator_prompt)),
+        "",
+    ))
+
+    try:
+        from megaplan.workers._impl import _STEP_REQUIRED_KEYS
+        required = set(_STEP_REQUIRED_KEYS.get("critique_evaluator", set()))
+    except ImportError as exc:  # pragma: no cover - defensive
+        results.append(("_STEP_REQUIRED_KEYS importable", False, f"ImportError: {exc}"))
+        return results
+    expected = {"selections", "skipped", "evaluator_model"}
+    missing = expected - required
+    results.append((
+        "_STEP_REQUIRED_KEYS covers selections/skipped/evaluator_model",
+        not missing,
+        "" if not missing else f"missing: {sorted(missing)}",
+    ))
+
+    return results
+
+
+def assert_adaptive_critique_wired() -> None:
+    """Raise if any static adaptive-critique wiring probe fails."""
+    from megaplan.types import AdaptiveCritiqueMisconfiguredError
+
+    results = probe_adaptive_critique_wiring()
+    failures = [(label, detail) for label, passed, detail in results if not passed]
+    if failures:
+        lines = ["adaptive critique is misconfigured:"]
+        for label, detail in failures:
+            lines.append(f"  - {label}: {detail}")
+        lines.append(
+            "Run `megaplan doctor --adaptive-critique` for a full status, "
+            "or set `[execution] adaptive_critique = false` to disable."
+        )
+        raise AdaptiveCritiqueMisconfiguredError(
+            "\n".join(lines),
+            missing=[label for label, _detail in failures],
+        )
