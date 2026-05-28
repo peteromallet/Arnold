@@ -105,6 +105,8 @@ That $12 is real — but it's small partly because the premium slice was subscri
 
 So the like-for-like saving is **~4×** — this run at real API prices costs about a quarter of the all-premium price — while the out-of-pocket reality was just the ~$12 DeepSeek bill. (DeepSeek's line is so low because **94% of its input tokens were cache hits**, priced 120× below the cache-miss rate — which is also why the real bill was ~$12, not the ~$131 the harness's own meter estimated.)
 
+And ~4× is the *conservative* read. That ~$94 of premium is inflated on purpose: as noted above, I pinned the entire store-integrity milestone (M2) to a frontier model end-to-end because its run-state has no safe recovery path. On a more typical project — without that maximally cautious all-premium stage — the premium slice shrinks dramatically, the all-in API cost falls toward the ~$12 DeepSeek bill, and the gap opens well past 4×.
+
 **On provenance.** The DeepSeek figures are from the real invoice — token counts and the 94% cache-hit rate are measured, not estimated. The GPT-5.5 figures are priced at the same ~94% cache rate DeepSeek saw (we don't have GPT's actual cache behavior here); if GPT caches less, the premium numbers — and the gap — only grow.
 
 ## Conclusion

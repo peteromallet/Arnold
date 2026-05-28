@@ -1433,3 +1433,296 @@ def test_gate_logs_warning_when_flag_delta_emit_fails(
     )
     gate = read_json(plan_fixture.plan_dir / "gate.json")
     assert gate["unresolved_flags"][0]["id"] == flag["id"]
+
+
+# ---------------------------------------------------------------------------
+# Layer 0 — critique-loop cap (mirrors the execute-review rework cap)
+# ---------------------------------------------------------------------------
+
+def _iterate_history(n: int) -> list[dict[str, object]]:
+    """n prior gate passes that recommended ITERATE."""
+    return [{"step": "gate", "result": "success", "recommendation": "ITERATE"} for _ in range(n)]
+
+
+def _iterate_summary(unresolved: list[dict[str, object]] | None = None) -> dict[str, object]:
+    return {
+        "recommendation": "ITERATE",
+        "rationale": "Still revising.",
+        "passed": False,
+        "unresolved_flags": unresolved or [],
+        "flag_resolutions": [],
+    }
+
+
+def test_critique_cap_revises_below_cap(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    # Default cap is 4; with 3 prior ITERATE rounds we are still under it.
+    state["history"] = _iterate_history(3)
+    state["iteration"] = 1  # prior signals file absent -> no false no-progress stall
+
+    result, next_step, _, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(),
+        robustness="full",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert next_step == "revise"
+    assert result == "success"
+
+
+def test_critique_cap_force_proceeds_on_cosmetic_only(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["history"] = _iterate_history(4)  # >= default cap of 4
+    state["iteration"] = 1
+    cosmetic = [{"id": "F-cosmetic", "severity": "minor", "status": "open", "concern": "nit"}]
+
+    result, next_step, summary, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(cosmetic),
+        robustness="full",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert next_step == "finalize"
+    assert result == "blocked"
+    assert "Max critique iterations" in summary
+    assert state["current_state"] == megaplan.STATE_GATED
+
+
+def test_critique_cap_escalates_on_open_correctness_flag(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["history"] = _iterate_history(4)  # >= default cap of 4
+    state["iteration"] = 1
+    critical = [{"id": "F-bug", "severity": "significant", "status": "open", "concern": "data loss"}]
+
+    result, next_step, summary, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(critical),
+        robustness="full",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    # P0/P1: the auto loop is status-driven, so the cap MUST move state to a
+    # hard-stop (BLOCKED), not merely return an escalate next_step. BLOCKED has
+    # no revise edge in the workflow, so the loop halts instead of looping.
+    assert state["current_state"] == megaplan.STATE_BLOCKED
+    assert "BLOCKED for human review" in summary
+    # never silently flips to GATED (which would route to finalize) when a
+    # correctness flag is open
+    assert state["current_state"] != megaplan.STATE_GATED
+
+
+def test_critique_robust_cap_higher_for_thorough(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    # 4 prior rounds would trip the full cap (4) but not the thorough cap (6).
+    state["history"] = _iterate_history(4)
+    state["iteration"] = 1
+
+    result, next_step, _, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(),
+        robustness="thorough",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert next_step == "revise"
+
+
+def test_critique_no_progress_early_stop(plan_fixture: PlanFixture) -> None:
+    import megaplan._core as core
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["history"] = _iterate_history(1)  # well under the hard cap
+    state["iteration"] = 1
+    # Pre-seed one stalled round so this round (also stalled) reaches the
+    # default no-progress window of 2.
+    state.setdefault("meta", {})["critique_no_progress_streak"] = 1
+    cosmetic = [{"id": "F-new", "severity": "minor", "status": "open", "concern": "fresh nit"}]
+
+    result, next_step, summary, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(cosmetic),
+        robustness="full",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert next_step == "finalize"
+    assert "no net progress" in summary
+    assert state["current_state"] == megaplan.STATE_GATED
+
+
+def test_critique_cap_light_caps_at_two(plan_fixture: PlanFixture) -> None:
+    """P3: light robustness caps the critique loop at 2, not the full default 4."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    # 2 prior ITERATE rounds trips the light cap (2) but would NOT trip full (4).
+    state["history"] = _iterate_history(2)
+    state["iteration"] = 1
+    cosmetic = [{"id": "F-nit", "severity": "minor", "status": "open", "concern": "style"}]
+
+    result, next_step, summary, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(cosmetic),
+        robustness="light",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert next_step == "finalize"
+    assert state["current_state"] == megaplan.STATE_GATED
+    assert "Max critique iterations (2)" in summary
+
+    # Same history under full would still revise (cap 4 not yet reached).
+    state_full = load_state(plan_fixture.plan_dir)
+    state_full["history"] = _iterate_history(2)
+    state_full["iteration"] = 1
+    _, next_step_full, _, _ = megaplan.handlers._apply_gate_outcome(
+        state_full,
+        _iterate_summary(cosmetic),
+        robustness="full",
+        plan_dir=plan_fixture.plan_dir,
+    )
+    assert next_step_full == "revise"
+
+
+def test_critique_cap_escalates_on_moderate_correctness_flag(plan_fixture: PlanFixture) -> None:
+    """P2: a blocking *moderate* correctness flag is NOT cosmetic — it escalates."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["history"] = _iterate_history(4)
+    state["iteration"] = 1
+    moderate_correctness = [
+        {"id": "F-mod", "severity": "moderate", "category": "correctness",
+         "status": "open", "concern": "edge case not handled"}
+    ]
+
+    result, next_step, summary, _ = megaplan.handlers._apply_gate_outcome(
+        state,
+        _iterate_summary(moderate_correctness),
+        robustness="full",
+        plan_dir=plan_fixture.plan_dir,
+    )
+
+    assert state["current_state"] == megaplan.STATE_BLOCKED
+    assert state["current_state"] != megaplan.STATE_GATED
+    assert "BLOCKED for human review" in summary
+
+
+# ---------------------------------------------------------------------------
+# Integration: drive the REAL status -> workflow_next path that auto.drive
+# consumes, not just the handler return tuple. These are the tests that would
+# fail against the pre-fix code (which left state at CRITIQUED + ITERATE, so
+# workflow_next re-derived "revise" and the auto loop spun forever).
+# ---------------------------------------------------------------------------
+
+def _iterate_gate_worker(session_id: str) -> WorkerResult:
+    return WorkerResult(
+        payload={
+            "recommendation": "ITERATE",
+            "rationale": "Plan still needs work.",
+            "signals_assessment": "Revisions still needed.",
+            "warnings": [],
+            "settled_decisions": [],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+        },
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id=session_id,
+    )
+
+
+def _persist_state(plan_fixture: PlanFixture, state: dict) -> None:
+    (plan_fixture.plan_dir / "state.json").write_text(
+        json.dumps(state, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def test_cap_with_significant_flag_halts_via_status_path(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cap + open SIGNIFICANT flag: derived next_step is NOT revise; plan BLOCKED.
+
+    Drives handle_gate -> persisted state -> the same _build_status_payload that
+    `status`/`auto.drive` use. Pre-fix this returned next_step="revise" (loop
+    forever); post-fix the plan is BLOCKED and the loop halts.
+    """
+    from megaplan.cli.status_view import _build_status_payload
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    # Ensure an open SIGNIFICANT blocking flag exists in the registry so the
+    # gate summary carries it as unresolved.
+    ensure_blocking_flags(plan_fixture.plan_dir, 1)
+    state = load_state(plan_fixture.plan_dir)
+    state["history"] = _iterate_history(4)  # at the default full cap of 4
+    _persist_state(plan_fixture, state)
+
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *a, **k: (_iterate_gate_worker("cap-sig"), "claude", "persistent", False),
+    )
+    megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    persisted = load_state(plan_fixture.plan_dir)
+    assert persisted["current_state"] == megaplan.STATE_BLOCKED
+
+    status = _build_status_payload(plan_fixture.plan_dir, persisted)
+    assert status["state"] == megaplan.STATE_BLOCKED
+    # The whole point: the status-driven loop must NOT re-derive revise.
+    assert "revise" not in (status.get("valid_next") or [])
+    assert status.get("next_step") != "revise"
+    # BLOCKED is terminal with no recoverable next step -> auto halts.
+    from megaplan.types import AUTOMATION_TERMINAL_STATES
+    assert status["state"] in AUTOMATION_TERMINAL_STATES
+    assert not (status.get("valid_next") or [])
+
+
+def test_cap_with_cosmetic_only_routes_to_finalize_via_status_path(
+    plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cap + cosmetic-only flags: derived next_step is finalize (force-proceed)."""
+    from megaplan.cli.status_view import _build_status_payload
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    # Downgrade every blocking flag to a cosmetic severity so none escalate.
+    registry = read_json(plan_fixture.plan_dir / "faults.json")
+    for flag in registry["flags"]:
+        flag["severity"] = "minor"
+        flag["category"] = "maintainability"
+    (plan_fixture.plan_dir / "faults.json").write_text(
+        json.dumps(registry, indent=2) + "\n", encoding="utf-8"
+    )
+    state = load_state(plan_fixture.plan_dir)
+    state["history"] = _iterate_history(4)
+    _persist_state(plan_fixture, state)
+
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        lambda *a, **k: (_iterate_gate_worker("cap-cosmetic"), "claude", "persistent", False),
+    )
+    megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    persisted = load_state(plan_fixture.plan_dir)
+    assert persisted["current_state"] == megaplan.STATE_GATED
+
+    status = _build_status_payload(plan_fixture.plan_dir, persisted)
+    assert status["state"] == megaplan.STATE_GATED
+    assert status.get("next_step") == "finalize"
+    assert "revise" not in (status.get("valid_next") or [])
