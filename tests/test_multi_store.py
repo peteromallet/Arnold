@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,13 +19,47 @@ from megaplan.store import (
     deterministic_idempotency_key,
 )
 from megaplan.store.file import FileStore
+from megaplan.tickets.identity import repo_codebase_identity
 from megaplan.schemas import MigrationRun
+from tests.contract.store_contract import run_store_contract, run_store_error_class_parity_contract
+
+
+def _init_git_repo(repo_root: Path) -> None:
+    repo_root.mkdir(parents=True, exist_ok=True)
+    if (repo_root / ".git").exists():
+        return
+    subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Megaplan Tests"], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
+    (repo_root / "README.md").write_text("# Test\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
 
 
 def _multi(tmp_path: Path) -> tuple[MultiStore, FileStore, FileStore]:
-    file_store = FileStore(tmp_path / "file")
-    db_store = FileStore(tmp_path / "db")
+    file_repo = tmp_path / "file-repo"
+    db_repo = tmp_path / "db-repo"
+    _init_git_repo(file_repo)
+    _init_git_repo(db_repo)
+    file_store = FileStore(tmp_path / "file", repo_root=file_repo)
+    db_store = FileStore(tmp_path / "db", repo_root=db_repo)
     return MultiStore(file_store=file_store, db_store=db_store, actor_id="actor"), file_store, db_store
+
+
+def test_multi_store_contract(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path / "contract")
+    reference_repo = tmp_path / "reference-repo"
+    _init_git_repo(reference_repo)
+
+    run_store_contract(lambda: store, epic_home_backend="db")
+    run_store_error_class_parity_contract(
+        lambda: FileStore(tmp_path / "reference", repo_root=reference_repo),
+        lambda: _multi(tmp_path / "parity")[0],
+        candidate_home_backend="db",
+    )
+
+    assert not file_store.list_epics()
+    assert db_store.list_epics()
 
 
 def test_multi_store_routes_by_epic_home_backend(tmp_path: Path) -> None:
@@ -48,6 +83,194 @@ def test_multi_store_routes_by_epic_home_backend(tmp_path: Path) -> None:
     assert updated.home_backend == "db"
     assert db_store.load_body(db_epic.id) == "db body updated"
     assert file_store.load_epic(db_epic.id) is None
+
+
+def test_multi_store_preserves_file_codebase_root_identity(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+
+    codebase = store.create_codebase(
+        owner="OpenAI",
+        name="Megaplan",
+        default_branch="main",
+        scope="epic_specific",
+        associated_epic_id=epic.id,
+        root_commit_sha="root-sha-1",
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "codebase-create"),
+    )
+
+    assert file_store.load_codebase(codebase.id) is not None
+    assert db_store.load_codebase(codebase.id) is None
+    assert store.load_codebase_by_associated_epic(epic.id).id == codebase.id
+    assert store.resolve_codebase_by_root_sha("root-sha-1").id == codebase.id
+    assert file_store.resolve_codebase_by_root_sha("root-sha-1").id == codebase.id
+
+    upserted = store.upsert_codebase(
+        owner="OpenAI",
+        name="Megaplan",
+        default_branch="trunk",
+        scope="epic_specific",
+        associated_epic_id=epic.id,
+        root_commit_sha="root-sha-2",
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "codebase-upsert"),
+    )
+
+    assert upserted.id == codebase.id
+    assert upserted.default_branch == "trunk"
+    assert upserted.root_commit_sha == "root-sha-2"
+    assert store.resolve_codebase_by_root_sha("root-sha-2").id == codebase.id
+    assert store.resolve_codebase_by_root_sha("root-sha-1") is None
+
+
+def test_multi_store_routes_codebase_mutations_by_loaded_owner(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+    identity = repo_codebase_identity(file_store.repo_root)
+    codebase = store.create_codebase(
+        owner=identity.owner,
+        name=identity.name,
+        default_branch=identity.default_branch,
+        scope="epic_specific",
+        associated_epic_id=epic.id,
+        root_commit_sha=identity.root_commit_sha,
+        idempotency_key=deterministic_idempotency_key("multi", epic.id, "owned-codebase"),
+    )
+
+    updated = store.update_codebase(
+        codebase.id,
+        notes="file-owned",
+        idempotency_key=deterministic_idempotency_key("multi", codebase.id, "update"),
+    )
+    touched = store.touch_codebase_accessed(
+        codebase.id,
+        accessed_at="2026-05-25T12:00:00+00:00",
+        idempotency_key=deterministic_idempotency_key("multi", codebase.id, "touch"),
+    )
+    verified = store.mark_codebase_verified(
+        codebase.id,
+        default_branch="trunk",
+        idempotency_key=deterministic_idempotency_key("multi", codebase.id, "verify"),
+    )
+
+    assert updated.notes == "file-owned"
+    assert touched.last_accessed_at is not None
+    assert verified.default_branch == "trunk"
+    assert file_store.load_codebase(codebase.id).default_branch == "trunk"
+    assert db_store.load_codebase(codebase.id) is None
+
+    store.remove_codebase(codebase.id, idempotency_key=deterministic_idempotency_key("multi", codebase.id, "remove"))
+    assert file_store.load_codebase(codebase.id) is None
+    assert db_store.load_codebase(codebase.id) is None
+
+
+def test_multi_store_routes_ticket_operations_by_codebase_and_ticket_owner(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    file_epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+    db_epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+    file_identity = repo_codebase_identity(file_store.repo_root)
+    file_codebase = store.create_codebase(
+        owner=file_identity.owner,
+        name=file_identity.name,
+        default_branch=file_identity.default_branch,
+        scope="epic_specific",
+        associated_epic_id=file_epic.id,
+        root_commit_sha=file_identity.root_commit_sha,
+        idempotency_key=deterministic_idempotency_key("multi", file_epic.id, "ticket-codebase"),
+    )
+    db_identity = repo_codebase_identity(db_store.repo_root)
+    db_codebase = store.create_codebase(
+        owner=db_identity.owner,
+        name=db_identity.name,
+        default_branch=db_identity.default_branch,
+        scope="epic_specific",
+        associated_epic_id=db_epic.id,
+        root_commit_sha=db_identity.root_commit_sha,
+        idempotency_key=deterministic_idempotency_key("multi", db_epic.id, "ticket-codebase"),
+    )
+
+    file_ticket = store.create_ticket(
+        codebase_id=file_codebase.id,
+        title="File ticket",
+        body="owned by file",
+        slug="file-ticket",
+        idempotency_key=deterministic_idempotency_key("multi", file_codebase.id, "ticket"),
+    )
+    db_ticket = store.create_ticket(
+        codebase_id=db_codebase.id,
+        title="DB ticket",
+        body="owned by db",
+        slug="db-ticket",
+        idempotency_key=deterministic_idempotency_key("multi", db_codebase.id, "ticket"),
+    )
+
+    store.link_ticket_to_epic(
+        ticket_id=file_ticket.id,
+        epic_id=file_epic.id,
+        resolves_on_complete=True,
+        idempotency_key=deterministic_idempotency_key("multi", file_ticket.id, "link"),
+    )
+    store.link_ticket_to_epic(
+        ticket_id=db_ticket.id,
+        epic_id=db_epic.id,
+        resolves_on_complete=True,
+        idempotency_key=deterministic_idempotency_key("multi", db_ticket.id, "link"),
+    )
+    updated = store.update_ticket(
+        file_ticket.id,
+        title="Updated file ticket",
+        idempotency_key=deterministic_idempotency_key("multi", file_ticket.id, "update"),
+    )
+
+    assert updated.title == "Updated file ticket"
+    assert file_store.load_ticket(file_ticket.id).title == "Updated file ticket"
+    assert db_store.load_ticket(file_ticket.id) is None
+    assert [row.ticket_id for row in store.list_ticket_epic_links(epic_id=file_epic.id)] == [file_ticket.id]
+    assert [row.ticket_id for row in store.list_ticket_epic_links(epic_id=db_epic.id)] == [db_ticket.id]
+    assert [row.id for row in store.list_tickets(codebase_ids=[file_codebase.id, db_codebase.id], sort="title", order="asc")] == [
+        db_ticket.id,
+        file_ticket.id,
+    ]
+
+    store.unlink_ticket_from_epic(
+        ticket_id=file_ticket.id,
+        epic_id=file_epic.id,
+        idempotency_key=deterministic_idempotency_key("multi", file_ticket.id, "unlink"),
+    )
+    assert store.list_ticket_epic_links(ticket_id=file_ticket.id) == []
+
+
+def test_multi_store_rejects_ambiguous_loaded_owners(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    codebase_id = "shared-codebase"
+    ticket_id = "shared-ticket"
+    for backend, owner in ((file_store, "file-owner"), (db_store, "db-owner")):
+        backend.create_codebase(
+            owner=owner,
+            name="repo",
+            default_branch="main",
+            codebase_id=codebase_id,
+            idempotency_key=deterministic_idempotency_key("multi", owner, "codebase"),
+        )
+        identity = repo_codebase_identity(backend.repo_root)
+        repo_codebase = backend.upsert_codebase(
+            owner=identity.owner,
+            name=identity.name,
+            default_branch=identity.default_branch,
+            root_commit_sha=identity.root_commit_sha,
+            idempotency_key=deterministic_idempotency_key("multi", owner, "repo-codebase"),
+        )
+        backend.create_ticket(
+            codebase_id=repo_codebase.id,
+            title=f"{owner} ticket",
+            slug=f"{owner}-ticket",
+            ticket_id=ticket_id,
+            idempotency_key=deterministic_idempotency_key("multi", owner, "ticket"),
+        )
+
+    with pytest.raises(StoreError, match="Codebase 'shared-codebase' exists in both file and db backends"):
+        store.update_codebase(codebase_id, notes="ambiguous")
+    with pytest.raises(StoreError, match="Ticket 'shared-ticket' exists in both file and db backends"):
+        store.update_ticket(ticket_id, title="ambiguous")
 
 
 def test_multi_store_missing_epic_fails_clearly(tmp_path: Path) -> None:
@@ -150,6 +373,51 @@ def test_multi_store_preserves_backend_checklist_normalization(tmp_path: Path) -
         [ChecklistItemInput(content="A", position=7), ChecklistItemInput(content="B", position=7)],
     )
     assert [item.position for item in replaced] == [1, 2]
+
+
+def test_multi_store_updates_checklist_items_without_load_fallback(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+    created = store.add_checklist_items(epic.id, [ChecklistItemInput(content="First", position=1)])
+
+    updated = store.update_checklist_item(created[0].id, status="done", position=1)
+
+    assert updated.status == "done"
+    assert file_store.list_checklist_items(epic.id)[0].status == "done"
+    assert db_store.list_checklist_items(epic.id) == []
+
+    with pytest.raises(KeyError, match="not found in file or db backends"):
+        store.update_checklist_item("missing-checklist-item", status="done")
+
+
+def test_multi_store_events_by_transaction_merges_backends_deterministically(tmp_path: Path) -> None:
+    store, file_store, db_store = _multi(tmp_path)
+    file_epic = store.create_epic(title="File", goal="g", body="body", home_backend="file")
+    db_epic = store.create_epic(title="DB", goal="g", body="body", home_backend="db")
+    transaction_id = "tx-shared"
+
+    file_event = file_store.record_epic_event(
+        epic_id=file_epic.id,
+        transaction_id=transaction_id,
+        event_type="state_change",
+        summary="file event",
+        prior_state={"backend": "file"},
+    )
+    db_event = db_store.record_epic_event(
+        epic_id=db_epic.id,
+        transaction_id=transaction_id,
+        event_type="state_change",
+        summary="db event",
+        prior_state={"backend": "db"},
+    )
+
+    copied = file_event.model_copy(update={"epic_id": db_epic.id})
+    db_store._commit_event(db_epic.id, copied.model_dump(mode="json"))
+
+    merged = store.events_by_transaction(transaction_id)
+
+    assert {event.id for event in merged} == {file_event.id, db_event.id}
+    assert merged == sorted(merged, key=lambda event: (event.occurred_at, event.id))
 
 
 def test_multi_store_preserves_backend_sprint_queue_cleanup(tmp_path: Path) -> None:

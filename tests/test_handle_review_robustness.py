@@ -13,6 +13,8 @@ import megaplan.review.checks
 from megaplan._core import json_dump, load_plan, read_json, save_flag_registry, save_state
 from megaplan.workers import WorkerResult, _build_mock_payload
 
+from tests.conftest import make_args_factory
+
 
 @dataclass
 class PlanFixture:
@@ -24,39 +26,13 @@ class PlanFixture:
     robustness: str
 
 
-def _make_args_factory(project_dir: Path) -> Callable[..., Namespace]:
-    def make_args(**overrides: object) -> Namespace:
-        data = {
-            "plan": None,
-            "idea": "test idea",
-            "name": "review-test-plan",
-            "project_dir": str(project_dir),
-            "auto_approve": None,
-            "robustness": None,
-            "agent": None,
-            "ephemeral": False,
-            "fresh": False,
-            "persist": False,
-            "confirm_destructive": True,
-            "user_approved": False,
-            "confirm_self_review": False,
-            "batch": None,
-            "override_action": None,
-            "note": None,
-            "reason": "",
-        }
-        data.update(overrides)
-        return Namespace(**data)
-
-    return make_args
-
-
 def _make_plan_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
     robustness: str,
 ) -> PlanFixture:
+    """Create a plan fixture (bootstrap is handled by ``bootstrap_fixture``)."""
     root = tmp_path / f"root-{robustness}"
     project_dir = tmp_path / f"project-{robustness}"
     config_path = tmp_path / f"config-{robustness}"
@@ -84,7 +60,7 @@ def _make_plan_fixture(
     monkeypatch.setattr(_io_module, "config_dir", _config_dir)
     monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
 
-    make_args = _make_args_factory(project_dir)
+    make_args = make_args_factory(project_dir)
     response = megaplan.handle_init(root, make_args(name=f"{robustness}-plan", robustness=robustness))
     plan_name = response["plan"]
     return PlanFixture(
@@ -144,6 +120,7 @@ def _adjacent_calls_review_checks(*, include_status: bool = True, status: str = 
 
 def test_handle_review_standard_branch_attaches_prechecks_and_updates_flags(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="standard")
@@ -215,6 +192,7 @@ def test_handle_review_standard_branch_attaches_prechecks_and_updates_flags(
 
 def test_handle_review_light_branch_skips_prechecks_and_keeps_review_payload_unadorned(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="light")
@@ -308,6 +286,7 @@ def test_resolve_review_outcome_uses_standard_and_robust_caps_separately(tmp_pat
 
 def test_handle_review_superrobust_path_merges_parallel_review_and_creates_review_rework(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
@@ -488,6 +467,7 @@ def test_rework_item_task_id_is_scoped_by_check_id() -> None:
 
 def test_handle_review_superrobust_iteration_two_marks_verified_review_flags(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")

@@ -4,6 +4,18 @@ import ast
 from pathlib import Path
 from typing import Any, Callable
 
+from megaplan._core import (
+    atomic_write_json,
+    atomic_write_text,
+    is_creative_mode,
+    is_prose_mode,
+    list_batch_artifacts,
+    read_json,
+    render_final_md,
+)
+from megaplan.forms.stance import validate_stance
+from megaplan.types import PlanState
+
 
 # All terminal statuses an executor may report for a task. "Tracked" means
 # the executor reported back on the task — including reporting it blocked
@@ -314,3 +326,215 @@ def _validate_and_merge_batch(
     if incomplete_message is not None and merged_count < total:
         issues.append(incomplete_message(merged_count, total))
     return merged_count, total
+
+
+def _snapshot_task_statuses(tasks: list[dict[str, Any]]) -> dict[str, str]:
+    return {
+        task["id"]: str(task.get("status", ""))
+        for task in tasks
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
+
+
+def _append_execute_reconciliation_advisories(
+    *,
+    before_statuses: dict[str, str],
+    tasks_by_id: dict[str, dict[str, Any]],
+    issues: list[str],
+) -> None:
+    for task_id, before_status in before_statuses.items():
+        after_status = str(tasks_by_id.get(task_id, {}).get("status", ""))
+        if before_status not in {"done", "skipped"} or after_status == before_status:
+            continue
+        issues.append(
+            f"Advisory: task {task_id} was {before_status!r} on disk before merge but structured output set it to {after_status!r}. Structured output remains authoritative."
+        )
+
+
+def _merge_batch_results(
+    *,
+    finalize_data: dict[str, Any],
+    payload: dict[str, Any],
+    batch_task_ids: list[str],
+    batch_sense_check_ids: list[str],
+    issues: list[str],
+    mode: str = "code",
+    state: PlanState | None = None,
+) -> tuple[int, int, int, int]:
+    batch_task_id_set = set(batch_task_ids)
+    batch_sense_check_id_set = set(batch_sense_check_ids)
+    pre_merge_statuses = _snapshot_task_statuses(
+        [
+            task
+            for task in finalize_data.get("tasks", [])
+            if task.get("id") in batch_task_id_set
+        ]
+    )
+    # Accept task_updates for ANY valid task, not just the current batch.
+    # Models often complete multiple batches' worth of work in one pass —
+    # rejecting the extra work as "unknown task_id" wastes correct results.
+    all_tasks_by_id = {
+        task["id"]: task
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    }
+    mode_state = state or {"config": {"mode": mode}}
+    creative_mode = is_creative_mode(mode_state)
+    if creative_mode and isinstance(payload.get("task_updates"), list):
+        for task_update in payload["task_updates"]:
+            if not isinstance(task_update, dict) or not isinstance(task_update.get("stance"), dict):
+                continue
+            violations = validate_stance(task_update["stance"])
+            if violations:
+                task_update["stance_violations"] = violations
+    if is_prose_mode(mode_state):
+        required_fields = ("task_id", "status", "executor_notes", "sections_written")
+        object_fields: tuple[str, ...] = ()
+        optional_fields: tuple[str, ...] = ()
+        if is_creative_mode(mode_state):
+            required_fields = required_fields + ("stance", "stop_signal")
+            object_fields = ("stance", "stop_signal")
+            optional_fields = ("stance_violations",)
+        merge_fields = ("status", "executor_notes", "sections_written", "stance", "stop_signal", "stance_violations")
+        array_fields = ("sections_written", "stance_violations")
+    else:
+        required_fields = ("task_id", "status", "executor_notes", "files_changed", "commands_run")
+        merge_fields = ("status", "executor_notes", "files_changed", "commands_run")
+        array_fields = ("files_changed", "commands_run")
+        object_fields = ()
+        optional_fields = ()
+    merged_count, _ = _validate_and_merge_batch(
+        payload.get("task_updates"),
+        required_fields=required_fields,
+        optional_fields=optional_fields,
+        targets_by_id=all_tasks_by_id,
+        id_field="task_id",
+        merge_fields=merge_fields,
+        issues=issues,
+        validation_label="task_updates",
+        merge_label="task_update",
+        incomplete_message=None,
+        enum_fields={"status": set(TERMINAL_TASK_STATUSES)},
+        nonempty_fields={"executor_notes"},
+        array_fields=array_fields,
+        object_fields=object_fields,
+    )
+    # Check batch-specific coverage: how many of THIS batch's tasks got updates?
+    # Any terminal status counts as "tracked" — the executor reported back.
+    # "blocked" / "completed" specifically used to be left out of this filter,
+    # which produced a false "tracking is incomplete" message when the
+    # executor legitimately blocked on a user prerequisite.
+    total_batch_tasks = len(batch_task_id_set)
+    batch_merged = sum(
+        1
+        for tid in batch_task_id_set
+        if all_tasks_by_id.get(tid, {}).get("status") in TERMINAL_TASK_STATUSES
+    )
+    if batch_merged < total_batch_tasks:
+        issues.append(
+            f"{total_batch_tasks - batch_merged}/{total_batch_tasks} batch tasks have no executor update — tracking is incomplete."
+        )
+    # Same for sense checks — accept any valid sense check ID.
+    all_sense_checks_by_id = {
+        sense_check["id"]: sense_check
+        for sense_check in finalize_data.get("sense_checks", [])
+        if isinstance(sense_check, dict) and isinstance(sense_check.get("id"), str)
+    }
+    acknowledged_count, _ = _validate_and_merge_batch(
+        payload.get("sense_check_acknowledgments"),
+        required_fields=("sense_check_id", "executor_note"),
+        targets_by_id=all_sense_checks_by_id,
+        id_field="sense_check_id",
+        merge_fields=("executor_note",),
+        issues=issues,
+        validation_label="sense_check_acknowledgments",
+        merge_label="sense_check_acknowledgment",
+        incomplete_message=None,
+        nonempty_fields={"executor_note"},
+    )
+    total_batch_checks = len(batch_sense_check_id_set)
+    batch_acknowledged = sum(
+        1
+        for sid in batch_sense_check_id_set
+        if all_sense_checks_by_id.get(sid, {}).get("executor_note")
+    )
+    if batch_acknowledged < total_batch_checks:
+        issues.append(
+            f"{total_batch_checks - batch_acknowledged}/{total_batch_checks} batch sense checks have no executor acknowledgment — tracking is incomplete."
+        )
+    _append_execute_reconciliation_advisories(
+        before_statuses=pre_merge_statuses,
+        tasks_by_id=all_tasks_by_id,
+        issues=issues,
+    )
+    return merged_count, total_batch_tasks, acknowledged_count, total_batch_checks
+
+
+def reconcile_latest_execution_batch(plan_dir: Path, state: PlanState) -> dict[str, Any]:
+    """Best-effort merge of the latest execution_batch_N artifact into finalize.json.
+
+    This is used at failure boundaries outside the execute handler, such as a
+    chain phase-complete callback failing after an execute subprocess produced
+    a checkpoint artifact. It intentionally treats the latest batch payload as
+    structured evidence and lets the normal merge validator decide which
+    entries are usable.
+    """
+
+    artifacts = list_batch_artifacts(plan_dir)
+    if not artifacts:
+        return {"reconciled": False, "reason": "no execution batch artifacts"}
+    latest = artifacts[-1]
+    try:
+        payload = read_json(latest)
+        finalize_data = read_json(plan_dir / "finalize.json")
+    except Exception as error:
+        return {
+            "reconciled": False,
+            "artifact": latest.name,
+            "reason": f"failed to read checkpoint inputs: {error}",
+        }
+    if not isinstance(payload, dict) or not isinstance(finalize_data, dict):
+        return {
+            "reconciled": False,
+            "artifact": latest.name,
+            "reason": "checkpoint or finalize payload was not an object",
+        }
+
+    batch_task_ids = [
+        task["id"]
+        for task in finalize_data.get("tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("id"), str)
+    ]
+    batch_sense_check_ids = [
+        check["id"]
+        for check in finalize_data.get("sense_checks", [])
+        if isinstance(check, dict) and isinstance(check.get("id"), str)
+    ]
+    issues: list[str] = []
+    merged_count, total_task_count, acknowledged_count, total_check_count = _merge_batch_results(
+        finalize_data=finalize_data,
+        payload=payload,
+        batch_task_ids=batch_task_ids,
+        batch_sense_check_ids=batch_sense_check_ids,
+        issues=issues,
+        mode=state.get("config", {}).get("mode", "code"),
+        state=state,
+    )
+    atomic_write_json(plan_dir / "finalize.json", finalize_data)
+    final_md_error: str | None = None
+    try:
+        atomic_write_text(
+            plan_dir / "final.md", render_final_md(finalize_data, phase="execute")
+        )
+    except Exception as error:
+        final_md_error = str(error)
+    return {
+        "reconciled": True,
+        "artifact": latest.name,
+        "merged_task_count": merged_count,
+        "total_task_count": total_task_count,
+        "acknowledged_sense_check_count": acknowledged_count,
+        "total_sense_check_count": total_check_count,
+        "issues": issues,
+        "final_md_error": final_md_error,
+    }

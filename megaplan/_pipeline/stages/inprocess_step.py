@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from megaplan._pipeline.types import StepContext, StepResult, Verdict
+from megaplan._pipeline.types import StepContext, StepResult, PipelineVerdict
 
 
 @dataclass(frozen=True)
@@ -77,10 +77,10 @@ class InProcessHandlerStep:
         next_state = after.get("current_state", before.get("current_state", ""))
         next_label = _label_for(self.name, response, next_state)
 
-        verdict: Verdict | None = None
+        verdict: PipelineVerdict | None = None
         if self.name == "gate":
             rec = _gate_recommendation(response, next_state)
-            verdict = Verdict(score=0.0, recommendation=rec)
+            verdict = PipelineVerdict(score=0.0, recommendation=rec)
 
         state_patch: dict[str, Any] = {}
         for key in ("current_state", "iteration", "last_gate"):
@@ -118,23 +118,34 @@ def _resolve_project_dir(ctx: StepContext) -> Path:
 def _read_state(plan_dir: Path) -> dict[str, Any]:
     import json
 
+    from megaplan.types import CliError
+
     path = Path(plan_dir) / "state.json"
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
     except json.JSONDecodeError:
-        return {}
+        raise CliError(
+            "corrupt_state_read",
+            "M3B_HALT_CORRUPT_STATE_READ: state.json cannot be parsed as JSON",
+        ) from None
+    if not isinstance(data, dict):
+        raise CliError(
+            "invalid_state_shape",
+            "M3B_HALT_INVALID_STATE_SHAPE: state.json is valid JSON but not a dict",
+        )
+    return data
 
 
 def _label_for(phase: str, response: Mapping[str, Any], next_state: str) -> str:
     """Return the executor's bare `next` label for a phase result.
 
     Sprint 4 Chunk A: the gate phase no longer returns a packed
-    `gate_<rec>:<step>` label. Instead, the Step returns a Verdict
+    `gate_<rec>:<step>` label. Instead, the Step returns a PipelineVerdict
     whose `recommendation` field drives `kind="gate"` edge dispatch.
     The `next` string returned here is just the bare next step name
-    for debug readability — the executor matches on the Verdict.
+    for debug readability — the executor matches on the PipelineVerdict.
     """
     if phase == "gate":
         return _gate_next_step(response, next_state)

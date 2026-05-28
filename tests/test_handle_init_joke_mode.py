@@ -15,33 +15,7 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan.types import CliError
-
-
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -69,9 +43,9 @@ def _load_state(root: Path, plan_name: str) -> dict:
 
 
 def test_joke_mode_accepts_relative_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root,
         _args(project_dir, name="joke-plan", mode="joke", output="scenes/cafe.md"),
@@ -83,9 +57,9 @@ def test_joke_mode_accepts_relative_output(
 
 
 def test_joke_mode_requires_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(root, _args(project_dir, mode="joke", output=None))
     assert info.value.code == "invalid_args"
@@ -93,9 +67,9 @@ def test_joke_mode_requires_output(
 
 
 def test_joke_mode_persists_primary_criterion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root,
         _args(
@@ -112,9 +86,9 @@ def test_joke_mode_persists_primary_criterion(
 
 
 def test_primary_criterion_is_rejected_outside_joke_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,

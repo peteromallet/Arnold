@@ -161,7 +161,22 @@ def _revise_default(ctx: StepContext, params: Mapping[str, Any]) -> str:
     )
 
 
-register_prompt("critique", _critique_default)
-register_prompt("critique:doc", _critique_doc)
-register_prompt("critique:joke", _critique_joke)
-register_prompt("revise", _revise_default)
+# Demo prompts are not registered at import time — production modules
+# should not pick up demo registrations as global side effects.
+# Call :func:`register_demo_prompts` explicitly from demo modules before
+# prompt resolution occurs.
+
+
+def register_demo_prompts() -> None:
+    """Register the default critique/revise prompts used by demo pipelines.
+
+    Call this at import time from demo modules (e.g.
+    ``megaplan._pipeline.demos.doc_critique``) so prompt resolution
+    works when the demo is run directly.  Production code never calls
+    this function — it keeps its own per-phase prompts in
+    ``megaplan/handlers/``.
+    """
+    register_prompt("critique", _critique_default)
+    register_prompt("critique:doc", _critique_doc)
+    register_prompt("critique:joke", _critique_joke)
+    register_prompt("revise", _revise_default)

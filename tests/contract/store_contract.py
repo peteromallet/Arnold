@@ -1,26 +1,235 @@
 from __future__ import annotations
 
+import inspect
 from typing import Callable
 
 from megaplan.store import (
     ArnoldStoreAdapter,
     ChecklistItemInput,
     ControlMessageInput,
+    DBStore,
+    FileStore,
+    MultiStore,
     ProgressEventInput,
     SprintItemInput,
     Store,
+    StoreError,
     deterministic_idempotency_key,
 )
+from megaplan.tickets.identity import repo_codebase_identity
 
 
-def run_store_contract(store_factory: Callable[[], Store]) -> None:
+def _store_protocol_method_names() -> list[str]:
+    return sorted(name for name, value in Store.__dict__.items() if callable(value) and not name.startswith("_"))
+
+
+def _public_callable_method_names(store: object) -> list[str]:
+    return sorted(name for name in dir(store) if not name.startswith("_") and callable(getattr(store, name, None)))
+
+
+def _assert_store_protocol_parity(store: Store) -> None:
+    protocol_names = _store_protocol_method_names()
+    concrete_names = _public_callable_method_names(store)
+    missing = sorted(set(protocol_names) - set(concrete_names))
+    assert isinstance(store, Store), f"{type(store).__name__} is not runtime-compatible with Store"
+    assert not missing, (
+        f"{type(store).__name__} is missing Store methods: {missing}. "
+        f"Store protocol methods={protocol_names}; concrete public callables={concrete_names}"
+    )
+    # Module-layout guard: mixin assembly must not change __module__.
+    _EXPECTED_MODULE: dict[type, str] = {
+        FileStore: "megaplan.store.file",
+        DBStore: "megaplan.store.db",
+        MultiStore: "megaplan.store.multi",
+    }
+    expected = _EXPECTED_MODULE.get(type(store))
+    if expected is not None:
+        assert type(store).__module__ == expected, (
+            f"{type(store).__name__}.__module__ is {type(store).__module__!r}, "
+            f"expected {expected!r}. Mixin assembly may have regressed."
+        )
+
+
+def _assert_codebase_signature_contract() -> None:
+    implementations = (Store, DBStore, FileStore, MultiStore)
+    for method_name in ("create_codebase", "upsert_codebase"):
+        signatures = {impl.__name__: inspect.signature(getattr(impl, method_name)) for impl in implementations}
+        for impl_name, signature in signatures.items():
+            parameters = signature.parameters
+            assert "default_branch" in parameters, f"{impl_name}.{method_name} must require default_branch"
+            assert parameters["default_branch"].default is inspect.Parameter.empty, (
+                f"{impl_name}.{method_name} must not default default_branch"
+            )
+            assert "root_commit_sha" in parameters, f"{impl_name}.{method_name} must expose root_commit_sha"
+            assert parameters["root_commit_sha"].default is None
+        assert list(signatures["Store"].parameters) == list(signatures["DBStore"].parameters)
+        assert list(signatures["Store"].parameters) == list(signatures["FileStore"].parameters)
+        assert list(signatures["Store"].parameters) == list(signatures["MultiStore"].parameters)
+
+
+def _assert_m2_store_signature_contract() -> None:
+    implementations = (DBStore, FileStore, MultiStore)
+    method_names = (
+        "create_ticket",
+        "load_ticket",
+        "list_tickets",
+        "update_ticket",
+        "link_ticket_to_epic",
+        "unlink_ticket_from_epic",
+        "list_ticket_epic_links",
+        "address_tickets_resolved_by_epic",
+        "load_codebase_by_associated_epic",
+        "resolve_codebase_by_root_sha",
+        "events_by_transaction",
+    )
+    for method_name in method_names:
+        protocol_parameters = list(inspect.signature(getattr(Store, method_name)).parameters)
+        for implementation in implementations:
+            concrete_parameters = list(inspect.signature(getattr(implementation, method_name)).parameters)
+            assert concrete_parameters == protocol_parameters, (
+                f"{implementation.__name__}.{method_name} parameters must match Store.{method_name}: "
+                f"{concrete_parameters} != {protocol_parameters}"
+            )
+
+
+def _capture_error_class(fn: Callable[[], object], *, label: str) -> type[BaseException]:
+    try:
+        fn()
+    except Exception as exc:
+        return type(exc)
+    raise AssertionError(f"expected {label} to raise")
+
+
+def _assert_same_error_class(
+    label: str,
+    first: Callable[[], object],
+    second: Callable[[], object],
+) -> None:
+    first_type = _capture_error_class(first, label=label)
+    second_type = _capture_error_class(second, label=label)
+    assert first_type is second_type, f"{label} error class mismatch: {first_type.__name__} != {second_type.__name__}"
+
+
+def _exercise_store_error_contract(store: Store, *, epic_home_backend: str) -> None:
+    idem = deterministic_idempotency_key
+    _assert_same_error_class(
+        "missing epic body access",
+        lambda: store.load_body("missing-epic"),
+        lambda: store.load_body("missing-epic"),
+    )
+
+    conflict_epic = store.create_epic(
+        title="Conflict Epic",
+        goal="Exercise lock/lease conflicts",
+        body="Body",
+        home_backend=epic_home_backend,
+        idempotency_key=idem("contract", epic_home_backend, "conflict_epic"),
+    )
+    store.acquire_lock(
+        conflict_epic.id,
+        "holder-a",
+        120,
+        idempotency_key=idem("contract", conflict_epic.id, "lock", "holder-a"),
+    )
+    _assert_same_error_class(
+        "active lock conflict",
+        lambda: store.acquire_lock(
+            conflict_epic.id,
+            "holder-b",
+            120,
+            idempotency_key=idem("contract", conflict_epic.id, "lock", "holder-b"),
+        ),
+        lambda: store.acquire_lock(
+            conflict_epic.id,
+            "holder-c",
+            120,
+            idempotency_key=idem("contract", conflict_epic.id, "lock", "holder-c"),
+        ),
+    )
+    store.release_lock(
+        conflict_epic.id,
+        "holder-a",
+        idempotency_key=idem("contract", conflict_epic.id, "lock", "release"),
+    )
+
+    lease_plan = store.create_plan(
+        sprint_id=None,
+        epic_id=conflict_epic.id,
+        name="lease-conflict-plan",
+        idea="exercise lease conflicts",
+        idempotency_key=idem("contract", conflict_epic.id, "lease-plan"),
+    )
+    store.acquire_execution_lease(
+        lease_plan.id,
+        "worker-a",
+        "local_cli",
+        120,
+        epic_id=conflict_epic.id,
+        idempotency_key=idem("contract", lease_plan.id, "lease", "worker-a"),
+    )
+    _assert_same_error_class(
+        "active execution lease conflict",
+        lambda: store.acquire_execution_lease(
+            lease_plan.id,
+            "worker-b",
+            "local_cli",
+            120,
+            epic_id=conflict_epic.id,
+            idempotency_key=idem("contract", lease_plan.id, "lease", "worker-b"),
+        ),
+        lambda: store.acquire_execution_lease(
+            lease_plan.id,
+            "worker-c",
+            "local_cli",
+            120,
+            epic_id=conflict_epic.id,
+            idempotency_key=idem("contract", lease_plan.id, "lease", "worker-c"),
+        ),
+    )
+    store.release_lease(
+        lease_plan.id,
+        "worker-a",
+        idempotency_key=idem("contract", lease_plan.id, "lease", "release"),
+    )
+
+    orphan_plan = store.create_plan(
+        sprint_id=None,
+        epic_id=None,
+        name="unsafe-artifact-plan",
+        idea="exercise unsafe artifact paths",
+        idempotency_key=idem("contract", "unsafe-artifact-plan"),
+    )
+    unsafe_name = "../escape.bin"
+    _assert_same_error_class(
+        "unsafe artifact paths",
+        lambda: store.write_plan_artifact(
+            orphan_plan.id,
+            unsafe_name,
+            b"bad",
+            idempotency_key=idem("contract", orphan_plan.id, "unsafe", "write"),
+        ),
+        lambda: store.read_plan_artifact(orphan_plan.id, unsafe_name),
+    )
+    _assert_same_error_class(
+        "unsafe artifact paths",
+        lambda: store.read_plan_artifact(orphan_plan.id, unsafe_name),
+        lambda: store.stat_plan_artifact(orphan_plan.id, unsafe_name),
+    )
+
+
+def run_store_contract(store_factory: Callable[[], Store], *, epic_home_backend: str = "file") -> None:
     store = store_factory()
     idem = deterministic_idempotency_key
+    _assert_store_protocol_parity(store)
+    _assert_codebase_signature_contract()
+    _assert_m2_store_signature_contract()
+    _exercise_store_error_contract(store, epic_home_backend=epic_home_backend)
 
     epic = store.create_epic(
         title="Editorial Title",
         goal="Editorial Goal",
         body="# Editorial Title\n\nEditorial Goal\n",
+        home_backend=epic_home_backend,
         idempotency_key=idem("contract", "create_epic"),
     )
     assert store.load_epic(epic.id).title == "Editorial Title"
@@ -32,6 +241,31 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         idempotency_key=idem("contract", epic.id, "update_body"),
     )
     assert updated_epic.revision == epic.revision + 1
+    first_state_update = store.update_epic(
+        epic.id,
+        expected_revision=updated_epic.revision,
+        state="planned",
+        idempotency_key=idem("contract", epic.id, "update_epic", "state"),
+    )
+    replayed_state_update = store.update_epic(
+        epic.id,
+        expected_revision=updated_epic.revision,
+        state="planned",
+        idempotency_key=idem("contract", epic.id, "update_epic", "state"),
+    )
+    assert replayed_state_update == first_state_update
+    assert store.load_epic(epic.id).revision == first_state_update.revision
+    try:
+        store.update_epic(
+            epic.id,
+            expected_revision=first_state_update.revision,
+            bogus_column="value",
+            idempotency_key=idem("contract", epic.id, "update_epic", "bogus_column"),
+        )
+    except StoreError:
+        pass
+    else:
+        raise AssertionError("unknown update_epic fields should raise StoreError")
     assert store.search_epics(query="revised")[0].id == epic.id
 
     checklist = store.seed_checklist(epic.id, ["First item", "Second item"], idempotency_key=idem("contract", epic.id, "seed_checklist"))
@@ -52,6 +286,35 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         ).completed_at
         is not None
     )
+    before_invalid_checklist = store.list_checklist_items(epic.id)
+    invalid_checklist = ChecklistItemInput.model_construct(
+        content="Invalid checklist",
+        status="bogus",
+        source="bot_inferred",
+    )
+    try:
+        store.add_checklist_items(
+            epic.id,
+            [ChecklistItemInput(content="Valid before invalid"), invalid_checklist],
+            idempotency_key=idem("contract", epic.id, "invalid_add_checklist"),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid checklist status should be rejected")
+    assert store.list_checklist_items(epic.id) == before_invalid_checklist
+
+    try:
+        store.update_checklist_item(
+            replaced[0].id,
+            status="bogus",
+            idempotency_key=idem("contract", replaced[0].id, "invalid_update_checklist_item"),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid checklist update status should be rejected")
+    assert store.list_checklist_items(epic.id) == before_invalid_checklist
 
     sprint = store.create_sprint(
         epic_id=epic.id,
@@ -68,6 +331,22 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         idempotency_key=idem("contract", sprint.id, "replace_sprint_items"),
     )
     assert items[0].content == "Investigate"
+    invalid_sprint_item = SprintItemInput.model_construct(
+        content="Invalid sprint item",
+        estimated_complexity="enormous",
+        status="open",
+    )
+    try:
+        store.replace_sprint_items(
+            sprint.id,
+            [SprintItemInput(content="Valid before invalid"), invalid_sprint_item],
+            idempotency_key=idem("contract", sprint.id, "invalid_replace_sprint_items"),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid sprint item complexity should be rejected")
+    assert store.list_sprint_items(sprint.id) == items
     queued = store.set_sprint_queue(epic.id, [sprint.id], {}, idempotency_key=idem("contract", epic.id, "set_sprint_queue"))
     assert queued[0].queue_position == 1
     assert store.list_sprints_with_items(epic.id)[0].items[0].id == items[0].id
@@ -257,23 +536,79 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         default_branch="main",
         repo_url="https://github.com/openai/megaplan.git",
         repo_workspace="/workspace/megaplan",
+        root_commit_sha="abc123",
         group_name="backend",
         idempotency_key=idem("contract", "codebase", "create"),
     )
     assert store.find_codebase("openai", "megaplan").id == codebase.id
     assert store.load_codebase(codebase.id).repo_url == "https://github.com/openai/megaplan.git"
     assert store.load_codebase(codebase.id).repo_workspace == "/workspace/megaplan"
+    assert store.resolve_codebase_by_root_sha("abc123").id == codebase.id
     upserted_codebase = store.upsert_codebase(
         owner="openai",
         name="megaplan",
         default_branch="trunk",
         repo_url="git@github.com:openai/megaplan.git",
         repo_workspace="/workspace/megaplan-next",
+        root_commit_sha="def456",
         idempotency_key=idem("contract", "codebase", "upsert"),
     )
     assert upserted_codebase.default_branch == "trunk"
     assert upserted_codebase.repo_url == "git@github.com:openai/megaplan.git"
     assert upserted_codebase.repo_workspace == "/workspace/megaplan-next"
+    assert upserted_codebase.root_commit_sha == "def456"
+    assert store.resolve_codebase_by_root_sha("def456").id == codebase.id
+    ticket_codebase_fields = {
+        "owner": "openai",
+        "name": f"megaplan-{epic_home_backend}",
+        "default_branch": "main",
+        "root_commit_sha": f"epic-{epic_home_backend}-sha",
+    }
+    repo_root = getattr(store, "repo_root", None)
+    if repo_root is None and hasattr(store, epic_home_backend):
+        repo_root = getattr(getattr(store, epic_home_backend), "repo_root", None)
+    if repo_root is not None:
+        identity = repo_codebase_identity(repo_root)
+        ticket_codebase_fields.update(
+            owner=identity.owner,
+            name=identity.name,
+            default_branch=identity.default_branch,
+            root_commit_sha=identity.root_commit_sha,
+        )
+    epic_codebase = store.create_codebase(
+        **ticket_codebase_fields,
+        scope="epic_specific",
+        associated_epic_id=epic.id,
+        idempotency_key=idem("contract", epic.id, "codebase"),
+    )
+    assert store.load_codebase_by_associated_epic(epic.id).id == epic_codebase.id
+    ticket = store.create_ticket(
+        codebase_id=epic_codebase.id,
+        title="Fix store abstraction",
+        body="Preserve codebase identity and ticket links.",
+        source="agent",
+        tags=["store", "ticket"],
+        slug=f"store-ticket-{epic_home_backend}",
+        idempotency_key=idem("contract", epic.id, "ticket"),
+    )
+    assert store.load_ticket(ticket.id).title == "Fix store abstraction"
+    assert [row.id for row in store.list_tickets(codebase_id=epic_codebase.id, keywords=["identity"])] == [ticket.id]
+    link = store.link_ticket_to_epic(
+        ticket_id=ticket.id,
+        epic_id=epic.id,
+        resolves_on_complete=True,
+        idempotency_key=idem("contract", epic.id, "ticket_link"),
+    )
+    assert link.resolves_on_complete is True
+    assert store.list_ticket_epic_links(ticket_id=ticket.id)[0].epic_id == epic.id
+    assert store.address_tickets_resolved_by_epic(epic.id) == [ticket.id]
+    assert store.load_ticket(ticket.id).status == "addressed"
+    store.unlink_ticket_from_epic(
+        ticket_id=ticket.id,
+        epic_id=epic.id,
+        idempotency_key=idem("contract", epic.id, "ticket_unlink"),
+    )
+    assert store.list_ticket_epic_links(ticket_id=ticket.id) == []
     artifact = store.create_code_artifact(
         kind="excerpt",
         source="codebase",
@@ -375,6 +710,22 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
         ),
         idempotency_key=idem("contract", epic.id, "put_control_message"),
     )
+    try:
+        store.put_control_message(
+            ControlMessageInput.model_construct(
+                epic_id=epic.id,
+                actor_id="actor-1",
+                intent="bogus",
+                target_id=orphan_plan.id,
+                payload={},
+                idempotency_key="invalid-control",
+            ),
+            idempotency_key=idem("contract", epic.id, "invalid_put_control_message"),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid control intent should be rejected")
     claimed = store.claim_pending_control_messages(
         processor_id="proc-1",
         idempotency_key=idem("contract", "proc-1", "claim_control"),
@@ -427,6 +778,155 @@ def run_store_contract(store_factory: Callable[[], Store]) -> None:
             idempotency_key=idem("contract", actor.id, "update"),
         ).name
         == "CLI v2"
+    )
+
+
+def run_store_error_class_parity_contract(
+    reference_factory: Callable[[], Store],
+    candidate_factory: Callable[[], Store],
+    *,
+    candidate_home_backend: str = "file",
+) -> None:
+    reference = reference_factory()
+    candidate = candidate_factory()
+    idem = deterministic_idempotency_key
+
+    reference_epic = reference.create_epic(
+        title="Reference conflict epic",
+        goal="Goal",
+        body="Body",
+        idempotency_key=idem("contract", "reference", "conflict-epic"),
+    )
+    candidate_epic = candidate.create_epic(
+        title="Candidate conflict epic",
+        goal="Goal",
+        body="Body",
+        home_backend=candidate_home_backend,
+        idempotency_key=idem("contract", "candidate", "conflict-epic"),
+    )
+
+    reference.acquire_lock(reference_epic.id, "holder-a", 120, idempotency_key=idem("contract", reference_epic.id, "lock", "holder-a"))
+    candidate.acquire_lock(candidate_epic.id, "holder-a", 120, idempotency_key=idem("contract", candidate_epic.id, "lock", "holder-a"))
+    reference_lock = _capture_error_class(
+        lambda: reference.acquire_lock(reference_epic.id, "holder-b", 120, idempotency_key=idem("contract", reference_epic.id, "lock", "holder-b")),
+        label="reference active lock conflict",
+    )
+    candidate_lock = _capture_error_class(
+        lambda: candidate.acquire_lock(candidate_epic.id, "holder-b", 120, idempotency_key=idem("contract", candidate_epic.id, "lock", "holder-b")),
+        label="candidate active lock conflict",
+    )
+    assert reference_lock is candidate_lock, f"active lock conflict error class mismatch: {reference_lock.__name__} != {candidate_lock.__name__}"
+    reference.release_lock(reference_epic.id, "holder-a", idempotency_key=idem("contract", reference_epic.id, "lock", "release"))
+    candidate.release_lock(candidate_epic.id, "holder-a", idempotency_key=idem("contract", candidate_epic.id, "lock", "release"))
+
+    reference_plan = reference.create_plan(
+        sprint_id=None,
+        epic_id=reference_epic.id,
+        name="reference-lease-plan",
+        idea="lease",
+        idempotency_key=idem("contract", reference_epic.id, "lease-plan"),
+    )
+    candidate_plan = candidate.create_plan(
+        sprint_id=None,
+        epic_id=candidate_epic.id,
+        name="candidate-lease-plan",
+        idea="lease",
+        idempotency_key=idem("contract", candidate_epic.id, "lease-plan"),
+    )
+    reference.acquire_execution_lease(
+        reference_plan.id,
+        "worker-a",
+        "local_cli",
+        120,
+        epic_id=reference_epic.id,
+        idempotency_key=idem("contract", reference_plan.id, "lease", "worker-a"),
+    )
+    candidate.acquire_execution_lease(
+        candidate_plan.id,
+        "worker-a",
+        "local_cli",
+        120,
+        epic_id=candidate_epic.id,
+        idempotency_key=idem("contract", candidate_plan.id, "lease", "worker-a"),
+    )
+    reference_lease = _capture_error_class(
+        lambda: reference.acquire_execution_lease(
+            reference_plan.id,
+            "worker-b",
+            "local_cli",
+            120,
+            epic_id=reference_epic.id,
+            idempotency_key=idem("contract", reference_plan.id, "lease", "worker-b"),
+        ),
+        label="reference active execution lease conflict",
+    )
+    candidate_lease = _capture_error_class(
+        lambda: candidate.acquire_execution_lease(
+            candidate_plan.id,
+            "worker-b",
+            "local_cli",
+            120,
+            epic_id=candidate_epic.id,
+            idempotency_key=idem("contract", candidate_plan.id, "lease", "worker-b"),
+        ),
+        label="candidate active execution lease conflict",
+    )
+    assert reference_lease is candidate_lease, (
+        f"active execution lease conflict error class mismatch: {reference_lease.__name__} != {candidate_lease.__name__}"
+    )
+    reference.release_lease(reference_plan.id, "worker-a", idempotency_key=idem("contract", reference_plan.id, "lease", "release"))
+    candidate.release_lease(candidate_plan.id, "worker-a", idempotency_key=idem("contract", candidate_plan.id, "lease", "release"))
+
+    reference_orphan = reference.create_plan(
+        sprint_id=None,
+        epic_id=None,
+        name="reference-unsafe-plan",
+        idea="unsafe",
+        idempotency_key=idem("contract", "reference", "unsafe-plan"),
+    )
+    candidate_orphan = candidate.create_plan(
+        sprint_id=None,
+        epic_id=None,
+        name="candidate-unsafe-plan",
+        idea="unsafe",
+        idempotency_key=idem("contract", "candidate", "unsafe-plan"),
+    )
+    reference_unsafe = _capture_error_class(
+        lambda: reference.write_plan_artifact(
+            reference_orphan.id,
+            "../escape.bin",
+            b"bad",
+            idempotency_key=idem("contract", reference_orphan.id, "unsafe", "write"),
+        ),
+        label="reference unsafe artifact path",
+    )
+    candidate_unsafe = _capture_error_class(
+        lambda: candidate.write_plan_artifact(
+            candidate_orphan.id,
+            "../escape.bin",
+            b"bad",
+            idempotency_key=idem("contract", candidate_orphan.id, "unsafe", "write"),
+        ),
+        label="candidate unsafe artifact path",
+    )
+    assert reference_unsafe is candidate_unsafe, (
+        f"unsafe artifact path error class mismatch: {reference_unsafe.__name__} != {candidate_unsafe.__name__}"
+    )
+
+
+def run_dbstore_preflight_contract() -> None:
+    store = DBStore(actor_id="contract-actor-without-dsn")
+    idempotency_error = _capture_error_class(
+        lambda: store.create_epic(title="T", goal="G", body="B"),
+        label="DBStore.create_epic idempotency requirement",
+    )
+    update_error = _capture_error_class(
+        lambda: store.update_body("epic-id", "new body", expected_revision=1),
+        label="DBStore.update_body idempotency requirement",
+    )
+    assert idempotency_error is ValueError
+    assert idempotency_error is update_error, (
+        f"DB idempotency-required error class mismatch: {idempotency_error.__name__} != {update_error.__name__}"
     )
 
 

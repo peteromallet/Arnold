@@ -4,11 +4,15 @@ Lets users invoke any registered pipeline (built-in or Python-module
 discovered) from the command line. Examples::
 
     megaplan run --list
-    megaplan run doc-critique --inputs doc=/tmp/fixture.md --plan-dir /tmp/dcdemo
-    megaplan run judges --inputs doc=/tmp/note.md --plan-dir /tmp/jd
     megaplan run writing-panel-strict path/to/draft.md
     megaplan run writing-panel-strict path/to/draft.md \
         --profile @writing-panel-strict:standard
+
+Demo pipelines (``doc-critique``, ``judges``) are not registered as
+built-ins; run them directly via their Python modules::
+
+    python -c "from megaplan._pipeline.demos.doc_critique import run_demo; ..."
+    python -c "from megaplan._pipeline.demo_judges import run_demo; ..."
 
 Single dispatch path: every pipeline is resolved through
 :mod:`megaplan._pipeline.registry`. The human-gate resume path is
@@ -24,6 +28,8 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from megaplan._core.state import write_plan_state
 
 
 def build_run_parser(subparsers: Any) -> None:
@@ -321,9 +327,7 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     # Persist state.json before running so the executor's state-merge
     # carries forward our identity snapshot.
     try:
-        (plan_dir / "state.json").write_text(
-            json.dumps(state, indent=2, sort_keys=True)
-        )
+        write_plan_state(plan_dir, mode="replace", state=state)
     except OSError:
         pass
 

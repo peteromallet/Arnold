@@ -1485,6 +1485,44 @@ def test_init_plan_warns_when_inherited_vendor_ignored_by_locked_profile(tmp_pat
     assert "inherited vendor=codex is ignored" in joined
 
 
+def test_vendor_lock_profile_metadata_load_failure_raises(tmp_path: Path) -> None:
+    with patch("megaplan.chain.load_profile_metadata", side_effect=RuntimeError("metadata offline")):
+        with pytest.raises(CliError, match="M3B_HALT_VENDOR_LOCK_PROFILE_LOAD"):
+            chain_module._warn_vendor_ignored_for_locked_profile(
+                tmp_path,
+                profile="apex",
+                vendor="codex",
+                writer=lambda _: None,
+            )
+
+
+def test_vendor_lock_with_no_profile_and_no_vendor_is_noop(tmp_path: Path) -> None:
+    writer_calls: list[str] = []
+
+    with patch("megaplan.chain.load_profile_metadata") as load_metadata:
+        chain_module._warn_vendor_ignored_for_locked_profile(
+            tmp_path,
+            profile=None,
+            vendor=None,
+            writer=writer_calls.append,
+        )
+
+    load_metadata.assert_not_called()
+    assert writer_calls == []
+
+
+def test_vendor_lock_default_vendor_resolution_failure_raises(tmp_path: Path) -> None:
+    with patch("megaplan.chain.load_profile_metadata", return_value={"apex": {"vendor_locked": True}}), \
+         patch("megaplan.chain._resolve_default_vendor", side_effect=RuntimeError("no default vendor")):
+        with pytest.raises(CliError, match="M3B_HALT_VENDOR_LOCK_RESOLVE"):
+            chain_module._warn_vendor_ignored_for_locked_profile(
+                tmp_path,
+                profile="apex",
+                vendor=None,
+                writer=lambda _: None,
+            )
+
+
 def test_init_plan_forwards_prep_direction_flag(tmp_path: Path) -> None:
     idea_path = _touch_idea(tmp_path, "m1.txt", "hello world")
     proc = subprocess.CompletedProcess(
@@ -2332,3 +2370,47 @@ def test_initialized_plan_respects_runtime_override_source(
     assert cp["prerequisite_policy"] == "required"
     assert cp["source"] == "runtime_override"
     assert cp["milestone_label"] == "m1"
+
+
+def test_load_runtime_policy_logs_corrupt_json(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    runtime_path = chain_module._runtime_policy_path_for(spec_path)
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_path.write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert chain_module.load_runtime_policy(spec_path) == {}
+    assert any("M3A_WARN_CHAIN_POLICY_READ" in record.getMessage() for record in caplog.records)
+
+
+def test_branch_head_logs_git_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        chain_module.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("git missing")),
+    )
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert chain_module._branch_head(tmp_path) is None
+    assert any("M3A_WARN_BRANCH_HEAD" in record.getMessage() for record in caplog.records)
+
+
+def test_latest_execute_result_logs_corrupt_state(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    assert chain_module._latest_execute_result(plan_dir) is None
+    assert any("M3A_WARN_EXECUTE_RESULT_READ" in record.getMessage() for record in caplog.records)

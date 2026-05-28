@@ -413,7 +413,7 @@ def test_handle_plan_sets_and_clears_active_step(
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     state = load_state(plan_fixture.plan_dir)
-    assert observed["step"] == "plan"
+    assert observed["phase"] == "plan"
     assert "started_at" in observed
     assert "active_step" not in state
 
@@ -436,7 +436,7 @@ def test_handle_plan_failure_clears_active_step(
         megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     state = load_state(plan_fixture.plan_dir)
-    assert observed["step"] == "plan"
+    assert observed["phase"] == "plan"
     assert "active_step" not in state
 
 
@@ -447,7 +447,7 @@ def test_clear_active_step_ignores_mismatched_run_id() -> None:
 
     clear_active_step(state, run_id=first_run_id)
 
-    assert state["active_step"]["step"] == "critique"
+    assert state["active_step"]["phase"] == "critique"
     assert state["active_step"]["run_id"] == second_run_id
 
 
@@ -455,7 +455,7 @@ def test_handle_status_reports_observability_fields(plan_fixture: PlanFixture) -
     state = load_state(plan_fixture.plan_dir)
     state["meta"]["notes"] = [{"timestamp": "2026-04-09T00:00:00Z", "note": "Newest note."}]
     state["active_step"] = {
-        "step": "critique",
+        "phase": "critique",
         "agent": "claude",
         "mode": "persistent",
         "started_at": "2026-04-09T00:00:00Z",
@@ -487,7 +487,7 @@ def test_handle_status_reports_observability_fields(plan_fixture: PlanFixture) -
     assert response["notes_count"] == 1
     assert response["notes"][0]["note"] == "Newest note."
     assert response["last_step"]["step"] == "plan"
-    assert response["active_step"]["step"] == "critique"
+    assert response["active_step"]["phase"] == "critique"
     assert response["active_step"]["session_id"] == "critique-session"
     assert "stale" in response["active_step"]
     assert response["active_step"]["artifact_mode"] == "completion_only"
@@ -519,7 +519,7 @@ def _drive_to_finalized(plan_fixture: PlanFixture) -> None:
 def test_handle_status_uses_execute_runtime_guidance(plan_fixture: PlanFixture) -> None:
     state = load_state(plan_fixture.plan_dir)
     state["active_step"] = {
-        "step": "execute",
+        "phase": "execute",
         "agent": "codex",
         "mode": "persistent",
         "started_at": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
@@ -540,7 +540,7 @@ def test_handle_status_includes_progress_when_finalize_exists(plan_fixture: Plan
     _drive_to_finalized(plan_fixture)
     state = load_state(plan_fixture.plan_dir)
     state["active_step"] = {
-        "step": "execute",
+        "phase": "execute",
         "agent": "codex",
         "mode": "persistent",
         "started_at": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
@@ -581,7 +581,7 @@ def test_handle_watch_combines_status_and_progress(plan_fixture: PlanFixture) ->
 def test_phase_progress_summary_completion_only(plan_fixture: PlanFixture) -> None:
     state = load_state(plan_fixture.plan_dir)
     state["active_step"] = {
-        "step": "critique",
+        "phase": "critique",
         "agent": "codex",
         "mode": "persistent",
         "started_at": (datetime.now(timezone.utc) - timedelta(minutes=3, seconds=12)).isoformat().replace("+00:00", "Z"),
@@ -597,7 +597,7 @@ def test_phase_progress_summary_completion_only(plan_fixture: PlanFixture) -> No
 def test_phase_progress_summary_stale(plan_fixture: PlanFixture) -> None:
     state = load_state(plan_fixture.plan_dir)
     state["active_step"] = {
-        "step": "plan",
+        "phase": "plan",
         "agent": "claude",
         "mode": "persistent",
         "started_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
@@ -667,24 +667,23 @@ def test_format_duration_hint_uses_human_readable_ranges() -> None:
     assert execute_hint == "Expected minimum duration: 5m (depends on task count)."
 
 
-def test_emit_phase_notice_writes_to_stderr_only(capsys: pytest.CaptureFixture[str]) -> None:
+def test_emit_phase_notice_logs_on_megaplan_logger(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+    caplog.set_level(logging.INFO, logger="megaplan")
     megaplan.handlers._emit_phase_notice("plan")
 
-    captured = capsys.readouterr()
-
-    assert captured.out == ""
-    assert "[megaplan]" in captured.err
-    assert "plan" in captured.err
-    assert "Expected duration:" in captured.err
+    assert "[megaplan]" in caplog.text
+    assert "plan" in caplog.text
+    assert "Expected duration:" in caplog.text
+    assert any(record.name == "megaplan" for record in caplog.records)
 
 
-def test_emit_phase_notice_ignores_non_phase_commands(capsys: pytest.CaptureFixture[str]) -> None:
+def test_emit_phase_notice_ignores_non_phase_commands(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+    caplog.set_level(logging.INFO, logger="megaplan")
     megaplan.handlers._emit_phase_notice("status")
 
-    captured = capsys.readouterr()
-
-    assert captured.out == ""
-    assert captured.err == ""
+    assert caplog.text == ""
 
 
 def test_workflow_mock_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

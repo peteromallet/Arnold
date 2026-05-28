@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -16,12 +17,13 @@ from megaplan.audits.capabilities import (
     union_verifies,
     validate_capabilities,
 )
-from megaplan.audits.verifiability import (
+from megaplan.orchestration.verifiability import (
     CriterionAudit,
     audit_criteria,
     classify_criteria,
     validate_requires,
 )
+from megaplan.handlers.verifiability import get_human_verification_status
 
 
 # ---------------------------------------------------------------------------
@@ -237,3 +239,51 @@ def test_union_verifies_merges_all() -> None:
     }
     result = union_verifies(state)
     assert result == {"run_tests", "read_files", "run_linter"}
+
+
+@pytest.mark.parametrize(
+    ("payload", "error", "expected_warning"),
+    [
+        (None, None, False),
+        ("{not valid json", None, True),
+        (None, PermissionError("denied"), True),
+    ],
+)
+def test_get_human_verification_status_read_visibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    payload: str | None,
+    error: Exception | None,
+    expected_warning: bool,
+) -> None:
+    verifications_path = tmp_path / "human_verifications.json"
+    if payload is not None:
+        verifications_path.write_text(payload, encoding="utf-8")
+    elif error is not None:
+        verifications_path.write_text("[]", encoding="utf-8")
+
+    if error is not None:
+        original_read_text = Path.read_text
+
+        def _read_text(self: Path, *args, **kwargs):
+            if self == verifications_path:
+                raise error
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _read_text)
+
+    caplog.set_level("WARNING", logger="megaplan")
+    status = get_human_verification_status(
+        tmp_path,
+        {"success_criteria": [{"criterion": "c1", "priority": "must", "requires": ["drive_browser"]}]},
+        worker_caps={"codex": {"run_tests"}},
+    )
+
+    assert status["verified"] == 0
+    assert status["pending"] == 1
+    messages = [record.getMessage() for record in caplog.records]
+    if expected_warning:
+        assert any("M3A_WARN_CORRUPT_VERIFICATIONS" in message for message in messages)
+    else:
+        assert not messages

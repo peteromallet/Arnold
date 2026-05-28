@@ -30,14 +30,14 @@ from megaplan.prompts import (
     _resolve_builder,
 )
 from megaplan.prompts.critique import write_single_check_template
-from megaplan.prompts.critique_joke import (
+from megaplan.pipelines.creative.prompts.critique_joke import (
     _critique_joke_prompt,
     single_check_critique_joke_prompt,
 )
-from megaplan.prompts.execute_joke import _execute_joke_prompt
-from megaplan.prompts.prep_joke import _prep_joke_prompt
+from megaplan.pipelines.creative.prompts.execute_joke import _execute_joke_prompt
+from megaplan.pipelines.creative.prompts.prep_joke import _prep_joke_prompt
 from megaplan.prompts.review_joke import _review_joke_prompt
-from megaplan.prompts.revise_joke import _revise_joke_prompt
+from megaplan.pipelines.creative.prompts.revise_joke import _revise_joke_prompt
 from megaplan.types import PlanState
 
 

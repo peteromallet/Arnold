@@ -13,7 +13,7 @@ from megaplan._pipeline import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.override import find_override_edge, override_edge
@@ -32,7 +32,7 @@ class _Halt:
 
 @dataclass
 class _Escapes:
-    """A Step that escapes via Verdict.override."""
+    """A Step that escapes via PipelineVerdict.override."""
 
     name: str = "escapes"
     kind: str = "decide"
@@ -42,7 +42,7 @@ class _Escapes:
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
-            verdict=Verdict(score=0.0, override=self.action),
+            verdict=PipelineVerdict(score=0.0, override=self.action),
             next="fallback",
         )
 
@@ -97,7 +97,7 @@ def test_executor_override_takes_precedence_over_gate_rec(tmp_path: Path) -> Non
 
         def run(self, ctx: StepContext) -> StepResult:
             return StepResult(
-                verdict=Verdict(score=0.0, recommendation="iterate",
+                verdict=PipelineVerdict(score=0.0, recommendation="iterate",
                                 override="abort"),
                 next="fallback",
             )

@@ -22,6 +22,19 @@ from .review import (
 )
 from ._shared import _gate_summary_or_skipped
 
+# TODO(M6a): _review_doc_prompt and _review_joke_prompt share significant
+# structural similarity (data loading, flag reverify construction, pre-check
+# blocks, extra_sections assembly, criteria priority rules, rework_items
+# shape) but have intentional semantic differences that prevent a shared
+# helper with byte-identical output: (a) artifact terminology ("Approved
+# plan" / "Output document content" vs "Approved scene canvas" / "Output
+# scene content"), (b) the full JSON example block (criteria names, evidence
+# text, task/sense-check verdicts, summary), (c) the primary-criterion
+# section present only in joke mode, (d) the flag-reverify instruction text
+# ("document" vs "scene"), and (e) the requirements intro sentence.  The
+# duplication is intentionally retained until a future milestone provides a
+# cleaner parameterization boundary.
+
 
 def _review_doc_prompt(
     state: PlanState,

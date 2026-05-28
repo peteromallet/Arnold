@@ -19,7 +19,7 @@ from megaplan._pipeline import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline_with_policy
 from megaplan._pipeline.runtime import (

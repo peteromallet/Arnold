@@ -38,6 +38,12 @@ PROFILE_METADATA_KEYS = frozenset({
     "critic_model",
 })
 
+# System-level fallback when no user, project, or pipeline YAML
+# ``default_profile`` / metadata ``default`` field is set.  The
+# constant is the single source of truth — shipped system TOMLs no
+# longer carry a ``default = \"partnered\"`` key.
+SYSTEM_DEFAULT_PROFILE = "partnered"
+
 VALID_CRITIC_CHOICES = ("kimi", "cross")
 VALID_DEPTH_CHOICES = ("minimal", "low", "medium", "high", "xhigh", "max")
 VALID_DEEPSEEK_PROVIDER_CHOICES = ("fireworks", "direct")
@@ -1131,8 +1137,11 @@ def resolve_pipeline_profile(
                         pipeline_local_metadata=pipeline_local_metadata,
                     )
 
-    # ── Layer 4: Profile default field ─────────────────────────────
-    # Scan system profiles for one with a "default" metadata field
+    # ── Layer 4: Profile default field → SYSTEM_DEFAULT_PROFILE ──
+    # Scan all metadata (system + user + project merge) for a profile
+    # with a ``default`` metadata field.  A user/project TOML can set
+    # its own ``default=`` and it will be picked up here via the merge
+    # in ``load_profile_metadata``.
     for pname, pmeta in system_metadata.items():
         default_ref = pmeta.get("default")
         if default_ref and isinstance(default_ref, str) and default_ref in system_profiles:
@@ -1144,12 +1153,22 @@ def resolve_pipeline_profile(
                 pipeline_local_metadata=pipeline_local_metadata,
             )
 
+    # No metadata-based default found — fall back to the module constant
+    if SYSTEM_DEFAULT_PROFILE in system_profiles:
+        return _resolve_with_inheritance(
+            SYSTEM_DEFAULT_PROFILE,
+            system_profiles=system_profiles,
+            system_metadata=system_metadata,
+            pipeline_local_profiles=pipeline_local_profiles,
+            pipeline_local_metadata=pipeline_local_metadata,
+        )
+
     # ── Fail loud ──────────────────────────────────────────────────
     raise CliError(
         "unknown_profile",
         f"Cannot resolve profile for pipeline '{pipeline_name}'. "
         f"No CLI flag, no pipeline-local profiles, no matching system profile, "
-        f"and no system profile with a 'default' field. "
+        f"and the system default profile '{SYSTEM_DEFAULT_PROFILE}' is not available. "
         f"Pipeline-local: {_known_profiles_text(pipeline_local_profiles)}. "
         f"System: {_known_profiles_text(system_profiles)}.",
     )
@@ -1251,7 +1270,8 @@ def apply_vendor_rewrite(
                             f"Vendor swap conflict on phase '{phase}' tier {tier_int}: {e.message}",
                         ) from e
                     raise
-    # feedback is locked at claude:low for cross-run comparability
+    # feedback is preserved from the profile (skipped during vendor swap for
+    # cross-run comparability) and defaults to "claude:low" when absent
     result: dict[str, str] = {}
     for phase, spec in profile.items():
         if phase == "feedback":
@@ -1697,6 +1717,7 @@ __all__ = [
     "DEFAULT_DEEPSEEK_PROVIDER",
     "CANONICAL_PREP_MODELS",
     "PREP_MODEL_STAGES",
+    "SYSTEM_DEFAULT_PROFILE",
     "VALID_DEPTH_CHOICES",
     "VALID_PHASE_KEYS",
     "PROFILE_METADATA_KEYS",

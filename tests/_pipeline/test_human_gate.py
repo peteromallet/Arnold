@@ -1,4 +1,4 @@
-"""Unit tests for HumanGateStep pause/resume semantics.
+"""Unit tests for HumanDecisionStep pause/resume semantics.
 
 Verifies pause file shape, resume with choice, fresh artifact
 re-reads after disk edits, and cleanup after resume.
@@ -18,7 +18,7 @@ import pytest
 
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.resume import check_awaiting_user, with_entry
-from megaplan._pipeline.steps.human_gate import HumanGateStep
+from megaplan._pipeline.steps.human_gate import HumanDecisionStep
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,
@@ -51,7 +51,7 @@ def _build_pause_resume_pipeline(
 
     The ``write`` stage is an :class:`AgentStep` whose worker callback
     supplies the per-iteration content; the ``decide`` stage is a
-    :class:`HumanGateStep` whose ``options`` map to either a loop-back
+    :class:`HumanDecisionStep` whose ``options`` map to either a loop-back
     target or ``"halt"``."""
     (pipeline_dir / "prompts").mkdir(parents=True, exist_ok=True)
     (pipeline_dir / "prompts" / "write.md").write_text("write prompt")
@@ -88,11 +88,11 @@ def _make_iteration_worker():
     return worker, state
 
 
-# ── HumanGateStep direct tests ─────────────────────────────────────────
+# ── HumanDecisionStep direct tests ─────────────────────────────────────
 
 
-class TestHumanGateStep:
-    """HumanGateStep: pause file shape, resume choice, cleanup."""
+class TestHumanDecisionStep:
+    """HumanDecisionStep: pause file shape, resume choice, cleanup."""
 
     def test_pause_writes_awaiting_user_json(self, tmp_path: Path):
         """On first run (no resume choice), writes correct awaiting_user.json."""
@@ -100,7 +100,7 @@ class TestHumanGateStep:
         artifact_dir.mkdir()
         (artifact_dir / "v1.md").write_text("Revised draft content")
 
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="human_decide",
             kind="decide",
             _artifact_stage="revise",
@@ -131,7 +131,7 @@ class TestHumanGateStep:
 
     def test_pause_with_missing_artifact(self, tmp_path: Path):
         """When artifact stage has no output yet, artifact_path is None."""
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="nonexistent",
@@ -149,7 +149,7 @@ class TestHumanGateStep:
 
     def test_resume_with_choice_supplied_via_constructor(self, tmp_path: Path):
         """When _resume_choice is set, returns it as the next label."""
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="revise",
@@ -179,7 +179,7 @@ class TestHumanGateStep:
         }
         (tmp_path / "awaiting_user.json").write_text(json.dumps(awaiting_data))
 
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="revise",
@@ -208,7 +208,7 @@ class TestHumanGateStep:
         }
         (tmp_path / "awaiting_user.json").write_text(json.dumps(awaiting_data))
 
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="revise",
@@ -225,7 +225,7 @@ class TestHumanGateStep:
 
     def test_invalid_choice_not_accepted(self, tmp_path: Path):
         """A choice not in _choices list is ignored, falls through to pause."""
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="revise",
@@ -245,7 +245,7 @@ class TestHumanGateStep:
         (tmp_path / "revise").mkdir()
         (tmp_path / "revise" / "v1.md").write_text("content")
 
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="revise",
@@ -332,7 +332,7 @@ class TestPauseResumeInPipeline:
         # and the agent auto-links via the natural "done" label.
         decide_stage = pipeline.stages["decide"]
         assert isinstance(decide_stage, Stage)
-        assert isinstance(decide_stage.step, HumanGateStep)
+        assert isinstance(decide_stage.step, HumanDecisionStep)
         write_stage = pipeline.stages["write"]
         assert any(
             e.label == "done" and e.target == "decide"
@@ -456,7 +456,7 @@ class TestFreshArtifactReRead:
         artifact_path.write_text("Original version")
 
         # First run: pause
-        step = HumanGateStep(
+        step = HumanDecisionStep(
             name="decide",
             kind="decide",
             _artifact_stage="revise",

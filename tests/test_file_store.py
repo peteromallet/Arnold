@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -7,24 +8,224 @@ import pytest
 
 from megaplan.editorial.body import update_body
 from megaplan.store import (
+    ControlMessageInput,
     CloudRunInput,
     FileStore,
     LocalDirBlobStore,
     ResidentConversationInput,
     ScheduledJobInput,
+    SprintItemInput,
     deterministic_idempotency_key,
 )
 from megaplan.store import ChecklistItemInput, RevisionConflict, StoreError
 from megaplan.store.snapshot import canonical_sha256
+from megaplan.tickets.files import read_ticket_file, slugify, ticket_file_path, write_ticket_file
+from megaplan.tickets.identity import repo_codebase_identity
 from tests.contract.store_contract import run_arnold_adapter_contract, run_store_contract
 
 
+def _init_git_repo(repo_root: Path) -> str:
+    repo_root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Megaplan Tests"], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=repo_root, check=True, capture_output=True, text=True)
+    (repo_root / "README.md").write_text("# Test\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo_root, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        ["git", "rev-list", "--max-parents=0", "HEAD"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip().splitlines()[0]
+
+
 def test_file_store_contract(tmp_path: Path) -> None:
-    run_store_contract(lambda: FileStore(tmp_path / "store"))
+    repo_root = tmp_path / "repo"
+    _init_git_repo(repo_root)
+    run_store_contract(lambda: FileStore(tmp_path / "store", repo_root=repo_root))
 
 
 def test_file_store_arnold_adapter_contract(tmp_path: Path) -> None:
     run_arnold_adapter_contract(lambda: FileStore(tmp_path / "store"))
+
+
+def test_file_store_ticket_ops_refuse_without_repo_root_sha(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+    store = FileStore(tmp_path / "store", repo_root=repo_root)
+
+    with pytest.raises(StoreError, match="root commit"):
+        store.create_ticket(
+            codebase_id="any",
+            title="No root",
+            body="body",
+            slug="no-root",
+        )
+
+
+def test_file_store_loads_legacy_null_ticket_with_normalized_codebase_without_writeback(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    _init_git_repo(repo_root)
+    store = FileStore(tmp_path / "store", repo_root=repo_root)
+    legacy_path = ticket_file_path(repo_root, "LEGACY-1", slugify("Legacy ticket"))
+    write_ticket_file(
+        legacy_path,
+        {
+            "id": "LEGACY-1",
+            "title": "Legacy ticket",
+            "status": "open",
+            "source": "human",
+            "tags": ["legacy"],
+            "codebase_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "last_edited_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "epics": [],
+            "__body__": "legacy body",
+        },
+    )
+
+    ticket = store.load_ticket("LEGACY-1")
+
+    assert ticket is not None
+    assert isinstance(ticket.codebase_id, str)
+    assert store.resolve_codebase_by_root_sha(repo_codebase_identity(repo_root).root_commit_sha).id == ticket.codebase_id
+    assert read_ticket_file(legacy_path)["codebase_id"] is None
+
+
+def test_file_store_mutating_legacy_null_ticket_writes_back_normalized_codebase(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    _init_git_repo(repo_root)
+    store = FileStore(tmp_path / "store", repo_root=repo_root)
+    legacy_path = ticket_file_path(repo_root, "LEGACY-2", slugify("Mutating legacy"))
+    write_ticket_file(
+        legacy_path,
+        {
+            "id": "LEGACY-2",
+            "title": "Mutating legacy",
+            "status": "open",
+            "source": "human",
+            "tags": [],
+            "codebase_id": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "last_edited_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "epics": [],
+            "__body__": "body",
+        },
+    )
+
+    updated = store.update_ticket("LEGACY-2", status="dismissed")
+
+    assert updated.status == "dismissed"
+    assert read_ticket_file(legacy_path)["codebase_id"] == updated.codebase_id
+
+
+def test_file_store_ticket_create_writes_repo_root_frontmatter_not_store_root(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    _init_git_repo(repo_root)
+    store = FileStore(tmp_path / "store", repo_root=repo_root)
+    identity = repo_codebase_identity(repo_root)
+    codebase = store.upsert_codebase(
+        owner=identity.owner,
+        name=identity.name,
+        default_branch=identity.default_branch,
+        root_commit_sha=identity.root_commit_sha,
+    )
+
+    ticket = store.create_ticket(
+        codebase_id=codebase.id,
+        title="Repo rooted",
+        body="body",
+        slug="repo-rooted",
+    )
+
+    assert (repo_root / ".megaplan" / "tickets" / f"{ticket.id}-repo-rooted.md").exists()
+    assert not (tmp_path / "store" / ".megaplan" / "tickets").exists()
+
+
+def test_file_store_ticket_links_use_repo_root_frontmatter_only(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    _init_git_repo(repo_root)
+    store = FileStore(tmp_path / "store", repo_root=repo_root)
+    codebase = store._resolve_ticket_codebase()
+    ticket = store.create_ticket(
+        codebase_id=codebase.id,
+        title="Linked ticket",
+        body="body",
+        slug="linked-ticket",
+    )
+
+    first = store.link_ticket_to_epic(
+        ticket_id=ticket.id,
+        epic_id="epic_1",
+        resolves_on_complete=False,
+    )
+    relinked = store.link_ticket_to_epic(
+        ticket_id=ticket.id,
+        epic_id="epic_1",
+        resolves_on_complete=True,
+    )
+
+    ticket_path = repo_root / ".megaplan" / "tickets" / f"{ticket.id}-linked-ticket.md"
+    frontmatter = read_ticket_file(ticket_path)
+    assert relinked.linked_at == first.linked_at
+    assert frontmatter["epics"] == [
+        {
+            "epic_id": "epic_1",
+            "resolves_on_complete": True,
+            "linked_at": first.linked_at,
+        }
+    ]
+    assert store.list_ticket_epic_links(ticket_id=ticket.id) == [relinked]
+    assert not (tmp_path / "store" / "ticket_epics").exists()
+
+    store.unlink_ticket_from_epic(ticket_id=ticket.id, epic_id="epic_1")
+
+    assert read_ticket_file(ticket_path)["epics"] == []
+    assert store.list_ticket_epic_links(ticket_id=ticket.id) == []
+    assert not (tmp_path / "store" / "ticket_epics").exists()
+
+
+def test_file_store_reads_facade_frontmatter_links_and_addresses_resolved(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    _init_git_repo(repo_root)
+    store = FileStore(tmp_path / "store", repo_root=repo_root)
+    codebase = store._resolve_ticket_codebase()
+    linked_at = datetime(2026, 1, 2, tzinfo=UTC)
+    ticket_path = ticket_file_path(repo_root, "FRONT-1", slugify("Facade linked"))
+    write_ticket_file(
+        ticket_path,
+        {
+            "id": "FRONT-1",
+            "title": "Facade linked",
+            "status": "open",
+            "source": "human",
+            "tags": ["facade"],
+            "codebase_id": codebase.id,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "last_edited_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "epics": [
+                {
+                    "epic_id": "epic_done",
+                    "resolves_on_complete": True,
+                    "linked_at": linked_at.isoformat(),
+                }
+            ],
+            "__body__": "body",
+        },
+    )
+
+    assert store.list_ticket_epic_links(epic_id="epic_done")[0].linked_at == linked_at
+    assert store.address_tickets_resolved_by_epic("epic_done") == ["FRONT-1"]
+    assert store.address_tickets_resolved_by_epic("epic_done") == []
+
+    frontmatter = read_ticket_file(ticket_path)
+    assert frontmatter["status"] == "addressed"
+    assert frontmatter["epics"][0]["epic_id"] == "epic_done"
+    assert not (tmp_path / "store" / "ticket_epics").exists()
 
 
 def test_file_store_places_orphan_plans_under_orphan_root(tmp_path: Path) -> None:
@@ -246,6 +447,39 @@ def test_file_store_normalizes_checklist_positions_across_mutations(tmp_path: Pa
     assert [item.position for item in replaced] == [1, 2]
     assert replaced[0].status == "done"
     assert replaced[0].completed_at == done.completed_at
+
+
+def test_file_store_rejects_invalid_store_inputs_before_writes(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    epic = store.create_epic(title="Epic", goal="Goal", body="Body")
+    existing = store.add_checklist_items(epic.id, [ChecklistItemInput(content="Existing")])
+    invalid_checklist = ChecklistItemInput.model_construct(content="Bad", status="bogus", source="bot_inferred")
+
+    with pytest.raises(ValueError):
+        store.add_checklist_items(epic.id, [ChecklistItemInput(content="Valid"), invalid_checklist])
+    assert [item.id for item in store.list_checklist_items(epic.id)] == [existing[0].id]
+
+    with pytest.raises(ValueError):
+        store.replace_checklist(epic.id, [invalid_checklist])
+    assert [item.id for item in store.list_checklist_items(epic.id)] == [existing[0].id]
+
+    sprint = store.create_sprint(epic_id=epic.id, sprint_number=1, name="One", goal="One")
+    invalid_sprint_item = SprintItemInput.model_construct(content="Bad", estimated_complexity="enormous", status="open")
+    with pytest.raises(ValueError):
+        store.replace_sprint_items(sprint.id, [SprintItemInput(content="Valid"), invalid_sprint_item])
+    assert store.list_sprint_items(sprint.id) == []
+
+    invalid_control = ControlMessageInput.model_construct(
+        epic_id=epic.id,
+        actor_id="actor",
+        intent="bogus",
+        target_id="target",
+        payload={},
+        idempotency_key="invalid-control",
+    )
+    with pytest.raises(ValueError):
+        store.put_control_message(invalid_control)
+    assert store.claim_pending_control_messages(processor_id="proc") == []
 
 
 def test_file_store_set_sprint_queue_validates_and_cleans_stale_state(tmp_path: Path) -> None:

@@ -25,9 +25,9 @@ from .critique import (
     _revise_prompt,
     _write_critique_template,
 )
-from .critique_creative import _critique_creative_prompt
-from .critique_joke import _critique_joke_prompt
-from .revise_joke import _revise_joke_prompt
+from megaplan.pipelines.creative.prompts.critique_creative import _critique_creative_prompt
+from megaplan.pipelines.creative.prompts.critique_joke import _critique_joke_prompt
+from megaplan.pipelines.creative.prompts.revise_joke import _revise_joke_prompt
 from .execute import (
     _execute_approval_note,
     _execute_batch_prompt as _execute_code_batch_prompt,
@@ -44,9 +44,9 @@ from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt
 def _feedback_prompt(state: PlanState, plan_dir: Path) -> str:
     """Adapter so build_feedback_prompt fits the _PromptBuilder signature."""
     return build_feedback_prompt(plan_dir, state)
-from .execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
-from .execute_creative import _execute_creative_batch_prompt, _execute_creative_prompt
-from .execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
+from megaplan.pipelines.doc.prompts.execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
+from megaplan.pipelines.creative.prompts.execute_creative import _execute_creative_batch_prompt, _execute_creative_prompt
+from megaplan.pipelines.creative.prompts.execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
 from .planning import (
     PLAN_TEMPLATE,
     _plan_prompt,
@@ -56,8 +56,8 @@ from .planning import (
     _prep_triage_prompt,
 )
 from .prep_doc import _prep_doc_prompt
-from .prep_joke import _prep_joke_prompt
-from .revise_creative import _revise_creative_prompt
+from megaplan.pipelines.creative.prompts.prep_joke import _prep_joke_prompt
+from megaplan.pipelines.creative.prompts.revise_creative import _revise_creative_prompt
 from .review import (
     _review_prompt,
     _settled_decisions_block,
@@ -70,7 +70,8 @@ from .review_joke import _review_joke_prompt
 
 _PromptBuilder = Callable[..., str]
 
-_CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
+# Shared builder map for all steps that are identical across agents.
+_COMMON_BUILDERS: dict[str, _PromptBuilder] = {
     "plan": _plan_prompt,
     "prep": _prep_prompt,
     "prep-triage": _prep_triage_prompt,
@@ -82,56 +83,29 @@ _CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
     "finalize": _finalize_prompt,
     "execute": _execute_prompt,
     "feedback": _feedback_prompt,
-    "review": partial(
-        _review_prompt,
-        review_intro="Review the execution critically against user intent and observable success criteria.",
-        criteria_guidance="Judge against the success criteria, not plan elegance.",
-        task_guidance="Review each task by cross-referencing the executor's per-task `files_changed` and `commands_run` against the git diff and any audit findings.",
-        sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the code.",
-    ),
 }
 
-_CODEX_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
-    "plan": _plan_prompt,
-    "prep": _prep_prompt,
-    "prep-triage": _prep_triage_prompt,
-    "prep-distill": _prep_distill_prompt,
-    "critique": _critique_prompt,
-    "critique_evaluator": _critique_evaluator_prompt,
-    "revise": _revise_prompt,
-    "gate": _gate_prompt,
-    "finalize": _finalize_prompt,
-    "execute": _execute_prompt,
-    "feedback": _feedback_prompt,
-    "review": partial(
-        _review_prompt,
-        review_intro="Review the implementation against the success criteria.",
-        criteria_guidance="Verify each success criterion explicitly.",
-        task_guidance="Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.",
-        sense_check_guidance="Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.",
-    ),
-}
+# Per-agent review overlays — the only step whose wording differs by agent.
+_CLAUDE_REVIEW_OVERLAY = partial(
+    _review_prompt,
+    review_intro="Review the execution critically against user intent and observable success criteria.",
+    criteria_guidance="Judge against the success criteria, not plan elegance.",
+    task_guidance="Review each task by cross-referencing the executor's per-task `files_changed` and `commands_run` against the git diff and any audit findings.",
+    sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the code.",
+)
 
-_HERMES_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {
-    "plan": _plan_prompt,
-    "prep": _prep_prompt,
-    "prep-triage": _prep_triage_prompt,
-    "prep-distill": _prep_distill_prompt,
-    "critique": _critique_prompt,
-    "critique_evaluator": _critique_evaluator_prompt,
-    "revise": _revise_prompt,
-    "gate": _gate_prompt,
-    "finalize": _finalize_prompt,
-    "execute": _execute_prompt,
-    "feedback": _feedback_prompt,
-    "review": partial(
-        _review_prompt,
-        review_intro="Review the execution critically against user intent and observable success criteria.",
-        criteria_guidance="Judge against the success criteria, not plan elegance.",
-        task_guidance="Review each task by cross-referencing the executor's per-task `files_changed` and `commands_run` against the git diff and any audit findings.",
-        sense_check_guidance="Review every sense check explicitly. Confirm concise executor acknowledgments when they are specific; dig deeper only when they are perfunctory or contradicted by the code.",
-    ),
-}
+_CODEX_REVIEW_OVERLAY = partial(
+    _review_prompt,
+    review_intro="Review the implementation against the success criteria.",
+    criteria_guidance="Verify each success criterion explicitly.",
+    task_guidance="Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.",
+    sense_check_guidance="Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.",
+)
+
+# Exported agent builder maps assembled from the shared base + per-agent review.
+_CLAUDE_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {**_COMMON_BUILDERS, "review": _CLAUDE_REVIEW_OVERLAY}
+_CODEX_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {**_COMMON_BUILDERS, "review": _CODEX_REVIEW_OVERLAY}
+_HERMES_PROMPT_BUILDERS: dict[str, _PromptBuilder] = {**_COMMON_BUILDERS, "review": _CLAUDE_REVIEW_OVERLAY}
 
 _NESTED_HARNESS_GUARD = (
     "You are already running inside the megaplan harness for this step. "

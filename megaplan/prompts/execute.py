@@ -17,12 +17,12 @@ from megaplan._core import (
     latest_plan_meta_path,
     read_json,
 )
-from megaplan.resolutions import (
+from megaplan.resolution_contract import (
     FALLBACK_STATES,
     HARD_BLOCK_STATES,
-    load_user_action_resolutions,
     resolution_applies_to_task,
 )
+from megaplan.resolutions import load_user_action_resolutions
 from megaplan.types import PlanState
 
 from ._shared import _debt_watch_lines, _gate_summary_or_skipped, _render_prep_block
@@ -293,7 +293,7 @@ def _format_user_action_guidance(
             action_id = action.get("id", "unknown")
             description = action.get("description", "")
             resolution = resolutions.get(action_id)
-            applies = resolution_applies_to_task(resolution, task_id)
+            applies = resolution_applies_to_task(resolution, task_id, source="disk")
 
             if applies and isinstance(resolution, dict):
                 state = resolution.get("state", "")
@@ -507,15 +507,7 @@ def _execute_batch_prompt(
     prerequisite_block, resolution_guidance_block = _format_user_action_guidance(
         finalize_data, resolutions, batch_task_ids
     )
-    approval_note = (
-        "Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations."
-        if state["config"].get("auto_approve")
-        else (
-            "Note: User explicitly approved this plan at the gate checkpoint."
-            if state["meta"].get("user_approved_gate")
-            else "Note: Review mode is enabled. Execute should only be running after explicit gate approval."
-        )
-    )
+    approval_note = _execute_approval_note(state)
     debt_watch_items = _debt_watch_lines(plan_dir, root)
     debt_watch_block = (
         "\n".join(

@@ -37,12 +37,25 @@ from megaplan._pipeline.registry import (
 
 
 def test_builtin_pipelines_are_registered() -> None:
-    """Built-in and in-tree pipelines are registered."""
+    """Built-in and in-tree pipelines are registered.
+
+    Only ``planning`` is a hardcoded built-in.  Demo pipelines
+    (``doc-critique``, ``judges``) are directly importable from their
+    demo modules but are no longer registered as built-ins.
+    """
     names = registered_pipelines()
     assert "planning" in names
-    assert "doc-critique" in names
-    assert "judges" in names
     assert "epic-blitz" in names
+
+
+def test_registered_pipelines_does_not_expose_demo_pipelines() -> None:
+    """Demo pipelines are importable directly but never appear in registry."""
+    names = registered_pipelines()
+    for demo_name in ("doc-critique", "judges"):
+        assert demo_name not in names, (
+            f"demo pipeline {demo_name!r} must not appear in "
+            f"registered_pipelines(); got {names!r}"
+        )
 
 
 def test_each_builtin_has_a_description() -> None:
@@ -62,20 +75,20 @@ def test_get_unknown_name_raises_with_helpful_message() -> None:
 
 
 def test_run_doc_critique_by_name_drives_to_done(tmp_path: Path) -> None:
-    """The full "feed in a new sequence" story for the 3× critique demo."""
+    """The full \"feed in a new sequence\" story for the 3× critique demo.
+
+    Uses the demo module directly instead of ``run_pipeline_by_name``
+    because demo pipelines are no longer registered as built-ins.
+    """
+    from megaplan._pipeline.demos.doc_critique import run_demo
+
     fixture = tmp_path / "fixture.md"
     fixture.write_text(
         "The original document. The critic reads this. The reviser "
         "appends to it. Three passes total."
     )
 
-    result = run_pipeline_by_name(
-        "doc-critique",
-        plan_dir=tmp_path,
-        inputs={"doc": fixture},
-        state={"critique_iter": 0},
-        mode="code",
-    )
+    result = run_demo(fixture_path=fixture, artifact_root=tmp_path, mode="code")
 
     # 3 critique versions + 2 revise versions + state.json — exactly
     # the artifact set the doc-critique demo produces.
@@ -86,16 +99,14 @@ def test_run_doc_critique_by_name_drives_to_done(tmp_path: Path) -> None:
 
 
 def test_run_judges_by_name_writes_fan_out_artifacts(tmp_path: Path) -> None:
+    """Fan-out judges demo — invoked directly instead of via registry."""
+    from megaplan._pipeline.demo_judges import run_demo
+
     fixture = tmp_path / "doc.md"
     fixture.write_text("A short document for the judges to score together.")
     artifact_root = tmp_path / "artifacts"
 
-    run_pipeline_by_name(
-        "judges",
-        plan_dir=artifact_root,
-        inputs={"doc": fixture},
-        state={},
-    )
+    run_demo(fixture_path=fixture, artifact_root=artifact_root)
 
     assert {
         path.relative_to(artifact_root).as_posix()

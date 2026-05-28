@@ -17,6 +17,7 @@ from megaplan._core.io import (
     plan_search_roots,
     read_json,
 )
+from megaplan._core.state import write_plan_state
 from megaplan.orchestration.feedback import load_feedback
 from megaplan.schemas import Plan, PlanArtifact
 from megaplan.store.base import ProgressEventInput
@@ -174,7 +175,7 @@ class PlanRepository:
         return read_json(self.plan_dir / "state.json")
 
     def save_state(self, state: dict[str, Any]) -> None:
-        atomic_write_json(self.plan_dir / "state.json", state)
+        write_plan_state(self.plan_dir, mode="replace", state=state)
 
     def list_execution_batch_artifacts(self) -> list[Path]:
         return sorted(

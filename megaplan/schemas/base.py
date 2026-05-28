@@ -27,7 +27,8 @@ def _default_list(value: Any) -> Any:
 NormalizedDict = Annotated[dict[str, Any], BeforeValidator(_default_dict)]
 NormalizedList = Annotated[list[Any], BeforeValidator(_default_list)]
 NormalizedStringList = Annotated[list[str], BeforeValidator(_default_list)]
-HomeBackend = Literal["file", "db"]
+Backend = Literal["file", "db"]
+HomeBackend = Backend
 
 
 class StorageModel(BaseModel):

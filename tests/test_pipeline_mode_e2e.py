@@ -27,11 +27,11 @@ from megaplan._pipeline import (
     Step,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.profile import Profile, empty_profile, load_profile
-from megaplan._pipeline.prompts import register_prompt, resolve_prompt
+from megaplan._pipeline.prompts import register_demo_prompts, register_prompt, resolve_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ class GenericCritic:
         next_label = "to_revise" if iteration + 1 < self.max_iter else "to_done"
         return StepResult(
             outputs={"critique": out},
-            verdict=Verdict(score=0.8 - iteration * 0.1, flags=("auto",)),
+            verdict=PipelineVerdict(score=0.8 - iteration * 0.1, flags=("auto",)),
             next=next_label,
             state_patch={"iter": iteration + 1, "last_model": model},
         )
@@ -118,6 +118,9 @@ def _build_loop_pipeline(max_iter: int = 3) -> Pipeline:
 
 
 def _register_per_mode_prompts() -> None:
+    # Register the default critique/revise prompts first (no longer
+    # done at import time), then layer on the mode-specific overrides.
+    register_demo_prompts()
     register_prompt(
         "critique:joke",
         lambda ctx, params: "Rate this joke: setup-payoff tightness, surprise.",

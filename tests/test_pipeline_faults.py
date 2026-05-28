@@ -113,3 +113,35 @@ def test_load_resilient_to_corrupt_file(tmp_path: Path) -> None:
     (tmp_path / "faults.json").write_text("{not valid json")
     reg = FaultRegistry.load(tmp_path)
     assert reg.faults == {}
+
+
+def test_load_resilient_to_corrupt_file_logs_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "faults.json").write_text("{not valid json", encoding="utf-8")
+
+    caplog.set_level("WARNING", logger="megaplan")
+    reg = FaultRegistry.load(tmp_path)
+
+    assert reg.faults == {}
+    assert any("M3A_WARN_CORRUPT_FAULTS" in record.getMessage() for record in caplog.records)
+
+
+def test_load_unreadable_existing_file_still_propagates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    faults_path = tmp_path / "faults.json"
+    faults_path.write_text("{}", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def _read_text(self: Path, *args, **kwargs):
+        if self == faults_path:
+            raise PermissionError("denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+
+    with pytest.raises(PermissionError, match="denied"):
+        FaultRegistry.load(tmp_path)

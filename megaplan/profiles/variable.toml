@@ -22,6 +22,12 @@
 #   4 = cross-cutting change with architecture implications
 #   5 = fundamental system change with high regression risk
 #
+# Tiers 4–5 use effort suffixes (``claude:low``, ``claude``) so that
+# ``--vendor`` and ``--depth`` can rewrite them at runtime.  This differs
+# from ``variable-claude``, which pins concrete model names on tiers 4–5
+# because ``vendor_locked=true`` prevents rewriting and concrete pins
+# guarantee reproducibility regardless of future defaults.
+#
 # Flag interactions:
 #   * `--vendor codex` — flips premium tier entries 4-5 from claude→codex;
 #     DeepSeek tiers 1-3 stay put.
@@ -32,7 +38,6 @@
 #   * `--deepseek-provider direct` — flips hermes:fireworks:… DeepSeek specs
 #     to hermes:deepseek:… (tiers 1-3).
 [profiles.variable]
-default = "partnered"
 plan                  = "claude:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "claude:low"

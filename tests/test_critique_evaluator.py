@@ -484,7 +484,7 @@ def test_evaluator_prompt_steers_cheapest_capable_critic(
 
     # The steer headline and the cost-ordered preference for cheap critics.
     assert "cheapest capable critic" in prompt.lower()
-    assert "deepseek-v4-pro" in prompt
+    assert "configured lowest-cost critic" in prompt.lower()
     # Escalation to premium must be conditional / justified, not the default.
     lower = prompt.lower()
     assert "escalate" in lower
@@ -501,6 +501,53 @@ def test_adaptive_never_a_robustness_level() -> None:
     """The flag is a boolean config knob; it must never become a robustness level."""
     assert "adaptive" not in ROBUSTNESS_LEVELS
     assert "variable" not in ROBUSTNESS_LEVELS
+
+
+# ---------------------------------------------------------------------------
+# Prompt/model-ID guard — no hardcoded model identifiers in prompt source
+# ---------------------------------------------------------------------------
+
+#: Model identifiers that must not appear as hardcoded strings in prompt-building
+#: Python sources (``megaplan/prompts/**/*.py``).  These belong in the
+#: ``CRITIC_MODEL_ROSTER`` (``megaplan/audits/critique_evaluator.py``) and
+#: profile/config modules, not in natural-language prompt text.
+_PROHIBITED_MODEL_IDS_IN_PROMPTS: tuple[str, ...] = (
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "gpt-5.5",
+)
+
+
+def test_no_model_identifier_strings_in_prompt_python_sources() -> None:
+    """Guard: ``megaplan/prompts/**/*.py`` files must not contain hardcoded
+    model identifier strings used in natural-language prompt guidance.
+
+    Model names live in the roster (``megaplan/audits/critique_evaluator.py``)
+    and profile/config modules.  Prompt text should refer to critics by their
+    configured / roster-derived role (\"the configured lowest-cost critic\",
+    \"the configured fallback critic\"), not by concrete model id.
+    """
+    prompts_dir = Path(__file__).parent.parent / "megaplan" / "prompts"
+    py_files = sorted(prompts_dir.rglob("*.py"))
+    assert py_files, f"No Python files found under {prompts_dir}"
+
+    violations: list[tuple[str, int, str]] = []
+    for py_file in py_files:
+        lines = py_file.read_text(encoding="utf-8").splitlines()
+        for lineno, line in enumerate(lines, start=1):
+            for model_id in _PROHIBITED_MODEL_IDS_IN_PROMPTS:
+                if model_id in line:
+                    violations.append((str(py_file), lineno, model_id))
+
+    assert not violations, (
+        "Hardcoded model identifier(s) found in prompt-building Python sources.\n"
+        "Prompt text must use configured-critic wording (e.g. \"the configured "
+        "lowest-cost critic\"), not concrete model ids.  Model ids belong in "
+        "the roster (megaplan/audits/critique_evaluator.py).\n\n"
+        + "\n".join(f"  {f}:{lineno} → {mid!r}" for f, lineno, mid in violations)
+    )
 
 
 # ---------------------------------------------------------------------------

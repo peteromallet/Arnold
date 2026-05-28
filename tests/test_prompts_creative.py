@@ -7,12 +7,12 @@ from megaplan.audits.robustness import joke_checks_for_robustness
 from megaplan.forms import get_form
 from megaplan.forms.provocations import select_active_checks
 from megaplan.prompts import create_claude_prompt
-from megaplan.prompts.critique_creative import (
+from megaplan.pipelines.creative.prompts.critique_creative import (
     _STANCE_AUTHENTICITY_SUBPROVOCATION,
     _critique_creative_prompt,
 )
 from megaplan.prompts.execute import _execute_prompt
-from megaplan.prompts.execute_creative import _execute_creative_prompt
+from megaplan.pipelines.creative.prompts.execute_creative import _execute_creative_prompt
 
 
 def _state(project_dir: Path, *, mode: str = "creative", form: str = "joke", iteration: int = 1) -> dict:

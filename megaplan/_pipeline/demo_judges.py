@@ -40,7 +40,7 @@ from megaplan._pipeline.types import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 
@@ -101,7 +101,7 @@ class JudgeClarity:
         )
         return StepResult(
             outputs={"verdict": verdict_path},
-            verdict=Verdict(score=float(score), payload={"judge": self.name}),
+            verdict=PipelineVerdict(score=float(score), payload={"judge": self.name}),
             next="done",
         )
 
@@ -128,7 +128,7 @@ class JudgeConcreteness:
         )
         return StepResult(
             outputs={"verdict": verdict_path},
-            verdict=Verdict(score=score, payload={"judge": self.name}),
+            verdict=PipelineVerdict(score=score, payload={"judge": self.name}),
             next="done",
         )
 
@@ -155,7 +155,7 @@ class JudgeBrevity:
         )
         return StepResult(
             outputs={"verdict": verdict_path},
-            verdict=Verdict(score=float(score), payload={"judge": self.name}),
+            verdict=PipelineVerdict(score=float(score), payload={"judge": self.name}),
             next="done",
         )
 
@@ -184,7 +184,7 @@ def _join_judges(results: list[StepResult], ctx: StepContext) -> StepResult:
     mean = sum(scores) / len(scores) if scores else 0.0
     return StepResult(
         outputs={},
-        verdict=Verdict(score=mean),
+        verdict=PipelineVerdict(score=mean),
         next="to_synthesis",
         state_patch={"judges": judges, "judge_verdict_paths": paths},
     )

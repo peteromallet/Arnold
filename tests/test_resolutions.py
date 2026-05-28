@@ -85,6 +85,7 @@ def _write_minimal_state(plan_dir: Path, *, project_dir: Path, auto_approve: boo
 
 
 def _make_args(**overrides) -> Namespace:
+    """Create a Namespace for CLI resolve command tests."""
     data = {
         "plan": None,
         "idea": "test",
@@ -267,6 +268,21 @@ class TestResolutionHelpers:
     def test_recommended_action_missing(self):
         assert resolution_recommended_action(None) == "awaiting_human"
         assert resolution_recommended_action({}) == "awaiting_human"
+
+    def test_applies_to_task_missing_key_means_all(self):
+        """Resolution with no ``applies_to_task_ids`` key applies to every task."""
+        resolution = {"state": "satisfied"}
+        assert resolution_applies_to_task(resolution, "T1") is True
+        assert resolution_applies_to_task(resolution, "T99") is True
+
+    def test_applies_to_task_non_list_scope_ignored(self):
+        """A non-list ``applies_to_task_ids`` is treated as inapplicable."""
+        resolution = {"applies_to_task_ids": "T1", "state": "satisfied"}
+        assert resolution_applies_to_task(resolution, "T1") is False
+
+    def test_recommended_action_unknown_state_defaults_to_awaiting_human(self):
+        assert resolution_recommended_action({"state": "bogus"}) == "awaiting_human"
+        assert resolution_recommended_action({"state": None}) == "awaiting_human"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

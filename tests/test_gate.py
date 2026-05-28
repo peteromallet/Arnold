@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -331,6 +332,23 @@ def test_revise_rejects_proceed_preflight_block(plan_fixture: PlanFixture) -> No
 
     assert error.value.code == "invalid_transition"
     assert "ITERATE" in str(error.value)
+
+
+def test_revise_accepts_legacy_verdict_only_gate_carry(plan_fixture: PlanFixture) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state = load_state(plan_fixture.plan_dir)
+    state["last_gate"] = {"recommendation": "ITERATE", "passed": False}
+    (plan_fixture.plan_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (plan_fixture.plan_dir / "gate_carry.json").write_text(
+        json.dumps({"version": 1, "verdict": "ITERATE", "passed": False}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    response = megaplan.handle_revise(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert response["state"] == megaplan.STATE_PLANNED
+    assert response["next_step"] == "critique"
 
 
 def test_gate_proceed_partial_resolutions_still_missing_after_reprompt_downgrades_to_iterate(
@@ -715,8 +733,8 @@ def test_gate_writes_carry_artifact(plan_fixture: PlanFixture, monkeypatch: pyte
     carry = read_json(carry_path)
     assert carry_path.stat().st_size <= 5_000
     assert carry["version"] == 1
-    assert carry["verdict"] == "ITERATE"
     assert carry["recommendation"] == "ITERATE"
+    assert "verdict" not in carry
 
 
 def test_carry_settled_decisions_are_dicts(plan_fixture: PlanFixture, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1141,6 +1159,30 @@ def test_override_add_note_records_note(plan_fixture: PlanFixture) -> None:
     assert any(n["note"] == "my note" for n in state["meta"]["notes"])
 
 
+def test_override_add_note_logs_warning_when_emit_fails(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    def _raise_emit(*args, **kwargs):
+        raise RuntimeError("emit broke")
+
+    monkeypatch.setattr("megaplan.observability.events.emit", _raise_emit)
+    caplog.set_level("WARNING", logger="megaplan")
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(plan=plan_fixture.plan_name, override_action="add-note", note="my note"),
+    )
+
+    assert response["success"] is True
+    state = load_state(plan_fixture.plan_dir)
+    assert any(n["note"] == "my note" for n in state["meta"]["notes"])
+    assert any("M3A_WARN_EMIT_OVERRIDE_ADD_NOTE" in record.getMessage() for record in caplog.records)
+
+
 def test_add_note_after_abort(plan_fixture: PlanFixture) -> None:
     megaplan.handle_override(
         plan_fixture.root,
@@ -1301,3 +1343,93 @@ def test_build_gate_signals_includes_debt_overlaps_when_flags_match(plan_fixture
 
     assert signals["signals"]["debt_overlaps"]
     assert signals["signals"]["debt_overlaps"][0]["flag_id"] == flag["id"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "error", "expected_warning"),
+    [
+        (None, FileNotFoundError(), False),
+        ("{not valid json", None, True),
+        (None, PermissionError("denied"), True),
+    ],
+)
+def test_prior_unresolved_flag_ids_visibility(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    payload: str | None,
+    error: Exception | None,
+    expected_warning: bool,
+) -> None:
+    current_iteration = 2
+    prior_path = tmp_path / "gate_signals_v1.json"
+    if payload is not None:
+        prior_path.write_text(payload, encoding="utf-8")
+    elif error is None:
+        prior_path.unlink(missing_ok=True)
+    else:
+        prior_path.write_text("{}", encoding="utf-8")
+
+    if error is not None:
+        original_read_text = Path.read_text
+
+        monkeypatch.setattr(
+            Path,
+            "read_text",
+            lambda self, *args, **kwargs: (_ for _ in ()).throw(error) if self == prior_path else original_read_text(self, *args, **kwargs),  # type: ignore[misc]
+        )
+
+    caplog.set_level("WARNING", logger="megaplan")
+    result = megaplan.handlers.gate._prior_unresolved_flag_ids(tmp_path, current_iteration)
+
+    assert result == set()
+    messages = [record.getMessage() for record in caplog.records]
+    if expected_warning:
+        assert any("M3A_WARN_CORRUPT_PRIOR_FLAGS" in message for message in messages)
+    else:
+        assert not messages
+
+
+def test_gate_logs_warning_when_flag_delta_emit_fails(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    flag = first_open_significant_flag(plan_fixture.plan_dir)
+    worker = make_gate_worker_result(
+        recommendation="ESCALATE",
+        rationale="needs a human call",
+        signals_assessment="blocking flag remains",
+        session_id="gate-emit-warning",
+    )
+    monkeypatch.setattr(
+        megaplan.workers,
+        "run_step_with_worker",
+        make_worker_sequence([(worker, "claude", "persistent", False)], {"count": 0}),
+    )
+
+    from megaplan.observability import events as events_module
+
+    original_emit = events_module.emit
+
+    def _maybe_raise_emit(kind, *args, **kwargs):
+        if kind in {events_module.EventKind.FLAG_RAISED, events_module.EventKind.FLAG_RESOLVED}:
+            raise RuntimeError("emit broke")
+        return original_emit(kind, *args, **kwargs)
+
+    monkeypatch.setattr("megaplan.observability.events.emit", _maybe_raise_emit)
+    caplog.set_level("WARNING", logger="megaplan")
+
+    response = megaplan.handle_gate(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert response["recommendation"] == "ESCALATE"
+    assert any(
+        "M3A_WARN_EMIT_FLAG_EVENT" in record.getMessage()
+        and "raised=" in record.getMessage()
+        and "resolved=0" in record.getMessage()
+        for record in caplog.records
+    )
+    gate = read_json(plan_fixture.plan_dir / "gate.json")
+    assert gate["unresolved_flags"][0]["id"] == flag["id"]

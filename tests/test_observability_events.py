@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from megaplan._core.io import atomic_write_text
 from megaplan.observability.events import (
     EventKind,
     EventWriter,
@@ -218,3 +219,24 @@ class TestFlockCriticalSection:
         events = list(read_events(plan_dir))
         seqs = [e["seq"] for e in events]
         assert sorted(seqs) == list(range(len(seqs)))
+
+
+def test_atomic_write_text_logs_warning_when_artifact_emit_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    target = tmp_path / "artifact.txt"
+
+    def _raise_emit(*args, **kwargs):
+        raise RuntimeError("emit broke")
+
+    monkeypatch.setattr("megaplan.observability.events.emit", _raise_emit)
+    caplog.set_level("WARNING", logger="megaplan")
+
+    atomic_write_text(target, "payload", _plan_dir=plan_dir)
+
+    assert target.read_text(encoding="utf-8") == "payload"
+    assert any("M3A_WARN_EMIT_ARTIFACT_WRITTEN" in record.getMessage() for record in caplog.records)

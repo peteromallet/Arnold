@@ -1,0 +1,804 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from megaplan.types import CliError
+
+
+def _compat():
+    module = sys.modules.get(__package__)
+    if module is None:  # pragma: no cover - defensive import guard
+        raise RuntimeError(f"{__package__} not loaded")
+    return module
+
+
+def _refresh_base_branch(
+    root: Path,
+    base_branch: str,
+    *,
+    writer,
+    no_git_refresh: bool = False,
+) -> None:
+    """Run `git fetch + checkout <base_branch> + pull`, aborting on refresh failures.
+
+    When ``no_git_refresh`` is True, this is a no-op (still logs that it was
+    skipped). This guard exists so developer checkouts running ``megaplan
+    chain`` do not get their currently checked-out branch stomped by an
+    automatic base-branch checkout.
+    """
+    if no_git_refresh:
+        writer("[chain] skipping git refresh (--no-git-refresh)\n")
+        return
+    for cmd in (
+        ["git", "fetch", "origin", base_branch],
+        ["git", "checkout", base_branch],
+        ["git", "pull", "--ff-only", "origin", base_branch],
+    ):
+        try:
+            proc = _compat().subprocess.run(
+                cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+            )
+            writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                if detail:
+                    writer(f"[chain] {' '.join(cmd)} output:\n{detail}\n")
+                raise CliError(
+                    "git_refresh_failed",
+                    (
+                        "Chain git refresh failed before milestone initialization: "
+                        f"{' '.join(cmd)} exited {proc.returncode}. "
+                        "Resolve the checkout or rerun with --no-git-refresh for a developer workspace."
+                    ),
+                    extra={
+                        "command": cmd,
+                        "returncode": proc.returncode,
+                        "stdout": proc.stdout,
+                        "stderr": proc.stderr,
+                    },
+                )
+        except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+            raise CliError(
+                "git_refresh_failed",
+                (
+                    "Chain git refresh failed before milestone initialization: "
+                    f"{' '.join(cmd)} failed with {exc}. "
+                    "Resolve the checkout or rerun with --no-git-refresh for a developer workspace."
+                ),
+                extra={"command": cmd, "error": str(exc)},
+            ) from exc
+
+
+def _run_command(
+    root: Path,
+    cmd: list[str],
+    *,
+    writer,
+    timeout: float = 120,
+    error_code: str = "command_failed",
+) -> subprocess.CompletedProcess[str]:
+    """Run a git/gh command and raise CliError with captured output on failure."""
+    try:
+        proc = _compat().subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+        raise CliError(
+            error_code,
+            f"{' '.join(cmd)} failed with {exc}",
+            extra={"command": cmd, "error": str(exc)},
+        ) from exc
+    if _compat()._should_retry_gh_without_env(cmd, proc):
+        writer(
+            "[chain] gh auth failed with GH_TOKEN/GITHUB_TOKEN present; "
+            "retrying with gh env tokens cleared\n"
+        )
+        try:
+            proc = _compat().subprocess.run(
+                cmd,
+                cwd=str(root),
+                env=_compat()._command_env(cmd),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            writer(f"[chain] {' '.join(cmd)} failed: {exc}\n")
+            raise CliError(
+                error_code,
+                f"{' '.join(cmd)} failed with {exc}",
+                extra={"command": cmd, "error": str(exc)},
+            ) from exc
+    writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        if detail:
+            writer(f"[chain] {' '.join(cmd)} output:\n{detail}\n")
+        raise CliError(
+            error_code,
+            f"{' '.join(cmd)} exited {proc.returncode}",
+            extra={
+                "command": cmd,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        )
+    return proc
+
+
+def _should_retry_gh_without_env(cmd: list[str], proc: subprocess.CompletedProcess[str]) -> bool:
+    if not cmd or cmd[0] != "gh" or proc.returncode == 0:
+        return False
+    if "GH_TOKEN" not in os.environ and "GITHUB_TOKEN" not in os.environ:
+        return False
+    combined = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+    return any(
+        marker in combined
+        for marker in (
+            "bad credentials",
+            "authentication failed",
+            "invalid token",
+            "requires authentication",
+            "http 401",
+            "status code 401",
+        )
+    )
+
+
+def _command_env(cmd: list[str]) -> dict[str, str] | None:
+    """Return a subprocess env for commands whose auth can be poisoned by env.
+
+    gh gives GH_TOKEN/GITHUB_TOKEN precedence over the logged-in keychain auth.
+    In long agent sessions those variables are often stale or scoped for a
+    different identity, so chain-managed gh calls should prefer gh's own auth.
+    """
+    if not cmd or cmd[0] != "gh":
+        return None
+    env = os.environ.copy()
+    env.pop("GH_TOKEN", None)
+    env.pop("GITHUB_TOKEN", None)
+    return env
+
+
+def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
+    proc = _compat().subprocess.run(
+        ["git", "ls-remote", "--exit-code", "--heads", "origin", branch],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    writer(f"[chain] git ls-remote --heads origin {branch} -> rc={proc.returncode}\n")
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 2:
+        return False
+    detail = (proc.stderr or proc.stdout or "").strip()
+    raise CliError(
+        "git_branch_lookup_failed",
+        f"git ls-remote --heads origin {branch} exited {proc.returncode}: {detail}",
+        extra={"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr},
+    )
+
+
+def _checkout_milestone_branch(root: Path, branch: str, *, base_branch: str, writer) -> None:
+    """Create or resume the milestone branch and push it to origin."""
+    if _compat()._remote_branch_exists(root, branch, writer=writer):
+        _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
+        _compat()._run_command(
+            root,
+            ["git", "checkout", "-B", branch, f"origin/{branch}"],
+            writer=writer,
+            error_code="git_branch_failed",
+        )
+        return
+    _compat()._run_command(root, ["git", "checkout", "-B", branch, base_branch], writer=writer, error_code="git_branch_failed")
+    _compat()._run_command(root, ["git", "push", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
+
+
+def _parse_pr_number_from_url(output: str) -> int | None:
+    match = re.search(r"/pull/(\d+)", output)
+    return int(match.group(1)) if match else None
+
+
+def _list_open_pr_for_branch(root: Path, branch: str, *, writer) -> dict[str, Any] | None:
+    proc = _compat()._run_command(
+        root,
+        ["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number,state"],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_lookup_failed",
+    )
+    try:
+        payload = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise CliError("gh_pr_lookup_failed", f"gh pr list produced non-JSON output: {exc}") from exc
+    if isinstance(payload, list) and payload:
+        first = payload[0]
+        return first if isinstance(first, dict) else None
+    return None
+
+
+def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: str, writer) -> int | None:
+    """Create or reuse the draft PR for a milestone branch."""
+    if not milestone.branch:
+        raise CliError("missing_branch", f"milestone {milestone.label!r} has no branch")
+    if _compat().shutil.which("gh") is None:
+        writer(
+            "[chain] gh executable not found; continuing with branch commits/pushes "
+            f"but skipping PR creation for {milestone.branch}\n"
+        )
+        return None
+    existing = _compat()._list_open_pr_for_branch(root, milestone.branch, writer=writer)
+    if existing and isinstance(existing.get("number"), int):
+        writer(f"[chain] reusing PR #{existing['number']} for {milestone.branch}\n")
+        return int(existing["number"])
+    title = f"{milestone.label}: megaplan milestone"
+    body = (
+        f"Automated megaplan chain milestone `{milestone.label}`.\n\n"
+        f"Idea file: `{milestone.idea}`\n"
+    )
+    proc = _compat()._run_command(
+        root,
+        [
+            "gh",
+            "pr",
+            "create",
+            "--draft",
+            "--base",
+            base_branch,
+            "--head",
+            milestone.branch,
+            "--title",
+            title,
+            "--body",
+            body,
+        ],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_create_failed",
+    )
+    number = _compat()._parse_pr_number_from_url(proc.stdout.strip())
+    if number is not None:
+        return number
+    created = _compat()._list_open_pr_for_branch(root, milestone.branch, writer=writer)
+    if created and isinstance(created.get("number"), int):
+        return int(created["number"])
+    raise CliError("gh_pr_create_failed", f"could not determine PR number for {milestone.branch}")
+
+
+def _claimed_paths(root: Path, plan_name: str) -> set[str]:
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    claimed_paths: set[str] = set()
+    for artifact_name in ("finalize.json", "execution.json"):
+        artifact = plan_dir / artifact_name
+        if not artifact.exists():
+            continue
+        try:
+            payload = json.loads(artifact.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            _compat()._warn_chain_fallback(
+                "M3A_WARN_CHAIN_CLAIMED_PATHS",
+                reason="corrupt_json",
+                path=artifact,
+            )
+            continue
+        for path in payload.get("files_changed") or []:
+            if isinstance(path, str) and path.strip():
+                claimed_paths.add(path.strip())
+        for task in payload.get("tasks") or payload.get("task_updates") or []:
+            if not isinstance(task, dict):
+                continue
+            for path in task.get("files_changed") or []:
+                if isinstance(path, str) and path.strip():
+                    claimed_paths.add(path.strip())
+    return claimed_paths
+
+
+def _claimed_nested_repo_paths(root: Path, plan_name: str) -> dict[Path, set[str]]:
+    repo_paths: dict[Path, set[str]] = {}
+    root_abs = root.resolve()
+    for raw_path in _compat()._claimed_paths(root, plan_name):
+        path = Path(raw_path)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(root_abs)
+            except (OSError, ValueError):
+                _compat()._warn_chain_fallback(
+                    "M3A_WARN_NESTED_REPO_PATHS",
+                    reason="path_normalization",
+                    context={"raw_path": raw_path},
+                )
+                continue
+        cursor = root
+        for part in path.parts[:-1]:
+            cursor = cursor / part
+            if (cursor / ".git").exists():
+                rel_to_repo = Path(*path.parts[len(cursor.relative_to(root).parts):])
+                repo_paths.setdefault(cursor, set()).add(rel_to_repo.as_posix())
+                break
+    return repo_paths
+
+
+def _claimed_root_paths(root: Path, plan_name: str) -> set[str]:
+    root_paths: set[str] = set()
+    root_abs = root.resolve()
+    for raw_path in _compat()._claimed_paths(root, plan_name):
+        path = Path(raw_path)
+        if path.is_absolute():
+            try:
+                path = path.resolve().relative_to(root_abs)
+            except (OSError, ValueError):
+                _compat()._warn_chain_fallback(
+                    "M3A_WARN_ROOT_PATHS",
+                    reason="path_normalization",
+                    context={"raw_path": raw_path},
+                )
+                continue
+        cursor = root
+        in_nested_repo = False
+        for part in path.parts[:-1]:
+            cursor = cursor / part
+            if (cursor / ".git").exists():
+                in_nested_repo = True
+                break
+        if not in_nested_repo:
+            root_paths.add(path.as_posix())
+    return root_paths
+
+
+def _claimed_nested_repos(root: Path, plan_name: str) -> list[Path]:
+    return sorted(_compat()._claimed_nested_repo_paths(root, plan_name), key=lambda repo: repo.as_posix())
+
+
+def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer) -> list[str]:
+    dirty: list[str] = []
+    root_abs = root.resolve()
+    for repo, paths in sorted(
+        _compat()._claimed_nested_repo_paths(root, plan_name).items(),
+        key=lambda item: item[0].as_posix(),
+    ):
+        proc = _compat().subprocess.run(
+            ["git", "status", "--short", "--", *sorted(paths)],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(
+            f"[chain] git -C {repo} status --short -- "
+            f"{' '.join(sorted(paths))} -> rc={proc.returncode}\n"
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            continue
+        try:
+            rel = repo.resolve().relative_to(root_abs).as_posix()
+        except (OSError, ValueError):
+            _compat()._warn_chain_fallback(
+                "M3A_WARN_DIRTY_NESTED_REPOS",
+                reason="path_normalization",
+                context={"repo": repo.as_posix()},
+            )
+            rel = repo.as_posix()
+        dirty.append(rel)
+    return dirty
+
+
+def _dirty_worktree_paths(root: Path) -> list[Path]:
+    proc = _compat().subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    paths: list[Path] = []
+    for line in proc.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        raw_path = line[3:]
+        candidates = raw_path.split(" -> ", 1) if " -> " in raw_path else [raw_path]
+        for path in candidates:
+            path = path.strip()
+            if path:
+                paths.append(root / path)
+    return paths
+
+
+def _reset_staged_paths(root: Path, paths: list[Path], *, writer) -> None:
+    if not paths:
+        return
+    root_abs = root.resolve()
+    rel_paths: list[str] = []
+    for path in paths:
+        try:
+            rel_paths.append(path.resolve().relative_to(root_abs).as_posix())
+        except (OSError, ValueError):
+            _compat()._warn_chain_fallback(
+                "M3A_WARN_RESET_STAGED",
+                reason="path_normalization",
+                context={"path": path.as_posix()},
+            )
+            continue
+    if rel_paths:
+        cmd = ["git", "reset", "--", *sorted(set(rel_paths))]
+        proc = _compat().subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+
+
+# ---------------------------------------------------------------------------
+# Git helpers for sync state classification
+# ---------------------------------------------------------------------------
+
+
+def _branch_head(root: Path) -> str | None:
+    """Return the sha of HEAD or *None* if the command fails (e.g. no repo)."""
+    try:
+        proc = _compat().subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return proc.stdout.strip() or None
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        _compat()._warn_chain_fallback(
+            "M3A_WARN_BRANCH_HEAD",
+            reason="git_error",
+            context={"root": root.as_posix()},
+        )
+    return None
+
+
+def _remote_branch_head(root: Path, branch: str) -> str | None:
+    """Return the sha of ``origin/<branch>`` or *None* if unresolvable."""
+    try:
+        proc = _compat().subprocess.run(
+            ["git", "ls-remote", "--heads", "origin", branch],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            line = proc.stdout.strip().splitlines()
+            if line:
+                return line[0].split()[0] if line[0] else None
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        _compat()._warn_chain_fallback(
+            "M3A_WARN_REMOTE_BRANCH_HEAD",
+            reason="git_error",
+            context={"root": root.as_posix(), "branch": branch},
+        )
+    return None
+
+
+def _is_worktree_dirty(root: Path) -> bool:
+    """True when ``git status --porcelain`` reports unstaged/uncommitted changes."""
+    try:
+        proc = _compat().subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return bool(proc.stdout.strip())
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        _compat()._warn_chain_fallback(
+            "M3A_WARN_WORKTREE_DIRTY",
+            reason="git_error",
+            context={"root": root.as_posix()},
+        )
+        return False
+
+
+def _classify_sync_state(
+    *,
+    branch_head: str | None,
+    pr_head: str | None,
+    last_pushed_commit: str | None,
+    dirty: bool,
+) -> str:
+    """Classify sync state independently from merge_policy.
+
+    Returns one of ``SYNC_CLEAN``, ``SYNC_STALE``, ``SYNC_DIRTY`` (from
+    ``megaplan.types``).
+    """
+    from megaplan.types import SYNC_CLEAN, SYNC_DIRTY, SYNC_STALE
+
+    if dirty:
+        return SYNC_DIRTY
+    if branch_head and last_pushed_commit and branch_head != last_pushed_commit:
+        return SYNC_DIRTY  # diverged from what was last pushed
+    if pr_head and last_pushed_commit and pr_head != last_pushed_commit:
+        return SYNC_STALE  # remote/PR head moved past our last push
+    if branch_head and pr_head and branch_head != pr_head:
+        return SYNC_STALE  # local branch behind PR head
+    if branch_head and last_pushed_commit and branch_head == last_pushed_commit:
+        return SYNC_CLEAN
+    # Not enough data to classify confidently.
+    return SYNC_CLEAN
+
+
+def _capture_sync_state(
+    root: Path,
+    spec_path: Path,
+    *,
+    branch: str | None = None,
+    pr_number: int | None = None,
+    extra_repos: list[str] | None = None,
+) -> None:
+    """Update the persisted chain state with fresh sync fields.
+
+    Reads live git data, classifies sync, and saves to the chain state.
+    Does nothing if ``root`` is not a git repo (all helpers return None).
+
+    When *extra_repos* is provided each path is probed for branch head,
+    dirty flag, and sync state.  Results are stored in
+    ``ChainState.extra_repo_sync``.  Extra repo probing is best-effort and
+    never destructive (no push, reset, or delete).
+    """
+    state = _compat().load_chain_state(spec_path)
+    branch_head = _compat()._branch_head(root)
+    pr_head: str | None = None
+    if branch:
+        pr_head = _compat()._remote_branch_head(root, branch)
+    dirty = _compat()._is_worktree_dirty(root)
+    state.branch_head = branch_head
+    state.pr_head = pr_head
+    state.dirty_flag = dirty
+    state.last_pushed_commit = branch_head  # live rev-parse — best-effort push tracking
+    state.sync_state = _compat()._classify_sync_state(
+        branch_head=branch_head,
+        pr_head=pr_head,
+        last_pushed_commit=state.last_pushed_commit,
+        dirty=dirty,
+    )
+
+    # Best-effort extra repo probing (non-destructive).
+    if extra_repos:
+        extra_sync: list[dict[str, Any]] = []
+        for repo_path_str in extra_repos:
+            try:
+                repo_path = Path(repo_path_str)
+                if not repo_path.exists():
+                    extra_sync.append(
+                        {"path": repo_path_str, "status": "missing"}
+                    )
+                    continue
+                er_head = _compat()._branch_head(repo_path)
+                if er_head is None:
+                    extra_sync.append(
+                        {"path": repo_path_str, "status": "not_a_git_repo"}
+                    )
+                    continue
+                er_dirty = _compat()._is_worktree_dirty(repo_path)
+                er_sync = _compat()._classify_sync_state(
+                    branch_head=er_head,
+                    pr_head=None,
+                    last_pushed_commit=er_head,
+                    dirty=er_dirty,
+                )
+                extra_sync.append(
+                    {
+                        "path": repo_path_str,
+                        "branch_head": er_head,
+                        "dirty": er_dirty,
+                        "sync_state": er_sync,
+                    }
+                )
+            except Exception:
+                extra_sync.append(
+                    {"path": repo_path_str, "status": "error"}
+                )
+        state.extra_repo_sync = extra_sync
+
+    _compat().save_chain_state(spec_path, state)
+
+
+def _commit_and_push_phase(
+    root: Path,
+    branch: str,
+    plan: str,
+    phase: str,
+    *,
+    writer,
+    preexisting_dirty_paths: list[Path] | None = None,
+) -> None:
+    """Commit any current diff and push the milestone branch."""
+    dirty_nested = _compat()._dirty_nested_repos_from_claimed_paths(root, plan, writer=writer)
+    if dirty_nested:
+        raise CliError(
+            "nested_repo_changes_uncommitted",
+            "Plan claimed changes in nested git repositories that top-level chain commits "
+            "cannot publish: "
+            + ", ".join(dirty_nested)
+            + ". Commit and push those nested repositories separately, or run the plan with "
+            "a project_dir rooted at the repository being changed.",
+        )
+    _compat()._run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
+    claimed_root_paths = _compat()._claimed_root_paths(root, plan)
+    claimed_nested_repo_roots: set[str] = set()
+    root_abs = root.resolve()
+    for repo in _compat()._claimed_nested_repos(root, plan):
+        try:
+            claimed_nested_repo_roots.add(repo.resolve().relative_to(root_abs).as_posix())
+        except (OSError, ValueError):
+            _compat()._warn_chain_fallback(
+                "M3A_WARN_COMMIT_PUSH_PATH",
+                reason="path_normalization",
+                context={"repo": repo.as_posix()},
+            )
+            continue
+    preexisting_unclaimed: list[Path] = []
+    for path in preexisting_dirty_paths or []:
+        try:
+            rel = path.resolve().relative_to(root_abs).as_posix()
+        except (OSError, ValueError):
+            _compat()._warn_chain_fallback(
+                "M3A_WARN_COMMIT_PUSH_PATH2",
+                reason="path_normalization",
+                context={"path": path.as_posix()},
+            )
+            continue
+        if rel not in claimed_root_paths and rel not in claimed_nested_repo_roots:
+            preexisting_unclaimed.append(path)
+    _compat()._reset_staged_paths(root, preexisting_unclaimed, writer=writer)
+    staged = _compat().subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if staged.returncode != 0 and staged.returncode != 1:
+        raise CliError(
+            "git_commit_failed",
+            f"git diff --cached --quiet exited {staged.returncode}",
+            extra={"stdout": staged.stdout, "stderr": staged.stderr},
+        )
+    nothing_staged = staged.returncode == 0
+    message = f"megaplan: {plan} {phase}"
+    commit_argv = ["git", "commit", "-m", message]
+    if nothing_staged:
+        if phase != "init":
+            writer(f"[chain] no changes to commit after {phase}\n")
+            return
+        # Anchor the milestone branch with an empty init commit so a draft PR
+        # can be opened before any phase produces a real diff.
+        commit_argv.insert(2, "--allow-empty")
+    _compat()._run_command(root, commit_argv, writer=writer, error_code="git_commit_failed")
+    _compat()._run_command(root, ["git", "push", "origin", branch], writer=writer, error_code="git_push_failed")
+
+
+def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
+    _compat()._run_command(root, ["gh", "pr", "ready", str(pr_number)], writer=writer, error_code="gh_pr_ready_failed")
+
+
+def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
+    try:
+        _compat()._run_command(
+            root,
+            ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
+            writer=writer,
+            timeout=120,
+            error_code="gh_pr_merge_failed",
+        )
+        return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
+    except CliError as exc:
+        combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
+        if "Auto merge is not allowed" not in combined:
+            raise
+        writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
+    _compat()._run_command(
+        root,
+        ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_merge_failed",
+    )
+    return "merged"
+
+
+def _is_transient_gh_error(exc: CliError) -> bool:
+    combined = " ".join(
+        str(part or "")
+        for part in (
+            exc.message,
+            exc.extra.get("stdout", ""),
+            exc.extra.get("stderr", ""),
+        )
+    ).lower()
+    return any(pattern in combined for pattern in _compat().GH_TRANSIENT_ERROR_PATTERNS)
+
+
+def _pr_state(root: Path, pr_number: int, *, writer) -> str:
+    for attempt in range(1, _compat().GH_PR_STATE_ATTEMPTS + 1):
+        try:
+            proc = _compat()._run_command(
+                root,
+                ["gh", "pr", "view", str(pr_number), "--json", "state"],
+                writer=writer,
+                timeout=120,
+                error_code="gh_pr_view_failed",
+            )
+            break
+        except CliError as exc:
+            if attempt >= _compat().GH_PR_STATE_ATTEMPTS or not _compat()._is_transient_gh_error(exc):
+                raise
+            writer(
+                "[chain] transient gh pr view failure; "
+                f"retrying ({attempt}/{_compat().GH_PR_STATE_ATTEMPTS})\n"
+            )
+            _compat().time.sleep(min(2 * attempt, 5))
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise CliError("gh_pr_view_failed", f"gh pr view produced non-JSON output: {exc}") from exc
+    value = payload.get("state")
+    if not isinstance(value, str):
+        raise CliError("gh_pr_view_failed", "gh pr view did not return a string state")
+    return value.lower()
+
+
+def _reconcile_terminal_pr_state(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    writer,
+) -> ChainState:
+    """Refresh live PR state even when the chain index is already terminal."""
+    pr_number = state.pr_number
+    completed_entry: dict[str, Any] | None = None
+    if pr_number is None:
+        for entry in reversed(state.completed):
+            if isinstance(entry, dict) and isinstance(entry.get("pr_number"), int):
+                completed_entry = entry
+                pr_number = int(entry["pr_number"])
+                break
+    if pr_number is None:
+        return state
+
+    live_state = _compat()._pr_state(root, pr_number, writer=writer)
+    reconciled = live_state
+    if state.pr_number is not None:
+        state.pr_state = reconciled
+    if completed_entry is not None:
+        completed_entry["pr_state"] = reconciled
+    _compat().save_chain_state(spec_path, state)
+    return state

@@ -23,7 +23,7 @@ from megaplan.types import (
     ROBUSTNESS_LEVELS,
     normalize_robustness,
     STATE_ABORTED,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,

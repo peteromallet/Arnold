@@ -21,10 +21,6 @@ from typing import Any
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
-import megaplan.workers
 
 from megaplan._pipeline.stages.inprocess_step import (
     build_inprocess_planning_steps,
@@ -33,56 +29,26 @@ from megaplan._pipeline.stages.inprocess_step import (
 )
 from megaplan._pipeline.types import StepContext
 
+from tests.conftest import make_args_factory
 
-def _make_mock_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plan_name_seed: str
-) -> tuple[Path, Path, str, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    root.mkdir(parents=True)
-    project_dir.mkdir(parents=True)
-    (project_dir / ".git").mkdir()
 
-    def _config_dir(home: Any = None) -> Path:
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-
-    init_args = Namespace(
-        plan=None,
+def _init_mock_plan(root: Path, project_dir: Path, plan_name_seed: str) -> tuple[Path, Path, str, Path]:
+    """Initialize a mock plan after bootstrap is already done."""
+    make_args = make_args_factory(project_dir)
+    init_args = make_args(
         idea=f"resume parity {plan_name_seed}",
         name=f"resume-{plan_name_seed}",
-        project_dir=str(project_dir),
-        auto_approve=None,
         robustness="robust",
-        agent=None,
-        ephemeral=False,
-        fresh=False,
-        persist=False,
-        confirm_destructive=True,
-        user_approved=False,
-        confirm_self_review=False,
-        batch=None,
-        override_action=None,
-        note=None,
-        reason="",
-        strict_notes=None,
-        source="user",
     )
     response = megaplan.handle_init(root, init_args)
     plan_name = response["plan"]
     plan_dir = megaplan.plans_root(root) / plan_name
 
-    note_args = Namespace(**{**vars(init_args), "plan": plan_name, "override_action": "add-note", "note": "resume scoped"})
+    note_args = make_args(
+        plan=plan_name,
+        override_action="add-note",
+        note="resume scoped",
+    )
     megaplan.handle_override(root, note_args)
     return root, project_dir, plan_name, plan_dir
 
@@ -189,17 +155,32 @@ def _hash_artifacts(plan_dir: Path) -> dict[str, str]:
 
 
 def test_pipeline_resume_matches_uninterrupted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
+    # bootstrap_fixture already set up MOCK_ENV_VAR, shutil.which, and config_dir.
+    # Create separate roots for runs A and B.
+    root_a = tmp_path / "a" / "root"
+    project_a = tmp_path / "a" / "project"
+    root_a.mkdir(parents=True)
+    project_a.mkdir(parents=True)
+    (project_a / ".git").mkdir()
+
+    root_b = tmp_path / "b" / "root"
+    project_b = tmp_path / "b" / "project"
+    root_b.mkdir(parents=True)
+    project_b.mkdir(parents=True)
+    (project_b / ".git").mkdir()
+
     # Run A: uninterrupted, end-to-end.
-    root_a, project_a, name_a, plan_dir_a = _make_mock_root(tmp_path / "a", monkeypatch, "p")
+    root_a, project_a, name_a, plan_dir_a = _init_mock_plan(root_a, project_a, "p")
     result_a = _drive_until(plan_dir_a, root_a, project_a, name_a)
     assert result_a["final_state"] == "done", result_a
 
     artifacts_a = _hash_artifacts(plan_dir_a)
 
     # Run B: halt after finalize, then resume to done.
-    root_b, project_b, name_b, plan_dir_b = _make_mock_root(tmp_path / "b", monkeypatch, "p")
+    root_b, project_b, name_b, plan_dir_b = _init_mock_plan(root_b, project_b, "p")
     halt = _drive_until(plan_dir_b, root_b, project_b, name_b, halt_after="finalize")
     assert halt["final_state"] == "halted", halt
     state_at_halt = json.loads((plan_dir_b / "state.json").read_text())

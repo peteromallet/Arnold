@@ -10,7 +10,7 @@ drivers that map persisted state names to in-process handler steps.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any
 
 from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
 
@@ -51,8 +51,3 @@ def build_planning_steps() -> dict[str, Any]:
             handler=megaplan.handlers.tiebreaker.handle_tiebreaker_decide,
         ),
     }
-
-
-def attach_handler_steps(stages: Iterable[Any]) -> None:
-    """No-op hook reserved for the Sprint-3 auto.py integration."""
-    return None

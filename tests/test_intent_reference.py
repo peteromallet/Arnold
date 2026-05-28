@@ -68,14 +68,11 @@ def test_downstream_prompt_modules_use_slim_reference() -> None:
     downstream_modules = [
         "critique.py",
         "execute.py",
-        "execute_creative.py",
-        "execute_doc.py",
         "finalize.py",
         "gate.py",
         "review.py",
         "review_doc.py",
         "review_joke.py",
-        "revise_creative.py",
         "tiebreaker_challenger.py",
         "tiebreaker_researcher.py",
     ]

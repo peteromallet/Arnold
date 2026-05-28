@@ -2990,7 +2990,12 @@ def test_variable_claude_profile_has_claude_premium_tiers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--profile variable-claude` has Claude on premium tiers 4-5 and is locked."""
+    """`--profile variable-claude` has Claude on premium tiers 4-5 and is locked.
+
+    Per SD1, tiers 4-5 intentionally use concrete model pins rather than
+    effort suffixes because vendor_locked=true disables --vendor/--depth
+    rewriting and concrete pins guarantee reproducibility.
+    """
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile="variable-claude")
@@ -3001,11 +3006,12 @@ def test_variable_claude_profile_has_claude_premium_tiers(
     execute_tiers = tier_models.get("execute")
     assert execute_tiers is not None
 
-    assert execute_tiers[4].startswith("claude"), (
-        f"tier 4 should be claude, got {execute_tiers[4]!r}"
+    # SD1: variable-claude uses concrete model pins, not effort suffixes
+    assert execute_tiers[4] == "claude:claude-sonnet-4-6", (
+        f"tier 4 should be concrete pin claude:claude-sonnet-4-6, got {execute_tiers[4]!r}"
     )
-    assert execute_tiers[5].startswith("claude"), (
-        f"tier 5 should be claude, got {execute_tiers[5]!r}"
+    assert execute_tiers[5] == "claude:claude-opus-4-7", (
+        f"tier 5 should be concrete pin claude:claude-opus-4-7, got {execute_tiers[5]!r}"
     )
 
     # Verify locked — vendor flag should be silently ignored
@@ -3015,8 +3021,56 @@ def test_variable_claude_profile_has_claude_premium_tiers(
     assert tier_models2 is not None
     execute_tiers2 = tier_models2.get("execute")
     assert execute_tiers2 is not None
-    assert execute_tiers2[4].startswith("claude"), (
-        f"locked profile should keep claude on tier 4, got {execute_tiers2[4]!r}"
+    # Concrete pins unchanged under vendor swap (locked profile)
+    assert execute_tiers2[4] == "claude:claude-sonnet-4-6", (
+        f"locked profile should keep concrete pin on tier 4, got {execute_tiers2[4]!r}"
+    )
+    assert execute_tiers2[5] == "claude:claude-opus-4-7", (
+        f"locked profile should keep concrete pin on tier 5, got {execute_tiers2[5]!r}"
+    )
+
+
+def test_variable_profile_uses_effort_suffixes_not_concrete_pins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--profile variable` uses effort suffixes (not concrete model pins) on
+    tiers 4-5 so --vendor and --depth can rewrite them.
+
+    This is the complement to SD1: variable-claude uses concrete pins
+    because vendor_locked=true; variable (unlocked) uses effort suffixes
+    so rewriting works.
+    """
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="variable")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models.get("execute")
+    assert execute_tiers is not None
+
+    # variable.toml uses effort suffixes, not concrete pins
+    assert execute_tiers[4] == "claude:low", (
+        f"tier 4 should be effort suffix claude:low, got {execute_tiers[4]!r}"
+    )
+    assert execute_tiers[5] == "claude", (
+        f"tier 5 should be bare claude (effort suffix), got {execute_tiers[5]!r}"
+    )
+
+    # Verify vendor swap rewrites effort suffixes (unlocked profile)
+    args2 = _worker_args(profile="variable", vendor="codex")
+    apply_profile_expansion(args2, None)
+    tier_models2 = getattr(args2, "tier_models", None)
+    assert tier_models2 is not None
+    execute_tiers2 = tier_models2.get("execute")
+    assert execute_tiers2 is not None
+    assert execute_tiers2[4].startswith("codex"), (
+        f"unlocked profile should swap claude→codex on tier 4, got {execute_tiers2[4]!r}"
+    )
+    assert execute_tiers2[5].startswith("codex"), (
+        f"unlocked profile should swap claude→codex on tier 5, got {execute_tiers2[5]!r}"
     )
 
 

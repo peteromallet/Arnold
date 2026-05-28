@@ -9,26 +9,27 @@ from typing import Any, Iterable
 from megaplan.orchestration.phase_result import BlockedTask, Deviation
 from megaplan.quality_resolutions import (
     ADVANCE_WITH_DEBT,
-    HARD_BLOCK as QUALITY_HARD_BLOCK,
     RERUN_REQUIRED,
     classify_quality_resolution_behavior,
     latest_quality_resolutions,
     validate_quality_resolution_event,
 )
-from megaplan.user_actions import (
+from megaplan.resolution_contract import (
     FALLBACK,
-    HARD_BLOCK as PREREQ_HARD_BLOCK,
+    HARD_BLOCK,
     OMIT,
     classify_resolution_behavior,
-    effective_resolutions,
     resolution_applies_to_task,
+    resolution_state,
+)
+from megaplan.user_actions import (
+    effective_resolutions,
 )
 
 PREREQUISITE = "prerequisite"
 QUALITY = "quality"
 UNRESOLVED = "unresolved"
 MALFORMED = "malformed"
-HARD_BLOCK = PREREQ_HARD_BLOCK
 
 
 @dataclass(frozen=True)
@@ -68,7 +69,7 @@ class BlockerDetail:
     message: str
     blocking_action_ids: tuple[str, ...] = ()
     resolution_state: str = UNRESOLVED
-    resolution_behavior: str = PREREQ_HARD_BLOCK
+    resolution_behavior: str = HARD_BLOCK
     phase: str | None = None
     evidence: tuple[str, ...] = ()
     debt_note: str | None = None
@@ -335,13 +336,6 @@ def _state_meta_list(state: dict[str, Any], field_name: str) -> list[dict[str, A
     return [item for item in value if isinstance(item, dict)]
 
 
-def _resolution_value(event: dict[str, Any] | None) -> str | None:
-    if not isinstance(event, dict):
-        return None
-    value = event.get("resolution")
-    return value if isinstance(value, str) else None
-
-
 def _prerequisite_detail(
     *,
     task_id: str,
@@ -351,8 +345,8 @@ def _prerequisite_detail(
 ) -> BlockerDetail:
     action_id = scope.action_id if scope is not None else "unknown"
     blocker_id = prerequisite_blocker_id(action_id, task_id)
-    resolution_state = _resolution_value(resolution_event) or UNRESOLVED
-    behavior = classify_resolution_behavior(resolution_state)
+    state = resolution_state(resolution_event, source="memory") or UNRESOLVED
+    behavior = classify_resolution_behavior(state)
     is_non_terminal = behavior in {OMIT, FALLBACK}
     is_terminal = not is_non_terminal
     suggested_commands: tuple[str, ...] = ()
@@ -367,7 +361,7 @@ def _prerequisite_detail(
         task_id=task_id,
         message=f"task {task_id} is blocked by user action {action_id}",
         blocking_action_ids=(action_id,) if action_id != "unknown" else (),
-        resolution_state=resolution_state,
+        resolution_state=state,
         resolution_behavior=behavior,
         phase="execute",
         evidence=_string_tuple((resolution_event or {}).get("evidence")),
@@ -429,7 +423,7 @@ def evaluate_prerequisite_blockers(
         for scope in matching_scopes:
             event = effective.get(scope.action_id)
             if event is not None and not resolution_applies_to_task(
-                event, blocked.task_id
+                event, blocked.task_id, source="memory"
             ):
                 event = None
             details.append(
@@ -449,14 +443,14 @@ def _quality_detail(
     malformed_reason: str | None = None,
 ) -> BlockerDetail:
     blocker_id = quality_blocker_id(deviation)
-    resolution_state = _resolution_value(resolution_event) or UNRESOLVED
+    state = resolution_state(resolution_event, source="memory") or UNRESOLVED
     behavior = classify_quality_resolution_behavior(
-        resolution_state,
+        state,
         deviation_active=True,
     )
     is_non_terminal = behavior == ADVANCE_WITH_DEBT
     requires_rerun = behavior == RERUN_REQUIRED
-    is_terminal = behavior == QUALITY_HARD_BLOCK
+    is_terminal = behavior == HARD_BLOCK
     suggested_commands: tuple[str, ...] = ()
     if is_terminal:
         suggested_commands = (f"quality-gate resolve --blocker-id {blocker_id}",)
@@ -468,7 +462,7 @@ def _quality_detail(
         blocker_kind=QUALITY,
         task_id=deviation.task_id,
         message=deviation.message,
-        resolution_state=resolution_state,
+        resolution_state=state,
         resolution_behavior=behavior,
         phase=_optional_str((resolution_event or {}).get("phase"))
         or _optional_str(getattr(deviation, "phase", None)),

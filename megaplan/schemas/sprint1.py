@@ -6,10 +6,10 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from megaplan.types import (
-    ActiveStep,
+    ActivePhase,
     ClarificationRecord,
     HistoryEntry,
     LastGateRecord,
@@ -18,6 +18,7 @@ from megaplan.types import (
     PlanState,
     PlanVersionRecord,
     SessionInfo,
+    validate_plan_current_state,
 )
 
 from .base import HomeBackend, NormalizedDict, NormalizedStringList, StorageModel, utc_now
@@ -238,6 +239,11 @@ class Plan(StorageModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("current_state")
+    @classmethod
+    def _validate_current_state(cls, value: str) -> str:
+        return validate_plan_current_state(value)
+
     @classmethod
     def from_plan_state(
         cls,
@@ -306,7 +312,7 @@ class Plan(StorageModel):
             "last_gate": cast(LastGateRecord, deepcopy(self.last_gate)),
         }
         if self.active_step is not None:
-            state["active_step"] = cast(ActiveStep, deepcopy(self.active_step))
+            state["active_step"] = cast(ActivePhase, deepcopy(self.active_step))
         if self.clarification is not None:
             state["clarification"] = cast(ClarificationRecord, deepcopy(self.clarification))
         if self.latest_failure is not None:

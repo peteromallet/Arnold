@@ -1,6 +1,6 @@
 """Sprint 4 Chunk A acceptance — typed verdicts + typed edges.
 
-Pins the new shape: Verdict carries a typed recommendation; Edge has a
+Pins the new shape: PipelineVerdict carries a typed recommendation; Edge has a
 kind discriminator; the compiled planning Pipeline emits typed
 ``kind="gate"`` edges for gate transitions; the executor dispatches
 on verdict.recommendation first, falling back to the legacy
@@ -22,14 +22,14 @@ from megaplan._pipeline import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.planning import compile_planning_pipeline
 
 
 def test_verdict_has_typed_recommendation_and_override() -> None:
-    v = Verdict(score=0.5, recommendation="iterate", override="force_proceed")
+    v = PipelineVerdict(score=0.5, recommendation="iterate", override="force_proceed")
     assert v.recommendation == "iterate"
     assert v.override == "force_proceed"
 
@@ -102,7 +102,7 @@ class _SyntheticJudge:
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
-            verdict=Verdict(score=1.0, recommendation=self.recommendation),
+            verdict=PipelineVerdict(score=1.0, recommendation=self.recommendation),
             next="fallback",
             state_patch={"recommended": self.recommendation},
         )

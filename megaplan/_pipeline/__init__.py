@@ -14,7 +14,7 @@ from megaplan._pipeline.types import (
     Step,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 __all__ = [
@@ -25,6 +25,6 @@ __all__ = [
     "StepResult",
     "Edge",
     "Overlay",
-    "Verdict",
+    "PipelineVerdict",
     "ParallelStage",
 ]

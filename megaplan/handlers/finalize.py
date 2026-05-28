@@ -24,7 +24,7 @@ from megaplan._core import (
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker, shutil, subprocess
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logging.getLogger("megaplan")
 
 
 def _strict_finalize_validation_enabled() -> bool:
