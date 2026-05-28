@@ -26,6 +26,7 @@ STATE_PAUSED = "paused"
 STATE_CANCELLED = "cancelled"
 STATE_AWAITING_PR_MERGE = "awaiting_pr_merge"
 STATE_AWAITING_HUMAN_VERIFY = "awaiting_human_verify"
+STATE_AWAITING_HUMAN = STATE_AWAITING_HUMAN_VERIFY
 STATE_TIEBREAKER_PENDING = "tiebreaker_pending"
 STATE_TIEBREAKER_READY = "tiebreaker_ready"
 PlanCurrentState = Literal[
@@ -106,6 +107,7 @@ class PlanConfig(TypedDict, total=False):
     tiebreaker_token_budget: int
     tiebreaker_time_budget_minutes: int
     strict_notes: NotRequired[bool]
+    prep_clarify: NotRequired[bool]
 
 
 class PlanMeta(TypedDict, total=False):
@@ -181,6 +183,11 @@ class ClarificationRecord(TypedDict, total=False):
     refined_idea: str
     intent_summary: str
     questions: list[str]
+    # 'prep' when halt is from prep ambiguity; absent for criteria-verification halts.
+    # Convention: gate serializes blocking items as human-readable strings
+    # (e.g. "[blocking] <question>"); structured data (severity/assumption) lives
+    # only in prep.json, not here.
+    source: str
 
 
 class LastGateRecord(TypedDict, total=False):

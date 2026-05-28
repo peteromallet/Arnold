@@ -2635,3 +2635,95 @@ def test_drive_halts_before_progress_when_orphan_clear_write_fails(
             )
 
     assert run_calls == []
+
+
+def _awaiting_human_status(plan: str, state: str = "awaiting_human_verify") -> dict:
+    return {
+        "success": True,
+        "step": "status",
+        "plan": plan,
+        "state": state,
+        "iteration": 1,
+        "summary": "Plan is awaiting human input.",
+        "next_step": None,
+        "valid_next": [],
+    }
+
+
+def test_auto_driver_prep_awaiting_human_includes_blocking_questions(
+    tmp_path: Path,
+) -> None:
+    plan = "prep-halt-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "awaiting_human_verify",
+                "clarification": {
+                    "intent_summary": "prep surfaced 2 blocking ambiguities",
+                    "questions": [
+                        "[blocking] Which auth library?",
+                        "[blocking] REST or GraphQL?",
+                    ],
+                    "source": "prep",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _awaiting_human_status(plan_name)
+
+    with patch.object(auto, "_status", side_effect=fake_status):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "awaiting_human"
+    assert "Which auth library?" in outcome.reason
+    assert "REST or GraphQL?" in outcome.reason
+    assert "override add-note" in outcome.reason
+    assert "override resume-clarify" in outcome.reason
+
+
+def test_auto_driver_criteria_awaiting_human_has_generic_reason(
+    tmp_path: Path,
+) -> None:
+    plan = "criteria-halt-plan"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": plan,
+                "current_state": "awaiting_human_verify",
+                "clarification": {
+                    "intent_summary": "Criteria verification needed.",
+                    "questions": ["Is the plan acceptable?"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _awaiting_human_status(plan_name)
+
+    with patch.object(auto, "_status", side_effect=fake_status):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "awaiting_human"
+    assert "plan has criteria requiring human verification" in outcome.reason
+    assert "override add-note" not in outcome.reason
+    assert "override resume-clarify" not in outcome.reason

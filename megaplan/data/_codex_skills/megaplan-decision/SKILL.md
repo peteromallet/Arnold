@@ -186,6 +186,7 @@ Default to `low`; only spend on depth when you can name the specific reason the 
 - `megaplan override set-robustness --robustness LEVEL --plan ID` — same for the planning-complexity dial.
 - `megaplan override replan --plan ID` — back up to planning and redo with whatever models / robustness are now active.
 - `megaplan override add-note --plan ID --note "..."` — inject guidance into an active plan without restarting any phase. Read by every subsequent phase. The brief is snapshotted at `init`; later edits to the idea-file are NOT re-read, so this is the verb for "I missed something." **`megaplan feedback` is end-of-run rating, not in-flight guidance** — common confusion.
+- `megaplan override resume-clarify --plan ID` — resume a run halted at `awaiting_human_verify` because prep surfaced blocking ambiguities. Answer the questions first via `override add-note`, then run this to advance to the plan phase. Only valid for prep-sourced halts; criteria-verification halts use `verify-human`.
 
 Lean on these instead of inventing new profile names. If you find yourself thinking "I want a profile that's *like* `partnered` but with X" — the answer is almost always `partnered` plus an override, not a new profile.
 
@@ -223,6 +224,25 @@ distill = "hermes:deepseek:deepseek-v4-pro"   # connects across areas, read-only
 ```
 
 Rationale: triage is the highest-leverage step (a bad route starves everything downstream), so it uses DeepSeek Pro by default; fan-out is the cost lever (flash × up to 10 ≪ pro × 10); distill must reconcile across areas. Explicit `claude:` and `shannon:` prep model entries are rejected until real read-only runners exist. Under `--vendor codex`, a resolved Codex flat prep route switches triage/distill to the Codex read-only runner; fan-out stays on the cheap Hermes/DeepSeek workers. Design + status: `briefs/prep-fanout-research-dossier.md`.
+
+**Prep clarification ("prep may ask").** When prep runs and discovers genuine ambiguities it cannot responsibly resolve alone, it surfaces them as **blocking questions** that pause the run at `awaiting_human_verify` before the plan phase begins. This is **on by default** — prep is allowed to ask. Blocking questions are candidate concerns, not verdicts: a human may judge a flagged blocker a non-issue and resume immediately.
+
+Each blocking question is presented with the question text and the reason it was classified as blocking (not an `assume_and_proceed` with a stated assumption). The operator answers via the existing `override add-note` mechanism, then resumes with `override resume-clarify` — the plan returns to `PREPPED` and the planner phase runs with both the prep output and the human's answers in context.
+
+**Opting out of prep clarification.** On cloud CI or unattended runs where no human is available, a blocking question strands the run at `awaiting_human_verify` indefinitely. Disable with `--no-prep-clarify` at init, or set `prep_clarify = false` in `[defaults]` in `~/.config/megaplan/config.toml`:
+
+```toml
+[defaults]
+prep_clarify = false   # never halt for prep questions (CI / unattended)
+```
+
+The CLI flag wins over the config default. When prep clarification is disabled, prep still writes `open_questions` into `prep.json` (both blocking and `assume_and_proceed` items) — the planner sees them as hints — but no question halts the run.
+
+Concrete resume loop:
+1. Run reaches `awaiting_human_verify` with prep blocking questions.
+2. Operator reads the questions, judges which are material.
+3. `megaplan override add-note --plan <ID> --note "<answers>"`
+4. `megaplan override resume-clarify --plan <ID>` → plan returns to `PREPPED` and continues.
 
 ### Feedback (`--with-feedback`)
 
@@ -276,6 +296,7 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 - **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.
 - **`--prep-direction "…"`** — steering text shown to the prep worker (when prep runs) as a "User direction for prep" section. Points prep at specific files / subsystems / questions to explore. Can also be set or replaced later with `megaplan prep --direction "…"` before the phase runs. No-op if prep is skipped. See "Optional phases" above.
+- **`--no-prep-clarify`** — disable prep clarification halts. When prep surfaces blocking ambiguities, the run pauses at `awaiting_human_verify` by default so a human can answer; on cloud CI or unattended runs where no human is available, pass this flag to let the planner proceed with the prep output as hints instead. Also settable as `prep_clarify = false` in `[defaults]` in config. See "Prep clarification" above.
 - **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "Optional phases" above.
 
 ### The escape hatch
