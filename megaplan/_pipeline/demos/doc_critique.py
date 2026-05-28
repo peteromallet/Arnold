@@ -35,7 +35,11 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._pipeline.executor import run_pipeline
-from megaplan._pipeline.prompts import resolve_prompt
+from megaplan._pipeline.prompts import register_demo_prompts, resolve_prompt
+
+# Register demo prompts at import time so prompt resolution works when
+# this module is run directly.  Must happen before any Step.run() call.
+register_demo_prompts()
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,

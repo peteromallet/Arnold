@@ -1566,36 +1566,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -2461,36 +2431,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -2640,21 +2580,6 @@
               "nargs": null,
               "option_strings": [
                 "--plan"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "show",
-              "help": "(legacy alias) equivalent to: feedback show --plan <name>",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--show"
               ],
               "required": false,
               "type": null
@@ -3012,36 +2937,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -3272,36 +3167,6 @@
               "nargs": null,
               "option_strings": [
                 "--deepseek-provider"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
               ],
               "required": false,
               "type": null
@@ -3654,7 +3519,7 @@
               "const": true,
               "default": false,
               "dest": "auto_start",
-              "help": "Immediately run the in-process auto driver after initializing the plan.",
+              "help": "Immediately run the auto driver after initializing the plan.",
               "metavar": null,
               "nargs": "0",
               "option_strings": [
@@ -4315,36 +4180,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -4695,36 +4530,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -4919,12 +4724,12 @@
               "choices": null,
               "const": null,
               "default": null,
-              "dest": "target_project_dir",
+              "dest": "project_dir",
               "help": null,
               "metavar": null,
               "nargs": null,
               "option_strings": [
-                "--target-project-dir"
+                "--project-dir"
               ],
               "required": true,
               "type": null
@@ -5355,36 +5160,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -5615,36 +5390,6 @@
               "nargs": null,
               "option_strings": [
                 "--deepseek-provider"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
               ],
               "required": false,
               "type": null
@@ -6244,36 +5989,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -6519,36 +6234,6 @@
               "nargs": null,
               "option_strings": [
                 "--deepseek-provider"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
               ],
               "required": false,
               "type": null
@@ -8823,36 +8508,6 @@
               "choices": null,
               "const": true,
               "default": false,
-              "dest": "with_prep",
-              "help": "Force the visible prep phase into the workflow regardless of --robustness. By default, prep only runs at --robustness thorough|extreme; this flag adds prep to full / light / bare so the planner can do explicit research before committing to a plan. Useful for unfamiliar libraries, novel external APIs, research-heavy briefs, or ambiguous requirements. Redundant on --robustness thorough|extreme (no-op).",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-prep"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
-              "dest": "with_feedback",
-              "help": "Force the visible feedback phase into the workflow regardless of --robustness. By default no feedback step runs; this flag adds a feedback step between review and done that scaffolds feedback.md (a per-stage ratings template) for the user to fill in afterward. Runs non-interactively under megaplan auto — never blocks on human input.",
-              "metavar": null,
-              "nargs": "0",
-              "option_strings": [
-                "--with-feedback"
-              ],
-              "required": false,
-              "type": null
-            },
-            {
-              "action": "_StoreTrueAction",
-              "choices": null,
-              "const": true,
-              "default": false,
               "dest": "fresh",
               "help": null,
               "metavar": null,
@@ -8889,6 +8544,21 @@
               "nargs": "0",
               "option_strings": [
                 "--ephemeral"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "work_dir",
+              "help": "Override the source-code working directory for subprocess workers (default: CWD)",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--work-dir"
               ],
               "required": false,
               "type": null

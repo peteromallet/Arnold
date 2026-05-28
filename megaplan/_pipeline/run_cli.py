@@ -4,11 +4,15 @@ Lets users invoke any registered pipeline (built-in or Python-module
 discovered) from the command line. Examples::
 
     megaplan run --list
-    megaplan run doc-critique --inputs doc=/tmp/fixture.md --plan-dir /tmp/dcdemo
-    megaplan run judges --inputs doc=/tmp/note.md --plan-dir /tmp/jd
     megaplan run writing-panel-strict path/to/draft.md
     megaplan run writing-panel-strict path/to/draft.md \
         --profile @writing-panel-strict:standard
+
+Demo pipelines (``doc-critique``, ``judges``) are not registered as
+built-ins; run them directly via their Python modules::
+
+    python -c "from megaplan._pipeline.demos.doc_critique import run_demo; ..."
+    python -c "from megaplan._pipeline.demo_judges import run_demo; ..."
 
 Single dispatch path: every pipeline is resolved through
 :mod:`megaplan._pipeline.registry`. The human-gate resume path is

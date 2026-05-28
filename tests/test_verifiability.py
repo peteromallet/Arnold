@@ -17,7 +17,7 @@ from megaplan.audits.capabilities import (
     union_verifies,
     validate_capabilities,
 )
-from megaplan.audits.verifiability import (
+from megaplan.orchestration.verifiability import (
     CriterionAudit,
     audit_criteria,
     classify_criteria,

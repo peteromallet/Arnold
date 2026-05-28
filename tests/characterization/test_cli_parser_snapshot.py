@@ -425,3 +425,26 @@ class TestCliParserSnapshot:
         assert isinstance(fixture, dict)
         assert "commands" in fixture
         assert "" in fixture["commands"]
+
+    def test_tiebreaker_run_has_work_dir(self) -> None:
+        """``tiebreaker-run`` must expose ``--work-dir`` so the common dispatch
+        path in ``main()`` can call ``set_work_dir_override`` before the
+        tiebreaker worker is spawned."""
+        fixture = _read_fixture()
+        root = fixture["commands"][""]
+        tb_run = root.get("subcommands", {}).get("tiebreaker-run", {})
+        assert tb_run, "tiebreaker-run subcommand missing from parser snapshot"
+
+        option_dests = {o["dest"] for o in tb_run.get("options", [])}
+        assert "work_dir" in option_dests, (
+            "tiebreaker-run must expose --work-dir; "
+            f"found options: {sorted(option_dests)}"
+        )
+
+        # Verify the help text is present and non-trivial
+        work_dir_opt = next(
+            o for o in tb_run["options"] if o["dest"] == "work_dir"
+        )
+        assert "working directory" in work_dir_opt.get("help", "").lower(), (
+            "--work-dir help text must mention 'working directory'"
+        )

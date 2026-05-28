@@ -375,8 +375,8 @@ def _critique_evaluator_prompt(
 
         **Assign the cheapest capable critic.** Within that ceiling, route each
         lens to the *cheapest model in the roster that can do that lens justice*
-        — by default the lowest-cost critic (e.g. `deepseek-v4-pro`, then
-        `deepseek-v4-flash`), which handle routine, mechanical, and
+        — by default the configured lowest-cost critic, then the configured
+        fallback critic, which handle routine, mechanical, and
         well-scoped lenses perfectly well. Escalate to a stronger / premium
         critic *only* for a lens that genuinely demands deeper judgment
         (subtle architectural tradeoffs, cross-cutting correctness, ambiguous

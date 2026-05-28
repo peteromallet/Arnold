@@ -16,28 +16,8 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan.cli import _resolve_project_root
 from megaplan.types import CliError
-
-
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config_path = tmp_path / "config"
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
 
 
 def test_resolve_project_root_prefers_project_dir(tmp_path: Path) -> None:
@@ -76,6 +56,7 @@ def test_resolve_project_root_falls_back_when_flag_absent(
 
 def test_main_init_writes_plan_under_project_dir_not_cwd_ancestor(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -83,7 +64,7 @@ def test_main_init_writes_plan_under_project_dir_not_cwd_ancestor(
     in an ancestor, but ``--project-dir`` should win and the plan must land
     under that directory.
     """
-    _bootstrap(tmp_path, monkeypatch)
+    # bootstrap_fixture already set up MOCK_ENV_VAR, shutil.which, and config_dir
 
     # Decoy ancestor: cwd lives under <ancestor>/cwd, and <ancestor>/.megaplan
     # exists. Without the fix, _find_megaplan_root(cwd) walks up and returns
@@ -128,6 +109,7 @@ def test_main_init_writes_plan_under_project_dir_not_cwd_ancestor(
 
 def test_main_init_parallel_project_dirs_do_not_collide(
     tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -136,7 +118,7 @@ def test_main_init_parallel_project_dirs_do_not_collide(
     minimal repro of the bake-off duplicate_plan race — without the fix, both
     inits would target the same CWD-walked root and the second would fail.
     """
-    _bootstrap(tmp_path, monkeypatch)
+    # bootstrap_fixture already set up MOCK_ENV_VAR, shutil.which, and config_dir
 
     ancestor = tmp_path / "ancestor"
     ancestor.mkdir()

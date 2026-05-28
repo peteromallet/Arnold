@@ -1,4 +1,8 @@
-"""Re-export shim — canonical implementation lives in :mod:`megaplan.orchestration.verifiability`.
+"""Deprecated compatibility shim — canonical implementation in :mod:`megaplan.orchestration.verifiability`.
+
+.. deprecated::
+    Use ``from megaplan.orchestration.verifiability import ...`` instead.
+    This module will be removed in a future milestone.
 
 This module used to hold a near-duplicate of the verifiability audit code that
 differed by exactly one import line (it pulled ``ALL_CAPABILITIES`` /
@@ -12,7 +16,16 @@ re-export so external callers like
 
 from __future__ import annotations
 
-from megaplan.orchestration.verifiability import *  # noqa: F401,F403
+import warnings
+
+warnings.warn(
+    "megaplan.audits.verifiability is deprecated; "
+    "use megaplan.orchestration.verifiability instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from megaplan.orchestration.verifiability import *  # noqa: F401,F403,E402
 
 __all__ = [
     "ALL_CAPABILITIES",

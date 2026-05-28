@@ -1,7 +1,7 @@
 """T10 — Python-module pipeline discovery + metadata + SKILL.md surface.
 
 Covers the six contract points laid out in the brief:
-  (a) registered_pipelines() lists planning, doc-critique, judges, writing-panel-strict.
+  (a) registered_pipelines() lists planning, writing-panel-strict.
   (b) A drop-in user pipeline at a temp ~/.megaplan/pipelines/foo.py
       (monkeypatched HOME) is discovered and runnable via the registry.
   (c) metadata['writing-panel-strict'] exposes description, default_profile,
@@ -11,9 +11,11 @@ Covers the six contract points laid out in the brief:
   (e) read_skill_md for a user pipeline WITHOUT a co-located SKILL.md
       returns None and does not raise.
   (f) discover_python_pipelines() rejects/skips a planted sibling whose
-      CLI name would collide with a hardcoded built-in (planning /
-      doc-critique / judges). The collision check is root-agnostic;
+      CLI name would collide with a hardcoded built-in (``planning``).
+      The collision check is root-agnostic;
       planting under the user-scan root proves the semantic.
+      Demo pipelines (doc-critique, judges) are no longer built-ins
+      and are importable directly from their demo modules.
 """
 
 from __future__ import annotations
@@ -38,9 +40,15 @@ def test_registered_pipelines_lists_builtins_plus_writing_panel_strict_and_epic_
     from megaplan._pipeline.registry import registered_pipelines
 
     names = registered_pipelines()
-    for required in ("planning", "doc-critique", "judges", "writing-panel-strict", "epic-blitz"):
+    for required in ("planning", "writing-panel-strict", "epic-blitz"):
         assert required in names, (
             f"missing {required!r} in registry; got {names!r}"
+        )
+    # Demo pipelines (doc-critique, judges) are not built-ins.
+    for demo_name in ("doc-critique", "judges"):
+        assert demo_name not in names, (
+            f"demo pipeline {demo_name!r} must not appear in "
+            f"registered_pipelines(); got {names!r}"
         )
 
 

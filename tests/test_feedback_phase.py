@@ -724,6 +724,44 @@ class TestRouting:
         # but importantly feedback is untouched
         assert "feedback" in rewritten
 
+    def test_vendor_rewrite_preserves_bare_feedback_not_normalized_or_swapped(self) -> None:
+        """Bare feedback='claude' stays 'claude' — not normalized to 'claude:low'
+        and not swapped to the target vendor."""
+        from megaplan.profiles import apply_vendor_rewrite
+
+        # all-claude.toml has bare feedback = "claude" (no effort suffix).
+        # This test proves that behavior is intentional: bare values are
+        # preserved as-is during vendor rewrite.
+        profile: dict[str, str] = {
+            "plan": "claude",
+            "critique": "claude",
+            "execute": "claude",
+            "review": "claude",
+            "feedback": "claude",  # bare — no ':low' suffix
+        }
+        rewritten = apply_vendor_rewrite(profile, "codex")
+        # Premium phases become codex (vendor-swapped)
+        assert rewritten["plan"] == "codex"
+        assert rewritten["critique"] == "codex"
+        # feedback is NOT vendor-swapped — it stays claude
+        assert rewritten["feedback"] == "claude"
+        # feedback is NOT normalized — bare "claude" stays bare,
+        # not coerced to "claude:low"
+        assert rewritten["feedback"] != "claude:low"
+
+    def test_vendor_rewrite_defaults_feedback_when_absent(self) -> None:
+        """When profile has no 'feedback' key, apply_vendor_rewrite defaults
+        to 'claude:low'."""
+        from megaplan.profiles import apply_vendor_rewrite
+
+        profile: dict[str, str] = {
+            "plan": "claude",
+            "critique": "codex",
+        }
+        rewritten = apply_vendor_rewrite(profile, "claude")
+        assert rewritten["feedback"] == "claude:low"
+        assert rewritten["plan"] == "claude"
+
     def test_default_agent_routing_has_feedback(self) -> None:
         """DEFAULT_AGENT_ROUTING includes 'feedback' key."""
         from megaplan.types import DEFAULT_AGENT_ROUTING

@@ -1,11 +1,11 @@
 """Pipeline registry — feed in pipelines by name.
 
-Asymmetric registration policy: the three built-ins (``planning``,
-``doc-critique``, ``judges``) are registered programmatically from
-their hardcoded ``_planning_builder`` / ``_doc_critique_builder`` /
-``_judges_builder`` callables at module import time; every other
-pipeline is discovered as a Python module via
-:func:`discover_python_pipelines`.
+Asymmetric registration policy: the single built-in (``planning``) is
+registered programmatically from its hardcoded ``_planning_builder``
+callable at module import time; every other pipeline is discovered as
+a Python module via :func:`discover_python_pipelines`.  Demo pipelines
+(``doc-critique``, ``judges``) are not registered as built-ins; they
+remain directly importable from their demo modules.
 
 Discovery scans (T9 / Step 8):
 
@@ -50,7 +50,7 @@ PipelineBuilder = Callable[[], Pipeline]
 
 
 # Built-in pipeline names that discovery must never override.
-_BUILTIN_NAMES: frozenset[str] = frozenset({"planning", "doc-critique", "judges"})
+_BUILTIN_NAMES: frozenset[str] = frozenset({"planning"})
 
 
 @dataclass
@@ -361,8 +361,8 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
     """Walk the in-tree + user pipeline directories and yield discovered pipelines.
 
     Returns a list of ``(cli_name, build_callable, metadata, source_path)``
-    quads. Collisions with the hardcoded built-in names
-    ``{'planning','doc-critique','judges'}`` are skipped with a
+    quads. Collisions with the hardcoded built-in name
+    ``{'planning'}`` are skipped with a
     :class:`UserWarning`. Modules that do not expose a callable
     ``build_pipeline`` attribute are skipped silently.
     """
@@ -408,7 +408,7 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Built-in pipelines registered at import time.
+# Built-in pipeline registered at import time.
 # ---------------------------------------------------------------------------
 
 
@@ -417,26 +417,8 @@ def _planning_builder() -> Pipeline:
     return compile_planning_pipeline()
 
 
-def _doc_critique_builder() -> Pipeline:
-    from megaplan._pipeline.demos.doc_critique import build_pipeline
-    return build_pipeline()
-
-
-def _judges_builder() -> Pipeline:
-    from megaplan._pipeline.demo_judges import build_pipeline
-    return build_pipeline()
-
-
 register_pipeline(
     "planning", _planning_builder,
     description="Production planning — runnable shape "
                 "(prep→plan→critique→gate→…→review).",
-)
-register_pipeline(
-    "doc-critique", _doc_critique_builder,
-    description="3× critique→revise loop on a markdown doc.",
-)
-register_pipeline(
-    "judges", _judges_builder,
-    description="Fan-out judges + synthesis demo.",
 )

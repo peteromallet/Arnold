@@ -21,54 +21,24 @@ from typing import Any
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
+
+from tests.conftest import make_args_factory
 
 
 def _make_args(plan_name: str, project_dir: Path, **overrides: Any) -> Namespace:
-    base = {
+    defaults: dict[str, Any] = {
         "plan": plan_name,
         "idea": "legacy cli compat",
         "name": plan_name,
-        "project_dir": str(project_dir),
-        "auto_approve": None,
         "robustness": "robust",
-        "agent": None,
-        "ephemeral": False,
-        "fresh": False,
-        "persist": False,
-        "confirm_destructive": True,
-        "user_approved": False,
-        "confirm_self_review": False,
-        "batch": None,
-        "override_action": None,
-        "note": None,
-        "reason": "",
-        "strict_notes": None,
-        "source": "user",
     }
-    base.update(overrides)
-    return Namespace(**base)
+    defaults.update(overrides)
+    return make_args_factory(project_dir)(**defaults)
 
 
 @pytest.fixture
-def cli_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", lambda home=None: config_path)
-    monkeypatch.setattr(megaplan.cli, "config_dir", lambda home=None: config_path)
+def cli_plan(bootstrap_fixture: tuple[Path, Path]):
+    root, project_dir = bootstrap_fixture
 
     init_args = _make_args(plan_name="cli-compat", project_dir=project_dir, plan=None)
     response = megaplan.handle_init(root, init_args)

@@ -27,9 +27,6 @@ from typing import Any
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 
 from megaplan._pipeline.stages.inprocess_step import (
     build_inprocess_planning_steps,
@@ -37,6 +34,8 @@ from megaplan._pipeline.stages.inprocess_step import (
     build_review_step,
 )
 from megaplan._pipeline.types import StepContext
+
+from tests.conftest import make_args_factory
 
 
 _PARITY_ARTIFACTS = (
@@ -54,51 +53,18 @@ _PARITY_ARTIFACTS = (
 
 
 def _make_args(plan_name: str, project_dir: Path, **overrides: Any) -> Namespace:
-    base = {
+    defaults: dict[str, Any] = {
         "plan": plan_name,
         "idea": "parity check idea",
         "name": plan_name,
-        "project_dir": str(project_dir),
-        "auto_approve": None,
         "robustness": "robust",
-        "agent": None,
-        "ephemeral": False,
-        "fresh": False,
-        "persist": False,
-        "confirm_destructive": True,
-        "user_approved": False,
-        "confirm_self_review": False,
-        "batch": None,
-        "override_action": None,
-        "note": None,
-        "reason": "",
-        "strict_notes": None,
-        "source": "user",
     }
-    base.update(overrides)
-    return Namespace(**base)
+    defaults.update(overrides)
+    return make_args_factory(project_dir)(**defaults)
 
 
-def _bootstrap_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str):
-    root = tmp_path / suffix / "root"
-    project_dir = tmp_path / suffix / "project"
-    config_path = tmp_path / suffix / "config"
-    root.mkdir(parents=True)
-    project_dir.mkdir(parents=True)
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Any = None) -> Path:
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-
+def _init_parity_plan(root: Path, project_dir: Path) -> tuple[str, Path]:
+    """Initialize a parity plan after bootstrap is already done."""
     init_args = _make_args(plan_name="parity-plan", project_dir=project_dir, plan=None)
     response = megaplan.handle_init(root, init_args)
     plan_name = response["plan"]
@@ -109,7 +75,7 @@ def _bootstrap_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suffix: str
         _make_args(plan_name=plan_name, project_dir=project_dir,
                    plan=plan_name, override_action="add-note", note="parity check"),
     )
-    return root, project_dir, plan_name, plan_dir
+    return plan_name, plan_dir
 
 
 def _run_direct(root: Path, project_dir: Path, plan_name: str) -> None:
@@ -194,12 +160,27 @@ def _hash_artifacts(plan_dir: Path) -> dict[str, str]:
 
 
 def test_direct_and_pipeline_produce_identical_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root_a, project_a, name_a, plan_dir_a = _bootstrap_root(tmp_path, monkeypatch, "direct")
+    # bootstrap_fixture already set up MOCK_ENV_VAR, shutil.which, and config_dir.
+    # Create separate roots for direct and pipeline runs.
+    root_a = tmp_path / "direct" / "root"
+    project_a = tmp_path / "direct" / "project"
+    root_a.mkdir(parents=True)
+    project_a.mkdir(parents=True)
+    (project_a / ".git").mkdir()
+
+    root_b = tmp_path / "pipeline" / "root"
+    project_b = tmp_path / "pipeline" / "project"
+    root_b.mkdir(parents=True)
+    project_b.mkdir(parents=True)
+    (project_b / ".git").mkdir()
+
+    name_a, plan_dir_a = _init_parity_plan(root_a, project_a)
     _run_direct(root_a, project_a, name_a)
 
-    root_b, project_b, name_b, plan_dir_b = _bootstrap_root(tmp_path, monkeypatch, "pipeline")
+    name_b, plan_dir_b = _init_parity_plan(root_b, project_b)
     _run_pipeline(root_b, project_b, name_b, plan_dir_b)
 
     state_a = json.loads((plan_dir_a / "state.json").read_text())

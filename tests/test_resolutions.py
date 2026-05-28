@@ -85,6 +85,7 @@ def _write_minimal_state(plan_dir: Path, *, project_dir: Path, auto_approve: boo
 
 
 def _make_args(**overrides) -> Namespace:
+    """Create a Namespace for CLI resolve command tests."""
     data = {
         "plan": None,
         "idea": "test",

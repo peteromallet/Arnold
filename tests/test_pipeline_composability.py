@@ -36,6 +36,7 @@ from megaplan._pipeline import (
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.prompts import (
     PromptRegistry,
+    register_demo_prompts,
     register_prompt,
     resolve_prompt,
 )
@@ -60,6 +61,11 @@ def test_new_mode_registers_a_prompt_without_subclassing_step() -> None:
 
 
 def test_unregistered_mode_falls_back_to_default_prompt() -> None:
+    # Demo prompts are no longer registered at import time — call
+    # register_demo_prompts() explicitly so the default 'critique'
+    # entry exists for this test.
+    register_demo_prompts()
+
     ctx = StepContext(
         plan_dir=Path("/tmp"), state={}, profile=None,
         mode="some-unregistered-mode", inputs={},
