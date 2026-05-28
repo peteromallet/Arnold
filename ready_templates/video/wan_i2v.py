@@ -38,8 +38,8 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    unetloader = UNETLoader(unet_name=UNET_NAME)
-    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    unetloader = UNETLoader(unet_name=UNET_NAME, weight_dtype='default')
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan', device='default')
     vaeloader = VAELoader(vae_name=VAE_NAME)
     clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
@@ -73,8 +73,11 @@ def build() -> VibeWorkflow:
     # Sampling
     ksampler = KSampler(
         seed=DEFAULT_SEED,
+        steps=20,
         cfg=GUIDE_STRENGTH,
         sampler_name='uni_pc',
+        scheduler='simple',
+        denoise=1,
         latent_image=latent,
         model=modelsamplingsd3,
         negative=negative,
@@ -86,7 +89,6 @@ def build() -> VibeWorkflow:
     createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
 
     # Outputs
-    savevideo = SaveVideo(video=createvideo)
+    savevideo = SaveVideo(filename_prefix='video/ComfyUI', format='auto', codec='auto', video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/ComfyUI')
-

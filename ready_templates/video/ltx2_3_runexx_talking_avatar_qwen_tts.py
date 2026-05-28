@@ -241,9 +241,9 @@ def build() -> VibeWorkflow:
     ailab_qwen3ttsvoiceclone = AILab_Qwen3TTSVoiceClone(
         target_text='So what if you just want to prompt. Text to video works fine as well. Go generate some while I enjoy my coffee. ',
         x_vector_only=True,
-        voice=986337553816914,
-        unload_models=116899311982882,
-        seed='randomize',
+        voice='Auto',
+        unload_models=True,
+        seed=986337553816914,
         reference_audio=melbandroformersampler.out(0),
     )
 
@@ -426,4 +426,3 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='LTX-2')
-

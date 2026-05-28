@@ -71,8 +71,8 @@ def test_ready_template_emitter_uses_typed_wrappers_and_strips_schema_defaults()
         template_id="image/typed",
     )
 
-    assert "from vibecomfy.nodes.core import SaveImage, UNETLoader" in source
-    assert "UNETLoader(" in source
+    assert "from vibecomfy.nodes.core import SaveImage" in source
+    assert "UNETLoader(" not in source
     assert "_id='1'" not in source
     assert "wf.metadata.setdefault('id_map'" not in source
     assert "wf._set_id_map(" not in source
@@ -1502,7 +1502,7 @@ def test_ready_template_uses_shared_helpers_and_passes_import_build_compile_pari
     assert "from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow" in result.text
     assert "from vibecomfy.registry.ready_template import" not in result.text
     assert "new_workflow" in result.text
-    assert "wf.finalize(PUBLIC_INPUTS(**locals())" in result.text
+    assert "wf.finalize(PUBLIC_INPUT_METADATA" in result.text
     assert "node=ref(" not in result.text
     assert "def _node" not in result.text
 

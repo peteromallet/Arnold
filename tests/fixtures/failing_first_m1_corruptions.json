@@ -26,5 +26,31 @@
     }
   },
   "captured_at_pytest": true,
+  "corruptions": [
+    {
+      "expected_type": "str",
+      "field": "voice",
+      "node_id": "1944",
+      "template_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "wrong_type": "int",
+      "wrong_value": 986337553816914
+    },
+    {
+      "expected_type": "bool",
+      "field": "unload_models",
+      "node_id": "1944",
+      "template_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "wrong_type": "int",
+      "wrong_value": 116899311982882
+    },
+    {
+      "expected_type": "int",
+      "field": "seed",
+      "node_id": "1944",
+      "template_id": "video/ltx2_3_runexx_talking_avatar_qwen_tts",
+      "wrong_type": "str",
+      "wrong_value": "randomize"
+    }
+  ],
   "schema": "vibecomfy.m1_pre_fix_corruptions.v1"
 }
