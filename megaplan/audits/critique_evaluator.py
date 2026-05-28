@@ -83,6 +83,13 @@ _AGENT_DEFAULT_MODEL: Final[dict[str, str]] = {
     "codex": "gpt-5.5",
 }
 
+#: Provider prefixes that may appear before a model name in a spec
+#: (e.g. ``deepseek:deepseek-v4-pro``).  These are not agents
+#: themselves; the part after the colon is the model name.
+_KNOWN_NATIVE_PROVIDERS: Final[frozenset[str]] = frozenset({
+    "deepseek", "fireworks", "zhipu", "google", "minimax",
+})
+
 
 def roster_rank(model: str) -> int:
     """Return the roster rank (1 = strongest) for *model*.
@@ -128,6 +135,10 @@ def roster_rank(model: str) -> int:
             # Resolve bare agent names (e.g. ``claude`` → ``claude-opus-4-7``).
             if normalized in _AGENT_DEFAULT_MODEL:
                 normalized = _AGENT_DEFAULT_MODEL[normalized]
+        elif agent in _KNOWN_NATIVE_PROVIDERS:
+            # ``deepseek:deepseek-v4-pro`` → ``deepseek-v4-pro``, etc.
+            # The rest after the provider prefix IS the model name.
+            normalized = rest
         else:
             raise ValueError(
                 f"Unknown agent {agent!r} in model spec {model!r}"

@@ -1,5 +1,4 @@
 [profiles.all-codex]
-default = "partnered"
 vendor_locked = true
 plan = "codex"
 prep = "codex"

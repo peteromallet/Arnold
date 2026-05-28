@@ -434,6 +434,57 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["checks", "flags", "verified_flag_ids", "disputed_flag_ids"],
     },
+    "critique_evaluator.json": {
+        "type": "object",
+        "properties": {
+            "selections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "check_id": {"type": "string"},
+                        "critic_model": {"type": "string"},
+                        "why": {"type": "string"},
+                        "area": {"type": "string"},
+                    },
+                    "required": ["check_id", "critic_model", "why", "area"],
+                    "additionalProperties": False,
+                },
+            },
+            "skipped": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "check_id": {"type": "string"},
+                        "why": {"type": "string"},
+                    },
+                    "required": ["check_id", "why"],
+                    "additionalProperties": False,
+                },
+            },
+            "evaluator_model": {"type": "string"},
+            "flag_verifications": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "flag_id": {"type": "string"},
+                        "lens": {"type": "string"},
+                        "outcome": {
+                            "type": "string",
+                            "enum": ["verified", "open", "accepted_tradeoff"],
+                        },
+                        "rationale": {"type": "string"},
+                    },
+                    "required": ["flag_id", "lens", "outcome", "rationale"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["selections", "skipped", "evaluator_model", "flag_verifications"],
+        "additionalProperties": False,
+    },
 "finalize.json": {
         "type": "object",
         "properties": {
