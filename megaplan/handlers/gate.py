@@ -15,7 +15,7 @@ from megaplan.orchestration.evaluation import (
     run_gate_checks,
 )
 from megaplan.profiles import apply_profile_expansion
-from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_CRITIQUED, STATE_GATED, StepResponse
+from megaplan.types import FLAG_BLOCKING_STATUSES, CliError, PlanState, STATE_BLOCKED, STATE_CRITIQUED, STATE_GATED, StepResponse
 from megaplan.workers import WorkerResult
 from megaplan._core import (
     add_or_increment_debt,
@@ -23,6 +23,7 @@ from megaplan._core import (
     configured_robustness,
     extract_subsystem_tag,
     find_command,
+    get_effective,
     infer_next_steps,
     load_debt_registry,
     load_flag_registry,
@@ -291,6 +292,186 @@ def _sync_legacy_last_gate_for_workflow(state: PlanState, gate_summary: dict[str
     }
 
 
+def _critique_cap_key(robustness: str) -> str:
+    """Select the robustness-scoped critique-iteration cap key.
+
+    Mirrors the review-loop cap selection (review.py): thorough/extreme pick
+    up the higher robust cap, everything else the default cap.
+    """
+    return (
+        "max_robust_critique_iterations"
+        if robustness in {"thorough", "extreme"}
+        else "max_critique_iterations"
+    )
+
+
+# light revises straight to GATED (workflow_data.py:103-105); keep its critique
+# loop cheap by capping at 2 regardless of the configured max_critique_iterations,
+# which is sized for the full/default path. bare has no revise edge so its ITERATE
+# branch is unreachable and needs no cap (workflow_data.py:108-112).
+_LIGHT_CRITIQUE_CAP = 2
+
+
+def _effective_critique_cap(robustness: str) -> int:
+    """Resolve the effective ITERATE-round cap for ``robustness``.
+
+    Reads the robustness-scoped DEFAULTS/config key, then applies the light
+    override (light caps at 2, below the full default of 4). bare never reaches
+    the cap because it has no revise edge.
+    """
+    cap = int(get_effective("execution", _critique_cap_key(robustness)))
+    if robustness == "light":
+        return min(cap, _LIGHT_CRITIQUE_CAP)
+    return cap
+
+
+def _prior_iterate_rounds(state: PlanState) -> int:
+    """Count completed critique→gate→revise ITERATE rounds in history.
+
+    The current gate pass is not yet recorded in history when
+    ``_apply_gate_outcome`` runs, so this counts only *prior* rounds — the
+    same convention as ``prior_rework_count`` in the review handler.
+    """
+    return sum(
+        1
+        for entry in state.get("history", [])
+        if entry.get("step") == "gate" and entry.get("recommendation") == "ITERATE"
+    )
+
+
+# Severities that are unambiguously cosmetic — safe to defer at the cap.
+_COSMETIC_SEVERITIES = frozenset({"minor", "likely-minor", "trivial", "cosmetic", "low", "nit"})
+# Categories that carry correctness/security risk — a blocking flag in one of
+# these escalates at the cap even at moderate severity (P2).
+_CRITICAL_CATEGORIES = frozenset({"correctness", "security"})
+
+
+def _is_cap_blocking_flag(flag: dict[str, Any]) -> bool:
+    """Whether ``flag`` must force ESCALATE (not force-proceed) at the cap.
+
+    Broader than the PROCEED-path predicate ON PURPOSE and scoped to the
+    cap-termination decision only (P2): a blocking flag escalates if it is
+    severity-significant OR it is a correctness/security-category flag at any
+    severity that is not explicitly cosmetic. So a blocking *moderate*
+    correctness flag escalates rather than being shipped as "cosmetic".
+    """
+    if flag.get("status") not in FLAG_BLOCKING_STATUSES:
+        return False
+    severity = flag.get("severity")
+    if severity in ("significant", "likely-significant"):
+        return True
+    if severity in _COSMETIC_SEVERITIES:
+        return False
+    # Non-cosmetic, non-significant (e.g. "moderate"/"uncertain"/unset):
+    # escalate when the flag is correctness/security in nature.
+    return flag.get("category") in _CRITICAL_CATEGORIES
+
+
+def _open_blocking_flags(gate_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    """Open flags that must force ESCALATE at the critique cap/stall.
+
+    See ``_is_cap_blocking_flag``: significant-or-worse, or any blocking
+    correctness/security flag at a non-cosmetic severity. Scoped to the
+    cap-termination switch only; the PROCEED-path predicate is unchanged.
+    """
+    return [
+        f
+        for f in gate_summary.get("unresolved_flags", [])
+        if isinstance(f, dict) and _is_cap_blocking_flag(f)
+    ]
+
+
+def _critique_no_progress_streak(
+    state: PlanState,
+    gate_summary: dict[str, Any],
+    plan_dir: Path,
+) -> int:
+    """Update and return the consecutive no-net-progress round streak.
+
+    A round counts as "no progress" when ``resolved_delta == 0`` (no prior
+    blocking flag closed this round) AND ``new_blocking >= 1`` (at least one
+    fresh blocking flag appeared) — the loop is treading water. The streak is
+    persisted on ``state['meta']`` so two consecutive stalled rounds can trip
+    the same severity-gated branch as the hard cap (mirrors the advisory
+    plateau hint in build_orchestrator_guidance, now enforced).
+
+    P4 — replay/resume consistency. ``_prior_iterate_rounds`` is history-based
+    (one entry per completed gate→revise round) while this streak is computed
+    from the per-iteration ``gate_signals`` files. To keep the two counters
+    from diverging when ``_apply_gate_outcome`` runs more than once for the same
+    ``state['iteration']`` (the reprompt path calls it twice; a resumed gate
+    re-runs the whole handler), the streak is updated AT MOST ONCE per
+    iteration. We stamp ``critique_no_progress_iteration`` with the iteration we
+    last counted; a repeat call at the same iteration returns the already-stored
+    streak without re-incrementing. Each real round bumps ``state['iteration']``
+    (a new revise/critique pass), so genuine rounds still advance the streak.
+    """
+    iteration = int(state.get("iteration", 0) or 0)
+    meta = state.setdefault("meta", {})
+    streak = int(meta.get("critique_no_progress_streak", 0) or 0)
+    # Idempotent per iteration: do not re-count a round we have already scored.
+    if int(meta.get("critique_no_progress_iteration", -1) or -1) == iteration:
+        return streak
+    # "Blocking" for the progress metric is the full open-flag set the gate
+    # tracks (gate_summary["unresolved_flags"], i.e. open significant flags),
+    # symmetric with the prior round read from gate_signals_v{n-1}.json. The
+    # narrower correctness/security predicate is only the termination *switch*.
+    new_blocking_ids = {
+        f.get("id")
+        for f in gate_summary.get("unresolved_flags", [])
+        if isinstance(f, dict) and f.get("id") and f.get("status") in FLAG_BLOCKING_STATUSES
+    }
+    prior_ids = _prior_unresolved_flag_ids(plan_dir, iteration)
+    resolved_delta = len(prior_ids - new_blocking_ids)
+    new_blocking = len(new_blocking_ids - prior_ids)
+    if resolved_delta == 0 and new_blocking >= 1:
+        streak += 1
+    else:
+        streak = 0
+    meta["critique_no_progress_streak"] = streak
+    meta["critique_no_progress_iteration"] = iteration
+    return streak
+
+
+def _critique_terminate_branch(
+    state: PlanState,
+    gate_summary: dict[str, Any],
+    reason: str,
+) -> tuple[str, str, str, list[str]]:
+    """Severity-gated termination shared by the hard cap and the stall stop.
+
+    The auto/chain loop is STATUS-DRIVEN: ``auto.drive`` re-derives the next
+    step from STATE via ``workflow_next``, IGNORING this handler's returned
+    ``next_step``. So termination MUST be expressed in state, not just the
+    return tuple, or the loop re-derives ``revise`` and spins forever (P0).
+
+    - Open correctness/security flag → set ``current_state = STATE_BLOCKED``.
+      STATE_BLOCKED has no WORKFLOW transitions, so ``workflow_next`` yields []
+      (no "revise"), it is a TERMINAL/AUTOMATION_TERMINAL state, and the chain
+      treats a "blocked" outcome under ``on_failure`` (default stop_chain) — NOT
+      ``on_escalate``'s force-proceed default — so a blocked plan halts for the
+      human (P1). This also sidesteps the soft-escalate-then-force-proceed gap.
+    - Cosmetic-only open flags → set ``current_state = STATE_GATED`` so
+      ``workflow_next`` yields "finalize" (mirrors the review-loop force-proceed
+      at review.py:248-252). VERIFIED via workflow_data.py STATE_GATED→finalize.
+    """
+    open_critical = _open_blocking_flags(gate_summary)
+    if open_critical:
+        state["current_state"] = STATE_BLOCKED
+        summary = (
+            f"{reason} with {len(open_critical)} unresolved correctness/security "
+            "flag(s). Plan BLOCKED for human review — the critique loop will not "
+            "ship an unresolved correctness/security concern."
+        )
+        return "blocked", "override add-note", summary, []
+    state["current_state"] = STATE_GATED
+    summary = (
+        f"{reason}. Force-proceeding to finalize despite remaining cosmetic flags "
+        "(deferred and recorded for audit)."
+    )
+    return "blocked", "finalize", summary, []
+
+
 def _apply_gate_outcome(
     state: PlanState,
     gate_summary: dict[str, Any],
@@ -358,6 +539,26 @@ def _apply_gate_outcome(
         summary = "Gate recommended PROCEED, but preflight checks are still blocking execution."
         return result, "gate", summary, []
     if gate_summary["recommendation"] == "ITERATE":
+        # Layer 0 backstop: bound the critique loop. Mirror the execute-review
+        # rework cap (review.py:238-254). Count prior ITERATE rounds; at the
+        # cap, terminate via the severity-gated branch (escalate on an open
+        # correctness/security flag, else force-proceed-with-note).
+        no_progress_streak = _critique_no_progress_streak(state, gate_summary, plan_dir)
+        prior_rounds = _prior_iterate_rounds(state)
+        max_iter = _effective_critique_cap(robustness)
+        max_no_progress = get_effective("execution", "max_critique_no_progress")
+        if prior_rounds >= max_iter:
+            return _critique_terminate_branch(
+                state,
+                gate_summary,
+                f"Max critique iterations ({max_iter}) reached",
+            )
+        if no_progress_streak >= max_no_progress:
+            return _critique_terminate_branch(
+                state,
+                gate_summary,
+                f"Critique loop made no net progress for {no_progress_streak} consecutive rounds",
+            )
         return result, "revise", summary, []
     if gate_summary["recommendation"] == "ESCALATE":
         return result, "override add-note", summary, []
