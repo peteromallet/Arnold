@@ -66,9 +66,17 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml
 
-      # Snapshot-check step intentionally omitted: scripts/regenerate_snapshots.py
-      # lives only on feature branches and has never landed on main. Re-add this
-      # step in the same PR that lands the regenerator script.
+      - name: Check snapshot freshness
+        # Bypass when the push commit message, PR title, or PR labels
+        # contain a `snapshots:` tag (or a `snapshots` label) so
+        # intentional refreshes do not fight CI.
+        if: |
+          !(
+            contains(github.event.head_commit.message, 'snapshots:') ||
+            contains(github.event.pull_request.title, 'snapshots:') ||
+            contains(toJson(github.event.pull_request.labels), 'snapshots')
+          )
+        run: .venv/bin/python scripts/regenerate_snapshots.py --check
 
       - name: Upload coverage artifact
         if: always()

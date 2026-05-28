@@ -134,7 +134,11 @@ Pure functions also exist: `workflow_from_ready(id)`, `workflow_from_id(id)`, `w
 
 To **convert** an arbitrary JSON workflow into an editable Python scratchpad you can hack on:
 ```bash
-python -m vibecomfy.cli convert <workflow_id_or_path> --out out/scratchpads/<name>.py
+python -m vibecomfy.cli port convert <workflow_id_or_path> --out out/scratchpads/<name>.py --json
+```
+To fork an existing ready template into `recipes/` for hand-editing:
+```bash
+python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py
 ```
 
 ### 3. Edit / compose
@@ -336,8 +340,8 @@ The full operating path lives in **`docs/adding_templates_models.md`**. Read it 
 3. **Declare custom nodes** in `vibecomfy/node_packs.py` (a `CustomNodePack(name, repo, classes, pip_packages)` entry) and pin in `custom_nodes.lock`.
 4. **Declare models**: workflow-embedded URLs go in workflow metadata; node-pack-specific layouts go in `vibecomfy/registry/models.yaml`.
 5. **Add a manifest row** in `workflow_corpus/manifests/coverage.json` with `id`, `path`, `media`, `task`, `coverage_tier`, `ready_template: true`.
-6. **Optional materializer policy** in `scripts/materialize_ready_templates.py` if the source needs smoke-time normalization (lower res / steps, fixture injection, deterministic seeds).
-7. **Generate** the ready Python file with `uv run python scripts/materialize_ready_templates.py` (or hand-author it under `ready_templates/<media>/<id>.py` for full control — see `ready_templates/image/z_image.py` for the canonical hand-authored shape).
+6. **Run port preflight**: `python -m vibecomfy.cli port check workflow_corpus/.../<id>.json --json`. Resolve hard errors (helper nodes, missing packs, model asset issues, widget alias drift) before hand-editing or RunPod.
+7. **Convert to a ready template** with `python -m vibecomfy.cli port convert workflow_corpus/.../<id>.json --ready-id <media>/<id> --out ready_templates/<media>/<id>.py --json`, or hand-author it under `ready_templates/<media>/<id>.py` for full control (see `ready_templates/image/z_image.py` for the canonical hand-authored shape). To fork a generated template into `recipes/` for hand-editing, use `python -m vibecomfy.cli copy-to-recipe <id> --out recipes/<name>.py`.
 8. **Validate locally**: `vibecomfy validate ready_templates/<media>/<id>.py`, then targeted tests `pytest -q tests/test_ready_templates.py tests/test_runpod_matrix.py tests/test_nodes_install.py tests/test_cli.py`.
 9. **Validate on RunPod** with a focused scope: `VIBECOMFY_MATRIX_SCOPE=<family> uv run python scripts/runpod_corpus_matrix.py`. Don't run the full matrix while iterating.
 10. **Document failures** in `docs/hiddenswitch_incompatibilities.md`, `docs/structural_issues.md`, or a family coverage doc — never leave fixes only in chat history or pod logs.

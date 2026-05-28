@@ -82,13 +82,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     runpod_enabled = config.getoption("--runpod")
     runpod_full_enabled = config.getoption("--runpod-full")
-    if not (runpod_enabled and runpod_full_enabled):
+    allow_runpod = runpod_enabled or runpod_full_enabled
+    allow_runpod_full = runpod_full_enabled
+    if not (allow_runpod and allow_runpod_full):
         selected: list[pytest.Item] = []
         deselected: list[pytest.Item] = []
         for item in items:
-            if "runpod_full" in item.keywords and not runpod_full_enabled:
+            if "runpod_full" in item.keywords and not allow_runpod_full:
                 deselected.append(item)
-            elif "runpod" in item.keywords and not runpod_enabled:
+            elif "runpod" in item.keywords and not allow_runpod:
                 deselected.append(item)
             else:
                 selected.append(item)
