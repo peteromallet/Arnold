@@ -54,13 +54,12 @@ def test_resolve_model_explicit_openrouter_claude_allowed(monkeypatch) -> None:
     assert kwargs.get("base_url") == "https://openrouter.ai/api/v1"
 
 
-def test_resolve_model_non_claude_openrouter_still_routes(monkeypatch) -> None:
-    """Non-Claude bare models (e.g. qwen/...) keep the existing OpenRouter
-    fallback so non-Claude users aren't disrupted."""
-    # No raise expected. acquire_key may return "" without keys present;
-    # in that case kwargs may be empty — what matters is that no CliError fires.
-    resolved, _kwargs = resolve_model("qwen/qwen3-235b")
-    assert resolved == "qwen/qwen3-235b"
+def test_resolve_model_non_claude_bare_model_requires_explicit_provider() -> None:
+    """Bare non-native models must not silently fall through to OpenRouter."""
+    with pytest.raises(CliError) as excinfo:
+        resolve_model("qwen/qwen3-235b")
+    assert excinfo.value.code == "openrouter_blocked"
+    assert "openrouter:" in excinfo.value.message
 
 
 def test_resolve_model_zhipu_prefix_unaffected() -> None:
