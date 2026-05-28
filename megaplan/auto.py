@@ -27,6 +27,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1021,6 +1022,32 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     return True
 
 
+def _parse_active_step_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _active_step_last_activity_stale(
+    active_step: dict[str, Any],
+    *,
+    threshold_seconds: float,
+) -> tuple[bool, int | None]:
+    if threshold_seconds <= 0:
+        return False, None
+    last_activity_at = _parse_active_step_timestamp(active_step.get("last_activity_at"))
+    if last_activity_at is None:
+        return False, None
+    idle_seconds = max(
+        0,
+        int((datetime.now(timezone.utc) - last_activity_at).total_seconds()),
+    )
+    return idle_seconds >= threshold_seconds, idle_seconds
+
+
 def drive(
     plan: str,
     *,
@@ -1334,6 +1361,30 @@ def drive(
             )
 
         active_step = status.get("active_step")
+        orphan_actions = {
+            "resume_or_recover",
+            "rerun_same_step",
+            "rerun_execute",
+            "terminate_idle_step",
+        }
+        if (
+            isinstance(active_step, dict)
+            and active_step.get("recommended_action") not in orphan_actions
+        ):
+            is_stale, idle_seconds = _active_step_last_activity_stale(
+                active_step,
+                threshold_seconds=phase_idle_timeout,
+            )
+            if is_stale:
+                threshold_display = int(phase_idle_timeout)
+                active_step["recommended_action"] = "terminate_idle_step"
+                active_step.setdefault("health", "stale")
+                active_step["recommended_action_reason"] = (
+                    "active_step.last_activity_at is stale "
+                    f"({idle_seconds}s without activity >= {threshold_display}s threshold); "
+                    "clearing before redispatch"
+                )
+
         if (
             isinstance(active_step, dict)
             and active_step.get("recommended_action") == "wait"
@@ -1355,12 +1406,7 @@ def drive(
         # into "recovering" malformed output.
         if (
             isinstance(active_step, dict)
-            and active_step.get("recommended_action") in {
-                "resume_or_recover",
-                "rerun_same_step",
-                "rerun_execute",
-                "terminate_idle_step",
-            }
+            and active_step.get("recommended_action") in orphan_actions
         ):
             orphan_step = active_phase_name(active_step) or next_step or "unknown"
             reason = (

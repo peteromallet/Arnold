@@ -193,6 +193,16 @@ def _shannon_readiness_timeout_seconds() -> int:
         return 120
 
 
+def _shannon_execute_timeout_seconds() -> int:
+    raw = os.getenv("MEGAPLAN_SHANNON_EXECUTE_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return 7200
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 7200
+
+
 def _shannon_handshake_probability() -> float:
     raw = os.getenv("MEGAPLAN_SHANNON_HANDSHAKE_PROBABILITY", "").strip()
     if not raw:
@@ -1102,6 +1112,7 @@ def run_shannon_step(
             cwd=work_dir,
             stdin_text=None,
             env=env,
+            timeout=_shannon_execute_timeout_seconds(),
             activity_callback=_activity_callback_for_state(state, plan_dir),
             idle_timeout=_worker_stream_idle_timeout_seconds(),
             tmux_session=tmux_session,
