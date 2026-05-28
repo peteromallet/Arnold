@@ -95,14 +95,17 @@ By hand, I'd budget this as multiple engineer-weeks — call it **4–8 weeks of
 
 ![Cost: realized DeepSeek bill vs. the same work and the whole epic priced on a premium API](assets/scribble-cost-comparison.png)
 
-**First, what the $12 is and isn't.** It's the real DeepSeek API bill for the work DeepSeek did — the ~78% of tokens that ran on it. The premium work (all planning and critique, plus M2 end-to-end) ran on a flat Codex/ChatGPT subscription I was already paying for, so its *marginal* cost was near zero — but a subscription I'd hold anyway isn't a true $0. So read $12 as the **DeepSeek line item**, and the honest like-for-like below as **DeepSeek API cost vs. the same work priced on a premium API** — both figures you can check against published rates.
+**The ~$12 is what I actually paid out of pocket** — the real DeepSeek API bill for the ~78% of tokens that ran on DeepSeek. The premium work (all planning and critique, plus M2 end-to-end) ran on a flat Codex/ChatGPT subscription I was already paying for, so its *marginal* cost was effectively zero.
 
-Priced API-vs-API:
+That $12 is real — but it's small partly because the premium slice was subscription-subsidized rather than billed per token, so on its own it isn't a clean like-for-like. Priced honestly, with **everything at real API rates**, three numbers tell the story:
 
-- **The work DeepSeek did: ~$12.** The *same tokens* on GPT-5.5 — assuming the same ~94% cache rate — would be **~$328, about 29× more.**
-- **The whole epic, end to end, on a premium API: ~$422** (GPT-5.5, same caching) — about **37× the DeepSeek bill**, and far more against pricier tiers (Opus, GPT-5.5 Pro).
+- **Actually paid: ~$12** — DeepSeek's slice on the DeepSeek API; the premium slice rode the subscription.
+- **All-in at API prices: ~$106** — that same ~$12 plus ~$94 for the premium slice priced on the GPT-5.5 API. I didn't *pay* the $94, but counting it is the honest comparison.
+- **All-premium: ~$422** — the whole epic run end-to-end on GPT-5.5.
 
-**On provenance.** The DeepSeek figures are from the real invoice — token counts and the 94% cache-hit rate are measured, not estimated. The GPT-5.5 counterfactual is a **rough** assumption: we don't have GPT's cache behavior here, so it's priced at the same ~94% rate DeepSeek saw. If GPT caches less, the gap only widens.
+So the like-for-like saving is **~4×** — this run at real API prices costs about a quarter of the all-premium price — while the out-of-pocket reality was just the ~$12 DeepSeek bill. (DeepSeek's line is so low because **94% of its input tokens were cache hits**, priced 120× below the cache-miss rate — which is also why the real bill was ~$12, not the ~$131 the harness's own meter estimated.)
+
+**On provenance.** The DeepSeek figures are from the real invoice — token counts and the 94% cache-hit rate are measured, not estimated. The GPT-5.5 figures are priced at the same ~94% cache rate DeepSeek saw (we don't have GPT's actual cache behavior here); if GPT caches less, the premium numbers — and the gap — only grow.
 
 ## Conclusion
 
