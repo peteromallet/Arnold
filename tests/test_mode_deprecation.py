@@ -29,34 +29,7 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan.types import CliError
-
-
-# ── shared fixtures (mirrors test_handle_init_*_mode.py) ───────────────────
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -91,10 +64,10 @@ def _load_state(root: Path, plan_name: str) -> dict:
 # that handle_init must write into `state['config']`. Verbatim from the
 # plan Overview pinned table.
 def test_mode_doc_writes_pinned_state_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    bootstrap_fixture: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """--mode doc → mode='doc', pipeline='doc', form unset."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root, _args(project_dir, mode="doc", output="docs/out.md")
     )
@@ -106,10 +79,10 @@ def test_mode_doc_writes_pinned_state_config(
 
 
 def test_mode_creative_writes_pinned_state_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """--mode creative --form poem → mode='creative', pipeline='creative', form='poem'."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root,
         _args(project_dir, mode="creative", form="poem", output="poems/p.md"),
@@ -122,11 +95,11 @@ def test_mode_creative_writes_pinned_state_config(
 
 
 def test_mode_metaplan_coerces_mode_to_doc(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """--mode metaplan → mode='doc' (coerced, T10 step 2 — preserve init.py:55-56
     coercion verbatim), pipeline='doc', form unset."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root, _args(project_dir, mode="metaplan", output="docs/m.md")
     )
@@ -138,13 +111,13 @@ def test_mode_metaplan_coerces_mode_to_doc(
 
 
 def test_mode_joke_does_not_rewrite_mode_to_creative(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """--mode joke → mode='joke' (NOT rewritten to 'creative'),
     pipeline='creative', form='joke' (implicit). This preserves the
     legacy is_prose_mode/creative_form_id semantics required by USER
     DECISION 2 for the retained --auto-start legacy path."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root, _args(project_dir, mode="joke", output="jokes/j.md")
     )
@@ -157,13 +130,13 @@ def test_mode_joke_does_not_rewrite_mode_to_creative(
 
 # ── verbatim deprecation warning (T10 step 4) ────────────────────────────
 def test_mode_doc_emits_verbatim_deprecation_warning_to_stderr(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    bootstrap_fixture: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """T10 step (4) pins the verbatim stderr text. The substring assertions
     below cover the placeholder slots (<X>=doc, <pipeline>=doc) plus the
     fixed 0.23/0.24 NOTE and removal-target text. doc/metaplan warnings
     do NOT cite `--form …` (only creative does)."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     megaplan.handle_init(
         root, _args(project_dir, mode="doc", output="docs/out.md")
     )
@@ -180,12 +153,12 @@ def test_mode_doc_emits_verbatim_deprecation_warning_to_stderr(
 
 
 def test_mode_creative_warning_includes_form_suffix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    bootstrap_fixture: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`--form …` suffix appears only on creative-pipeline routings so the
     deprecation hint matches the new `megaplan run creative --form <X>`
     surface."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     megaplan.handle_init(
         root,
         _args(project_dir, mode="creative", form="joke", output="jokes/j.md"),
@@ -197,11 +170,11 @@ def test_mode_creative_warning_includes_form_suffix(
 
 
 def test_mode_metaplan_warning_cites_doc_pipeline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    bootstrap_fixture: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """metaplan redirects to the doc pipeline — the deprecation warning must
     reference `megaplan run doc`, NOT `megaplan run metaplan`."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     megaplan.handle_init(
         root, _args(project_dir, mode="metaplan", output="docs/m.md")
     )
@@ -212,11 +185,11 @@ def test_mode_metaplan_warning_cites_doc_pipeline(
 
 
 def test_mode_joke_warning_cites_creative_pipeline_with_form(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    bootstrap_fixture: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """joke redirects to creative --form joke — the warning must cite
     `megaplan run creative --form …`."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     megaplan.handle_init(
         root, _args(project_dir, mode="joke", output="jokes/j.md")
     )
@@ -228,11 +201,11 @@ def test_mode_joke_warning_cites_creative_pipeline_with_form(
 
 # ── --mode code is clean (T10 step 7) ────────────────────────────────────
 def test_mode_code_writes_state_config_without_pipeline_or_form(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    bootstrap_fixture: tuple[Path, Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """--mode code is the default; it writes mode='code', leaves
     pipeline/form unset, and emits NO deprecation warning to stderr."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(root, _args(project_dir, mode="code"))
     state = _load_state(root, response["plan"])
     err = capsys.readouterr().err
@@ -246,12 +219,12 @@ def test_mode_code_writes_state_config_without_pipeline_or_form(
 
 # ── HARD CONTRACT: --form rules (USER DECISION 1) ────────────────────────
 def test_form_joke_rejected_on_mode_doc(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """USER DECISION 1: --form joke on --mode doc must raise
     CliError('invalid_args'). The hard contract lives at init.py and is
     NOT deferred."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as excinfo:
         megaplan.handle_init(
             root,
@@ -262,12 +235,12 @@ def test_form_joke_rejected_on_mode_doc(
 
 
 def test_form_joke_rejected_on_mode_metaplan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """USER DECISION 1: --form joke on --mode metaplan must raise
     CliError('invalid_args'). metaplan coerces to mode='doc' BEFORE the
     --form check, so the same gate that rejects --form on doc applies."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as excinfo:
         megaplan.handle_init(
             root,
@@ -278,12 +251,12 @@ def test_form_joke_rejected_on_mode_metaplan(
 
 
 def test_missing_form_rejected_on_mode_creative(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """USER DECISION 1: --mode creative WITHOUT --form must raise
     CliError('invalid_args'). The creative pipeline cannot dispatch
     without a form id."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as excinfo:
         megaplan.handle_init(
             root,

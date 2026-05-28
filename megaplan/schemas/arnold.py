@@ -266,11 +266,14 @@ class EpicSnapshot(StorageModel):
     search_document: str | None = None
 
 
-class EpicSearchSummary(Epic):
+class EpicSummary(Epic):
     snippet: str | None = None
     rank: float | int | None = None
     match_tier: int | None = None
     backend: HomeBackend | None = None
+
+
+EpicSearchSummary = EpicSummary
 
 
 class Feedback(StorageModel):

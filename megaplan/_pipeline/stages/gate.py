@@ -1,7 +1,7 @@
 """GateStep — Sprint 4 Chunk B real handler port for the gate phase.
 
 The gate Step is a ``decide`` kind. It produces a typed
-:class:`Verdict` with ``recommendation`` set, which the executor
+:class:`PipelineVerdict` with ``recommendation`` set, which the executor
 dispatches against ``kind="gate"`` edges.
 """
 

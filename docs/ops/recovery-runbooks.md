@@ -155,7 +155,7 @@ Recovery steps:
 - For partial imports, rerun the same command; unchanged imported plans are skipped.
 
 Post-recovery validation:
-- Run `megaplan migrate-local-plans --source-home <home> --source-project <project> --target-project-dir <repo> --dry-run`.
+- Run `megaplan migrate-local-plans --source-home <home> --source-project <project> --project-dir <repo> --dry-run`.
 - Confirm no conflicts or unexpected errors.
 - Run `pytest tests/test_epic_cli.py -q`.
 

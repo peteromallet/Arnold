@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 
 import megaplan
+import megaplan.execute.aggregation
+import megaplan.execute.batch
 import megaplan.execute.core
 import megaplan.workers
 from megaplan._core import compute_global_batches
@@ -127,10 +129,16 @@ def test_high_scope_drift_blocks_only_hardened_robustness(
         )
 
     monkeypatch.setattr(megaplan.workers, "run_step_with_worker", drift_worker)
+    _drift_snapshot = lambda *_: ({"a.py": "claimed-hash", "b.py": "unclaimed-hash"}, None)
     monkeypatch.setattr(
-        megaplan.execute.core,
+        megaplan.execute.batch,
         "_capture_git_status_snapshot",
-        lambda *_: ({"a.py": "claimed-hash", "b.py": "unclaimed-hash"}, None),
+        _drift_snapshot,
+    )
+    monkeypatch.setattr(
+        megaplan.execute.aggregation,
+        "_capture_git_status_snapshot",
+        _drift_snapshot,
     )
 
     args_kwargs: dict[str, Any] = {

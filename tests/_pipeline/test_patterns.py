@@ -14,7 +14,7 @@ patterns highlighted in the brief:
 * ``subpipeline_call`` — round-trips a child :class:`Pipeline` via
   :class:`SubloopStep`, with the ``promote`` callable mapping child
   state to a :data:`GateRecommendation` on the parent's
-  :class:`Verdict`.
+  :class:`PipelineVerdict`.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from megaplan._pipeline.types import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 
@@ -93,7 +93,7 @@ class _StatePatchStep:
 
 @dataclass
 class _VerdictStep:
-    """Step that emits a fixed :class:`Verdict.recommendation`."""
+    """Step that emits a fixed :class:`PipelineVerdict.recommendation`."""
 
     name: str
     recommendation: GateRecommendation
@@ -104,7 +104,7 @@ class _VerdictStep:
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
             outputs={Path("v1.md").name: ctx.plan_dir / f"{self.name}.md"},
-            verdict=Verdict(score=1.0, recommendation=self.recommendation),
+            verdict=PipelineVerdict(score=1.0, recommendation=self.recommendation),
             next=self.recommendation,
         )
 
@@ -306,7 +306,7 @@ class TestSubpipelineCall:
     ) -> None:
         """Regression (c): the child Pipeline runs under :class:`SubloopStep`
         with its state propagating back via the ``promote`` callable as a
-        :data:`GateRecommendation` on the parent's :class:`Verdict`."""
+        :data:`GateRecommendation` on the parent's :class:`PipelineVerdict`."""
 
         # Child pipeline: a single Step that publishes
         # ``current_state='critiqued'`` (the shape an InProcessHandlerStep
@@ -441,9 +441,9 @@ class TestMajorityVote:
     def test_strict_majority_wins(self, tmp_path: Path) -> None:
         join = majority_vote()
         results = [
-            StepResult(verdict=Verdict(score=1.0, recommendation="proceed")),
-            StepResult(verdict=Verdict(score=1.0, recommendation="proceed")),
-            StepResult(verdict=Verdict(score=1.0, recommendation="iterate")),
+            StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
+            StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
+            StepResult(verdict=PipelineVerdict(score=1.0, recommendation="iterate")),
         ]
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join(results, ctx)
@@ -454,8 +454,8 @@ class TestMajorityVote:
     def test_tie_routes_to_tiebreaker(self, tmp_path: Path) -> None:
         join = majority_vote()
         results = [
-            StepResult(verdict=Verdict(score=1.0, recommendation="proceed")),
-            StepResult(verdict=Verdict(score=1.0, recommendation="iterate")),
+            StepResult(verdict=PipelineVerdict(score=1.0, recommendation="proceed")),
+            StepResult(verdict=PipelineVerdict(score=1.0, recommendation="iterate")),
         ]
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="test")
         merged = join(results, ctx)

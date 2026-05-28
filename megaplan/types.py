@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -25,16 +25,66 @@ STATE_BLOCKED = "blocked"
 STATE_PAUSED = "paused"
 STATE_CANCELLED = "cancelled"
 STATE_AWAITING_PR_MERGE = "awaiting_pr_merge"
-STATE_AWAITING_HUMAN = "awaiting_human_verify"
+STATE_AWAITING_HUMAN_VERIFY = "awaiting_human_verify"
 STATE_TIEBREAKER_PENDING = "tiebreaker_pending"
 STATE_TIEBREAKER_READY = "tiebreaker_ready"
+PlanCurrentState = Literal[
+    "initialized",
+    "prepped",
+    "planned",
+    "critiqued",
+    "gated",
+    "finalized",
+    "executed",
+    "reviewed",
+    "done",
+    "aborted",
+    "failed",
+    "blocked",
+    "paused",
+    "cancelled",
+    "awaiting_pr_merge",
+    "awaiting_human_verify",
+    "tiebreaker_pending",
+    "tiebreaker_ready",
+]
+CANONICAL_PLAN_STATES: frozenset[str] = frozenset(
+    {
+        STATE_INITIALIZED,
+        STATE_PREPPED,
+        STATE_PLANNED,
+        STATE_CRITIQUED,
+        STATE_GATED,
+        STATE_FINALIZED,
+        STATE_EXECUTED,
+        STATE_REVIEWED,
+        STATE_DONE,
+        STATE_ABORTED,
+        STATE_FAILED,
+        STATE_BLOCKED,
+        STATE_PAUSED,
+        STATE_CANCELLED,
+        STATE_AWAITING_PR_MERGE,
+        STATE_AWAITING_HUMAN_VERIFY,
+        STATE_TIEBREAKER_PENDING,
+        STATE_TIEBREAKER_READY,
+    }
+)
 TERMINAL_STATES = {STATE_DONE, STATE_ABORTED, STATE_FAILED, STATE_BLOCKED, STATE_CANCELLED}
 AUTOMATION_TERMINAL_STATES = TERMINAL_STATES | {
     STATE_PAUSED,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_TIEBREAKER_PENDING,
     STATE_TIEBREAKER_READY,
 }
+
+
+def validate_plan_current_state(value: Any) -> str:
+    """Return a canonical plan state or raise for invalid persisted state."""
+
+    if value not in CANONICAL_PLAN_STATES:
+        raise ValueError(f"invalid current_state {value!r}")
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +135,8 @@ class SessionInfo(TypedDict, total=False):
     sandbox_hash: str
 
 
-class ActiveStep(TypedDict, total=False):
-    step: str
+class ActivePhase(TypedDict, total=False):
+    phase: str
     agent: str
     mode: str
     model: str
@@ -149,7 +199,7 @@ class LastGateRecord(TypedDict, total=False):
 class PlanState(TypedDict):
     name: str
     idea: str
-    current_state: str
+    current_state: PlanCurrentState
     iteration: int
     created_at: str
     config: PlanConfig
@@ -157,7 +207,7 @@ class PlanState(TypedDict):
     plan_versions: list[PlanVersionRecord]
     history: list[HistoryEntry]
     meta: PlanMeta
-    active_step: NotRequired[ActiveStep]
+    active_step: NotRequired[ActivePhase]
     clarification: NotRequired[ClarificationRecord]
     latest_failure: NotRequired[dict[str, Any] | None]
     resume_cursor: NotRequired[dict[str, Any] | None]
@@ -331,6 +381,7 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "plan": "claude",
     "prep": "claude",
     "critique": "codex",
+    "critique_evaluator": "claude",
     "revise": "claude",
     "gate": "claude",
     "feedback": "claude:low",

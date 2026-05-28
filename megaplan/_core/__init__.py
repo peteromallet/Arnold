@@ -96,6 +96,7 @@ from .modes import (
 
 # -- state.py: plan state, history, sessions ---------------------------------
 from .state import (
+    active_phase_name,
     active_plan_dirs,
     active_step_is_stale,
     append_history,
@@ -250,6 +251,7 @@ __all__ = [
     "is_creative_mode",
     "is_prose_mode",
     # state
+    "active_phase_name",
     "active_plan_dirs",
     "active_step_is_stale",
     "append_history",

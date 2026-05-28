@@ -251,7 +251,18 @@ def atomic_write_text(path: Path, content: str, *, _plan_dir: Path | None = None
                 payload={"path": str(path), "size_bytes": len(content)},
             )
         except Exception:
-            pass
+            try:
+                from megaplan.handlers.shared import _warn_best_effort_emit_failure
+
+                _warn_best_effort_emit_failure(
+                    "M3A_WARN_EMIT_ARTIFACT_WRITTEN",
+                    action="atomic-write-text",
+                    plan_dir=_plan_dir,
+                    event_kind="artifact_written",
+                    context={"path": str(path), "size_bytes": len(content)},
+                )
+            except Exception:
+                pass
 
 
 def atomic_write_json(path: Path, data: Any, *, _plan_dir: Path | None = None) -> None:

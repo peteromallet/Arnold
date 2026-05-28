@@ -137,10 +137,102 @@ def test_parallel_critique_sets_and_clears_active_step(
     state = load_state(plan_fixture.plan_dir)
 
     assert response["success"] is True
-    assert observed["step"] == "critique"
+    assert observed["phase"] == "critique"
     assert observed["agent"] == "hermes"
     assert observed["model"] == "fireworks:accounts/fireworks/models/kimi-k2p6"
     assert "active_step" not in state
+
+
+def test_parallel_critique_fallback_logs_warning(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda step, args: ("hermes", "persistent", False, "fireworks:model"),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "run_parallel_critique",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("parallel failed")),
+    )
+
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    caplog.set_level("WARNING", logger="megaplan")
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert response["success"] is True
+    assert any("M3A_WARN_PARALLEL_CRITIQUE_FALLBACK" in record.getMessage() for record in caplog.records)
+
+
+def test_critique_rank_parse_logs_warning(
+    plan_fixture: PlanFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    monkeypatch.setattr(megaplan.handlers.critique, "adaptive_critique_enabled", lambda state: True)
+    monkeypatch.setattr(megaplan.handlers.critique, "is_creative_mode", lambda state: False)
+    monkeypatch.setattr(
+        megaplan.handlers,
+        "resolve_agent_mode",
+        lambda step, args: ("claude", "persistent", False, "unknown-model"),
+    )
+    monkeypatch.setattr(
+        megaplan.handlers.critique,
+        "validate_critique_checks",
+        lambda payload, **kwargs: [],
+    )
+
+    def fake_run_step(step, state, plan_dir, args, *, root=None, prompt_kwargs=None, **kwargs):
+        if step == "critique_evaluator":
+            return (
+                WorkerResult(
+                    payload={"selections": [], "flag_verifications": []},
+                    raw_output="{}",
+                    duration_ms=1,
+                    cost_usd=0.0,
+                    session_id="eval",
+                ),
+                "claude",
+                "persistent",
+                False,
+            )
+        return (
+            WorkerResult(
+                payload={"checks": [], "flags": [], "verified_flag_ids": [], "disputed_flag_ids": []},
+                raw_output="{}",
+                duration_ms=1,
+                cost_usd=0.0,
+                session_id="critique",
+            ),
+            "claude",
+            "persistent",
+            False,
+        )
+
+    monkeypatch.setattr(megaplan.workers, "run_step_with_worker", fake_run_step)
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.roster_rank",
+        lambda _model: (_ for _ in ()).throw(ValueError("unknown model")),
+    )
+    monkeypatch.setattr(
+        "megaplan.audits.critique_evaluator.validate_evaluator_verdict",
+        lambda payload, **kwargs: None,
+    )
+
+    caplog.set_level("WARNING", logger="megaplan")
+    response = megaplan.handle_critique(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    assert response["success"] is True
+    assert any("M3A_WARN_CRITIQUE_RANK_PARSE" in record.getMessage() for record in caplog.records)
 
 
 def test_critique_prompt_contains_robustness_instruction(plan_fixture: PlanFixture) -> None:

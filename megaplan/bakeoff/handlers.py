@@ -227,8 +227,10 @@ def json_dumps_sorted(data: Any) -> str:
 
 def _phase(plan_state: dict[str, Any]) -> str:
     active = plan_state.get("active_step")
-    if isinstance(active, dict) and active.get("step"):
-        return str(active["step"])
+    if isinstance(active, dict):
+        phase = active.get("phase") or active.get("step")
+        if phase:
+            return str(phase)
     history = plan_state.get("history")
     if isinstance(history, list) and history:
         last = history[-1]

@@ -15,7 +15,7 @@ from megaplan._pipeline import (
     Step,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 from megaplan._pipeline.executor import run_pipeline
 from megaplan._pipeline.subloop import SubloopStep

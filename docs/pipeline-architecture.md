@@ -11,7 +11,7 @@ Eight frozen dataclasses + one Protocol. ~190 LOC in
 
 ```
 Edge          (label, target, kind, recommendation)
-Verdict       (score, flags, notes, payload, recommendation, override)
+PipelineVerdict       (score, flags, notes, payload, recommendation, override)
 StepContext   (plan_dir, state, profile, mode, inputs, budget)
 StepResult    (outputs, verdict, next, state_patch)
 Step          (Protocol: name, kind, prompt_key, slot, run)
@@ -24,7 +24,7 @@ Overlay       (name, apply)
 **Step.kind** is a Literal of five values:
 
 - `produce`: writes an artifact (prep, plan, revise, finalize, execute).
-- `judge`: emits a Verdict (critique, review).
+- `judge`: emits a PipelineVerdict (critique, review).
 - `decide`: maps verdicts to a typed recommendation (gate).
 - `subloop`: carries a nested Pipeline; its child runs as a sub-program.
 - `override`: reserved for escape-edge dispatch.
@@ -90,14 +90,14 @@ are always importable as Python values, regardless of that runtime flag.
 A `SubloopStep` carries a `child_pipeline`. At dispatch time the
 executor runs the child via `run_pipeline` (or `_with_policy`) under
 a subdir of `ctx.plan_dir`, then promotes the child's final state
-into a Verdict on the parent via a configurable `promote` callable.
+into a PipelineVerdict on the parent via a configurable `promote` callable.
 This is the elegance fix for tiebreaker: two state-machine states
 collapse into one Step.
 
 Override edges (`Edge(kind="override", ...)`) move the legacy CLI
 escape hatches (`override force-proceed` / `abort` / `replan` /
 `add-note`) into the typed edge model. A Step returning a
-Verdict with `override="force_proceed"` causes the executor to find
+PipelineVerdict with `override="force_proceed"` causes the executor to find
 and follow the matching `kind="override"` edge.
 
 ## How a prompt variant is added (in <20 lines)
@@ -142,7 +142,7 @@ the planning graph.
 ## Worked example — a 3× critique → revise loop from scratch
 
 ```python
-from megaplan._pipeline import Edge, Pipeline, Stage, StepContext, StepResult, Verdict
+from megaplan._pipeline import Edge, Pipeline, Stage, StepContext, StepResult, PipelineVerdict
 from megaplan._pipeline.executor import run_pipeline
 
 class Critic:
@@ -150,7 +150,7 @@ class Critic:
     def run(self, ctx):
         n = int(ctx.state.get("iter", 0)) + 1
         return StepResult(
-            verdict=Verdict(score=0.5, recommendation="iterate" if n < 3 else "proceed"),
+            verdict=PipelineVerdict(score=0.5, recommendation="iterate" if n < 3 else "proceed"),
             next="iterate",
             state_patch={"iter": n},
         )

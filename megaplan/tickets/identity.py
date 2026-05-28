@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+
+from .files import slugify
+
+
+@dataclass(frozen=True)
+class RepoCodebaseIdentity:
+    owner: str
+    name: str
+    default_branch: str
+    root_commit_sha: str
 
 
 def repo_root_sha(cwd: Path | None = None) -> str:
@@ -83,3 +95,28 @@ def repo_default_branch(cwd: Path | None = None) -> str | None:
     if ref.startswith("refs/remotes/origin/"):
         return ref[len("refs/remotes/origin/"):]
     return ref or None
+
+
+def repo_codebase_identity(cwd: Path | None = None) -> RepoCodebaseIdentity:
+    """Return deterministic store codebase metadata for the current repo.
+
+    This helper requires a committed repository first. If the repo has no
+    resolvable ``origin`` owner/name, it falls back to a deterministic local
+    identity that incorporates the repo directory slug, the resolved path hash,
+    and the root commit SHA prefix.
+    """
+    root_sha = repo_root_sha(cwd)
+    owner, name = repo_owner_name(cwd)
+    if not owner or not name:
+        repo_root = Path(cwd or ".").resolve()
+        path_hash = hashlib.sha256(str(repo_root).encode("utf-8")).hexdigest()[:12]
+        root_sha_prefix = root_sha[:12]
+        owner = "local"
+        name = f"{slugify(repo_root.name)}-{path_hash}-{root_sha_prefix}"
+    default_branch = repo_default_branch(cwd) or "main"
+    return RepoCodebaseIdentity(
+        owner=owner,
+        name=name,
+        default_branch=default_branch,
+        root_commit_sha=root_sha,
+    )

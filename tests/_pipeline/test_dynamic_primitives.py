@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 import pytest
 
+import megaplan._pipeline.patterns as patterns_module
 from megaplan._pipeline.patterns import (
     dynamic_fanout,
     iterate_until_consensus,
@@ -28,7 +29,7 @@ from megaplan._pipeline.types import (
     Stage,
     StepContext,
     StepResult,
-    Verdict,
+    PipelineVerdict,
 )
 
 
@@ -69,7 +70,7 @@ class _GeneratorStep:
 
 @dataclass(frozen=True)
 class _ReviewerStep:
-    """Emits a Verdict with reviewer_id payload — feeds weighted_vote."""
+    """Emits a PipelineVerdict with reviewer_id payload — feeds weighted_vote."""
 
     name: str = "reviewer"
     kind: str = "judge"
@@ -80,7 +81,7 @@ class _ReviewerStep:
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
-            verdict=Verdict(
+            verdict=PipelineVerdict(
                 score=1.0,
                 recommendation=self.recommendation,
                 payload={"reviewer_id": self.reviewer_id},
@@ -93,7 +94,7 @@ class _ReviewerStep:
 class _AggregateStep:
     """Stateful stub for iterate_until_consensus tests.
 
-    Emits a Verdict whose ``per_reviewer_recommendations`` payload is
+    Emits a PipelineVerdict whose ``per_reviewer_recommendations`` payload is
     drawn from ``recs_per_call`` — one list per invocation. After the
     list is exhausted, the last entry is reused so trailing iterations
     have well-defined output.
@@ -115,7 +116,7 @@ class _AggregateStep:
         # primitive consults the ratio, not the aggregate label).
         top: GateRecommendation = recs[0] if recs else "proceed"
         return StepResult(
-            verdict=Verdict(
+            verdict=PipelineVerdict(
                 score=1.0,
                 recommendation=top,
                 payload={"per_reviewer_recommendations": list(recs)},
@@ -422,3 +423,14 @@ class TestPairedRound:
     def test_empty_advocates_raises(self) -> None:
         with pytest.raises(ValueError):
             paired_round([], sees_other=True, name="empty")
+
+
+def test_patterns_facade_reexports_dynamic_private_helpers() -> None:
+    assert patterns_module._specialize_step is not None
+    assert patterns_module._read_specs_from_path is not None
+    assert patterns_module._extract_specs_from_result is not None
+    assert patterns_module._PanelFromArtifactStep is not None
+    assert patterns_module._DynamicFanoutStep is not None
+    assert patterns_module._agreement_ratio is not None
+    assert patterns_module._ConsensusStep is not None
+    assert patterns_module._PairedRoundStep is not None

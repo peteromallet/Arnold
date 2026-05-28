@@ -17,24 +17,19 @@ from megaplan.prompts._shared import _render_prep_block
 from megaplan.receipts.extractors import load_and_extract
 from megaplan.workers import WorkerResult
 
+from tests.conftest import make_args_factory
+
 
 def _make_args(plan_name: str | None, project_dir: Path, **overrides: Any) -> Namespace:
-    base = {
+    defaults: dict[str, Any] = {
         "plan": plan_name,
         "idea": "prep fanout skip",
         "name": plan_name,
-        "project_dir": str(project_dir),
-        "auto_approve": None,
         "robustness": "robust",
-        "agent": None,
-        "ephemeral": False,
-        "fresh": False,
-        "persist": False,
-        "confirm_self_review": False,
         "prep_direction": None,
     }
-    base.update(overrides)
-    return Namespace(**base)
+    defaults.update(overrides)
+    return make_args_factory(project_dir)(**defaults)
 
 
 def test_cli_registers_prep_command() -> None:

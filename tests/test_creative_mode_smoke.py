@@ -6,32 +6,10 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan._core import atomic_write_json, atomic_write_text, read_json
 from megaplan.execute.core import _build_aggregate_execution_payload
 from megaplan.handlers.review import _resolve_review_outcome
 from megaplan.types import STATE_DONE
-
-
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(megaplan._core.shutil, "which", lambda name: "/usr/bin/mock")
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
 
 
 def _init_args(project_dir: Path, *, name: str) -> Namespace:
@@ -53,9 +31,9 @@ def _init_args(project_dir: Path, *, name: str) -> Namespace:
 
 
 def _initialized_creative_poem(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, name: str
+    bootstrap_fixture: tuple[Path, Path], *, name: str
 ) -> tuple[Path, dict]:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(root, _init_args(project_dir, name=name))
     plan_dir = megaplan.plans_root(root) / response["plan"]
     state = read_json(plan_dir / "state.json")
@@ -109,9 +87,9 @@ def _poem_execute_payload(*, stop_requested: bool) -> dict:
 
 
 def test_creative_poem_execute_writes_directors_notes_once_per_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    plan_dir, state = _initialized_creative_poem(tmp_path, monkeypatch, name="creative-poem-smoke")
+    plan_dir, state = _initialized_creative_poem(bootstrap_fixture, name="creative-poem-smoke")
 
     aggregate = _build_aggregate_execution_payload(
         [_poem_execute_payload(stop_requested=False)],
@@ -148,9 +126,9 @@ def test_creative_poem_execute_writes_directors_notes_once_per_run(
 
 
 def test_creative_poem_stop_signal_halts_needs_rework_review(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    plan_dir, state = _initialized_creative_poem(tmp_path, monkeypatch, name="creative-poem-stop")
+    plan_dir, state = _initialized_creative_poem(bootstrap_fixture, name="creative-poem-stop")
 
     _build_aggregate_execution_payload(
         [_poem_execute_payload(stop_requested=True)],

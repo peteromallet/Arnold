@@ -9,18 +9,17 @@ from typing import Any
 
 from megaplan import handlers as _pkg
 from megaplan.review import checks as review_checks
-from megaplan.execute.core import _check_done_task_evidence, build_monitor_hint
+from megaplan.execute.quality import _check_done_task_evidence
+from megaplan.execute.batch import build_monitor_hint
 from megaplan.orchestration.evaluation import is_rubber_stamp
 from megaplan.execute.merge import _validate_and_merge_batch
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.profiles import apply_profile_expansion
-from megaplan.receipts import build_receipt
-from megaplan.receipts.writer import write_receipt
 from megaplan.types import (
     MOCK_ENV_VAR,
     CliError,
     PlanState,
-    STATE_AWAITING_HUMAN,
+    STATE_AWAITING_HUMAN_VERIFY,
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
@@ -60,12 +59,22 @@ from .shared import (
     _attach_next_step_runtime,
     _agent_mode_parts,
     _emit_phase_notice,
+    _emit_receipt,
     _run_worker,
     _supports_prompt_kwargs,
     attach_agent_fallback,
     worker_module,
 )
 from megaplan.orchestration.phase_result import _emit_phase_result
+
+"""Review handler — post-execute implementation-evidence pass.
+
+Review runs *after* execute and evaluates implementation evidence,
+merged artifacts, and completion quality.  It is the counterpart to
+critique (which runs *before* execute and evaluates plan quality).
+These two passes are distinct: critique judges the *plan*, review
+judges the *work product*.  Do not rename or conflate them.
+"""
 
 log = logging.getLogger(__name__)
 
@@ -250,13 +259,13 @@ def _resolve_review_outcome(
             for c in criteria
         )
         if has_deferred_must:
-            # STATE_AWAITING_HUMAN is intentionally NOT modified for with_feedback.
+            # STATE_AWAITING_HUMAN_VERIFY is intentionally NOT modified for with_feedback.
             # When deferred_must criteria require human verification, the plan is not
             # considered complete yet — scaffolding feedback.md would be misleading
             # because the user still needs to verify. Feedback scaffolding is deferred
             # until the plan actually reaches done (via the existing interactive
             # 'megaplan feedback edit' path after verification).
-            return "success", STATE_AWAITING_HUMAN, None
+            return "success", STATE_AWAITING_HUMAN_VERIFY, None
 
     with_feedback = state.get("config", {}).get("with_feedback", False)
     return "success", STATE_REVIEWED if with_feedback else STATE_DONE, None
@@ -420,27 +429,18 @@ def _finalize_review_outcome(
             finalize_hash=finalize_hash,
         ),
     )
-    try:
-        artifact_hash = sha256_file(plan_dir / "review.json")
-        receipt = build_receipt(
-            phase="review",
-            state=state,
-            plan_dir=plan_dir,
-            args=args,
-            worker=worker,
-            agent=agent,
-            mode=mode,
-            output_file="review.json",
-            artifact_hash=artifact_hash,
-            verdict=review_verdict,
-        )
-        write_receipt(
-            plan_dir,
-            receipt,
-            project_dir=Path(state["config"]["project_dir"]),
-        )
-    except Exception:
-        log.warning("Review receipt emission failed", exc_info=True)
+    _emit_receipt(
+        plan_dir=plan_dir,
+        state=state,
+        args=args,
+        worker=worker,
+        agent=agent,
+        mode=mode,
+        phase="review",
+        output_file="review.json",
+        artifact_hash=sha256_file(plan_dir / "review.json"),
+        verdict=review_verdict,
+    )
     save_state_merge_meta(plan_dir, state)
 
     criteria = worker.payload.get("criteria", [])

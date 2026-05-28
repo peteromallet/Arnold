@@ -20,7 +20,7 @@ from megaplan._pipeline.types import StepContext, StepResult
 
 
 @dataclass
-class HumanGateStep:
+class HumanDecisionStep:
     """Pause execution and wait for human input.
 
     Writes ``awaiting_user.json`` to the plan directory and returns a

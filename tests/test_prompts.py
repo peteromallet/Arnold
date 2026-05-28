@@ -45,6 +45,9 @@ from megaplan.prompts import (
     create_claude_prompt,
     create_codex_prompt,
 )
+from megaplan.prompts.execute import _execute_approval_note, _execute_prompt
+from megaplan.prompts.review_doc import _review_doc_prompt
+from megaplan.prompts.review_joke import _review_joke_prompt
 from megaplan.workers import _build_mock_payload
 
 
@@ -259,6 +262,43 @@ def _render_codex_review_prompt(
         sense_check_guidance="Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.",
         pre_check_flags=pre_check_flags,
     )
+
+
+def test_gate_summary_prefers_recommendation_only_carry(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    atomic_write_json(
+        plan_dir / "gate_carry.json",
+        {
+            "version": 1,
+            "recommendation": "PROCEED",
+            "passed": True,
+            "settled_decisions": [],
+        },
+    )
+
+    gate = _gate_summary_or_skipped(plan_dir)
+
+    assert gate["recommendation"] == "PROCEED"
+    assert "verdict" not in gate
+
+
+def test_gate_summary_reads_legacy_verdict_only_carry(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    atomic_write_json(
+        plan_dir / "gate_carry.json",
+        {
+            "version": 1,
+            "verdict": "ITERATE",
+            "passed": False,
+            "settled_decisions": [],
+        },
+    )
+
+    gate = _gate_summary_or_skipped(plan_dir)
+
+    assert gate["recommendation"] == "ITERATE"
 
 
 def _baseline_codex_review_prompt_snapshot(state: PlanState, plan_dir: Path) -> str:
@@ -857,6 +897,39 @@ def test_execute_prompt_user_approved_note(tmp_path: Path) -> None:
     assert "Execution tracking source of truth (`finalize.json`)" in prompt
 
 
+def test_execute_single_and_batch_approval_note_match_auto_approve(tmp_path: Path) -> None:
+    """Single-task and batch prompts emit identical approval-note text for auto-approve."""
+    plan_dir, state = _scaffold(tmp_path)
+    state["config"]["auto_approve"] = True
+    single_prompt = _execute_prompt(state, plan_dir, root=None)
+    batch_prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set())
+    expected = _execute_approval_note(state)
+    assert expected in single_prompt
+    assert expected in batch_prompt
+
+
+def test_execute_single_and_batch_approval_note_match_user_approved_gate(tmp_path: Path) -> None:
+    """Single-task and batch prompts emit identical approval-note text for user-approved gate."""
+    plan_dir, state = _scaffold(tmp_path)
+    state["meta"]["user_approved_gate"] = True
+    single_prompt = _execute_prompt(state, plan_dir, root=None)
+    batch_prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set())
+    expected = _execute_approval_note(state)
+    assert expected in single_prompt
+    assert expected in batch_prompt
+
+
+def test_execute_single_and_batch_approval_note_match_review_mode(tmp_path: Path) -> None:
+    """Single-task and batch prompts emit identical approval-note text for review mode."""
+    plan_dir, state = _scaffold(tmp_path)
+    # Neither auto_approve nor user_approved_gate set → review mode
+    single_prompt = _execute_prompt(state, plan_dir, root=None)
+    batch_prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set())
+    expected = _execute_approval_note(state)
+    assert expected in single_prompt
+    assert expected in batch_prompt
+
+
 def test_execute_prompt_surfaces_sense_checks_and_watch_items(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     prompt = create_claude_prompt("execute", state, plan_dir)
@@ -1374,3 +1447,393 @@ def test_unsupported_codex_step_raises(tmp_path: Path) -> None:
     plan_dir, state = _scaffold(tmp_path)
     with pytest.raises(Exception):
         create_codex_prompt("clarify", state, plan_dir)
+
+
+# ---------------------------------------------------------------------------
+# _review_doc_prompt and _review_joke_prompt snapshot tests
+# ---------------------------------------------------------------------------
+
+
+def _scaffold_doc_review(tmp_path: Path) -> tuple[Path, PlanState]:
+    """Scaffold minimal state for _review_doc_prompt rendering."""
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+    output_path = "output.md"
+    output_file = project_dir / output_path
+    output_file.write_text("# Final Document\n\nAll sections present.\n", encoding="utf-8")
+
+    state: PlanState = {
+        "name": "doc-review-test",
+        "idea": "Write a document about testing.",
+        "current_state": "executed",
+        "iteration": 1,
+        "created_at": "2026-05-01T00:00:00Z",
+        "config": {
+            "project_dir": str(project_dir),
+            "auto_approve": False,
+            "robustness": "standard",
+            "mode": "doc",
+            "output_path": output_path,
+        },
+        "sessions": {},
+        "plan_versions": [
+            {
+                "version": 1,
+                "file": "plan_v1.md",
+                "hash": "sha256:doc",
+                "timestamp": "2026-05-01T00:00:00Z",
+            }
+        ],
+        "history": [],
+        "meta": {
+            "significant_counts": [],
+            "weighted_scores": [],
+            "plan_deltas": [],
+            "recurring_critiques": [],
+            "total_cost_usd": 0.0,
+            "overrides": [],
+            "notes": [],
+        },
+        "last_gate": {},
+    }
+
+    atomic_write_text(plan_dir / "plan_v1.md", "# Doc Plan\n## Sections\n- Intro\n- Body\n- Conclusion\n")
+    atomic_write_json(
+        plan_dir / "plan_v1.meta.json",
+        {
+            "version": 1,
+            "timestamp": "2026-05-01T00:00:00Z",
+            "hash": "sha256:doc",
+            "success_criteria": [
+                {"criterion": "Document covers all planned sections", "priority": "must"}
+            ],
+            "questions": [],
+            "assumptions": [],
+        },
+    )
+    atomic_write_json(
+        plan_dir / "execution.json",
+        {
+            "output": "done",
+            "files_changed": ["output.md"],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "executor_notes": "Wrote all sections.",
+                    "files_changed": ["output.md"],
+                    "commands_run": [],
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {"sense_check_id": "SC1", "executor_note": "Done."}
+            ],
+        },
+    )
+    atomic_write_json(
+        plan_dir / "gate.json",
+        {
+            "recommendation": "PROCEED",
+            "rationale": "Plan looks good.",
+            "settled_decisions": [],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+            "warnings": [],
+        },
+    )
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Write the document",
+                    "status": "done",
+                    "executor_notes": "Wrote all sections.",
+                    "files_changed": ["output.md"],
+                    "commands_run": [],
+                }
+            ],
+            "sense_checks": [
+                {
+                    "id": "SC1",
+                    "task_id": "T1",
+                    "question": "Does the output exist?",
+                    "executor_note": "Done.",
+                    "verdict": "",
+                }
+            ],
+            "meta_commentary": "All good.",
+        },
+    )
+    return plan_dir, state
+
+
+def _scaffold_joke_review(tmp_path: Path) -> tuple[Path, PlanState]:
+    """Scaffold minimal state for _review_joke_prompt rendering."""
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (project_dir / ".git").mkdir()
+    output_path = "scenes/scene.md"
+    (project_dir / "scenes").mkdir()
+    output_file = project_dir / output_path
+    output_file.write_text("The umbrella refuses to be returned.\n", encoding="utf-8")
+
+    state: PlanState = {
+        "name": "joke-review-test",
+        "idea": "Two strangers try to return a broken umbrella.",
+        "current_state": "executed",
+        "iteration": 1,
+        "created_at": "2026-05-01T00:00:00Z",
+        "config": {
+            "project_dir": str(project_dir),
+            "auto_approve": False,
+            "robustness": "standard",
+            "mode": "joke",
+            "output_path": output_path,
+            "primary_criterion": "weirdest coherent",
+        },
+        "sessions": {},
+        "plan_versions": [
+            {
+                "version": 1,
+                "file": "plan_v1.md",
+                "hash": "sha256:joke",
+                "timestamp": "2026-05-01T00:00:00Z",
+            }
+        ],
+        "history": [],
+        "meta": {
+            "significant_counts": [],
+            "weighted_scores": [],
+            "plan_deltas": [],
+            "recurring_critiques": [],
+            "total_cost_usd": 0.0,
+            "overrides": [],
+            "notes": [],
+        },
+        "last_gate": {},
+    }
+
+    atomic_write_text(plan_dir / "plan_v1.md", "# Scene Canvas: Umbrella Return\n## Premise\nTwo strangers argue over a broken umbrella.\n")
+    atomic_write_json(
+        plan_dir / "plan_v1.meta.json",
+        {
+            "version": 1,
+            "timestamp": "2026-05-01T00:00:00Z",
+            "hash": "sha256:joke",
+            "success_criteria": [
+                {"criterion": "Scene serves the declared primary criterion", "priority": "must"}
+            ],
+            "questions": [],
+            "assumptions": [],
+        },
+    )
+    atomic_write_json(
+        plan_dir / "execution.json",
+        {
+            "output": "done",
+            "files_changed": ["scenes/scene.md"],
+            "commands_run": [],
+            "deviations": [],
+            "task_updates": [
+                {
+                    "task_id": "T1",
+                    "status": "done",
+                    "executor_notes": "Wrote a scene.",
+                    "files_changed": ["scenes/scene.md"],
+                    "commands_run": [],
+                }
+            ],
+            "sense_check_acknowledgments": [
+                {"sense_check_id": "SC1", "executor_note": "Done."}
+            ],
+        },
+    )
+    atomic_write_json(
+        plan_dir / "gate.json",
+        {
+            "recommendation": "ITERATE",
+            "rationale": "Push the weirdness.",
+            "settled_decisions": [],
+            "flag_resolutions": [],
+            "accepted_tradeoffs": [],
+            "warnings": [],
+        },
+    )
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Write the scene",
+                    "status": "done",
+                    "executor_notes": "Wrote a scene.",
+                    "files_changed": ["scenes/scene.md"],
+                    "commands_run": [],
+                }
+            ],
+            "sense_checks": [
+                {
+                    "id": "SC1",
+                    "task_id": "T1",
+                    "question": "Does the scene exist?",
+                    "executor_note": "Done.",
+                    "verdict": "",
+                }
+            ],
+            "meta_commentary": "Looking good.",
+        },
+    )
+    return plan_dir, state
+
+
+def test_review_doc_prompt_key_strings(tmp_path: Path) -> None:
+    """_review_doc_prompt renders document-specific key strings and JSON example."""
+    plan_dir, state = _scaffold_doc_review(tmp_path)
+
+    prompt = _review_doc_prompt(
+        state,
+        plan_dir,
+        review_intro="Review the document critically against user intent and observable success criteria.",
+        criteria_guidance="Judge against the success criteria, not plan elegance.",
+        task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output document.",
+        sense_check_guidance="Review every sense check explicitly.",
+    )
+
+    # Key exact strings that distinguish the doc review prompt
+    assert "Approved plan:" in prompt
+    assert "Output document content:" in prompt
+    # Doc JSON example — criteria name and evidence
+    assert '"name": "Document covers all planned sections"' in prompt
+    assert '"evidence": "All 5 planned sections are present and non-empty."' in prompt
+    # Doc task verdict example
+    assert '"reviewer_verdict": "Pass. Introduction section covers scope and audience as planned."' in prompt
+    # Doc sense check verdict example
+    assert '"verdict": "Confirmed. The introduction references prior art as required."' in prompt
+    # Doc review_verdict example
+    assert '"review_verdict": "approved"' in prompt
+    # Should not contain joke/scene-specific strings
+    assert "Approved scene canvas:" not in prompt
+    assert "Output scene content:" not in prompt
+    assert "Primary criterion:" not in prompt
+
+
+def test_review_joke_prompt_key_strings(tmp_path: Path) -> None:
+    """_review_joke_prompt renders joke-specific key strings and JSON example."""
+    plan_dir, state = _scaffold_joke_review(tmp_path)
+
+    prompt = _review_joke_prompt(
+        state,
+        plan_dir,
+        review_intro="Review the scene critically against the brief, the declared primary criterion, and the approved scene canvas.",
+        criteria_guidance="Judge first against the declared primary criterion, then against the remaining success criteria and scene-canvas commitments.",
+        task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output scene prose.",
+        sense_check_guidance="Review every sense check explicitly.",
+    )
+
+    # Key exact strings that distinguish the joke/scene review prompt
+    assert "Approved scene canvas:" in prompt
+    assert "Output scene content:" in prompt
+    assert "Primary criterion:" in prompt
+    assert "weirdest coherent" in prompt
+    # Joke JSON example — criteria name and evidence
+    assert '"name": "Scene serves the declared primary criterion"' in prompt
+    assert '"evidence": "The final scene preserves the intended comic engine from opening through button."' in prompt
+    # Joke task verdict example
+    assert '"reviewer_verdict": "Pass. The written scene beats align with the planned canvas and primary criterion."' in prompt
+    # Joke sense check verdict example
+    assert '"verdict": "Confirmed. The final scene still serves the declared primary criterion."' in prompt
+    # Joke review_verdict example
+    assert '"review_verdict": "approved"' in prompt
+    # Should not contain doc-specific strings
+    assert "Approved plan:" not in prompt
+    assert "Output document content:" not in prompt
+
+
+def test_review_doc_and_joke_json_examples_differ(tmp_path: Path) -> None:
+    """The JSON examples embedded in _review_doc_prompt and _review_joke_prompt differ in criteria name, evidence, and verdict phrasing."""
+    doc_root = tmp_path / "doc"
+    doc_root.mkdir()
+    plan_dir, state = _scaffold_doc_review(doc_root)
+
+    doc_prompt = _review_doc_prompt(
+        state,
+        plan_dir,
+        review_intro="Review the document critically against user intent and observable success criteria.",
+        criteria_guidance="Judge against the success criteria, not plan elegance.",
+        task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output document.",
+        sense_check_guidance="Review every sense check explicitly.",
+    )
+
+    joke_root = tmp_path / "joke"
+    joke_root.mkdir()
+    plan_dir2, state2 = _scaffold_joke_review(joke_root)
+    joke_prompt = _review_joke_prompt(
+        state2,
+        plan_dir2,
+        review_intro="Review the scene critically against the brief, the declared primary criterion, and the approved scene canvas.",
+        criteria_guidance="Judge first against the declared primary criterion, then against the remaining success criteria and scene-canvas commitments.",
+        task_guidance="Review each task by cross-referencing the executor's per-task `sections_written` against the output scene prose.",
+        sense_check_guidance="Review every sense check explicitly.",
+    )
+
+    # ---- Criteria name differs ----
+    doc_criterion = '"name": "Document covers all planned sections"'
+    joke_criterion = '"name": "Scene serves the declared primary criterion"'
+    assert doc_criterion in doc_prompt
+    assert joke_criterion not in doc_prompt
+    assert joke_criterion in joke_prompt
+    assert doc_criterion not in joke_prompt
+
+    # ---- Criteria evidence differs ----
+    doc_evidence = '"evidence": "All 5 planned sections are present and non-empty."'
+    joke_evidence = '"evidence": "The final scene preserves the intended comic engine from opening through button."'
+    assert doc_evidence in doc_prompt
+    assert joke_evidence not in doc_prompt
+    assert joke_evidence in joke_prompt
+    assert doc_evidence not in joke_prompt
+
+    # ---- Task verdict example differs ----
+    doc_verdict = '"reviewer_verdict": "Pass. Introduction section covers scope and audience as planned."'
+    joke_verdict = '"reviewer_verdict": "Pass. The written scene beats align with the planned canvas and primary criterion."'
+    assert doc_verdict in doc_prompt
+    assert joke_verdict not in doc_prompt
+    assert joke_verdict in joke_prompt
+    assert doc_verdict not in joke_prompt
+
+    # ---- Sense check verdict example differs ----
+    doc_sc_verdict = '"verdict": "Confirmed. The introduction references prior art as required."'
+    joke_sc_verdict = '"verdict": "Confirmed. The final scene still serves the declared primary criterion."'
+    assert doc_sc_verdict in doc_prompt
+    assert joke_sc_verdict not in doc_prompt
+    assert joke_sc_verdict in joke_prompt
+    assert doc_sc_verdict not in joke_prompt
+
+    # ---- Summary example differs ----
+    assert '"summary": "Approved. All must criteria pass."' in doc_prompt
+    assert '"summary": "Approved. The scene meets the brief and the primary criterion."' in joke_prompt
+
+
+def test_plan_template_has_no_megaplan_path_references() -> None:
+    """PLAN_TEMPLATE must use neutral example paths (e.g. src/), not megaplan/."""
+    from megaplan.prompts.planning import PLAN_TEMPLATE
+
+    lines = PLAN_TEMPLATE.split("\n")
+    offending = [
+        f"  line {i + 1}: {line.strip()}"
+        for i, line in enumerate(lines)
+        if "megaplan/" in line
+    ]
+    assert not offending, (
+        f"PLAN_TEMPLATE contains {len(offending)} megaplan/ path reference(s):\n"
+        + "\n".join(offending)
+    )

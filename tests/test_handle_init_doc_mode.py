@@ -8,33 +8,7 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 from megaplan.types import CliError
-
-
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -60,16 +34,16 @@ def _load_state(root: Path, plan_name: str) -> dict:
     return json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
 
 
-def test_doc_mode_requires_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+def test_doc_mode_requires_output(bootstrap_fixture: tuple[Path, Path]) -> None:
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(root, _args(project_dir, mode="doc", output=None))
     assert info.value.code == "invalid_args"
     assert "--output" in str(info.value)
 
 
-def test_output_rejects_absolute_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+def test_output_rejects_absolute_path(bootstrap_fixture: tuple[Path, Path]) -> None:
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,
@@ -79,8 +53,8 @@ def test_output_rejects_absolute_path(tmp_path: Path, monkeypatch: pytest.Monkey
     assert "relative" in str(info.value).lower() or "absolute" in str(info.value).lower()
 
 
-def test_output_rejects_parent_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+def test_output_rejects_parent_traversal(bootstrap_fixture: tuple[Path, Path]) -> None:
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,
@@ -90,8 +64,8 @@ def test_output_rejects_parent_traversal(tmp_path: Path, monkeypatch: pytest.Mon
     assert ".." in str(info.value)
 
 
-def test_doc_mode_accepts_relative_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+def test_doc_mode_accepts_relative_output(bootstrap_fixture: tuple[Path, Path]) -> None:
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root,
         _args(project_dir, name="doc-plan", mode="doc", output="docs/result.md"),
@@ -102,10 +76,10 @@ def test_doc_mode_accepts_relative_output(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_code_mode_without_output_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """Code mode without --output is the common case and must keep working."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root,
         _args(project_dir, name="code-plan", mode="code", output=None),
@@ -116,11 +90,11 @@ def test_code_mode_without_output_succeeds(
 
 
 def test_code_mode_with_output_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """--output is meaningless in code mode; accepting it silently has
     historically masked dropped --mode doc flags. Reject it loudly."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,
@@ -132,11 +106,11 @@ def test_code_mode_with_output_is_rejected(
 
 
 def test_metaplan_mode_is_alias_for_doc(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """--mode metaplan is a user-facing alias for --mode doc; state should
     record 'doc' so all downstream `mode == 'doc'` checks keep working."""
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     response = megaplan.handle_init(
         root,
         _args(project_dir, name="metaplan-alias", mode="metaplan", output="docs/design.md"),
@@ -147,9 +121,9 @@ def test_metaplan_mode_is_alias_for_doc(
 
 
 def test_from_doc_valid_path_populates_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     prior_doc = project_dir / "docs" / "prior.md"
     prior_doc.parent.mkdir(parents=True, exist_ok=True)
     prior_doc.write_text(
@@ -209,9 +183,9 @@ def test_from_doc_valid_path_populates_state(
 
 
 def test_from_doc_nonexistent_path_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,
@@ -229,9 +203,9 @@ def test_from_doc_nonexistent_path_rejected(
 
 
 def test_from_doc_absolute_path_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,
@@ -249,9 +223,9 @@ def test_from_doc_absolute_path_rejected(
 
 
 def test_from_doc_parent_traversal_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     with pytest.raises(CliError) as info:
         megaplan.handle_init(
             root,
@@ -269,9 +243,9 @@ def test_from_doc_parent_traversal_rejected(
 
 
 def test_from_doc_doc_with_no_section_succeeds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     prior_doc = project_dir / "docs" / "prior.md"
     prior_doc.parent.mkdir(parents=True, exist_ok=True)
     prior_doc.write_text("# Prior Doc\n\nNo settled decisions here.\n", encoding="utf-8")
@@ -294,9 +268,9 @@ def test_from_doc_doc_with_no_section_succeeds(
 
 
 def test_from_doc_valid_with_code_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     prior_doc = project_dir / "docs" / "prior.md"
     prior_doc.parent.mkdir(parents=True, exist_ok=True)
     prior_doc.write_text(
@@ -332,9 +306,9 @@ def test_from_doc_valid_with_code_mode(
 
 
 def test_from_doc_parse_warnings_surface_in_response(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     prior_doc = project_dir / "docs" / "prior.md"
     prior_doc.parent.mkdir(parents=True, exist_ok=True)
     prior_doc.write_text(

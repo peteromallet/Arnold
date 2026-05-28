@@ -9,12 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core.io import (
-    atomic_write_json,
     atomic_write_text,
     collect_git_diff_patch,
     now_utc,
-    read_json,
 )
+from megaplan._core.state import write_plan_state
 from megaplan.bakeoff.state import (
     BakeoffProfileRecord,
     BakeoffState,
@@ -143,18 +142,7 @@ def _copy_plan(src: Path, dest: Path, *, project_dir: str | None) -> None:
 def _rewrite_project_dir(state_path: Path, *, project_dir: str | None) -> None:
     if not state_path.exists():
         return
-    state = read_json(state_path)
-    if not isinstance(state, dict):
-        return
-    config = state.get("config")
-    if not isinstance(config, dict):
-        config = {}
-        state["config"] = config
-    original = config.get("project_dir")
-    if "archived_project_dir" not in config:
-        config["archived_project_dir"] = original
-    config["project_dir"] = project_dir
-    atomic_write_json(state_path, state)
+    write_plan_state(state_path.parent, mode="copy-time-rewrite", project_dir=project_dir)
 
 
 def _copy_profile_artifact(src: Path, dest: Path) -> None:

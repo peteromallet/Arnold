@@ -135,7 +135,7 @@ def test_migrate_local_plans_requires_explicit_source_selection(tmp_path: Path, 
         "migrate-local-plans",
         "--source-home",
         str(tmp_path / "home"),
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     response = json.loads(capsys.readouterr().out)
@@ -165,7 +165,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
         str(home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
         "--dry-run",
     ])
@@ -181,7 +181,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
         str(home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     imported = json.loads(capsys.readouterr().out)
@@ -201,7 +201,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
         str(home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     rerun = json.loads(capsys.readouterr().out)
@@ -215,7 +215,7 @@ def test_migrate_local_plans_dry_run_does_not_write_and_import_preserves_nested_
         str(home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     conflict = json.loads(capsys.readouterr().out)
@@ -246,7 +246,7 @@ def test_migrate_local_plans_all_projects_legacy_epic_and_db_promotion_preserve_
         "--source-home",
         str(home),
         "--all-projects",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
         "--mode",
         "legacy-epic",

@@ -15,7 +15,8 @@ from typing import Any
 
 import pytest
 
-import megaplan.execute.core as execute_core
+import megaplan.execute.aggregation as execute_agg
+from megaplan.types import CliError
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def patched_snapshot(monkeypatch: pytest.MonkeyPatch):
     def _snapshot(_: Path) -> tuple[dict[str, str], str | None]:
         return ({"docs/foo.md": "deliverable-hash"}, None)
 
-    monkeypatch.setattr(execute_core, "_capture_git_status_snapshot", _snapshot)
+    monkeypatch.setattr(execute_agg, "_capture_git_status_snapshot", _snapshot)
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def patched_loc(monkeypatch: pytest.MonkeyPatch):
     def _loc(_project_dir: Path, paths: set[str]) -> dict[str, int]:
         return {path: 264 for path in paths}
 
-    monkeypatch.setattr(execute_core, "collect_loc_by_file", _loc)
+    monkeypatch.setattr(execute_agg, "collect_loc_by_file", _loc)
 
 
 def _empty_payload() -> dict[str, Any]:
@@ -57,7 +58,7 @@ def test_doc_mode_output_path_in_files_claimed(
         }
     }
 
-    drift = execute_core._compute_execute_scope_drift(
+    drift = execute_agg._compute_execute_scope_drift(
         tmp_path,
         _empty_payload(),
         state,
@@ -84,7 +85,7 @@ def test_code_mode_unchanged_unclaimed_doc_still_flagged(
         }
     }
 
-    drift = execute_core._compute_execute_scope_drift(
+    drift = execute_agg._compute_execute_scope_drift(
         tmp_path,
         _empty_payload(),
         state,
@@ -102,10 +103,29 @@ def test_compute_scope_drift_without_state_is_safe(
 ) -> None:
     """Backwards compatibility: callers may still omit state."""
 
-    drift = execute_core._compute_execute_scope_drift(
+    drift = execute_agg._compute_execute_scope_drift(
         tmp_path,
         _empty_payload(),
     )
 
     assert drift.files_added == ["docs/foo.md"]
     assert drift.severity == "high"
+
+
+def test_compute_scope_drift_halts_on_snapshot_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        execute_agg,
+        "_capture_git_status_snapshot",
+        lambda _path: (_ for _ in ()).throw(RuntimeError("snapshot boom")),
+    )
+    monkeypatch.setattr(
+        execute_agg,
+        "collect_loc_by_file",
+        lambda _project_dir, _paths: {},
+    )
+
+    with pytest.raises(CliError, match="M3B_HALT_SCOPE_DRIFT_SNAPSHOT"):
+        execute_agg._compute_execute_scope_drift(tmp_path, _empty_payload())

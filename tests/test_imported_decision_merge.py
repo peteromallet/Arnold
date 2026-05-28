@@ -7,36 +7,10 @@ from pathlib import Path
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
 import megaplan.handlers
 from megaplan.handlers import _merge_imported_decision_criteria
 from megaplan.types import STATE_CRITIQUED
 from megaplan.workers import WorkerResult
-
-
-def _bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Path | None = None) -> Path:
-        del home
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-    return root, project_dir
 
 
 def _args(project_dir: Path, **overrides: object) -> Namespace:
@@ -176,10 +150,10 @@ def test_merge_imported_decision_criteria_is_idempotent() -> None:
 
 
 def test_handle_plan_merges_imported_decisions_into_success_criteria(
-    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     init_response = megaplan.handle_init(root, _args(project_dir, name="plan-merge"))
     state = _load_state(root, init_response["plan"])
     state["meta"]["imported_decisions"] = [
@@ -220,10 +194,10 @@ def test_handle_plan_merges_imported_decisions_into_success_criteria(
 
 
 def test_handle_revise_merges_imported_decisions_into_success_criteria(
-    tmp_path: Path,
+    bootstrap_fixture: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root, project_dir = _bootstrap(tmp_path, monkeypatch)
+    root, project_dir = bootstrap_fixture
     init_response = megaplan.handle_init(root, _args(project_dir, name="revise-merge"))
     state = _load_state(root, init_response["plan"])
     state["meta"]["imported_decisions"] = [

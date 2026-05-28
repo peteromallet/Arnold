@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import megaplan.workers as worker_module
-from megaplan.execute.core import build_monitor_hint
+from megaplan.execute.batch import build_monitor_hint
 from megaplan.profiles import apply_profile_expansion
 from megaplan.prompts import create_claude_prompt, create_codex_prompt, create_hermes_prompt
 from megaplan.receipts import build_receipt
@@ -139,6 +139,55 @@ def _attach_next_step_runtime(response: StepResponse) -> None:
         response["next_step_runtime"] = runtime
 
 
+def _warn_best_effort_emit_failure(
+    token: str,
+    *,
+    action: str,
+    plan_dir: Path | None = None,
+    phase: str | None = None,
+    event_kind: str | None = None,
+    context: dict[str, Any] | None = None,
+) -> None:
+    try:
+        details: list[str] = [f"action={action}"]
+        if event_kind:
+            details.append(f"event_kind={event_kind}")
+        if phase:
+            details.append(f"phase={phase}")
+        if plan_dir is not None:
+            details.append(f"plan_dir={plan_dir}")
+        if context:
+            for key in sorted(context):
+                details.append(f"{key}={context[key]!r}")
+        log.warning(
+            "%s best-effort observability emit failed (%s)",
+            token,
+            ", ".join(details),
+            exc_info=True,
+        )
+    except Exception:
+        pass
+
+
+def _warn_read_fallback(
+    token: str,
+    *,
+    path: Path | None = None,
+    reason: str,
+    context: dict[str, Any] | None = None,
+) -> None:
+    try:
+        details: list[str] = [f"reason={reason}"]
+        if path is not None:
+            details.append(f"path={path}")
+        if context:
+            for key in sorted(context):
+                details.append(f"{key}={context[key]!r}")
+        log.warning("%s read fallback (%s)", token, ", ".join(details), exc_info=True)
+    except Exception:
+        pass
+
+
 _AUTO_NEXT_STEP = object()
 
 
@@ -149,7 +198,7 @@ def _emit_phase_notice(step: str) -> None:
         step,
         configured_timeout_seconds=DEFAULT_NON_EXECUTE_TIMEOUT_CAP_SECONDS,
     )
-    print(f"[megaplan] Starting {step}... {duration_hint}", file=sys.stderr)
+    log.info("[megaplan] Starting %s... %s", step, duration_hint)
 
 
 def _run_worker(
@@ -295,6 +344,39 @@ def _snapshot_cli_provenance(state: PlanState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _emit_receipt(
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    args: argparse.Namespace,
+    worker: WorkerResult,
+    agent: str,
+    mode: str,
+    phase: str,
+    output_file: str,
+    artifact_hash: str,
+    verdict: Any = None,
+) -> None:
+    """Emit a receipt for *phase*, best-effort (warns on failure)."""
+    try:
+        project_dir = Path(state["config"]["project_dir"])
+        receipt = build_receipt(
+            phase=phase,
+            state=state,
+            plan_dir=plan_dir,
+            args=args,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            output_file=output_file,
+            artifact_hash=artifact_hash,
+            verdict=verdict,
+        )
+        write_receipt(plan_dir, receipt, project_dir=project_dir)
+    except Exception:
+        log.warning("Receipt emission failed for step %s", phase, exc_info=True)
+
+
 def _finish_step(
     plan_dir: Path,
     state: PlanState,
@@ -337,23 +419,18 @@ def _finish_step(
         ),
     )
     if step not in {"execute", "review"}:
-        project_dir = Path(state["config"]["project_dir"])
-        try:
-            receipt = build_receipt(
-                phase=step,
-                state=state,
-                plan_dir=plan_dir,
-                args=args,
-                worker=worker,
-                agent=agent,
-                mode=mode,
-                output_file=output_file,
-                artifact_hash=artifact_hash,
-                verdict=(history_fields or {}).get("verdict"),
-            )
-            write_receipt(plan_dir, receipt, project_dir=project_dir)
-        except Exception:
-            log.warning("Receipt emission failed for step %s", step, exc_info=True)
+        _emit_receipt(
+            plan_dir=plan_dir,
+            state=state,
+            args=args,
+            worker=worker,
+            agent=agent,
+            mode=mode,
+            phase=step,
+            output_file=output_file,
+            artifact_hash=artifact_hash,
+            verdict=(history_fields or {}).get("verdict"),
+        )
     save_state_merge_meta(plan_dir, state)
     resolved_next = next_step
     if resolved_next is _AUTO_NEXT_STEP:
@@ -404,6 +481,11 @@ def _raise_step_validation_error(
 def _write_json_artifact(plan_dir: Path, filename: str, payload: dict[str, Any]) -> str:
     atomic_write_json(plan_dir / filename, payload, _plan_dir=plan_dir)
     return sha256_file(plan_dir / filename)
+
+
+def _write_gate_json(plan_dir: Path, payload: dict[str, Any]) -> str:
+    """Write gate.json through _write_json_artifact and return the hash."""
+    return _write_json_artifact(plan_dir, "gate.json", payload)
 
 
 def _write_plan_version(

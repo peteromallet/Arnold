@@ -198,7 +198,7 @@ See **megaplan-decision** for when to add the feedback phase (`--with-feedback`)
 
 This is **user feedback**, owned by the human after a run finishes — megaplan only scaffolds the template and parses it back on load, it never overwrites edits. Old plans without a `feedback.md` simply have no feedback attached; running `megaplan feedback --plan <name>` on an older plan scaffolds the template on demand (backwards compatible).
 
-Use `megaplan feedback --plan <name> --show` to print the parsed summary, and `--no-edit` to just scaffold the template and print the path without launching an editor. Parsed feedback is exposed on the in-memory `Plan` record as `Plan.feedback` (a dict shaped `{"overall": {...}, "stages": {stage: {...}}}`), so downstream tooling can read it the same way as any other artifact. When `--actor`/`MEGAPLAN_ACTOR_ID` is set, parsed feedback is also written to the `plans.feedback` jsonb column so the DB and file backends stay in sync.
+Use `megaplan feedback show --plan <name>` to print the parsed summary, and `--no-edit` to just scaffold the template and print the path without launching an editor. Parsed feedback is exposed on the in-memory `Plan` record as `Plan.feedback` (a dict shaped `{"overall": {...}, "stages": {stage: {...}}}`), so downstream tooling can read it the same way as any other artifact. When `--actor`/`MEGAPLAN_ACTOR_ID` is set, parsed feedback is also written to the `plans.feedback` jsonb column so the DB and file backends stay in sync.
 
 ### Filling feedback with subagents
 Recommended process when an agent (rather than the human) is producing the initial assessment:
@@ -206,7 +206,7 @@ Recommended process when an agent (rather than the human) is producing the initi
 1. **Scaffold**: run `megaplan feedback --plan <name> --no-edit` to create the empty `feedback.md`. Note the plan directory it prints — that is where the per-stage artifacts live (`plan_v*.md`, `critique*.json`, `gate.json`, `tiebreaker_*.json`, `finalize.json`, `execution*.json`, `review.json`, etc.).
 2. **Per-stage assessment**: dispatch one read-only subagent per stage that actually ran (skip stages with no artifacts). Brief each subagent narrowly — give it the plan idea, the stage name, and the artifact filenames for that stage only. Ask it to return a 0–10 rating plus a 1–3 sentence comment grounded in what the artifacts show (what worked, what was weak, what was missed). Run these in parallel; they have no dependencies on each other.
 3. **Synthesize Overall**: after the per-stage results come back, *you* (the orchestrating agent, not a subagent) read the per-stage ratings and comments together with the final outcome (`final.md`, `review.json`, any `latest_failure`) and decide an Overall rating and comment. The Overall is a judgment call about whether the run delivered the goal, not an average of stage ratings.
-4. **Write**: edit `feedback.md` with the ratings and comments. Leave a stage blank if it didn't run or you can't form a defensible opinion — empty is better than guessed. Run `megaplan feedback --plan <name> --show` to confirm the parser picked everything up.
+4. **Write**: edit `feedback.md` with the ratings and comments. Leave a stage blank if it didn't run or you can't form a defensible opinion — empty is better than guessed. Run `megaplan feedback show --plan <name>` to confirm the parser picked everything up.
 
 Keep comments grounded in specific artifact evidence ("critique flagged X but reviewer didn't catch the regression in Y") rather than vibes. The point of feedback is signal for future runs, not a participation score.
 
@@ -273,7 +273,7 @@ megaplan ticket unlink <ticket> <epic>
 megaplan ticket addressed <id> [--note <n>]
 megaplan ticket dismiss <id> --reason "..."
 megaplan ticket reopen <id>
-megaplan feedback --plan <name> [--show] [--no-edit]
+megaplan feedback show --plan <name> [--no-edit]
 megaplan feedback search [--profile <s>] [--repo <s>] [--min-rating N] [--max-rating N] [--stage <name>] [--has-comment] [--all] [--json]
 megaplan introspect --plan <name> [--json]
 megaplan trace --plan <name> [--follow] [--format json|pretty|narrative] [--phase <p>] [--since <duration>]

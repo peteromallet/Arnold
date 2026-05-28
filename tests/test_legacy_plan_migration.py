@@ -37,7 +37,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
         str(source_home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
         "--dry-run",
     ])
@@ -55,7 +55,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
         str(source_home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     imported = json.loads(capsys.readouterr().out)
@@ -76,7 +76,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
         str(source_home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     rerun = json.loads(capsys.readouterr().out)
@@ -90,7 +90,7 @@ def test_legacy_plan_migration_orphan_dry_run_idempotency_and_conflict(
         str(source_home),
         "--source-project",
         "old-project",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
     ])
     conflict = json.loads(capsys.readouterr().out)
@@ -122,7 +122,7 @@ def test_legacy_plan_migration_all_projects_legacy_epic_and_db_promotion(
         "--source-home",
         str(source_home),
         "--all-projects",
-        "--target-project-dir",
+        "--project-dir",
         str(project),
         "--mode",
         "legacy-epic",

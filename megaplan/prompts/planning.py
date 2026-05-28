@@ -98,26 +98,26 @@ PLAN_TEMPLATE = textwrap.dedent(
 
     ## Main Phase
 
-    ### Step 1: Audit the current behavior (`megaplan/prompts.py`)
+    ### Step 1: Audit the current behavior (`src/prompts.py`)
     **Scope:** Small
-    1. **Inspect** the current implementation and call out the exact insertion points (`megaplan/prompts.py:29`).
+    1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
 
-    ### Step 2: Add the first change (`megaplan/evaluation.py`)
+    ### Step 2: Add the first change (`src/evaluation.py`)
     **Scope:** Medium
-    1. **Implement** the smallest viable change with exact file references (`megaplan/evaluation.py:1`).
+    1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
     2. **Capture** any tricky behavior with a short example.
        ```python
        issues = validate_plan_structure(plan_text)
        ```
 
-    ### Step 3: Wire downstream behavior (`megaplan/handlers.py`, `megaplan/workers.py`)
+    ### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
     **Scope:** Medium
-    1. **Update** the runtime flow in the touched files (`megaplan/handlers.py:400`, `megaplan/workers.py:199`).
+    1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
 
-    ### Step 4: Prove the change (`tests/test_evaluation.py`, `tests/test_megaplan.py`)
+    ### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
     **Scope:** Small
-    1. **Run** the cheapest targeted checks first (`tests/test_evaluation.py:1`).
-    2. **Finish** with broader verification once the wiring is in place (`tests/test_megaplan.py:1`).
+    1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+    2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
 
     ## Execution Order
     1. Update prompts and mocks before enforcing stricter validation.

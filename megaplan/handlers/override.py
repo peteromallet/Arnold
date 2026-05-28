@@ -51,7 +51,7 @@ from megaplan.orchestration.evaluation import (
 )
 from megaplan.orchestration.phase_result import read_phase_result
 
-from .shared import _append_to_meta, _attach_next_step_runtime
+from .shared import _append_to_meta, _attach_next_step_runtime, _warn_best_effort_emit_failure, _write_gate_json
 
 
 _REVISE_STRUCTURAL_OVERRIDE_ACTIONS = {"step-add", "step-remove", "step-move", "replan"}
@@ -156,7 +156,13 @@ def _override_add_note(
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "add-note", "reason": note, "source": source})
         emit(EventKind.NOTE_ADDED, plan_dir=plan_dir, payload={"note": note, "source": source})
     except Exception:
-        pass
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_ADD_NOTE",
+            action="override-add-note",
+            plan_dir=plan_dir,
+            event_kind="override_applied,note_added",
+            context={"source": source},
+        )
     response: StepResponse = {
         "success": True,
         "step": "override",
@@ -182,7 +188,12 @@ def _override_abort(
         from megaplan.observability.events import emit, EventKind
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "abort", "reason": args.reason})
     except Exception:
-        pass
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_ABORT",
+            action="override-abort",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+        )
     return {
         "success": True,
         "step": "override",
@@ -291,7 +302,7 @@ def _override_force_proceed(
         override_forced=True,
         orchestrator_guidance="Force-proceed override applied. Proceed to finalize.",
     )
-    atomic_write_json(plan_dir / "gate.json", gate)
+    _write_gate_json(plan_dir, gate)
     flag_registry = load_flag_registry(plan_dir)
     unresolved_flags = unresolved_significant_flags(flag_registry)
     debt_registry = load_debt_registry(root)
@@ -317,7 +328,12 @@ def _override_force_proceed(
         from megaplan.observability.events import emit, EventKind
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "force-proceed", "reason": args.reason})
     except Exception:
-        pass
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_FORCE_PROCEED",
+            action="override-force-proceed",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+        )
     response: StepResponse = {
         "success": True,
         "step": "override",
@@ -357,7 +373,12 @@ def _override_replan(
         from megaplan.observability.events import emit, EventKind
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "replan", "reason": reason})
     except Exception:
-        pass
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_REPLAN",
+            action="override-replan",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+        )
     next_steps = workflow_next(state)
     response: StepResponse = {
         "success": True,
@@ -570,7 +591,13 @@ def _override_set_robustness(
         from megaplan.observability.events import emit, EventKind
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "set-robustness", "from": previous_level, "to": new_level, "reason": args.reason})
     except Exception:
-        pass
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_ROBUSTNESS",
+            action="override-set-robustness",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+            context={"from_level": previous_level, "to_level": new_level},
+        )
     next_steps = infer_next_steps(state)
     summary = (
         f"Robustness unchanged at '{new_level}'."
@@ -631,7 +658,13 @@ def _override_set_profile(
         from megaplan.observability.events import emit, EventKind
         emit(EventKind.OVERRIDE_APPLIED, plan_dir=plan_dir, payload={"action": "set-profile", "from": previous_profile, "to": new_profile, "reason": args.reason})
     except Exception:
-        pass
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_EMIT_OVERRIDE_PROFILE",
+            action="override-set-profile",
+            plan_dir=plan_dir,
+            event_kind="override_applied",
+            context={"from_profile": previous_profile, "to_profile": new_profile},
+        )
     next_steps = infer_next_steps(state)
     summary = (
         f"Profile unchanged at '{new_profile}'."

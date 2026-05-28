@@ -37,7 +37,16 @@ from megaplan._core import (
 )
 
 from .critique import _validate_tiebreaker
-from .shared import _append_to_meta, _build_gate_prompt_override, _finish_step, _run_worker, _write_json_artifact, log
+from .shared import (
+    _append_to_meta,
+    _build_gate_prompt_override,
+    _finish_step,
+    _run_worker,
+    _warn_best_effort_emit_failure,
+    _warn_read_fallback,
+    _write_gate_json,
+    log,
+)
 
 def _build_gate_signals_artifact(
     plan_dir: Path,
@@ -123,7 +132,11 @@ def _gate_summary_for_transition(plan_dir: Path, state: PlanState) -> dict[str, 
     if carry_path.exists():
         carry = read_json(carry_path)
         if isinstance(carry, dict):
-            return carry
+            normalized = dict(carry)
+            recommendation = normalized.get("recommendation") or normalized.get("verdict")
+            if recommendation is not None:
+                normalized["recommendation"] = recommendation
+            return normalized
     gate_path = plan_dir / "gate.json"
     if gate_path.exists():
         gate = read_json(gate_path)
@@ -248,7 +261,6 @@ def _build_gate_carry(gate_summary: dict[str, Any], *, iteration: int) -> dict[s
     recommendation = str(gate_summary.get("recommendation", "PROCEED"))
     return {
         "version": 1,
-        "verdict": recommendation,
         "recommendation": recommendation,
         "passed": bool(gate_summary.get("passed", False)),
         "rationale_brief": _brief_text(gate_summary.get("rationale", ""), sentences=3),
@@ -413,7 +425,23 @@ def _prior_unresolved_flag_ids(plan_dir: Path, current_iteration: int) -> set[st
             f.get("id") for f in data.get("unresolved_flags", [])
             if isinstance(f, dict) and f.get("id")
         }
-    except Exception:
+    except FileNotFoundError:
+        return set()
+    except _json.JSONDecodeError:
+        _warn_read_fallback(
+            "M3A_WARN_CORRUPT_PRIOR_FLAGS",
+            path=prev_path,
+            reason="corrupt_json",
+            context={"iteration": current_iteration - 1},
+        )
+        return set()
+    except (OSError, UnicodeDecodeError):
+        _warn_read_fallback(
+            "M3A_WARN_CORRUPT_PRIOR_FLAGS",
+            path=prev_path,
+            reason="unreadable",
+            context={"iteration": current_iteration - 1},
+        )
         return set()
 
 
@@ -522,9 +550,11 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
         _normalize_settled_decisions(gate_summary)
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
         _write_gate_carry(plan_dir, gate_summary, iteration=iteration)
-        gate_hash = _write_json_artifact(plan_dir, "gate.json", gate_summary)
+        gate_hash = _write_gate_json(plan_dir, gate_summary)
 
         # Emit flag_raised / flag_resolved based on delta vs prior gate pass
+        raised: set[str] = set()
+        resolved: set[str] = set()
         try:
             from megaplan.observability.events import emit, EventKind
             new_flag_ids = {
@@ -539,7 +569,13 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             for fid in resolved:
                 emit(EventKind.FLAG_RESOLVED, plan_dir=plan_dir, phase="gate", payload={"flag_id": fid})
         except Exception:
-            pass
+            _warn_best_effort_emit_failure(
+                "M3A_WARN_EMIT_FLAG_EVENT",
+                action="gate-flag-delta",
+                plan_dir=plan_dir,
+                phase="gate",
+                context={"raised": len(raised), "resolved": len(resolved)},
+            )
 
         debt_entries_added = 0
         if gate_summary["recommendation"] == "PROCEED":

@@ -5,6 +5,8 @@ import json
 import pytest
 
 import megaplan
+import megaplan.execute.aggregation
+import megaplan.execute.batch
 import megaplan.execute.core
 import megaplan.handlers
 import megaplan.execute.merge
@@ -616,7 +618,8 @@ def test_review_works_after_batch_by_batch_execution(
         raise AssertionError(f"Unexpected batch prompt: {prompt_override}")
 
     _local_setup_two_batch_plan()
-    monkeypatch.setattr(megaplan.execute.core, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.batch, "_capture_git_status_snapshot", lambda *_: ({}, None))
+    monkeypatch.setattr(megaplan.execute.aggregation, "_capture_git_status_snapshot", lambda *_: ({}, None))
 
     original_run_step = megaplan.workers.run_step_with_worker
 

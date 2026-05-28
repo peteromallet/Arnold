@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,21 +48,40 @@ from megaplan._core import (
 )
 
 from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
-from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
+from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_gate_json, _write_plan_version
+
+"""Critique handler — pre-execute plan-quality pass.
+
+Critique runs *before* execute and evaluates plan quality, proposed
+approach, and completeness.  It is the counterpart to review (which
+runs *after* execute and evaluates implementation evidence).  These
+two passes are distinct: critique judges the *plan*, review judges
+the *work product*.  Do not rename or conflate them.
+"""
+
+log = logging.getLogger("megaplan")
 from .tiebreaker import _build_tiebreaker_reprompt
 
-def _safe_roster_rank(model: str) -> int:
+def _safe_roster_rank(model: str, *, warn: bool = False) -> int:
     """Roster rank for *model* (1 = strongest), or a large rank if unknown.
 
     Used to collapse the evaluator's per-lens critic assignments to the
     strongest (cheapest-capable-of-all) model for the single critique run.
     Unknown specs sort last so a recognised assignment always wins.
+
+    When *warn* is True, logs M3A_WARN_CRITIQUE_RANK_PARSE on fallback.
     """
     from megaplan.audits.critique_evaluator import roster_rank
 
     try:
         return roster_rank(model)
     except ValueError:
+        if warn:
+            log.warning(
+                "M3A_WARN_CRITIQUE_RANK_PARSE critique rank fallback (model=%r)",
+                model,
+                exc_info=True,
+            )
         return 999
 
 
@@ -86,7 +106,6 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
         if adaptive_path:
             from megaplan.audits.critique_evaluator import (
                 CRITIC_MODEL_ROSTER,
-                roster_rank,
                 validate_evaluator_verdict,
             )
             from megaplan.audits.robustness import CRITIQUE_CHECKS, checks_for_robustness
@@ -94,13 +113,14 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             resolved = _pkg.resolve_agent_mode("critique", args)
             _ce_agent, _ce_mode, _ce_refreshed, _ce_model = _agent_mode_parts(resolved)
             _rank_input = _ce_model or _ce_agent
-            try:
-                _current_rank = roster_rank(_rank_input)
-            except ValueError:
-                _current_rank = 999
+            _current_rank = _safe_roster_rank(_rank_input, warn=True)
             if _current_rank > 1:
-                evaluator_model = CRITIC_MODEL_ROSTER[0].model
-                evaluator_resolved: Any = ("claude", _ce_mode, _ce_refreshed, evaluator_model)
+                _run_vendor = (state["config"].get("vendor") or "").strip().lower()
+                if _run_vendor == "codex":
+                    _eval_agent, evaluator_model = "codex", "gpt-5.5"
+                else:
+                    _eval_agent, evaluator_model = "claude", CRITIC_MODEL_ROSTER[0].model
+                evaluator_resolved: Any = (_eval_agent, _ce_mode, _ce_refreshed, evaluator_model)
             else:
                 evaluator_model = _rank_input
                 evaluator_resolved = resolved
@@ -307,6 +327,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             except Exception as exc:
                 clear_active_step(state, run_id=run_id)
                 save_state_merge_meta(plan_dir, state)
+                log.warning(
+                    "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK parallel critique fallback",
+                    exc_info=True,
+                )
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
                 worker, agent, mode, refreshed = _pkg._run_worker(
@@ -408,7 +432,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "preflight_results": {},
                 "orchestrator_guidance": "Light robustness routes critique to one revision pass.",
             }
-            atomic_write_json(plan_dir / "gate.json", minimal_gate)
+            _write_gate_json(plan_dir, minimal_gate)
             _write_gate_carry(plan_dir, minimal_gate, iteration=iteration)
             state["last_gate"] = {"recommendation": "ITERATE"}
         scope_flags_list = scope_creep_flags(registry, statuses=FLAG_BLOCKING_STATUSES)
@@ -615,7 +639,7 @@ def _validate_tiebreaker(
     missing = [f for f in required_fields if not gate_summary.get(f)]
     if missing:
         gate_summary["recommendation"] = "ITERATE"
-        gate_summary["rationale"] += f" [Auto-downgraded: missing required fields {missing}]"
+        gate_summary["rationale"] += " [TIEBREAKER_DOWNGRADED_MISSING_FIELDS: Auto-downgraded; missing required fields: " + ", ".join(missing) + "]"
         state["current_state"] = STATE_CRITIQUED
         return "tiebreaker_rejected_missing_fields", "revise", summary_base
 

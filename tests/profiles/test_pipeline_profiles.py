@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from megaplan.profiles import (
+    SYSTEM_DEFAULT_PROFILE,
     _flatten_profile_keys,
     _load_pipeline_local_profiles,
     _resolve_with_inheritance,
@@ -83,22 +82,127 @@ class TestFlattenKeys:
 
 
 class TestSystemProfileDefaults:
-    """System profiles have 'default' metadata fields."""
+    """System default profile is driven by the module constant, not TOML."""
 
-    def test_partnered_has_default_field(self) -> None:
-        metadata = load_profile_metadata()
-        assert "partnered" in metadata
-        assert metadata["partnered"].get("default") == "partnered"
+    def test_system_default_profile_constant_is_partnered(self) -> None:
+        """The module constant is the single source of truth."""
+        assert SYSTEM_DEFAULT_PROFILE == "partnered"
 
-    def test_system_profiles_have_default_field(self) -> None:
-        """Every shipped system profile should have a 'default' field."""
+    def test_system_default_profile_is_in_system_profiles(self) -> None:
+        """The constant must name a profile that actually exists."""
         profiles = load_profiles()
-        metadata = load_profile_metadata()
-        for name in profiles:
-            if name in metadata:
-                assert "default" in metadata[name], (
-                    f"Profile '{name}' missing 'default' metadata field"
-                )
+        assert SYSTEM_DEFAULT_PROFILE in profiles
+
+    def test_layer4_falls_back_to_system_default_profile(self) -> None:
+        """When system_metadata has no 'default' key, Layer 4 uses the constant."""
+        system_profiles = load_profiles()
+        # Strip all 'default' keys from metadata — simulating shipped TOMLs
+        # that no longer carry the key, with no user/project override.
+        raw_metadata = load_profile_metadata()
+        stripped_metadata = {
+            name: {k: v for k, v in meta.items() if k != "default"}
+            for name, meta in raw_metadata.items()
+        }
+        profile = resolve_pipeline_profile(
+            None,
+            pipeline_name="no-pipeline-local-profiles",
+            system_profiles=system_profiles,
+            system_metadata=stripped_metadata,
+            pipeline_local_profiles={},
+            pipeline_local_metadata={},
+            default_profile=None,
+        )
+        assert isinstance(profile, dict)
+        # Resolved profile must be the SYSTEM_DEFAULT_PROFILE ("partnered").
+        # partnered uses claude:low for author phases and DeepSeek for
+        # mechanical/critique phases.
+        assert profile.get("plan") == "claude:low", (
+            f"expected partnered plan=claude:low, got {profile.get('plan')!r}"
+        )
+        assert "deepseek" in profile.get("critique", "").lower(), (
+            f"expected partnered critique=DeepSeek, got {profile.get('critique')!r}"
+        )
+
+    def test_user_project_default_override_wins_over_constant(self) -> None:
+        """A metadata 'default' field (e.g., from user/project TOML) overrides
+        the SYSTEM_DEFAULT_PROFILE constant at Layer 4."""
+        system_profiles = load_profiles()
+        raw_metadata = load_profile_metadata()
+
+        # Simulate a user/project override: inject 'default = "solo"'
+        # on partnered's metadata (partnered retains adaptive_critique
+        # after the TOML cleanup, so it's still present in metadata).
+        assert "partnered" in raw_metadata, (
+            "partnered must still have metadata after TOML cleanup"
+        )
+        overridden_metadata = {
+            name: dict(meta) for name, meta in raw_metadata.items()
+        }
+        overridden_metadata["partnered"]["default"] = "solo"
+
+        profile = resolve_pipeline_profile(
+            None,
+            pipeline_name="no-pipeline-local-profiles",
+            system_profiles=system_profiles,
+            system_metadata=overridden_metadata,
+            pipeline_local_profiles={},
+            pipeline_local_metadata={},
+            default_profile=None,
+        )
+        # The override "solo" should resolve, not the constant "partnered".
+        # solo uses DeepSeek for author phases (plan, revise) — partnered
+        # uses Claude for those.  solo does have feedback=claude:low, so
+        # we check the author phases specifically.
+        assert isinstance(profile, dict)
+        assert "deepseek" in profile.get("plan", "").lower()
+        assert "deepseek" in profile.get("revise", "").lower()
+
+    def test_project_default_overrides_user_default(self) -> None:
+        """When user and project metadata both set ``default`` on the same
+        profile, the project's value wins because ``load_profile_metadata``
+        loads project last (built-in → user → project), overwriting any
+        user-level ``default`` for the same profile name."""
+        system_profiles = load_profiles()
+        raw_metadata = load_profile_metadata()
+
+        assert "partnered" in raw_metadata, (
+            "partnered must still have metadata after TOML cleanup"
+        )
+        assert "apex" in system_profiles
+        assert "solo" in system_profiles
+
+        # Simulate the post-merge state of load_profile_metadata:
+        #   1. Built-in: partnered metadata (vendor_locked, adaptive_critique,
+        #      tier_models — no ``default`` key, per T7 cleanup).
+        #   2. User profiles.toml sets [partnered] default = "solo"
+        #   3. Project .megaplan/profiles.toml sets [partnered] default = "apex"
+        # After merge, project overwrites user: partnered.default = "apex".
+        merged_metadata = {
+            name: dict(meta) for name, meta in raw_metadata.items()
+        }
+        merged_metadata["partnered"]["default"] = "apex"
+
+        profile = resolve_pipeline_profile(
+            None,
+            pipeline_name="no-pipeline-local-profiles",
+            system_profiles=system_profiles,
+            system_metadata=merged_metadata,
+            pipeline_local_profiles={},
+            pipeline_local_metadata={},
+            default_profile=None,
+        )
+        assert isinstance(profile, dict)
+        # Apex profile distinguishes from partnered:
+        #   - critique = "codex" (partnered uses DeepSeek)
+        #   - execute = "codex" (partnered uses DeepSeek)
+        assert profile.get("critique") == "codex", (
+            f"expected apex critique=codex (project override), "
+            f"got {profile.get('critique')!r}"
+        )
+        assert profile.get("execute") == "codex", (
+            f"expected apex execute=codex (project override), "
+            f"got {profile.get('execute')!r}"
+        )
 
 
 # ── 4-layer profile resolution ────────────────────────────────────────

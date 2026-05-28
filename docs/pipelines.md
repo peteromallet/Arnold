@@ -16,8 +16,8 @@ A megaplan pipeline is a small directed graph executed by
 * **Edge** — a labelled transition. `Edge(label, target, kind="normal",
   recommendation=None)` matches `StepResult.next == label` when
   `kind="normal"`. `Edge(... kind="gate", recommendation="proceed")` matches
-  the **typed** `Verdict.recommendation` ahead of any label fallback.
-* **Verdict** — an optional structured outcome on a `StepResult`
+  the **typed** `PipelineVerdict.recommendation` ahead of any label fallback.
+* **PipelineVerdict** — an optional structured outcome on a `StepResult`
   (`score`, `recommendation ∈ {"proceed","iterate","tiebreaker","escalate"}`).
   Gate Steps emit it; the executor's typed dispatch routes on it.
 
@@ -146,7 +146,7 @@ stages = alternating_turns(roles=(
 
 Thin wrapper around `SubloopStep`. Runs `child_pipeline` as a nested
 pipeline; `promote` maps the child's terminal `state` dict to a
-`GateRecommendation` on the parent's `Verdict`. The child runs against a
+`GateRecommendation` on the parent's `PipelineVerdict`. The child runs against a
 copy of the parent state — its state patches do **not** flow back
 in-process. Anything the parent needs back must be read from on-disk
 artifacts under `artifact_subdir`.
@@ -188,7 +188,7 @@ counted = iterate_until(stage_x, condition=lambda s: s["round"] < 3)
 Returns the `(handler_step, escape_edge)` pair. `escape_edge` is a
 `kind="gate"` `recommendation="escalate"` edge the caller appends to the
 host stage's edges; the handler is added to the graph as a standalone
-stage. `condition` documents when the host Step should emit a `Verdict`
+stage. `condition` documents when the host Step should emit a `PipelineVerdict`
 with `recommendation="escalate"`.
 
 ```python
@@ -203,7 +203,7 @@ handler, escape = escalate_if(
 Returns a `join` callable for `panel_parallel(..., join=majority_vote())`
 patterns. Tallies each reviewer's `verdict.recommendation`; the majority
 wins, ties resolve to `"tiebreaker"`, empty panels also yield
-`"tiebreaker"`. The synthetic result carries a `Verdict` plus
+`"tiebreaker"`. The synthetic result carries a `PipelineVerdict` plus
 `next=<recommendation>` so a downstream gate stage can dispatch on
 either typed or label-fallback edges.
 
@@ -340,7 +340,7 @@ pipeline = Pipeline(
 persona, via `dataclasses.replace`), runs them, and folds the per-
 reviewer verdicts through `weighted_vote` so the third persona's
 opinion counts 1.5× the others. The outgoing gate edges then dispatch
-on the synthetic `Verdict.recommendation`.
+on the synthetic `PipelineVerdict.recommendation`.
 
 ## The `doc` pipeline
 
@@ -463,7 +463,7 @@ Pipelines using `subpipeline_call`, the `PipelineBuilder.subpipeline`
 method, or the canonical `TiebreakerStep` (planning's
 `tiebreaker` stage) **MUST** declare `kind="gate"` recommendation edges
 on the host stage, not `kind="normal"` label edges. The executor's typed
-dispatch resolves the `Verdict.recommendation` produced by the subloop's
+dispatch resolves the `PipelineVerdict.recommendation` produced by the subloop's
 `promote` callable; label-only edges will never match. The planning
 pipeline's tiebreaker stage is the canonical example:
 

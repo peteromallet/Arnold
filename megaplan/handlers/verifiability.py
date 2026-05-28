@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
-from megaplan.types import CliError, STATE_AWAITING_HUMAN, STATE_DONE, StepResponse
+from megaplan.types import CliError, STATE_AWAITING_HUMAN_VERIFY, STATE_DONE, StepResponse
 from megaplan._core import atomic_write_json, latest_plan_meta_path, load_plan, now_utc, read_json, save_state_merge_meta
+from .shared import _warn_read_fallback
 
 
 def get_human_verification_status(
@@ -29,7 +31,7 @@ def get_human_verification_status(
 
     # --- classify deferred human criteria -----------------------------------
     if worker_caps is not None:
-        from megaplan.audits.verifiability import classify_criteria
+        from megaplan.orchestration.verifiability import classify_criteria
         _, human_deferred = classify_criteria(success_criteria, worker_caps)
     else:
         # Without worker caps we cannot classify – treat everything as
@@ -48,10 +50,22 @@ def get_human_verification_status(
     raw_verifications: list[dict[str, Any]] = []
     if verifications_path.exists():
         try:
-            loaded = read_json(verifications_path)
+            loaded = json.loads(verifications_path.read_text(encoding="utf-8"))
             if isinstance(loaded, list):
                 raw_verifications = loaded
-        except Exception:
+        except json.JSONDecodeError:
+            _warn_read_fallback(
+                "M3A_WARN_CORRUPT_VERIFICATIONS",
+                path=verifications_path,
+                reason="corrupt_json",
+            )
+            raw_verifications = []
+        except (OSError, UnicodeDecodeError):
+            _warn_read_fallback(
+                "M3A_WARN_CORRUPT_VERIFICATIONS",
+                path=verifications_path,
+                reason="unreadable",
+            )
             raw_verifications = []
 
     # --- group by criterion_idx, pick latest per criterion ------------------
@@ -198,7 +212,7 @@ def handle_verify_human(root: Path, args: argparse.Namespace) -> StepResponse:
         }
 
     # ── verdict recording mode ──────────────────────────────────────────
-    if state["current_state"] != STATE_AWAITING_HUMAN:
+    if state["current_state"] != STATE_AWAITING_HUMAN_VERIFY:
         raise CliError(
             "wrong_state",
             f"verify-human requires state 'awaiting_human_verify', got '{state['current_state']}'.",
@@ -287,7 +301,7 @@ def handle_audit_verifiability(root: Path, args: argparse.Namespace) -> StepResp
     success_criteria = plan_meta.get("success_criteria", [])
 
     from megaplan.audits.capabilities import get_worker_capabilities
-    from megaplan.audits.verifiability import audit_criteria, validate_requires
+    from megaplan.orchestration.verifiability import audit_criteria, validate_requires
 
     worker_caps = get_worker_capabilities(state)
     audits = audit_criteria(success_criteria, worker_caps)

@@ -272,6 +272,7 @@ def _artifact_line(row: dict[str, Any]) -> str:
 
 def render_audit_report_markdown(payload: dict[str, Any]) -> str:
     active = payload.get("active_step") if isinstance(payload.get("active_step"), dict) else None
+    active_phase = active.get("phase") or active.get("step") if active else None
     totals = payload["receipt_totals"]
     lines = [
         f"# Megaplan Audit Report: {payload['plan']}",
@@ -294,7 +295,7 @@ def render_audit_report_markdown(payload: dict[str, Any]) -> str:
             [
                 "## Active Step",
                 "",
-                f"- Step: `{active.get('step')}`",
+                f"- Step: `{active_phase}`",
                 f"- Agent: `{active.get('agent')}`",
                 f"- Started: `{active.get('started_at')}`",
                 f"- Attempt: `{active.get('attempt')}`",

@@ -19,17 +19,16 @@ from typing import Any
 import pytest
 
 import megaplan
-import megaplan._core
-import megaplan._core.io as io_module
-import megaplan.cli
-import megaplan.workers
 
 from megaplan._pipeline.planning import compile_planning_pipeline
 from megaplan._pipeline.stages.inprocess_step import (
+    InProcessHandlerStep,
+    _read_state,
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,
 )
+from megaplan.types import CliError
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,
@@ -38,50 +37,16 @@ from megaplan._pipeline.types import (
     StepResult,
 )
 
+from tests.conftest import make_args_factory
 
-def _make_mock_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, robustness: str = "standard"):
-    """Mirror tests/conftest.py::_make_plan_fixture_with_robustness."""
-    from argparse import Namespace
 
-    root = tmp_path / "root"
-    project_dir = tmp_path / "project"
-    config_path = tmp_path / "config"
-    root.mkdir()
-    project_dir.mkdir()
-    (project_dir / ".git").mkdir()
-
-    def _config_dir(home: Any = None) -> Path:
-        return config_path
-
-    monkeypatch.setenv(megaplan.MOCK_ENV_VAR, "1")
-    monkeypatch.setattr(
-        megaplan._core.shutil,
-        "which",
-        lambda name: "/usr/bin/mock" if name in {"claude", "codex"} else None,
-    )
-    monkeypatch.setattr(io_module, "config_dir", _config_dir)
-    monkeypatch.setattr(megaplan.cli, "config_dir", _config_dir)
-
-    init_args = Namespace(
-        plan=None,
-        idea="ship the pipeline e2e",
+def _init_mock_plan(root: Path, project_dir: Path, robustness: str = "standard"):
+    """Initialize a mock plan after bootstrap is already done."""
+    make_args = make_args_factory(project_dir)
+    init_args = make_args(
         name="pipeline-e2e-plan",
-        project_dir=str(project_dir),
-        auto_approve=None,
+        idea="ship the pipeline e2e",
         robustness=robustness,
-        agent=None,
-        ephemeral=False,
-        fresh=False,
-        persist=False,
-        confirm_destructive=True,
-        user_approved=False,
-        confirm_self_review=False,
-        batch=None,
-        override_action=None,
-        note=None,
-        reason="",
-        strict_notes=None,
-        source="user",
     )
     response = megaplan.handle_init(root, init_args)
     plan_name = response["plan"]
@@ -89,26 +54,10 @@ def _make_mock_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, robustness:
 
     # Mirror the existing mock-E2E test: install a "test note" so the
     # initialized state machine can transition through.
-    note_args = Namespace(
+    note_args = make_args(
         plan=plan_name,
-        idea="ship the pipeline e2e",
-        name=plan_name,
-        project_dir=str(project_dir),
-        auto_approve=None,
-        robustness=robustness,
-        agent=None,
-        ephemeral=False,
-        fresh=False,
-        persist=False,
-        confirm_destructive=True,
-        user_approved=False,
-        confirm_self_review=False,
-        batch=None,
         override_action="add-note",
         note="keep changes scoped",
-        reason="",
-        strict_notes=None,
-        source="user",
     )
     megaplan.handle_override(root, note_args)
 
@@ -200,9 +149,10 @@ def _drive_pipeline(
 
 @pytest.mark.parametrize("robustness", ["standard", "robust"])
 def test_pipeline_drives_plan_end_to_end(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, robustness: str,
+    bootstrap_fixture: tuple[Path, Path], robustness: str,
 ) -> None:
-    root, project_dir, plan_name, plan_dir = _make_mock_root(tmp_path, monkeypatch, robustness)
+    root, project_dir = bootstrap_fixture
+    root, project_dir, plan_name, plan_dir = _init_mock_plan(root, project_dir, robustness)
 
     result = _drive_pipeline(plan_dir, root, project_dir, plan_name)
 
@@ -226,3 +176,66 @@ def test_pipeline_drives_plan_end_to_end(
     assert "finalized->execute" in visits
     assert "executed->review" in visits
     assert "terminal:done" in visits
+
+
+def test_corrupt_state_json_prevents_handler_from_running(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    """Corrupt state.json raises M3B_HALT_CORRUPT_STATE_READ before handler runs."""
+    root, project_dir = bootstrap_fixture
+    root, project_dir, plan_name, plan_dir = _init_mock_plan(root, project_dir)
+
+    # Write corrupt state.json
+    (plan_dir / "state.json").write_text("not valid json {{{\n", encoding="utf-8")
+
+    # Direct _read_state raises on corrupt JSON
+    with pytest.raises(CliError, match="M3B_HALT_CORRUPT_STATE_READ"):
+        _read_state(plan_dir)
+
+    # Prove handler does not run: create a simple step and ensure
+    # corrupt state prevents execution
+    handler_called = False
+
+    def tracking_handler(_root: Any, _args: Any) -> dict[str, Any]:
+        nonlocal handler_called
+        handler_called = True
+        return {"success": True}
+
+    step = InProcessHandlerStep(
+        name="test",
+        kind="produce",
+        handler=tracking_handler,
+    )
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state={"name": plan_name},
+        profile={"root": root, "project_dir": project_dir},
+        mode="code",
+        inputs={},
+        budget=None,
+    )
+
+    with pytest.raises(CliError, match="M3B_HALT_CORRUPT_STATE_READ"):
+        step.run(ctx)
+
+    assert not handler_called, "handler should not have been called when state is corrupt"
+
+
+def test_non_dict_state_json_raises_invalid_shape(
+    bootstrap_fixture: tuple[Path, Path],
+) -> None:
+    """Non-dict state.json (e.g. a list) raises M3B_HALT_INVALID_STATE_SHAPE."""
+    root, project_dir = bootstrap_fixture
+    root, project_dir, plan_name, plan_dir = _init_mock_plan(root, project_dir)
+
+    # Write valid JSON that is not a dict
+    (plan_dir / "state.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    # Direct _read_state raises on wrong shape
+    with pytest.raises(CliError, match="M3B_HALT_INVALID_STATE_SHAPE"):
+        _read_state(plan_dir)
+
+    # Missing state.json still returns {}
+    (plan_dir / "state.json").unlink()
+    result = _read_state(plan_dir)
+    assert result == {}

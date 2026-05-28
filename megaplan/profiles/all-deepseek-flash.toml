@@ -1,6 +1,5 @@
 # DeepSeek V4 Flash direct API for every megaplan phase.
 [profiles.all-deepseek-flash]
-default = "partnered"
 plan     = "hermes:deepseek:deepseek-v4-flash"
 prep     = "hermes:deepseek:deepseek-v4-flash"
 critique = "hermes:deepseek:deepseek-v4-flash"

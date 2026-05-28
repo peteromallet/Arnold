@@ -95,10 +95,11 @@ def test_review_receipt_written_for_non_parallel_branch(
 def test_review_receipt_written_for_parallel_branch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     audit_dir = tmp_path / "audit"
     monkeypatch.setenv("MEGAPLAN_AUDIT_DIR", str(audit_dir))
-    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="superrobust")
+    fixture = _make_plan_fixture(tmp_path, robustness="superrobust")
     _advance_to_executed(fixture)
     _plan_dir, state = load_plan(fixture.root, fixture.plan_name)
     criteria_payload = _build_mock_payload(
