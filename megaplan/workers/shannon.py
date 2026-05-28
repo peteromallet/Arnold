@@ -712,25 +712,84 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Parse Shannon CLI JSON output into ``(envelope, payload)``.
+def _parse_shannon_ndjson_events(raw: str) -> list[Any] | None:
+    """Parse Shannon ``--output-format=stream-json`` stdout into an event list.
 
-    Shannon with ``--output-format=json`` emits a JSON array of transcript
-    messages. We walk the array in reverse, preferring the trailing
-    ``type=result`` event produced by ``@dexh/shannon@0.0.2`` and then falling
-    back to assistant messages that carry ``structured_output`` or JSON text.
-    If the top-level value is already a dict we hand it back directly
-    (compatible with :func:`~megaplan.workers.parse_claude_envelope`'s expected
-    input shape).
+    In ``stream-json`` mode Shannon emits one JSON object per line (NDJSON) as
+    each event occurs — ``system/init``, per-turn ``assistant`` + ``result``,
+    optional ``system/hook_*`` rows, and a trailing ``shannon_session``
+    metadata row on cleanup — instead of buffering the whole turn into a single
+    ``JSON.stringify([...])`` array (the ``--output-format=json`` shape). Each
+    incremental line flushes to stdout, which lets the ``_impl.py`` idle-output
+    watchdog reset ``last_output`` on real progress and gives Shannon genuine
+    liveness for a long single turn.
+
+    Returns the decoded list of events when *raw* is line-delimited JSON with at
+    least one parseable object, otherwise ``None`` so the caller can fall back
+    to the single-document (``--output-format=json``) parse path. The returned
+    list is shaped exactly like the legacy buffered transcript array, so it is
+    fed straight through the existing array-walking extraction below and yields
+    an identical final structured-output payload for normal turns.
     """
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise CliError(
-            "parse_error",
-            f"Shannon output was not valid JSON: {exc}",
-            extra={"raw_output": raw},
-        ) from exc
+    if not isinstance(raw, str):
+        return None
+    lines = [ln for ln in raw.splitlines() if ln.strip()]
+    # A single JSON line that decodes to a list IS the legacy buffered array
+    # (``--output-format=json``); leave it to the single-document path so its
+    # behaviour is unchanged. NDJSON only ever has one JSON value per line.
+    if len(lines) < 2:
+        return None
+    events: list[Any] = []
+    saw_object = False
+    for line in lines:
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            # Any non-JSON line means this is not clean NDJSON (e.g. a single
+            # pretty-printed JSON document spread across lines, or interleaved
+            # prose). Fall back to the single-document parser.
+            return None
+        if isinstance(value, dict):
+            saw_object = True
+        events.append(value)
+    if not saw_object:
+        return None
+    return events
+
+
+def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Parse Shannon CLI output into ``(envelope, payload)``.
+
+    Two on-the-wire shapes are supported:
+
+    * ``--output-format=stream-json`` (the liveness path, current default): one
+      JSON event per line (NDJSON). The events are collected, in order, into a
+      list identical in shape to the legacy transcript array and then walked by
+      the same reverse-scan logic below — so the trailing ``type=result`` event
+      still wins and the extracted structured-output payload is identical to the
+      buffered path for a normal turn.
+    * ``--output-format=json`` (legacy buffered path): a single
+      ``JSON.stringify([...])`` array of transcript messages, or a single error
+      / structured-output object.
+
+    We walk the array in reverse, preferring the trailing ``type=result`` event
+    produced by ``@dexh/shannon`` and then falling back to assistant messages
+    that carry ``structured_output`` or JSON text. If the top-level value is
+    already a dict we hand it back directly (compatible with
+    :func:`~megaplan.workers.parse_claude_envelope`'s expected input shape).
+    """
+    ndjson_events = _parse_shannon_ndjson_events(raw)
+    if ndjson_events is not None:
+        data: Any = ndjson_events
+    else:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise CliError(
+                "parse_error",
+                f"Shannon output was not valid JSON: {exc}",
+                extra={"raw_output": raw},
+            ) from exc
 
     # ── error envelope (single dict) ────────────────────────────────────
     if isinstance(data, dict):
@@ -982,7 +1041,15 @@ def run_shannon_step(
     base_command.extend([
         "-p",
         launcher_prompt,
-        "--output-format=json",
+        # stream-json makes Shannon emit one JSON event per line (NDJSON) as
+        # work happens (init, per-turn assistant/result, trailing metadata)
+        # instead of buffering the entire turn into a single JSON array that
+        # only flushes at turn end. The incremental lines reset the _impl.py
+        # idle-output watchdog (last_output, _impl.py:420), giving Shannon
+        # genuine liveness so a long legitimate Opus turn no longer trips the
+        # SHANNON_STREAM_READ_TIMEOUT idle bound as a false worker_stall.
+        # _parse_shannon_output handles both NDJSON and the legacy json array.
+        "--output-format=stream-json",
     ])
     drop_root_requested = _shannon_drop_root_enabled()
     if drop_root_requested:
@@ -1051,7 +1118,11 @@ def run_shannon_step(
         readiness_command.extend([
             "-p",
             readiness_prompt,
-            "--output-format=json",
+            # Match the main run: stream-json gives the readiness probe the same
+            # incremental-liveness behaviour. Its output is only checked for
+            # non-emptiness (not parsed for a structured payload), so the shape
+            # change is inert here beyond liveness.
+            "--output-format=stream-json",
         ])
         if effort is not None:
             readiness_command.extend(["--effort", effort])
