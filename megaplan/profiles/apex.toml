@@ -37,6 +37,7 @@ adaptive_critique = true
 plan                  = "claude"
 prep                  = "claude"
 critique              = "codex"
+critique_evaluator    = "claude"
 revise                = "claude"
 gate                  = "claude"
 finalize              = "claude"

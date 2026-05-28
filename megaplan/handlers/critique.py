@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ from megaplan.types import (
 )
 from megaplan.workers import WorkerResult, validate_payload
 from megaplan._core import (
+    adaptive_critique_enabled,
     atomic_write_json,
     configured_robustness,
     is_creative_mode,
@@ -49,6 +51,8 @@ from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
 from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
 
+log = logging.getLogger("megaplan")
+
 def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="critique") as (plan_dir, state):
         require_state(state, "critique", {STATE_PLANNED})
@@ -63,11 +67,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 "bare robustness skips critique entirely; the workflow routes plan -> finalize directly. "
                 "Run `megaplan finalize` instead, or use --robustness light if you want a critique pass.",
             )
-        # Adaptive critique (the evaluator) is the only critique path. The
-        # static robustness->lens mapping has been removed. Creative modes
-        # (joke/storytelling) are the sole exception: they still select
-        # provocations via select_active_checks rather than the evaluator.
-        adaptive_path = not is_creative_mode(state)
+        adaptive_path = adaptive_critique_enabled(state) and not is_creative_mode(state)
         critic_model_override: str | None = None
         _verified_flag_ids_set: set[str] = set()
         _selection_why: dict[str, str] = {}
@@ -364,6 +364,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             except Exception as exc:
                 clear_active_step(state, run_id=run_id)
                 save_state_merge_meta(plan_dir, state)
+                log.warning(
+                    "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK parallel critique fallback",
+                    exc_info=True,
+                )
                 print(f"[parallel-critique] Failed, falling back to sequential: {exc}", file=sys.stderr)
                 _seq_prompt_kwargs = {"active_checks": list(active_checks), "expected_ids": expected_ids, "revise_context": _revise_ctx, "selection_why": _selection_why} if adaptive_path else None
                 worker, agent, mode, refreshed = _pkg._run_worker(
@@ -672,7 +676,9 @@ def _validate_tiebreaker(
     missing = [f for f in required_fields if not gate_summary.get(f)]
     if missing:
         gate_summary["recommendation"] = "ITERATE"
-        gate_summary["rationale"] += f" [Auto-downgraded: missing required fields {missing}]"
+        gate_summary["rationale"] += (
+            f" [TIEBREAKER_DOWNGRADED_MISSING_FIELDS: missing required fields {missing}]"
+        )
         state["current_state"] = STATE_CRITIQUED
         return "tiebreaker_rejected_missing_fields", "revise", summary_base
 

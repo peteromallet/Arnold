@@ -536,7 +536,7 @@ def test_hermes_worker_installs_sandbox_for_execute(monkeypatch, tmp_path, fake_
         plan_dir,
         root=repo_root,
         fresh=True,
-        model="openrouter/anthropic/claude-opus-4.6",
+        model="openrouter:anthropic/claude-opus-4.6",
     )
 
     # The sandbox was active while the agent ran:

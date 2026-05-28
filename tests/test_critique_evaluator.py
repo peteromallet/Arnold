@@ -442,6 +442,9 @@ def test_forced_parallel_failure_sequential_fallback_honors_verdict(
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
 
     state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     # Critic runs on hermes; the evaluator routes to claude (its own slot), so
     # it can validly assign premium critics (rater >= dispatchee).
@@ -527,6 +530,10 @@ def test_other_selection_synthesized_into_active_checks(
     from megaplan.prompts import create_claude_prompt
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     # Critic runs on hermes; the evaluator routes to claude (its own slot), so
     # it can validly assign premium critics (rater >= dispatchee).
@@ -615,6 +622,10 @@ def test_evaluator_artifacts_preserved_per_iteration(
     import json
 
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+    state_path = plan_fixture.plan_dir / "state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    persisted["config"]["adaptive_critique"] = True
+    state_path.write_text(json.dumps(persisted, indent=2), encoding="utf-8")
 
     monkeypatch.setattr(
         megaplan.handlers,

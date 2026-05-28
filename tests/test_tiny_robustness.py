@@ -31,7 +31,7 @@ def test_tiny_robustness_skips_critique_and_review(
     monkeypatch: pytest.MonkeyPatch,
     bootstrap_fixture: tuple[Path, Path],
 ) -> None:
-    tiny_fixture = _make_plan_fixture(tmp_path, robustness="tiny")
+    tiny_fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="tiny")
 
     _plan_dir, tiny_initial_state = load_plan(tiny_fixture.root, tiny_fixture.plan_name)
     # From INITIALIZED at tiny, next valid step is plan (not prep).
@@ -66,7 +66,7 @@ def test_tiny_robustness_rejects_manual_critique(
     bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """Calling `megaplan critique` at tiny should error — the phase is skipped."""
-    fixture = _make_plan_fixture(tmp_path, robustness="tiny")
+    fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="tiny")
     megaplan.handle_plan(fixture.root, fixture.make_args(plan=fixture.plan_name))
 
     with pytest.raises(CliError, match="bare robustness skips critique"):
@@ -79,9 +79,9 @@ def test_tiny_parity_with_light_terminates_in_done(
     bootstrap_fixture: tuple[Path, Path],
 ) -> None:
     """Both tiny and light end in STATE_DONE after execute (no review phase)."""
-    tiny_fixture = _make_plan_fixture(tmp_path, robustness="tiny")
-    light_fixture = _make_plan_fixture(tmp_path, robustness="light")
-    standard_fixture = _make_plan_fixture(tmp_path, robustness="standard")
+    tiny_fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="tiny")
+    light_fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="light")
+    standard_fixture = _make_plan_fixture(tmp_path, monkeypatch, robustness="standard")
 
     _advance_tiny_to_executed(tiny_fixture)
     _advance_to_executed(light_fixture)

@@ -43,6 +43,7 @@ adaptive_critique = true
 plan                  = "claude:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 critique              = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+critique_evaluator    = "claude:low"
 revise                = "claude:low"
 gate                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 finalize              = "claude:low"
