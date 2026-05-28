@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ModelAsset, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, ImageScaleBy, KSamplerSelect, LTXVAddGuide, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVLatentUpsampler, LTXVPreprocess, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImagesByLongerEdge, SamplerCustomAdvanced, UNETLoader, VAEDecodeTiled, VAELoader
+from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, DualCLIPLoader, EmptyLTXVLatentVideo, GetImageSize, GetVideoComponents, ImageScaleBy, KSamplerSelect, LTXVAddGuide, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVCropGuides, LTXVEmptyLatentAudio, LTXVLatentUpsampler, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LatentUpscaleModelLoader, LoadImage, LoadVideo, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImagesByLongerEdge, SamplerCustomAdvanced, UNETLoader, VAEDecodeTiled, VAELoader
 from vibecomfy.nodes.kjnodes import INTConstant, ImageResizeKJv2, LTX2AttentionTunerPatch, LTX2MemoryEfficientSageAttentionPatch, LTX2_NAG, LTXVChunkFeedForward, LTXVImgToVideoInplaceKJ, PathchSageAttentionKJ, SimpleCalculatorKJ, VRAM_Debug
 from vibecomfy.nodes.rgthree import Power_Lora_Loader_rgthree
 from vibecomfy.nodes.vibecomfy_internal import VibeComfyStripConditioningKeys
@@ -12,6 +12,7 @@ from vibecomfy.nodes.videohelpersuite import VHS_VideoCombine
 
 
 A = 'a'
+AUDIO_VAE_NAME = 'LTX23_audio_vae_bf16.safetensors'
 CLIP_NAME = 'gemma_3_12B_it_fp4_mixed.safetensors'
 CLIP_PROJECTION_NAME = 'ltx-2.3_text_projection_bf16.safetensors'
 CPU = 'cpu'
@@ -27,7 +28,9 @@ LTX_SMOKE_GUIDE_MP4 = 'ltx_smoke_guide.mp4'
 NEAREST_EXACT = 'nearest-exact'
 SPATIAL_UPSCALER_NAME = 'ltx-2.3-spatial-upscaler-x2-1.1.safetensors'
 UNET_NAME = 'ltx-2.3-22b-distilled-1.1_transformer_only_fp8_scaled.safetensors'
+VAE_TAESD_NAME = 'taeltx2_3.safetensors'
 VIDEO_VAE_NAME = 'LTX23_video_vae_bf16.safetensors'
+V_0_909375_0_725_0_421875_0_0 = '0.909375, 0.725, 0.421875, 0.0'
 
 
 MODELS = {
@@ -41,8 +44,8 @@ MODELS = {
 
 
 PUBLIC_INPUT_METADATA = {
-    'seed': InputSpec(node='3', field='noise_seed', default=DEFAULT_SEED, type='INT'),
-    'image': InputSpec(node='5', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
+    'seed': InputSpec(node='4', field='noise_seed', default=DEFAULT_SEED, type='INT'),
+    'image': InputSpec(node='6', field='image', default='', type='IMAGE', required=True, aliases=('input_image',), media_semantics='image'),
 }
 
 READY_METADATA = ReadyMetadata.build(
@@ -73,65 +76,55 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Sampling
-    ksamplerselect = KSamplerSelect(_id='1', sampler_name='euler_ancestral_cfg_pp')
-    ksamplerselect_2 = KSamplerSelect(_id='2', sampler_name='euler_cfg_pp')
-
-    randomnoise = RandomNoise(
-        _id='3',
-        noise_seed=DEFAULT_SEED,
-        control_after_generate=FIXED,
-    )
-
-    randomnoise_2 = RandomNoise(
-        _id='4',
-        noise_seed=DEFAULT_SEED_2,
-        control_after_generate=FIXED,
-    )
+    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+    ksamplerselect_2 = KSamplerSelect(sampler_name='euler_cfg_pp')
+    manualsigmas = ManualSigmas(sigmas=V_0_909375_0_725_0_421875_0_0)
+    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate=FIXED)
+    randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
     # Inputs
-    image, _ = LoadImage(_id='5', image='image (6).png')
-    image_2, _ = LoadImage(_id='6', image='0 (13).webp')
+    image, _ = LoadImage(image='image (6).png')
+    image_2, _ = LoadImage(image='0 (13).webp')
+    _, calc_int, _ = SimpleCalculatorKJ(expression=A, variables='a', a=24.0)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=AUDIO_VAE_NAME)
 
     # Loaders
-    vaeloader = VAELoader(_id='7', vae_name=VIDEO_VAE_NAME)
+    vaeloader = VAELoader(vae_name=VAE_TAESD_NAME)
+    vaeloader_2 = VAELoader(vae_name=VIDEO_VAE_NAME)
 
     latentupscalemodelloader = LatentUpscaleModelLoader(
-        _id='8',
         model_name=SPATIAL_UPSCALER_NAME,
     )
 
-    unetloader = UNETLoader(_id='9', unet_name=UNET_NAME)
+    unetloader = UNETLoader(unet_name=UNET_NAME)
 
     dualcliploader = DualCLIPLoader(
-        _id='10',
         clip_name1=CLIP_NAME,
         clip_name2=CLIP_PROJECTION_NAME,
         type_='ltxv',
         device='default',
     )
 
-    manualsigmas = ManualSigmas(
-        _id='11',
+    manualsigmas_2 = ManualSigmas(
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    manualsigmas_2 = ManualSigmas(_id='12', sigmas='0.909375, 0.725, 0.421875, 0.0')
-    intconstant = INTConstant(_id='13', value=81)
-    intconstant_2 = INTConstant(_id='14', value=720)
-    intconstant_3 = INTConstant(_id='15', value=1280)
+    manualsigmas_3 = ManualSigmas(sigmas=V_0_909375_0_725_0_421875_0_0)
+    intconstant = INTConstant(value=81)
+    intconstant_2 = INTConstant(value=720)
+    intconstant_3 = INTConstant(value=1280)
 
     loadvideo = LoadVideo(
-        _id='16',
         file=LTX_SMOKE_GUIDE_MP4,
         video='ltx_smoke_guide.mp4',
+        widget_0='ltx_smoke_guide.mp4',
     )
 
     # Conditioning
-    negative = CLIPTextEncode(_id='17', text='', clip=dualcliploader)
-    negative_2 = CLIPTextEncode(_id='18', text='', clip=dualcliploader)
+    negative = CLIPTextEncode(text='', clip=dualcliploader)
+    negative_2 = CLIPTextEncode(text='', clip=dualcliploader)
 
     image_3, width, height, _ = ImageResizeKJv2(
-        _id='19',
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -142,38 +135,36 @@ def build() -> VibeWorkflow:
     )
 
     loraloadermodelonly = LoraLoaderModelOnly(
-        _id='20',
         lora_name=LORA_NAME,
         strength_model=GUIDE_STRENGTH,
         model=unetloader,
     )
 
-    _, calc_int, _ = SimpleCalculatorKJ(
-        _id='21',
+    _, calc_int_2, _ = SimpleCalculatorKJ(
         expression=A,
         variables='a,b',
         b=24.0,
+        widget_0='a',
         a=intconstant,
     )
 
-    images, _, _ = GetVideoComponents(_id='22', video=loadvideo)
+    images, _, _ = GetVideoComponents(video=loadvideo)
+
+    ltxvemptylatentaudio = LTXVEmptyLatentAudio(
+        frames_number=calc_int_2,
+        frame_rate=calc_int,
+        audio_vae=ltxvaudiovaeloader,
+    )
 
     positive, negative_3 = LTXVConditioning(
-        _id='23',
         frame_rate=24.0,
         negative=negative,
         positive=negative_2,
     )
 
-    imagescaleby = ImageScaleBy(
-        _id='24',
-        upscale_method=LANCZOS,
-        scale_by=0.5,
-        image=image_3,
-    )
+    imagescaleby = ImageScaleBy(upscale_method=LANCZOS, scale_by=0.5, image=image_3)
 
     image_4, _, _, _ = ImageResizeKJv2(
-        _id='25',
         upscale_method=NEAREST_EXACT,
         keep_proportion=CROP,
         divisible_by=32,
@@ -184,19 +175,16 @@ def build() -> VibeWorkflow:
     )
 
     pathchsageattentionkj = PathchSageAttentionKJ(
-        _id='26',
         sage_attention='auto',
         model=loraloadermodelonly,
     )
 
     resizeimagesbylongeredge = ResizeImagesByLongerEdge(
-        _id='27',
         longer_edge=1536,
         images=image_3,
     )
 
     image_5, _, _, _ = ImageResizeKJv2(
-        _id='28',
         upscale_method=LANCZOS,
         keep_proportion='stretch',
         divisible_by=32,
@@ -206,61 +194,58 @@ def build() -> VibeWorkflow:
         image=images,
     )
 
-    width_4, height_4, _ = GetImageSize(_id='29', image=imagescaleby)
-    ltxvpreprocess = LTXVPreprocess(_id='30', img_compression=18, image=image_4)
-    ltxvchunkfeedforward = LTXVChunkFeedForward(_id='31', model=pathchsageattentionkj)
+    width_4, height_4, _ = GetImageSize(image=imagescaleby)
+
+    resizeimagesbylongeredge_2 = ResizeImagesByLongerEdge(
+        longer_edge=1536,
+        images=image_4,
+    )
+
+    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=image_4)
+    ltxvchunkfeedforward = LTXVChunkFeedForward(model=pathchsageattentionkj)
 
     ltxvpreprocess_2 = LTXVPreprocess(
-        _id='32',
         img_compression=18,
         image=resizeimagesbylongeredge,
     )
 
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        _id='33',
         width=width_4,
         height=height_4,
-        length=calc_int,
+        length=calc_int_2,
     )
 
     ltx2attentiontunerpatch = LTX2AttentionTunerPatch(
-        _id='34',
         triton_kernels=False,
         model=ltxvchunkfeedforward,
     )
 
     ltxvimgtovideoinplacekj = LTXVImgToVideoInplaceKJ(
-        _id='35',
         num_images='2',
         latent=emptyltxvlatentvideo,
-        vae=vaeloader,
+        vae=vaeloader_2,
         **{'num_images.index_1': 0, 'num_images.index_2': -1, 'num_images.strength_1': 1.0, 'num_images.strength_2': 1.0, 'num_images.image_1': ltxvpreprocess_2, 'num_images.image_2': ltxvpreprocess},
     )
 
     ltx2memoryefficientsageattentionpatch = LTX2MemoryEfficientSageAttentionPatch(
-        _id='36',
         model=ltx2attentiontunerpatch,
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
-        _id='37',
+        audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoinplacekj,
     )
 
-    model, _ = Power_Lora_Loader_rgthree(
-        _id='38',
-        model=ltx2memoryefficientsageattentionpatch,
-    )
+    model, _ = Power_Lora_Loader_rgthree(model=ltx2memoryefficientsageattentionpatch)
+    ltxvscheduler = LTXVScheduler(steps=1, latent=ltxvconcatavlatent)
 
     ltx2_nag = LTX2_NAG(
-        _id='39',
         model=model,
         nag_cond_audio=negative_3,
         nag_cond_video=negative_3,
     )
 
     cfgguider = CFGGuider(
-        _id='40',
         cfg=GUIDE_STRENGTH_2,
         model=ltx2_nag,
         negative=negative_3,
@@ -268,56 +253,52 @@ def build() -> VibeWorkflow:
     )
 
     output, _ = SamplerCustomAdvanced(
-        _id='41',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
         sampler=ksamplerselect,
-        sigmas=manualsigmas,
+        sigmas=manualsigmas_2,
     )
 
-    video_latent, _ = LTXVSeparateAVLatent(_id='42', av_latent=output)
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
     ltxvlatentupsampler = LTXVLatentUpsampler(
-        _id='43',
         samples=video_latent,
         upscale_model=latentupscalemodelloader,
-        vae=vaeloader,
+        vae=vaeloader_2,
     )
 
     any_output, _, _, _, _ = VRAM_Debug(
-        _id='44',
         unload_all_models=True,
         any_input=ltxvlatentupsampler,
     )
 
     ltxvimgtovideoinplacekj_2 = LTXVImgToVideoInplaceKJ(
-        _id='45',
         num_images='1',
         latent=any_output,
-        vae=vaeloader,
+        vae=vaeloader_2,
         **{'num_images.index_1': 0, 'num_images.strength_1': 1.0, 'num_images.image_1': resizeimagesbylongeredge},
     )
 
     positive_2, negative_4, latent = LTXVAddGuide(
-        _id='46',
         image=image_5,
         latent=ltxvimgtovideoinplacekj_2,
         negative=negative_3,
         positive=positive,
-        vae=vaeloader,
+        vae=vaeloader_2,
     )
 
-    ltxvconcatavlatent_2 = LTXVConcatAVLatent(_id='47', video_latent=latent)
+    ltxvconcatavlatent_2 = LTXVConcatAVLatent(
+        audio_latent=audio_latent,
+        video_latent=latent,
+    )
 
     positive_3, negative_5 = VibeComfyStripConditioningKeys(
-        _id='48',
         negative=negative_4,
         positive=positive_2,
     )
 
     cfgguider_2 = CFGGuider(
-        _id='49',
         cfg=GUIDE_STRENGTH_2,
         model=ltx2_nag,
         negative=negative_5,
@@ -325,18 +306,21 @@ def build() -> VibeWorkflow:
     )
 
     output_2, _ = SamplerCustomAdvanced(
-        _id='50',
         guider=cfgguider_2,
         latent_image=ltxvconcatavlatent_2,
         noise=randomnoise,
         sampler=ksamplerselect_2,
-        sigmas=manualsigmas_2,
+        sigmas=manualsigmas_3,
     )
 
-    video_latent_2, _ = LTXVSeparateAVLatent(_id='51', av_latent=output_2)
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output_2)
+
+    ltxvaudiovaedecode = LTXVAudioVAEDecode(
+        audio_vae=ltxvaudiovaeloader,
+        samples=audio_latent_2,
+    )
 
     _, _, latent_2 = LTXVCropGuides(
-        _id='52',
         latent=video_latent_2,
         negative=negative_5,
         positive=positive_3,
@@ -344,15 +328,13 @@ def build() -> VibeWorkflow:
 
     # Decode
     vaedecodetiled = VAEDecodeTiled(
-        _id='53',
         temporal_size=4096,
         samples=latent_2,
-        vae=vaeloader,
+        vae=vaeloader_2,
     )
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
-        _id='54',
         frame_rate=24.0,
         filename_prefix='reigh_vibecomfy_ltx_raw_guide',
         format='video/h264-mp4',
@@ -360,3 +342,4 @@ def build() -> VibeWorkflow:
     )
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=vhs_videocombine, output_type='VHS_VideoCombine', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='reigh_vibecomfy_ltx_raw_guide')
+

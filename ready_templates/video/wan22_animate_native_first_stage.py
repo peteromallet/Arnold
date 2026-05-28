@@ -68,61 +68,50 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    cliploader = CLIPLoader(_id='1', clip_name=CLIP_NAME, type_='wan')
-    vaeloader = VAELoader(_id='2', vae_name=VAE_NAME)
-    clipvisionloader = CLIPVisionLoader(_id='3', clip_name=CLIP_NAME_2)
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    vaeloader = VAELoader(vae_name=VAE_NAME)
+    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
     # Inputs
-    image, _ = LoadImage(_id='4', image='reference_image.png')
-    unetloader = UNETLoader(_id='5', unet_name=UNET_NAME)
+    image, _ = LoadImage(image='reference_image.png')
+    unetloader = UNETLoader(unet_name=UNET_NAME)
 
     downloadandloadsam2model = DownloadAndLoadSAM2Model(
-        _id='6',
         model=MODEL_NAME,
         segmentor='video',
         device='cuda',
     )
 
-    loadvideo = LoadVideo(_id='7', file='motion_video.mp4')
+    loadvideo = LoadVideo(file='motion_video.mp4')
 
     # Conditioning
     cliptextencode = CLIPTextEncode(
-        _id='8',
         text='low quality, blurry, distorted',
         clip=cliploader,
     )
 
     clipvisionencode = CLIPVisionEncode(
-        _id='9',
         crop='none',
         clip_vision=clipvisionloader,
         image=image,
     )
 
-    loraloadermodelonly = LoraLoaderModelOnly(
-        _id='10',
-        lora_name=LORA_NAME,
-        model=unetloader,
-    )
-
-    cliptextencode_2 = CLIPTextEncode(_id='11', text=DEFAULT_PROMPT, clip=cliploader)
-    images, audio, _ = GetVideoComponents(_id='12', video=loadvideo)
+    loraloadermodelonly = LoraLoaderModelOnly(lora_name=LORA_NAME, model=unetloader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+    images, audio, _ = GetVideoComponents(video=loadvideo)
 
     loraloadermodelonly_2 = LoraLoaderModelOnly(
-        _id='13',
         lora_name=LORA_NAME_2,
         model=loraloadermodelonly,
     )
 
     pixelperfectresolution = PixelPerfectResolution(
-        _id='14',
         image_gen_height=480,
         image_gen_width=832,
         original_image=images,
     )
 
     imagescale = ImageScale(
-        _id='15',
         upscale_method='lanczos',
         width=832,
         height=480,
@@ -131,7 +120,6 @@ def build() -> VibeWorkflow:
     )
 
     dwpreprocessor = DWPreprocessor(
-        _id='16',
         detect_hand='disable',
         detect_body='disable',
         detect_face='enable',
@@ -143,7 +131,6 @@ def build() -> VibeWorkflow:
     )
 
     dwpreprocessor_2 = DWPreprocessor(
-        _id='17',
         detect_hand='enable',
         detect_body='enable',
         detect_face='disable',
@@ -154,10 +141,9 @@ def build() -> VibeWorkflow:
         image=imagescale,
     )
 
-    modelsamplingsd3 = ModelSamplingSD3(_id='18', shift=8, model=loraloadermodelonly_2)
+    modelsamplingsd3 = ModelSamplingSD3(shift=8, model=loraloadermodelonly_2)
 
     positive_coords, _, _, _, _ = PointsEditor(
-        _id='19',
         points_store='[{}]',
         coordinates='[{"x":320,"y":320}]',
         neg_coordinates='[]',
@@ -170,19 +156,17 @@ def build() -> VibeWorkflow:
     )
 
     sam2segmentation = Sam2Segmentation(
-        _id='20',
         keep_model_loaded=True,
         coordinates_positive=positive_coords,
         image=imagescale,
         sam2_model=downloadandloadsam2model,
     )
 
-    growmask = GrowMask(_id='21', expand=10, mask=sam2segmentation)
-    blockifymask = BlockifyMask(_id='22', masks=growmask)
-    drawmaskonimage = DrawMaskOnImage(_id='23', image=imagescale, mask=blockifymask)
+    growmask = GrowMask(expand=10, mask=sam2segmentation)
+    blockifymask = BlockifyMask(masks=growmask)
+    drawmaskonimage = DrawMaskOnImage(image=imagescale, mask=blockifymask)
 
     positive, negative, latent, trim_latent, trim_image, _ = WanAnimateToVideo(
-        _id='24',
         length=DEFAULT_FRAMES,
         background_video=drawmaskonimage,
         character_mask=blockifymask,
@@ -197,7 +181,6 @@ def build() -> VibeWorkflow:
 
     # Sampling
     ksampler = KSampler(
-        _id='25',
         seed=DEFAULT_SEED,
         cfg=GUIDE_STRENGTH,
         sampler_name='euler',
@@ -207,31 +190,21 @@ def build() -> VibeWorkflow:
         positive=positive,
     )
 
-    trimvideolatent = TrimVideoLatent(
-        _id='26',
-        samples=ksampler,
-        trim_amount=trim_latent,
-    )
+    trimvideolatent = TrimVideoLatent(samples=ksampler, trim_amount=trim_latent)
 
     # Decode
-    vaedecode = VAEDecode(_id='27', samples=trimvideolatent, vae=vaeloader)
+    vaedecode = VAEDecode(samples=trimvideolatent, vae=vaeloader)
 
     imagefrombatch = ImageFromBatch(
-        _id='28',
         length=DEFAULT_FRAMES_2,
         batch_index=trim_image,
         image=vaedecode,
     )
 
-    createvideo = CreateVideo(
-        _id='29',
-        fps=DEFAULT_FPS,
-        audio=audio,
-        images=imagefrombatch,
-    )
+    createvideo = CreateVideo(fps=DEFAULT_FPS, audio=audio, images=imagefrombatch)
 
     # Outputs
-    savevideo = SaveVideo(_id='30', video=createvideo)
+    savevideo = SaveVideo(video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one')
 

@@ -71,49 +71,41 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, _ = LoadImage(
-        _id='1',
-        image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png',
-    )
+    image, _ = LoadImage(image='03_video_wan2_2_14B_i2v_subgraphed_input_image.png')
 
     # Loaders
-    cliploader = CLIPLoader(_id='2', clip_name=CLIP_NAME, type_='wan')
-    vaeloader = VAELoader(_id='3', vae_name=VAE_NAME)
-    unetloader = UNETLoader(_id='4', unet_name=UNET_NAME)
-    unetloader_2 = UNETLoader(_id='5', unet_name=UNET_NAME_2)
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    vaeloader = VAELoader(vae_name=VAE_NAME)
+    unetloader = UNETLoader(unet_name=UNET_NAME)
+    unetloader_2 = UNETLoader(unet_name=UNET_NAME_2)
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT, clip=cliploader)
-    cliptextencode_2 = CLIPTextEncode(_id='7', text=DEFAULT_PROMPT_2, clip=cliploader)
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
 
     loraloadermodelonly = LoraLoaderModelOnly(
-        _id='8',
         lora_name=LORA_NAME,
         strength_model=GUIDE_STRENGTH,
         model=unetloader,
     )
 
     loraloadermodelonly_2 = LoraLoaderModelOnly(
-        _id='9',
         lora_name=LORA_NAME_2,
         strength_model=GUIDE_STRENGTH,
         model=unetloader_2,
     )
 
     modelsamplingsd3 = ModelSamplingSD3(
-        _id='10',
         shift=5.000000000000001,
         model=loraloadermodelonly,
     )
 
     modelsamplingsd3_2 = ModelSamplingSD3(
-        _id='11',
         shift=5.000000000000001,
         model=loraloadermodelonly_2,
     )
 
     positive, negative, latent = WanImageToVideo(
-        _id='12',
         height=720,
         length=81,
         width=720,
@@ -125,7 +117,6 @@ def build() -> VibeWorkflow:
 
     # Sampling
     ksampleradvanced = KSamplerAdvanced(
-        _id='13',
         add_noise='enable',
         noise_seed=0,
         steps=4,
@@ -140,7 +131,6 @@ def build() -> VibeWorkflow:
     )
 
     ksampleradvanced_2 = KSamplerAdvanced(
-        _id='14',
         add_noise='disable',
         steps=4,
         cfg=GUIDE_STRENGTH_2,
@@ -155,12 +145,11 @@ def build() -> VibeWorkflow:
     )
 
     # Decode
-    vaedecode = VAEDecode(_id='15', samples=ksampleradvanced_2, vae=vaeloader)
-    createvideo = CreateVideo(_id='16', fps=DEFAULT_FPS, images=vaedecode)
+    vaedecode = VAEDecode(samples=ksampleradvanced_2, vae=vaeloader)
+    createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
 
     # Outputs
     savevideo = SaveVideo(
-        _id='17',
         filename_prefix='video/Wan2.2_image_to_video',
         video=createvideo,
     )

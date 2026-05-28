@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow, node as raw_call
 from vibecomfy.nodes.core import CFGGuider, CLIPTextEncode, CheckpointLoaderSimple, CreateVideo, EmptyLTXVLatentVideo, KSamplerSelect, LTXAVTextEncoderLoader, LTXVAudioVAEDecode, LTXVAudioVAELoader, LTXVConcatAVLatent, LTXVConditioning, LTXVEmptyLatentAudio, LTXVPreprocess, LTXVScheduler, LTXVSeparateAVLatent, LoadImage, LoraLoaderModelOnly, ManualSigmas, RandomNoise, ResizeImageMaskNode, SamplerCustomAdvanced, SaveVideo
-from vibecomfy.nodes.ltxvideo import GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, MultimodalGuider
+from vibecomfy.nodes.ltxvideo import GemmaAPITextEncode, GuiderParameters, LTXFloatToInt, LTXVImgToVideoConditionOnly, LTXVTiledVAEDecode, MultimodalGuider
 from vibecomfy.patches.ltx_lowvram import apply as apply_ltx_lowvram
 from vibecomfy.patches.requirements import ensure_custom_nodes
 from vibecomfy.patches.resolution import resolution
@@ -52,43 +52,42 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Inputs
-    image, _ = LoadImage(_id='2004', image='example.png')
+    image, _ = LoadImage(image='example.png')
 
     # Sampling
     emptyltxvlatentvideo = EmptyLTXVLatentVideo(
-        _id='3059',
         width=960,
         height=544,
         length=DEFAULT_FRAMES,
     )
 
     # Loaders
-    model, _, vae = CheckpointLoaderSimple(_id='3940', ckpt_name=CKPT_NAME)
-    ltxvaudiovaeloader = LTXVAudioVAELoader(_id='4010', ckpt_name=CKPT_NAME)
+    model, _, vae = CheckpointLoaderSimple(ckpt_name=CKPT_NAME)
+    ltxvaudiovaeloader = LTXVAudioVAELoader(ckpt_name=CKPT_NAME)
+    randomnoise = RandomNoise(noise_seed=DEFAULT_SEED, control_after_generate=FIXED)
+    ksamplerselect = KSamplerSelect(sampler_name='euler_ancestral_cfg_pp')
+    randomnoise_2 = RandomNoise(noise_seed=DEFAULT_SEED_2, control_after_generate=FIXED)
 
-    randomnoise = RandomNoise(
-        _id='4814',
-        noise_seed=DEFAULT_SEED,
-        control_after_generate=FIXED,
-    )
-
-    ksamplerselect = KSamplerSelect(_id='4831', sampler_name='euler_ancestral_cfg_pp')
-
-    randomnoise_2 = RandomNoise(
-        _id='4832',
-        noise_seed=DEFAULT_SEED_2,
-        control_after_generate=FIXED,
+    gemmaapitextencode = GemmaAPITextEncode(
+        ckpt_name=CKPT_NAME,
+        enhance_prompt=CKPT_NAME,
+        widget_0='',
     )
 
     ltxavtextencoderloader = LTXAVTextEncoderLoader(
-        _id='4960',
         text_encoder=TEXT_ENCODER_NAME,
         ckpt_name=CKPT_NAME,
         device='default',
     )
 
+    gemmaapitextencode_2 = GemmaAPITextEncode(
+        ckpt_name=CKPT_NAME,
+        enhance_prompt=False,
+        prompt=DEFAULT_PROMPT,
+        widget_0='',
+    )
+
     guiderparameters = GuiderParameters(
-        _id='4963',
         cfg=GUIDE_STRENGTH,
         modality='AUDIO',
         modality_scale=3,
@@ -103,41 +102,28 @@ def build() -> VibeWorkflow:
     )
 
     manualsigmas = ManualSigmas(
-        _id='4971',
         sigmas='1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0',
     )
 
-    ltxfloattoint = LTXFloatToInt(_id='4985', rounding=0, a=24.0)
+    ltxfloattoint = LTXFloatToInt(rounding=0, a=24.0)
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(
-        _id='2483',
-        text=DEFAULT_PROMPT_2,
-        clip=ltxavtextencoderloader,
-    )
-
-    cliptextencode_2 = CLIPTextEncode(
-        _id='2612',
-        text=DEFAULT_PROMPT,
-        clip=ltxavtextencoderloader,
-    )
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=ltxavtextencoderloader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT, clip=ltxavtextencoderloader)
 
     ltxvemptylatentaudio = LTXVEmptyLatentAudio(
-        _id='3980',
         frames_number=121,
         frame_rate=ltxfloattoint,
         audio_vae=ltxvaudiovaeloader,
     )
 
     loraloadermodelonly = LoraLoaderModelOnly(
-        _id='4922',
         lora_name=LORA_NAME,
         strength_model=GUIDE_STRENGTH_4,
         model=model,
     )
 
     guiderparameters_2 = GuiderParameters(
-        _id='4964',
         cfg=GUIDE_STRENGTH_2,
         modality_scale=3,
         rescale=0.9,
@@ -145,34 +131,26 @@ def build() -> VibeWorkflow:
     )
 
     loraloadermodelonly_2 = LoraLoaderModelOnly(
-        _id='4968',
         lora_name=LORA_NAME,
         strength_model=GUIDE_STRENGTH_5,
         model=model,
     )
 
     resizeimagemasknode = ResizeImageMaskNode(
-        _id='4981',
         resize_type='scale longer dimension',
         scale_method='lanczos',
         input=image,
     )
 
     positive, negative = LTXVConditioning(
-        _id='1241',
         frame_rate=24.0,
         negative=cliptextencode_2,
         positive=cliptextencode,
     )
 
-    ltxvpreprocess = LTXVPreprocess(
-        _id='3336',
-        img_compression=18,
-        image=resizeimagemasknode,
-    )
+    ltxvpreprocess = LTXVPreprocess(img_compression=18, image=resizeimagemasknode)
 
     ltxvimgtovideoconditiononly = LTXVImgToVideoConditionOnly(
-        _id='3159',
         strength=0.7,
         bypass=True,
         image=ltxvpreprocess,
@@ -181,7 +159,6 @@ def build() -> VibeWorkflow:
     )
 
     multimodalguider = MultimodalGuider(
-        _id='4808',
         widget_0='28',
         model=loraloadermodelonly_2,
         negative=negative,
@@ -190,7 +167,6 @@ def build() -> VibeWorkflow:
     )
 
     cfgguider = CFGGuider(
-        _id='4828',
         cfg=GUIDE_STRENGTH_3,
         model=loraloadermodelonly,
         negative=negative,
@@ -198,13 +174,11 @@ def build() -> VibeWorkflow:
     )
 
     ltxvconcatavlatent = LTXVConcatAVLatent(
-        _id='4528',
         audio_latent=ltxvemptylatentaudio,
         video_latent=ltxvimgtovideoconditiononly,
     )
 
     output_2, _ = SamplerCustomAdvanced(
-        _id='4829',
         guider=cfgguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise_2,
@@ -212,10 +186,9 @@ def build() -> VibeWorkflow:
         sigmas=manualsigmas,
     )
 
-    ltxvscheduler = LTXVScheduler(_id='4966', steps=15, latent=ltxvconcatavlatent)
+    ltxvscheduler = LTXVScheduler(steps=15, latent=ltxvconcatavlatent)
 
     output, _ = SamplerCustomAdvanced(
-        _id='4802',
         guider=multimodalguider,
         latent_image=ltxvconcatavlatent,
         noise=randomnoise,
@@ -223,21 +196,15 @@ def build() -> VibeWorkflow:
         sigmas=ltxvscheduler,
     )
 
-    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(
-        _id='4845',
-        av_latent=output_2,
-    )
-
-    video_latent, audio_latent = LTXVSeparateAVLatent(_id='4824', av_latent=output)
+    video_latent_2, audio_latent_2 = LTXVSeparateAVLatent(av_latent=output_2)
+    video_latent, audio_latent = LTXVSeparateAVLatent(av_latent=output)
 
     ltxvaudiovaedecode_2 = LTXVAudioVAEDecode(
-        _id='4848',
         audio_vae=ltxvaudiovaeloader,
         samples=audio_latent_2,
     )
 
     ltxvtiledvaedecode = LTXVTiledVAEDecode(
-        _id='4982',
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
@@ -246,20 +213,17 @@ def build() -> VibeWorkflow:
     )
 
     ltxvaudiovaedecode = LTXVAudioVAEDecode(
-        _id='4818',
         audio_vae=ltxvaudiovaeloader,
         samples=audio_latent,
     )
 
     createvideo_2 = CreateVideo(
-        _id='4849',
         fps=DEFAULT_FPS,
         audio=ltxvaudiovaedecode_2,
         images=ltxvtiledvaedecode,
     )
 
     ltxvtiledvaedecode_2 = LTXVTiledVAEDecode(
-        _id='4983',
         horizontal_tiles=2,
         vertical_tiles=2,
         overlap=6,
@@ -268,15 +232,14 @@ def build() -> VibeWorkflow:
     )
 
     createvideo = CreateVideo(
-        _id='4819',
         fps=DEFAULT_FPS,
         audio=ltxvaudiovaedecode,
         images=ltxvtiledvaedecode_2,
     )
 
     # Outputs
-    savevideo_2 = SaveVideo(_id='4852', filename_prefix='output_D', video=createvideo_2)
-    savevideo = SaveVideo(_id='4823', filename_prefix='output_F', video=createvideo)
+    savevideo_2 = SaveVideo(filename_prefix='output_D', video=createvideo_2)
+    savevideo = SaveVideo(filename_prefix='output_F', video=createvideo)
 
     apply_ltx_lowvram(wf)
     resolution(384, 256, 9).apply(wf)

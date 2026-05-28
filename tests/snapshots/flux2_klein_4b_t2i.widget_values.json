@@ -2,12 +2,6 @@
   [
     "CFGGuider",
     "cfg",
-    "1",
-    1
-  ],
-  [
-    "CFGGuider",
-    "cfg",
     "5",
     1
   ],
@@ -15,48 +9,48 @@
     "CLIPLoader",
     "clip_name",
     "'qwen_3_4b.safetensors'",
-    2
+    1
   ],
   [
     "CLIPLoader",
     "type",
     "'flux2'",
-    2
+    1
   ],
   [
     "CLIPTextEncode",
     "text",
     "''",
-    3
-  ],
-  [
-    "Flux2Scheduler",
-    "steps",
-    "4",
     1
   ],
   [
     "KSamplerSelect",
     "sampler_name",
     "'euler'",
+    1
+  ],
+  [
+    "PrimitiveInt",
+    "value",
+    "1024",
     2
+  ],
+  [
+    "PrimitiveStringMultiline",
+    "value",
+    "'A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\\n'",
+    1
   ],
   [
     "RandomNoise",
     "noise_seed",
-    "432262096973490",
+    "0",
     1
   ],
   [
     "SaveImage",
     "filename_prefix",
     "'Flux2-Klein'",
-    2
-  ],
-  [
-    "UNETLoader",
-    "unet_name",
-    "'flux-2-klein-4b.safetensors'",
     1
   ],
   [
@@ -69,6 +63,6 @@
     "VAELoader",
     "vae_name",
     "'flux2-vae.safetensors'",
-    2
+    1
   ]
 ]

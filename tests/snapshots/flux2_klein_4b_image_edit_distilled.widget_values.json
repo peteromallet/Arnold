@@ -3,19 +3,19 @@
     "CFGGuider",
     "cfg",
     "1",
-    2
+    1
   ],
   [
     "CLIPLoader",
     "clip_name",
     "'qwen_3_4b.safetensors'",
-    2
+    1
   ],
   [
     "CLIPLoader",
     "type",
     "'flux2'",
-    2
+    1
   ],
   [
     "CLIPTextEncode",
@@ -24,28 +24,22 @@
     1
   ],
   [
-    "CLIPTextEncode",
-    "text",
-    "'stylize the handbag in image1 with the colours and logo from image 2'",
-    1
-  ],
-  [
     "Flux2Scheduler",
     "steps",
     "4",
-    2
+    1
   ],
   [
     "ImageScaleToTotalPixels",
     "upscale_method",
     "'nearest-exact'",
-    3
+    1
   ],
   [
     "KSamplerSelect",
     "sampler_name",
     "'euler'",
-    2
+    1
   ],
   [
     "LoadImage",
@@ -66,27 +60,21 @@
     1
   ],
   [
-    "RandomNoise",
-    "noise_seed",
-    "786795143695419",
-    1
-  ],
-  [
     "SaveImage",
     "filename_prefix",
     "'Flux2-Klein'",
-    2
+    1
   ],
   [
     "UNETLoader",
     "unet_name",
     "'flux-2-klein-4b-fp8.safetensors'",
-    2
+    1
   ],
   [
     "VAELoader",
     "vae_name",
     "'flux2-vae.safetensors'",
-    2
+    1
   ]
 ]

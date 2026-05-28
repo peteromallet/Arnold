@@ -4,9 +4,9 @@
 from __future__ import annotations
 
 from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
-from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, LoadImage
+from vibecomfy.nodes.core import AudioEncoderEncode, AudioEncoderLoader, LoadAudio, LoadImage
 from vibecomfy.nodes.gimm_vfi import DownloadAndLoadGIMMVFIModel, GIMMVFI_interpolate
-from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, ImageResizeKJv2
+from vibecomfy.nodes.kjnodes import GetImageSizeAndCount, ImageResizeKJv2, InsertLatentToIndexed
 from vibecomfy.nodes.melbandroformer import MelBandRoFormerModelLoader, MelBandRoFormerSampler
 from vibecomfy.nodes.videohelpersuite import VHS_LoadAudio, VHS_SelectEveryNthImage, VHS_SplitImages, VHS_VideoCombine
 from vibecomfy.nodes.wanvideowrapper import NormalizeAudioLoudness, WanVideoAddS2VEmbeds, WanVideoBlockSwap, WanVideoContextOptions, WanVideoDecode, WanVideoEmptyEmbeds, WanVideoEncode, WanVideoLoraSelectMulti, WanVideoModelLoader, WanVideoSampler, WanVideoSetBlockSwap, WanVideoSetLoRAs, WanVideoTextEncodeCached, WanVideoTorchCompileSettings, WanVideoVAELoader
@@ -47,59 +47,50 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    wanvideotorchcompilesettings = WanVideoTorchCompileSettings(_id='35')
-    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
 
     wanvideoblockswap = WanVideoBlockSwap(
-        _id='39',
         blocks_to_swap=25,
         use_non_blocking=True,
         prefetch_blocks=1,
     )
 
     wanvideoloraselectmulti = WanVideoLoraSelectMulti(
-        _id='60',
         lora_0=LORA__NAME,
         strength_0=1.5,
         merge_loras=False,
     )
 
-    audioencoderloader = AudioEncoderLoader(
-        _id='65',
-        audio_encoder_name=AUDIO_ENCODER_NAME,
+    audioencoderloader = AudioEncoderLoader(audio_encoder_name=AUDIO_ENCODER_NAME)
+
+    loadaudio = LoadAudio(
+        audio='NieR_ Automata - _Weight of the World_ ENG VER. by Lizz Robinett [CyOSTbel3AM].mp3',
     )
 
     text_embeds, _, _ = WanVideoTextEncodeCached(
-        _id='67',
         model_name=CLIP_NAME,
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
     )
 
     # Inputs
-    image_2, _ = LoadImage(_id='73', image='2b.jpg')
+    image_2, _ = LoadImage(image='2b.jpg')
 
     melbandroformermodelloader = MelBandRoFormerModelLoader(
-        _id='81',
         model=MEL_BAND_ROFORMER_NAME,
     )
 
-    wanvideocontextoptions = WanVideoContextOptions(
-        _id='83',
-        context_schedule='uniform_standard',
-    )
-
-    audio, _ = VHS_LoadAudio(_id='94', audio_file='input/weightoftheworld2.mp4')
+    wanvideocontextoptions = WanVideoContextOptions(context_schedule='uniform_standard')
+    audio, _ = VHS_LoadAudio(audio_file='input/weightoftheworld2.mp4')
 
     downloadandloadgimmvfimodel = DownloadAndLoadGIMMVFIModel(
-        _id='95',
         widget_0=WIDGET__NAME,
         widget_1='fp16',
         widget_2=False,
     )
 
     wanvideomodelloader = WanVideoModelLoader(
-        _id='22',
         model=MODEL_NAME,
         base_precision='fp16_fast',
         quantization='fp8_e4m3fn_scaled',
@@ -108,7 +99,6 @@ def build() -> VibeWorkflow:
     )
 
     image_3, width_2, height_2, _ = ImageResizeKJv2(
-        _id='74',
         width=960,
         height=640,
         upscale_method='lanczos',
@@ -118,26 +108,22 @@ def build() -> VibeWorkflow:
     )
 
     melbandroformersampler = MelBandRoFormerSampler(
-        _id='82',
         audio=audio,
         model=melbandroformermodelloader.out(0),
     )
 
     wanvideoemptyembeds = WanVideoEmptyEmbeds(
-        _id='37',
         num_frames=DEFAULT_FRAMES,
         width=width_2,
         height=height_2,
     )
 
     wanvideosetloras = WanVideoSetLoRAs(
-        _id='58',
         lora=wanvideoloraselectmulti,
         model=wanvideomodelloader,
     )
 
     wanvideoencode = WanVideoEncode(
-        _id='72',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -147,29 +133,24 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    normalizeaudioloudness = NormalizeAudioLoudness(
-        _id='98',
-        audio=melbandroformersampler.out(0),
-    )
+    normalizeaudioloudness = NormalizeAudioLoudness(audio=melbandroformersampler.out(0))
 
     wanvideosetblockswap = WanVideoSetBlockSwap(
-        _id='56',
         block_swap_args=wanvideoblockswap,
         model=wanvideosetloras,
     )
 
     audioencoderencode = AudioEncoderEncode(
-        _id='64',
         audio=normalizeaudioloudness,
         audio_encoder=audioencoderloader,
     )
 
     image_embeds, _ = WanVideoAddS2VEmbeds(
-        _id='101',
         audio_scale=0,
         frame_window_size=201,
         pose_end_percent=False,
         pose_start_percent=1,
+        widget_0=201,
         widget_1=1,
         audio_encoder_output=audioencoderencode,
         embeds=wanvideoemptyembeds,
@@ -177,7 +158,6 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
-        _id='27',
         steps=4,
         cfg=GUIDE_STRENGTH,
         shift=4,
@@ -190,17 +170,21 @@ def build() -> VibeWorkflow:
     )
 
     wanvideodecode = WanVideoDecode(
-        _id='28',
         normalization='default',
         samples=samples,
         vae=wanvideovaeloader,
     )
 
-    image, _, _, _ = GetImageSizeAndCount(_id='70', image=wanvideodecode)
-    _, _, image_b, _ = VHS_SplitImages(_id='80', split_index=3, images=image)
+    insertlatenttoindexed = InsertLatentToIndexed(
+        widget_0=0,
+        destination=samples,
+        source=wanvideoencode,
+    )
+
+    image, _, _, _ = GetImageSizeAndCount(image=wanvideodecode)
+    _, _, image_b, _ = VHS_SplitImages(split_index=3, images=image)
 
     gimmvfi_interpolate = GIMMVFI_interpolate(
-        _id='96',
         widget_0=1,
         widget_1=3,
         widget_2=0,
@@ -212,7 +196,6 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine_2 = VHS_VideoCombine(
-        _id='97',
         frame_rate=16,
         filename_prefix='WanVideo2_2_S2V',
         format=VIDEO_H264_MP4,
@@ -227,13 +210,11 @@ def build() -> VibeWorkflow:
     )
 
     image_4, _ = VHS_SelectEveryNthImage(
-        _id='102',
         select_every_nth=2,
         images=gimmvfi_interpolate.out(0),
     )
 
     vhs_videocombine = VHS_VideoCombine(
-        _id='30',
         frame_rate=24,
         filename_prefix='WanVideo2_2_S2V',
         format=VIDEO_H264_MP4,

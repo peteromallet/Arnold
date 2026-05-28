@@ -38,29 +38,27 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     # Loaders
-    unetloader = UNETLoader(_id='37', unet_name=UNET_NAME)
-    cliploader = CLIPLoader(_id='38', clip_name=CLIP_NAME, type_='wan')
-    vaeloader = VAELoader(_id='39', vae_name=VAE_NAME)
-    clipvisionloader = CLIPVisionLoader(_id='49', clip_name=CLIP_NAME_2)
+    unetloader = UNETLoader(unet_name=UNET_NAME)
+    cliploader = CLIPLoader(clip_name=CLIP_NAME, type_='wan')
+    vaeloader = VAELoader(vae_name=VAE_NAME)
+    clipvisionloader = CLIPVisionLoader(clip_name=CLIP_NAME_2)
 
     # Inputs
-    image, _ = LoadImage(_id='52', image='image_to_video_wan_start_image.png')
+    image, _ = LoadImage(image='image_to_video_wan_start_image.png')
 
     # Conditioning
-    cliptextencode = CLIPTextEncode(_id='6', text=DEFAULT_PROMPT, clip=cliploader)
-    cliptextencode_2 = CLIPTextEncode(_id='7', text=DEFAULT_PROMPT_2, clip=cliploader)
+    cliptextencode = CLIPTextEncode(text=DEFAULT_PROMPT, clip=cliploader)
+    cliptextencode_2 = CLIPTextEncode(text=DEFAULT_PROMPT_2, clip=cliploader)
 
     clipvisionencode = CLIPVisionEncode(
-        _id='51',
         crop='none',
         clip_vision=clipvisionloader,
         image=image,
     )
 
-    modelsamplingsd3 = ModelSamplingSD3(_id='54', shift=8, model=unetloader)
+    modelsamplingsd3 = ModelSamplingSD3(shift=8, model=unetloader)
 
     positive, negative, latent = WanImageToVideo(
-        _id='50',
         widget_0=512,
         widget_1=512,
         widget_2=33,
@@ -74,7 +72,6 @@ def build() -> VibeWorkflow:
 
     # Sampling
     ksampler = KSampler(
-        _id='3',
         seed=DEFAULT_SEED,
         cfg=GUIDE_STRENGTH,
         sampler_name='uni_pc',
@@ -85,11 +82,11 @@ def build() -> VibeWorkflow:
     )
 
     # Decode
-    vaedecode = VAEDecode(_id='8', samples=ksampler, vae=vaeloader)
-    createvideo = CreateVideo(_id='55', fps=DEFAULT_FPS, images=vaedecode)
+    vaedecode = VAEDecode(samples=ksampler, vae=vaeloader)
+    createvideo = CreateVideo(fps=DEFAULT_FPS, images=vaedecode)
 
     # Outputs
-    savevideo = SaveVideo(_id='56', video=createvideo)
+    savevideo = SaveVideo(video=createvideo)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=savevideo, output_type='SaveVideo', name='video', artifact_kind='video', mime_type='video/mp4', expected_cardinality='one', filename_prefix='video/ComfyUI')
 

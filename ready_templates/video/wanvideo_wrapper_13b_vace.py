@@ -8,7 +8,7 @@ from vibecomfy.nodes.core import EmptyImage, GetImageRangeFromBatch, LoadImage, 
 from vibecomfy.nodes.depthanythingv2 import DepthAnything_V2, DownloadAndLoadDepthAnythingV2Model
 from vibecomfy.nodes.kjnodes import AddLabel, GetImageSizeAndCount, ImageConcatMulti, ImagePadKJ, ImageResizeKJv2
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
-from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoDecode, WanVideoExperimentalArgs, WanVideoModelLoader, WanVideoSLG, WanVideoSampler, WanVideoTeaCache, WanVideoTextEncode, WanVideoVACEEncode, WanVideoVACEModelSelect, WanVideoVACEStartToEndFrame, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoBlockSwap, WanVideoDecode, WanVideoExperimentalArgs, WanVideoModelLoader, WanVideoSLG, WanVideoSampler, WanVideoTeaCache, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVACEEncode, WanVideoVACEModelSelect, WanVideoVACEStartToEndFrame, WanVideoVAELoader
 
 
 BLACK = 'black'
@@ -54,7 +54,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='image',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors']},
-    custom_node_packs={'ComfyUI-DepthAnythingV2': {'commit': '553187872eeb1d52e50dc53209fa57e569609a72', 'url': 'https://github.com/kijai/ComfyUI-DepthAnythingV2.git', 'class_schema_sha256': 'f4e181ab42ca179eda161acba5121e999cb54b1dbee0dc087a22bd42af7241ae', 'classes_used': ['DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model'], 'pip_packages': ['opencv-python-headless', 'transformers'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageRangeFromBatch', 'GetImageSizeAndCount', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoDecode', 'WanVideoExperimentalArgs', 'WanVideoModelLoader', 'WanVideoSLG', 'WanVideoSampler', 'WanVideoTextEncode', 'WanVideoVACEEncode', 'WanVideoVACEModelSelect', 'WanVideoVACEStartToEndFrame', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
+    custom_node_packs={'ComfyUI-DepthAnythingV2': {'commit': '553187872eeb1d52e50dc53209fa57e569609a72', 'url': 'https://github.com/kijai/ComfyUI-DepthAnythingV2.git', 'class_schema_sha256': 'f4e181ab42ca179eda161acba5121e999cb54b1dbee0dc087a22bd42af7241ae', 'classes_used': ['DepthAnything_V2', 'DownloadAndLoadDepthAnythingV2Model'], 'pip_packages': ['opencv-python-headless', 'transformers'], 'status': 'discovered'}, 'ComfyUI-KJNodes': {'commit': 'b7646ad70a7daa7aeb919ca542274758d26ba2df', 'url': 'https://github.com/kijai/ComfyUI-KJNodes.git', 'class_schema_sha256': '1beaf129c8fa26175d89a28f9ca10d08b5ac27c8fc9bff920263fcbba17cb691', 'classes_used': ['GetImageRangeFromBatch', 'GetImageSizeAndCount', 'ImageResizeKJv2'], 'pip_packages': ['matplotlib'], 'status': 'discovered'}, 'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoBlockSwap', 'WanVideoDecode', 'WanVideoExperimentalArgs', 'WanVideoModelLoader', 'WanVideoSLG', 'WanVideoSampler', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVACEEncode', 'WanVideoVACEModelSelect', 'WanVideoVACEStartToEndFrame', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
     provenance={'source_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json', 'source_id': 'wan13b_vace', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_vace.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_13b_vace'},
 )
 
@@ -62,106 +62,90 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
-        _id='11',
-        model_name=CLIP_NAME,
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+
+    wanvideoblockswap = WanVideoBlockSwap(
+        blocks_to_swap=0,
+        use_non_blocking=True,
+        vace_blocks_to_swap=15,
     )
 
-    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
-
     wanvideoteacache = WanVideoTeaCache(
-        _id='52',
         rel_l1_thresh=0.10000000000000002,
         start_step=0,
         use_coefficients=TRUE,
     )
 
     # Inputs
-    image, _ = LoadImage(
-        _id='64',
-        image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-0.webp',
-    )
-
-    wanvideoexperimentalargs = WanVideoExperimentalArgs(_id='71', cfg_zero_star=True)
+    image, _ = LoadImage(image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-0.webp')
+    wanvideoexperimentalargs = WanVideoExperimentalArgs(cfg_zero_star=True)
 
     wanvideoslg = WanVideoSLG(
-        _id='72',
         blocks=V_8,
         start_percent=0.30000000000000004,
         end_percent=0.7000000000000002,
     )
 
     image_3, _ = LoadImage(
-        _id='112',
         image='replicate-prediction-5cvynz9d91rgg0cfsvqschdpww-3.webp',
     )
 
     wanvideoteacache_2 = WanVideoTeaCache(
-        _id='147',
         rel_l1_thresh=0.10000000000000002,
         start_step=0,
         use_coefficients=TRUE,
     )
 
     wanvideoslg_2 = WanVideoSLG(
-        _id='149',
         blocks=V_8,
         start_percent=0.30000000000000004,
         end_percent=0.7100000000000002,
     )
 
-    wanvideoexperimentalargs_2 = WanVideoExperimentalArgs(_id='150', cfg_zero_star=True)
-    image_7, _ = LoadImage(_id='169', image='hunhyuanwolf.png')
+    wanvideoexperimentalargs_2 = WanVideoExperimentalArgs(cfg_zero_star=True)
+    image_7, _ = LoadImage(image='hunhyuanwolf.png')
 
     image_8, frame_count, _, _ = VHS_LoadVideo(
-        _id='173',
         video=WOLF_INTERPOLATED_MP4,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': IMAGE},
     )
 
     downloadandloaddepthanythingv2model = DownloadAndLoadDepthAnythingV2Model(
-        _id='175',
         model=DEPTH_ANYTHING_NAME,
     )
 
     wanvideoslg_3 = WanVideoSLG(
-        _id='187',
         blocks=V_8,
         start_percent=0.30000000000000004,
         end_percent=0.7000000000000002,
     )
 
-    wanvideoexperimentalargs_3 = WanVideoExperimentalArgs(_id='188', cfg_zero_star=True)
+    wanvideoexperimentalargs_3 = WanVideoExperimentalArgs(cfg_zero_star=True)
 
     image_10, _, _, _ = VHS_LoadVideo(
-        _id='199',
         video=WOLF_INTERPOLATED_MP4,
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': IMAGE},
     )
 
     wanvideoteacache_3 = WanVideoTeaCache(
-        _id='214',
         rel_l1_thresh=0.10000000000000002,
         start_step=0,
         use_coefficients=TRUE,
     )
 
-    wanvideovacemodelselect = WanVideoVACEModelSelect(
-        _id='224',
-        vace_model=VACE_MODEL_NAME,
-    )
+    wanvideovacemodelselect = WanVideoVACEModelSelect(vace_model=VACE_MODEL_NAME)
 
     wanvideomodelloader = WanVideoModelLoader(
-        _id='22',
         model=MODEL_NAME,
         base_precision='fp16',
         vace_model=wanvideovacemodelselect,
     )
 
     images_2, _ = ImagePadKJ(
-        _id='184',
         bottom=128,
         extra_padding=COLOR,
         pad_mode='255,255,255',
@@ -169,7 +153,6 @@ def build() -> VibeWorkflow:
     )
 
     image_14, _, _, _ = ImageResizeKJv2(
-        _id='226',
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
@@ -177,7 +160,6 @@ def build() -> VibeWorkflow:
     )
 
     image_15, width_8, height_8, _ = ImageResizeKJv2(
-        _id='227',
         width=640,
         height=640,
         upscale_method=LANCZOS,
@@ -188,7 +170,6 @@ def build() -> VibeWorkflow:
     )
 
     image_17, width_10, height_10, _ = ImageResizeKJv2(
-        _id='229',
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
@@ -197,7 +178,6 @@ def build() -> VibeWorkflow:
     )
 
     wanvideotextencode = WanVideoTextEncode(
-        _id='16',
         positive_prompt=DEFAULT_PROMPT,
         negative_prompt=DEFAULT_NEGATIVE,
         model_to_offload=wanvideomodelloader,
@@ -205,7 +185,6 @@ def build() -> VibeWorkflow:
     )
 
     addlabel = AddLabel(
-        _id='133',
         text_x=2,
         text_y=48,
         height=32,
@@ -218,7 +197,6 @@ def build() -> VibeWorkflow:
     )
 
     wanvideotextencode_2 = WanVideoTextEncode(
-        _id='168',
         positive_prompt=DEFAULT_PROMPT_2,
         negative_prompt=DEFAULT_NEGATIVE_2,
         model_to_offload=wanvideomodelloader,
@@ -226,13 +204,11 @@ def build() -> VibeWorkflow:
     )
 
     depthanything_v2 = DepthAnything_V2(
-        _id='174',
         da_model=downloadandloaddepthanythingv2model,
         images=image_17,
     )
 
     wanvideotextencode_3 = WanVideoTextEncode(
-        _id='211',
         positive_prompt=DEFAULT_PROMPT_2,
         negative_prompt=DEFAULT_NEGATIVE_2,
         model_to_offload=wanvideomodelloader,
@@ -240,7 +216,6 @@ def build() -> VibeWorkflow:
     )
 
     images_3, masks_3 = ImagePadKJ(
-        _id='216',
         bottom=128,
         extra_padding=COLOR,
         pad_mode='127,127,127',
@@ -248,7 +223,6 @@ def build() -> VibeWorkflow:
     )
 
     image_16, _, _, _ = ImageResizeKJv2(
-        _id='228',
         upscale_method=LANCZOS,
         keep_proportion=CROP,
         pad_color=V_172_172_172,
@@ -259,7 +233,6 @@ def build() -> VibeWorkflow:
     )
 
     image_18, _, _, _ = ImageResizeKJv2(
-        _id='230',
         upscale_method=LANCZOS,
         keep_proportion=PAD,
         pad_color=V_255_255_255,
@@ -270,7 +243,6 @@ def build() -> VibeWorkflow:
     )
 
     image_19, _, _, _ = ImageResizeKJv2(
-        _id='238',
         upscale_method=LANCZOS,
         keep_proportion=PAD,
         pad_color=V_255_255_255,
@@ -281,7 +253,6 @@ def build() -> VibeWorkflow:
     )
 
     images, masks = WanVideoVACEStartToEndFrame(
-        _id='111',
         num_frames=DEFAULT_FRAMES_2,
         empty_frame_level=0.5000000000000001,
         end_image=image_16,
@@ -289,7 +260,6 @@ def build() -> VibeWorkflow:
     )
 
     addlabel_2 = AddLabel(
-        _id='134',
         text_x=2,
         text_y=48,
         height=32,
@@ -302,7 +272,6 @@ def build() -> VibeWorkflow:
     )
 
     addlabel_3 = AddLabel(
-        _id='156',
         text_x=2,
         text_y=48,
         height=32,
@@ -315,7 +284,6 @@ def build() -> VibeWorkflow:
     )
 
     addlabel_4 = AddLabel(
-        _id='157',
         text_x=2,
         text_y=48,
         height=32,
@@ -329,7 +297,6 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine_3 = VHS_VideoCombine(
-        _id='177',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_VACE_startendframe',
         format=VIDEO_H264_MP4,
@@ -343,7 +310,6 @@ def build() -> VibeWorkflow:
     )
 
     addlabel_5 = AddLabel(
-        _id='202',
         text_x=2,
         text_y=48,
         height=32,
@@ -355,27 +321,21 @@ def build() -> VibeWorkflow:
         image=images_3,
     )
 
-    image_11, width_6, height_6, count_6 = GetImageSizeAndCount(
-        _id='205',
-        image=images_3,
-    )
-
-    image_12, _ = GetImageRangeFromBatch(_id='219', images=images_3)
-    _, mask_5 = GetImageRangeFromBatch(_id='222', masks=masks_3)
+    image_11, width_6, height_6, count_6 = GetImageSizeAndCount(image=images_3)
+    image_12, _ = GetImageRangeFromBatch(images=images_3)
+    _, mask_5 = GetImageRangeFromBatch(masks=masks_3)
 
     images_4, masks_4 = WanVideoVACEStartToEndFrame(
-        _id='231',
         empty_frame_level=0.5000000000000001,
         num_frames=frame_count,
         control_images=depthanything_v2,
         start_image=image_19,
     )
 
-    previewimage_4 = PreviewImage(_id='237', images=image_18)
-    image_2, width, height, count = GetImageSizeAndCount(_id='104', image=images)
+    previewimage_4 = PreviewImage(images=image_18)
+    image_2, width, height, count = GetImageSizeAndCount(image=images)
 
     imageconcatmulti_2 = ImageConcatMulti(
-        _id='136',
         direction=DOWN,
         match_image_size=True,
         unused_3=None,
@@ -383,13 +343,9 @@ def build() -> VibeWorkflow:
         image_2=addlabel_2,
     )
 
-    image_5, width_3, height_3, count_3 = GetImageSizeAndCount(
-        _id='145',
-        image=images_4,
-    )
+    image_5, width_3, height_3, count_3 = GetImageSizeAndCount(image=images_4)
 
     imageconcatmulti_4 = ImageConcatMulti(
-        _id='160',
         direction=DOWN,
         match_image_size=True,
         unused_3=None,
@@ -398,7 +354,6 @@ def build() -> VibeWorkflow:
     )
 
     wanvideovaceencode_3 = WanVideoVACEEncode(
-        _id='209',
         strength=0,
         vace_start_percent=1,
         vace_end_percent=False,
@@ -410,14 +365,13 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    previewimage_2 = PreviewImage(_id='220', images=image_12)
-    previewimage_3 = PreviewImage(_id='232', images=images_4)
-    maskpreview = MaskPreview(_id='233', mask=masks_4)
-    maskpreview_2 = MaskPreview(_id='234', mask=masks)
-    maskpreview_3 = MaskPreview(_id='235', mask=mask_5)
+    previewimage_2 = PreviewImage(images=image_12)
+    previewimage_3 = PreviewImage(images=images_4)
+    maskpreview = MaskPreview(mask=masks_4)
+    maskpreview_2 = MaskPreview(mask=masks)
+    maskpreview_3 = MaskPreview(mask=mask_5)
 
     wanvideovaceencode = WanVideoVACEEncode(
-        _id='56',
         strength=0,
         vace_start_percent=1,
         vace_end_percent=False,
@@ -430,10 +384,9 @@ def build() -> VibeWorkflow:
         vae=wanvideovaeloader,
     )
 
-    previewimage = PreviewImage(_id='113', images=image_2)
+    previewimage = PreviewImage(images=image_2)
 
     wanvideovaceencode_2 = WanVideoVACEEncode(
-        _id='148',
         strength=0,
         vace_start_percent=1,
         vace_end_percent=False,
@@ -447,7 +400,6 @@ def build() -> VibeWorkflow:
     )
 
     samples_3, _ = WanVideoSampler(
-        _id='197',
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -462,7 +414,6 @@ def build() -> VibeWorkflow:
     )
 
     samples, _ = WanVideoSampler(
-        _id='70',
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -477,7 +428,6 @@ def build() -> VibeWorkflow:
     )
 
     samples_2, _ = WanVideoSampler(
-        _id='172',
         steps=20,
         cfg=GUIDE_STRENGTH,
         shift=8.000000000000002,
@@ -490,29 +440,17 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode_2,
     )
 
-    wanvideodecode_3 = WanVideoDecode(
-        _id='196',
-        samples=samples_3,
-        vae=wanvideovaeloader,
-    )
-
-    wanvideodecode = WanVideoDecode(_id='138', samples=samples, vae=wanvideovaeloader)
-
-    wanvideodecode_2 = WanVideoDecode(
-        _id='167',
-        samples=samples_2,
-        vae=wanvideovaeloader,
-    )
-
-    image_9, _, height_5, _ = GetImageSizeAndCount(_id='193', image=wanvideodecode_3)
-    image_4, _, height_2, _ = GetImageSizeAndCount(_id='137', image=wanvideodecode)
-    image_6, _, height_4, _ = GetImageSizeAndCount(_id='159', image=wanvideodecode_2)
-    emptyimage_3 = EmptyImage(_id='191', width=8, height=height_5)
-    emptyimage = EmptyImage(_id='132', width=8, height=height_2)
-    emptyimage_2 = EmptyImage(_id='155', width=8, height=height_4)
+    wanvideodecode_3 = WanVideoDecode(samples=samples_3, vae=wanvideovaeloader)
+    wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
+    wanvideodecode_2 = WanVideoDecode(samples=samples_2, vae=wanvideovaeloader)
+    image_9, _, height_5, _ = GetImageSizeAndCount(image=wanvideodecode_3)
+    image_4, _, height_2, _ = GetImageSizeAndCount(image=wanvideodecode)
+    image_6, _, height_4, _ = GetImageSizeAndCount(image=wanvideodecode_2)
+    emptyimage_3 = EmptyImage(width=8, height=height_5)
+    emptyimage = EmptyImage(width=8, height=height_2)
+    emptyimage_2 = EmptyImage(width=8, height=height_4)
 
     imageconcatmulti_5 = ImageConcatMulti(
-        _id='192',
         inputcount=3,
         direction=LEFT,
         match_image_size=True,
@@ -523,7 +461,6 @@ def build() -> VibeWorkflow:
     )
 
     imageconcatmulti = ImageConcatMulti(
-        _id='135',
         inputcount=3,
         direction=LEFT,
         match_image_size=True,
@@ -534,7 +471,6 @@ def build() -> VibeWorkflow:
     )
 
     imageconcatmulti_3 = ImageConcatMulti(
-        _id='158',
         inputcount=3,
         direction=LEFT,
         match_image_size=True,
@@ -545,7 +481,6 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine_4 = VHS_VideoCombine(
-        _id='213',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_VACE_outpaint',
         format=VIDEO_H264_MP4,
@@ -559,7 +494,6 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine = VHS_VideoCombine(
-        _id='139',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_VACE_startendframe',
         format=VIDEO_H264_MP4,
@@ -573,7 +507,6 @@ def build() -> VibeWorkflow:
     )
 
     vhs_videocombine_2 = VHS_VideoCombine(
-        _id='165',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_VACE_startendframe',
         format=VIDEO_H264_MP4,

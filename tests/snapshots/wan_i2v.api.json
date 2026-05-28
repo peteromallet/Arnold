@@ -77,10 +77,9 @@
   "10": {
     "class_type": "WanImageToVideo",
     "inputs": {
-      "widget_0": 512,
-      "widget_1": 512,
-      "widget_2": 33,
-      "widget_3": 1,
+      "width": 512,
+      "height": 512,
+      "length": 33,
       "positive": [
         "6",
         0
@@ -107,6 +106,7 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": 987948718394761,
+      "steps": 20,
       "cfg": 6,
       "sampler_name": "uni_pc",
       "model": [

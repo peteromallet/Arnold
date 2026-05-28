@@ -1,125 +1,155 @@
 {
-  "7b34ab90:61": {
+  "1": {
     "class_type": "KSamplerSelect",
     "inputs": {
       "sampler_name": "euler"
     }
   },
-  "7b34ab90:62": {
-    "class_type": "Flux2Scheduler",
-    "inputs": {}
-  },
-  "7b34ab90:66": {
-    "class_type": "EmptyFlux2LatentImage",
-    "inputs": {}
-  },
-  "7b34ab90:70": {
+  "2": {
     "class_type": "UNETLoader",
     "inputs": {
       "unet_name": "flux-2-klein-base-9b-fp8.safetensors"
     }
   },
-  "7b34ab90:71": {
+  "3": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_3_8b_fp8mixed.safetensors",
       "type": "flux2"
     }
   },
-  "7b34ab90:72": {
+  "4": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "full_encoder_small_decoder.safetensors"
     }
   },
-  "7b34ab90:73": {
+  "5": {
     "class_type": "RandomNoise",
     "inputs": {
       "noise_seed": 653844576367526
     }
   },
-  "7b34ab90:67": {
-    "class_type": "CLIPTextEncode",
+  "75:68": {
+    "class_type": "PrimitiveInt",
     "inputs": {
-      "text": "",
-      "clip": [
-        "7b34ab90:71",
+      "value": 1024
+    }
+  },
+  "75:69": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 1024
+    }
+  },
+  "6": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "width": [
+        "75:68",
+        0
+      ],
+      "height": [
+        "75:69",
         0
       ]
     }
   },
-  "7b34ab90:74": {
-    "class_type": "CLIPTextEncode",
+  "7": {
+    "class_type": "EmptyFlux2LatentImage",
     "inputs": {
-      "text": "",
-      "clip": [
-        "7b34ab90:71",
+      "width": [
+        "75:68",
+        0
+      ],
+      "height": [
+        "75:69",
         0
       ]
     }
   },
-  "7b34ab90:63": {
+  "8": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "",
+      "clip": [
+        "3",
+        0
+      ]
+    }
+  },
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "",
+      "clip": [
+        "3",
+        0
+      ]
+    }
+  },
+  "10": {
     "class_type": "CFGGuider",
     "inputs": {
       "cfg": 5,
       "model": [
-        "7b34ab90:70",
+        "2",
         0
       ],
       "positive": [
-        "7b34ab90:74",
+        "9",
         0
       ],
       "negative": [
-        "7b34ab90:67",
+        "8",
         0
       ]
     }
   },
-  "7b34ab90:64": {
+  "11": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
       "noise": [
-        "7b34ab90:73",
+        "5",
         0
       ],
       "guider": [
-        "7b34ab90:63",
+        "10",
         0
       ],
       "sampler": [
-        "7b34ab90:61",
+        "1",
         0
       ],
       "sigmas": [
-        "7b34ab90:62",
+        "6",
         0
       ],
       "latent_image": [
-        "7b34ab90:66",
+        "7",
         0
       ]
     }
   },
-  "7b34ab90:65": {
+  "12": {
     "class_type": "VAEDecode",
     "inputs": {
       "samples": [
-        "7b34ab90:64",
+        "11",
         0
       ],
       "vae": [
-        "7b34ab90:72",
+        "4",
         0
       ]
     }
   },
-  "1": {
+  "13": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "Flux2-Klein",
       "images": [
-        "7b34ab90:65",
+        "12",
         0
       ]
     }

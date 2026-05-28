@@ -28,7 +28,6 @@ def build() -> VibeWorkflow:
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
     ailab_qwen3ttscustomvoice = AILab_Qwen3TTSCustomVoice(
-        _id='1',
         instruct='Calm, clear, friendly delivery.',
         language='English',
         model_size='0.6B',
@@ -37,7 +36,6 @@ def build() -> VibeWorkflow:
     )
 
     saveaudiomp3 = SaveAudioMP3(
-        _id='2',
         filename_prefix='audio/qwen3_tts_custom_voice',
         audio=ailab_qwen3ttscustomvoice,
     )

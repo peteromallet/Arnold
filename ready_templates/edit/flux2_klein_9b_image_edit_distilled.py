@@ -34,35 +34,64 @@ def image_edit_flux2_klein_9b_distilled(
     Inner nodes: KSamplerSelect, SamplerCustomAdvanced, VAEDecode, RandomNoise, UNETLoader, CLIPLoader, EmptyFlux2LatentImage, CFGGuider, Flux2Scheduler, GetImageSize, ReferenceLatentx2, ImageScaleToTotalPixels, VAELoader, CLIPTextEncode, ConditioningZeroOut, VAEEncode.
     """
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
+    ksamplerselect = KSamplerSelect(_id='7b34ab90:61', sampler_name='euler')
+    unetloader = UNETLoader(_id='7b34ab90:70', unet_name=unet_name)
+    cliploader = CLIPLoader(_id='7b34ab90:71', type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(_id='7b34ab90:72', vae_name=vae_name)
 
     randomnoise = RandomNoise(
+        _id='7b34ab90:73',
         noise_seed=26416064315367,
         control_after_generate='randomize',
     )
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
+        _id='7b34ab90:80',
         upscale_method='nearest-exact',
         image=image,
     )
 
-    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
-    width, height, _ = GetImageSize(image=imagescaletototalpixels)
-    vaeencode = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-    flux2scheduler = Flux2Scheduler(steps=4, width=width, height=height)
-    emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
-    conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
-    referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
+    cliptextencode = CLIPTextEncode(_id='7b34ab90:74', text=prompt, clip=cliploader)
+    width, height, _ = GetImageSize(_id='7b34ab90:99', image=imagescaletototalpixels)
+
+    vaeencode = VAEEncode(
+        _id='7b34ab90:124',
+        pixels=imagescaletototalpixels,
+        vae=vaeloader,
+    )
+
+    flux2scheduler = Flux2Scheduler(
+        _id='7b34ab90:62',
+        steps=4,
+        width=width,
+        height=height,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='7b34ab90:66',
+        width=width,
+        height=height,
+    )
+
+    conditioningzeroout = ConditioningZeroOut(
+        _id='7b34ab90:82',
+        conditioning=cliptextencode,
+    )
+
+    referencelatent_2 = ReferenceLatent(
+        _id='7b34ab90:125',
+        conditioning=cliptextencode,
+        latent=vaeencode,
+    )
 
     referencelatent = ReferenceLatent(
+        _id='7b34ab90:123',
         conditioning=conditioningzeroout,
         latent=vaeencode,
     )
 
     cfgguider = CFGGuider(
+        _id='7b34ab90:63',
         cfg=1,
         model=unetloader,
         negative=referencelatent,
@@ -70,6 +99,7 @@ def image_edit_flux2_klein_9b_distilled(
     )
 
     output, _ = SamplerCustomAdvanced(
+        _id='7b34ab90:64',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -77,7 +107,7 @@ def image_edit_flux2_klein_9b_distilled(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(_id='7b34ab90:65', samples=output, vae=vaeloader)
 
     return vaedecode
 
@@ -99,51 +129,88 @@ def image_edit_flux2_klein_9b_distilled_dual(
     """
 
     imagescaletototalpixels = ImageScaleToTotalPixels(
+        _id='65c22b29:85',
         upscale_method='lanczos',
         image=reference_image2,
     )
 
-    ksamplerselect = KSamplerSelect(sampler_name='euler')
+    ksamplerselect = KSamplerSelect(_id='65c22b29:101', sampler_name='euler')
 
     randomnoise = RandomNoise(
+        _id='65c22b29:106',
         noise_seed=583453753589969,
         control_after_generate='randomize',
     )
 
-    unetloader = UNETLoader(unet_name=unet_name)
-    cliploader = CLIPLoader(type_='flux2', clip_name=clip_name)
-    vaeloader = VAELoader(vae_name=vae_name)
+    unetloader = UNETLoader(_id='65c22b29:107', unet_name=unet_name)
+    cliploader = CLIPLoader(_id='65c22b29:108', type_='flux2', clip_name=clip_name)
+    vaeloader = VAELoader(_id='65c22b29:110', vae_name=vae_name)
 
     imagescaletototalpixels_2 = ImageScaleToTotalPixels(
+        _id='65c22b29:111',
         upscale_method='lanczos',
         image=reference_image1,
     )
 
-    cliptextencode = CLIPTextEncode(text=prompt, clip=cliploader)
-    width, height, _ = GetImageSize(image=imagescaletototalpixels_2)
-    vaeencode = VAEEncode(pixels=imagescaletototalpixels_2, vae=vaeloader)
-    vaeencode_2 = VAEEncode(pixels=imagescaletototalpixels, vae=vaeloader)
-    conditioningzeroout = ConditioningZeroOut(conditioning=cliptextencode)
-    flux2scheduler = Flux2Scheduler(steps=4, width=width, height=height)
-    emptyflux2latentimage = EmptyFlux2LatentImage(width=width, height=height)
-    referencelatent_2 = ReferenceLatent(conditioning=cliptextencode, latent=vaeencode)
+    cliptextencode = CLIPTextEncode(_id='65c22b29:109', text=prompt, clip=cliploader)
+    width, height, _ = GetImageSize(_id='65c22b29:114', image=imagescaletototalpixels_2)
+
+    vaeencode = VAEEncode(
+        _id='65c22b29:127',
+        pixels=imagescaletototalpixels_2,
+        vae=vaeloader,
+    )
+
+    vaeencode_2 = VAEEncode(
+        _id='65c22b29:130',
+        pixels=imagescaletototalpixels,
+        vae=vaeloader,
+    )
+
+    conditioningzeroout = ConditioningZeroOut(
+        _id='65c22b29:86',
+        conditioning=cliptextencode,
+    )
+
+    flux2scheduler = Flux2Scheduler(
+        _id='65c22b29:102',
+        steps=4,
+        width=width,
+        height=height,
+    )
+
+    emptyflux2latentimage = EmptyFlux2LatentImage(
+        _id='65c22b29:113',
+        width=width,
+        height=height,
+    )
+
+    referencelatent_2 = ReferenceLatent(
+        _id='65c22b29:128',
+        conditioning=cliptextencode,
+        latent=vaeencode,
+    )
 
     referencelatent = ReferenceLatent(
+        _id='65c22b29:126',
         conditioning=conditioningzeroout,
         latent=vaeencode,
     )
 
     referencelatent_4 = ReferenceLatent(
+        _id='65c22b29:131',
         conditioning=referencelatent_2,
         latent=vaeencode_2,
     )
 
     referencelatent_3 = ReferenceLatent(
+        _id='65c22b29:129',
         conditioning=referencelatent,
         latent=vaeencode_2,
     )
 
     cfgguider = CFGGuider(
+        _id='65c22b29:103',
         cfg=1,
         model=unetloader,
         negative=referencelatent_3,
@@ -151,6 +218,7 @@ def image_edit_flux2_klein_9b_distilled_dual(
     )
 
     output, _ = SamplerCustomAdvanced(
+        _id='65c22b29:104',
         guider=cfgguider,
         latent_image=emptyflux2latentimage,
         noise=randomnoise,
@@ -158,7 +226,7 @@ def image_edit_flux2_klein_9b_distilled_dual(
         sigmas=flux2scheduler,
     )
 
-    vaedecode = VAEDecode(samples=output, vae=vaeloader)
+    vaedecode = VAEDecode(_id='65c22b29:105', samples=output, vae=vaeloader)
 
     return vaedecode
 
@@ -166,8 +234,8 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    image, _ = LoadImage(_id='76', image='bold_outfit_woman.jpeg')
-    image_2, _ = LoadImage(_id='121', image='handbag_white.png')
+    image, _ = LoadImage(image='bold_outfit_woman.jpeg')
+    image_2, _ = LoadImage(image='handbag_white.png')
     edited = image_edit_flux2_klein_9b_distilled(
         unet_name='flux-2-klein-9b-fp8.safetensors',
         clip_name='qwen_3_8b_fp8mixed.safetensors',
@@ -183,8 +251,8 @@ def build() -> VibeWorkflow:
         reference_image1=image,
         reference_image2=image_2,
     )
-    saveimage = SaveImage(_id='9', filename_prefix='Flux2-Klein', images=edited)
-    saveimage_2 = SaveImage(_id='122', images=edited_dual)
+    saveimage = SaveImage(filename_prefix='Flux2-Klein', images=edited)
+    saveimage_2 = SaveImage(images=edited_dual)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='Flux2-Klein')
 

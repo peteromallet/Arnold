@@ -7,7 +7,7 @@ from vibecomfy.templates import InputSpec, ReadyMetadata, new_workflow
 from vibecomfy.nodes.core import ImageBlur
 from vibecomfy.nodes.kjnodes import ImageConcatMulti
 from vibecomfy.nodes.videohelpersuite import VHS_LoadVideo, VHS_VideoCombine
-from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoControlEmbeds, WanVideoDecode, WanVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTeaCache, WanVideoTextEncode, WanVideoVAELoader
+from vibecomfy.nodes.wanvideowrapper import LoadWanVideoT5TextEncoder, WanVideoControlEmbeds, WanVideoDecode, WanVideoEncode, WanVideoLoraSelect, WanVideoModelLoader, WanVideoSampler, WanVideoTeaCache, WanVideoTextEncode, WanVideoTorchCompileSettings, WanVideoVAELoader
 
 
 CLIP_NAME = 'umt5-xxl-enc-bf16.safetensors'
@@ -25,7 +25,7 @@ READY_METADATA = ReadyMetadata.build(
     capability='video',
     inputs=PUBLIC_INPUT_METADATA,
     requirements={'models': ['umt5-xxl-enc-bf16.safetensors', 'wanvideo/Wan2_1_VAE_bf16.safetensors']},
-    custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoControlEmbeds', 'WanVideoDecode', 'WanVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEncode', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
+    custom_node_packs={'ComfyUI-VideoHelperSuite': {'commit': '4ee72c065db22c9d96c2427954dc69e7b908444b', 'url': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git', 'class_schema_sha256': '8391e679554eecd5d324a3e34a713ff240e619e3a07476587845ba18c9fae310', 'classes_used': ['VHS_LoadVideo', 'VHS_VideoCombine'], 'pip_packages': [], 'status': 'discovered'}, 'ComfyUI-WanVideoWrapper': {'commit': 'df8f3e49daaad117cf3090cc916c83f3d001494c', 'url': 'https://github.com/kijai/ComfyUI-WanVideoWrapper.git', 'class_schema_sha256': '80187858cc6ec371c9860fd9ca5fcf5174324d75782046657e252492512d115f', 'classes_used': ['LoadWanVideoT5TextEncoder', 'WanVideoControlEmbeds', 'WanVideoDecode', 'WanVideoEncode', 'WanVideoLoraSelect', 'WanVideoModelLoader', 'WanVideoSampler', 'WanVideoTextEncode', 'WanVideoTorchCompileSettings', 'WanVideoVAELoader'], 'pip_packages': ['onnx', 'opencv-python-headless'], 'status': 'discovered'}},
     provenance={'source_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json', 'source_id': 'wan13b_control_lora', 'source_type': 'api', 'source_workflow_path': 'workflow_corpus/custom_nodes/wanvideo_wrapper/kijai/wan13b_control_lora.json', 'output_mode': 'ready_template', 'ready_id': 'video/wanvideo_wrapper_13b_control_lora'},
 )
 
@@ -33,51 +33,35 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(
-        _id='11',
-        model_name=CLIP_NAME,
-    )
-
-    wanvideovaeloader = WanVideoVAELoader(_id='38', model_name=VAE_NAME)
-
-    wanvideoteacache = WanVideoTeaCache(
-        _id='52',
-        rel_l1_thresh=0.1,
-        use_coefficients='true',
-    )
+    loadwanvideot5textencoder = LoadWanVideoT5TextEncoder(model_name=CLIP_NAME)
+    wanvideotorchcompilesettings = WanVideoTorchCompileSettings()
+    wanvideovaeloader = WanVideoVAELoader(model_name=VAE_NAME)
+    wanvideoteacache = WanVideoTeaCache(rel_l1_thresh=0.1, use_coefficients='true')
+    wanvideotorchcompilesettings_2 = WanVideoTorchCompileSettings()
 
     image, _, _, _ = VHS_LoadVideo(
-        _id='97',
         video='wolf_interpolated.mp4',
         videopreview={'hidden': False, 'paused': False, 'params': {'filename': 'wolf_interpolated.mp4', 'type': 'input', 'format': 'video/mp4', 'force_rate': 0, 'custom_width': 0, 'custom_height': 0, 'frame_load_cap': 0, 'skip_first_frames': 0, 'select_every_nth': 1}},
         **{'choose video to upload': 'image'},
     )
 
-    wanvideoloraselect = WanVideoLoraSelect(_id='98', lora=LORA_NAME)
+    wanvideoloraselect = WanVideoLoraSelect(lora=LORA_NAME)
 
     wanvideotextencode = WanVideoTextEncode(
-        _id='16',
         positive_prompt='video of a wolf',
         negative_prompt=DEFAULT_NEGATIVE,
         t5=loadwanvideot5textencoder,
     )
 
     wanvideomodelloader = WanVideoModelLoader(
-        _id='22',
         model=MODEL_NAME,
         base_precision='fp16',
         lora=wanvideoloraselect,
     )
 
-    imageblur = ImageBlur(
-        _id='104',
-        widget_0=4,
-        widget_1=1,
-        image=image,
-    )
+    imageblur = ImageBlur(widget_0=4, widget_1=1, image=image)
 
     wanvideoencode = WanVideoEncode(
-        _id='95',
         enable_vae_tiling=272,
         tile_x=144,
         tile_y=128,
@@ -88,13 +72,11 @@ def build() -> VibeWorkflow:
     )
 
     wanvideocontrolembeds = WanVideoControlEmbeds(
-        _id='96',
         end_percent=0.7,
         latents=wanvideoencode,
     )
 
     samples, _ = WanVideoSampler(
-        _id='27',
         seed=0,
         batched_cfg='',
         cache_args=wanvideoteacache,
@@ -103,10 +85,9 @@ def build() -> VibeWorkflow:
         text_embeds=wanvideotextencode,
     )
 
-    wanvideodecode = WanVideoDecode(_id='28', samples=samples, vae=wanvideovaeloader)
+    wanvideodecode = WanVideoDecode(samples=samples, vae=wanvideovaeloader)
 
     imageconcatmulti = ImageConcatMulti(
-        _id='103',
         unused_3=None,
         image_1=imageblur,
         image_2=wanvideodecode,
@@ -114,7 +95,6 @@ def build() -> VibeWorkflow:
 
     # Outputs
     vhs_videocombine = VHS_VideoCombine(
-        _id='30',
         frame_rate=16,
         filename_prefix='WanVideoWrapper_I2V',
         format='video/h264-mp4',

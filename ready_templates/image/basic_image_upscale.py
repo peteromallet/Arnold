@@ -23,16 +23,9 @@ def build() -> VibeWorkflow:
     """Build the workflow (auto-generated)."""
     wf = new_workflow(READY_METADATA, source_path=__file__)
 
-    image, _ = LoadImage(_id='1', image='image_upscale_input.png')
-
-    imagescaleby = ImageScaleBy(
-        _id='2',
-        upscale_method='lanczos',
-        scale_by=2.0,
-        image=image,
-    )
-
-    saveimage = SaveImage(_id='3', filename_prefix='image-upscale', images=imagescaleby)
+    image, _ = LoadImage(image='image_upscale_input.png')
+    imagescaleby = ImageScaleBy(upscale_method='lanczos', scale_by=2.0, image=image)
+    saveimage = SaveImage(filename_prefix='image-upscale', images=imagescaleby)
 
     return wf.finalize(PUBLIC_INPUT_METADATA, output_node=saveimage, output_type='SaveImage', name='image', artifact_kind='image', mime_type='image/png', expected_cardinality='one', filename_prefix='image-upscale')
 

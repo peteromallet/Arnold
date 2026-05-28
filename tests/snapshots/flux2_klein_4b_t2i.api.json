@@ -1,249 +1,164 @@
 {
-  "7b34ab90:61": {
+  "1": {
     "class_type": "KSamplerSelect",
     "inputs": {
       "sampler_name": "euler"
     }
   },
-  "7b34ab90:62": {
-    "class_type": "Flux2Scheduler",
-    "inputs": {}
-  },
-  "7b34ab90:66": {
-    "class_type": "EmptyFlux2LatentImage",
-    "inputs": {}
-  },
-  "7b34ab90:70": {
+  "2": {
     "class_type": "UNETLoader",
     "inputs": {
       "unet_name": "flux-2-klein-base-4b.safetensors"
     }
   },
-  "7b34ab90:71": {
+  "3": {
     "class_type": "CLIPLoader",
     "inputs": {
       "clip_name": "qwen_3_4b.safetensors",
       "type": "flux2"
     }
   },
-  "7b34ab90:72": {
+  "4": {
     "class_type": "VAELoader",
     "inputs": {
       "vae_name": "flux2-vae.safetensors"
     }
   },
-  "7b34ab90:73": {
+  "5": {
     "class_type": "RandomNoise",
-    "inputs": {}
-  },
-  "7b34ab90:67": {
-    "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "",
-      "clip": [
-        "7b34ab90:71",
+      "noise_seed": 0
+    }
+  },
+  "6": {
+    "class_type": "PrimitiveStringMultiline",
+    "inputs": {
+      "value": "A hedgehog wearing a tiny party hat surrounded by confetti, early digital camera style, slight noise, flash photography, candid moment, 2000s digicam aesthetic, festive birthday celebration atmosphere\n"
+    }
+  },
+  "75:68": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 1024
+    }
+  },
+  "75:69": {
+    "class_type": "PrimitiveInt",
+    "inputs": {
+      "value": 1024
+    }
+  },
+  "7": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "width": [
+        "75:68",
+        0
+      ],
+      "height": [
+        "75:69",
         0
       ]
     }
   },
-  "7b34ab90:74": {
-    "class_type": "CLIPTextEncode",
+  "8": {
+    "class_type": "EmptyFlux2LatentImage",
     "inputs": {
-      "text": "",
-      "clip": [
-        "7b34ab90:71",
+      "width": [
+        "75:68",
+        0
+      ],
+      "height": [
+        "75:69",
         0
       ]
     }
   },
-  "7b34ab90:63": {
+  "9": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "",
+      "clip": [
+        "3",
+        0
+      ]
+    }
+  },
+  "10": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": [
+        "6",
+        0
+      ],
+      "clip": [
+        "3",
+        0
+      ]
+    }
+  },
+  "11": {
     "class_type": "CFGGuider",
     "inputs": {
       "cfg": 5,
       "model": [
-        "7b34ab90:70",
+        "2",
         0
       ],
       "positive": [
-        "7b34ab90:74",
+        "10",
         0
       ],
       "negative": [
-        "7b34ab90:67",
+        "9",
         0
       ]
     }
   },
-  "7b34ab90:64": {
+  "12": {
     "class_type": "SamplerCustomAdvanced",
     "inputs": {
       "noise": [
-        "7b34ab90:73",
+        "5",
         0
       ],
       "guider": [
-        "7b34ab90:63",
+        "11",
         0
       ],
       "sampler": [
-        "7b34ab90:61",
+        "1",
         0
       ],
       "sigmas": [
-        "7b34ab90:62",
+        "7",
         0
       ],
       "latent_image": [
-        "7b34ab90:66",
+        "8",
         0
       ]
     }
   },
-  "7b34ab90:65": {
+  "13": {
     "class_type": "VAEDecode",
     "inputs": {
       "samples": [
-        "7b34ab90:64",
+        "12",
         0
       ],
       "vae": [
-        "7b34ab90:72",
+        "4",
         0
       ]
     }
   },
-  "a67caa28:61": {
-    "class_type": "KSamplerSelect",
-    "inputs": {
-      "sampler_name": "euler"
-    }
-  },
-  "a67caa28:62": {
-    "class_type": "Flux2Scheduler",
-    "inputs": {
-      "steps": 4
-    }
-  },
-  "a67caa28:66": {
-    "class_type": "EmptyFlux2LatentImage",
-    "inputs": {}
-  },
-  "a67caa28:70": {
-    "class_type": "UNETLoader",
-    "inputs": {
-      "unet_name": "flux-2-klein-4b.safetensors"
-    }
-  },
-  "a67caa28:71": {
-    "class_type": "CLIPLoader",
-    "inputs": {
-      "clip_name": "qwen_3_4b.safetensors",
-      "type": "flux2"
-    }
-  },
-  "a67caa28:72": {
-    "class_type": "VAELoader",
-    "inputs": {
-      "vae_name": "flux2-vae.safetensors"
-    }
-  },
-  "a67caa28:73": {
-    "class_type": "RandomNoise",
-    "inputs": {
-      "noise_seed": 432262096973490
-    }
-  },
-  "a67caa28:74": {
-    "class_type": "CLIPTextEncode",
-    "inputs": {
-      "text": "",
-      "clip": [
-        "a67caa28:71",
-        0
-      ]
-    }
-  },
-  "a67caa28:76": {
-    "class_type": "ConditioningZeroOut",
-    "inputs": {
-      "conditioning": [
-        "a67caa28:74",
-        0
-      ]
-    }
-  },
-  "a67caa28:63": {
-    "class_type": "CFGGuider",
-    "inputs": {
-      "cfg": 1,
-      "model": [
-        "a67caa28:70",
-        0
-      ],
-      "positive": [
-        "a67caa28:74",
-        0
-      ],
-      "negative": [
-        "a67caa28:76",
-        0
-      ]
-    }
-  },
-  "a67caa28:64": {
-    "class_type": "SamplerCustomAdvanced",
-    "inputs": {
-      "noise": [
-        "a67caa28:73",
-        0
-      ],
-      "guider": [
-        "a67caa28:63",
-        0
-      ],
-      "sampler": [
-        "a67caa28:61",
-        0
-      ],
-      "sigmas": [
-        "a67caa28:62",
-        0
-      ],
-      "latent_image": [
-        "a67caa28:66",
-        0
-      ]
-    }
-  },
-  "a67caa28:65": {
-    "class_type": "VAEDecode",
-    "inputs": {
-      "samples": [
-        "a67caa28:64",
-        0
-      ],
-      "vae": [
-        "a67caa28:72",
-        0
-      ]
-    }
-  },
-  "1": {
+  "14": {
     "class_type": "SaveImage",
     "inputs": {
       "filename_prefix": "Flux2-Klein",
       "images": [
-        "7b34ab90:65",
-        0
-      ]
-    }
-  },
-  "2": {
-    "class_type": "SaveImage",
-    "inputs": {
-      "filename_prefix": "Flux2-Klein",
-      "images": [
-        "a67caa28:65",
+        "13",
         0
       ]
     }
