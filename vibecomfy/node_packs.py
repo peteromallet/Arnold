@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
@@ -417,15 +418,48 @@ def _known_node_packs(lockfile_path: Path = Path("custom_nodes.lock")) -> tuple[
     return tuple(sorted(by_name.values(), key=lambda pack: pack.name.lower()))
 
 
-KNOWN_NODE_PACKS: tuple[CustomNodePack, ...] = _known_node_packs()
+def _lockfile_fingerprint(lockfile_path: Path) -> tuple[str, bool, int, int]:
+    resolved = lockfile_path.expanduser().resolve(strict=False)
+    try:
+        stat = resolved.stat()
+    except OSError:
+        return (str(resolved), False, 0, 0)
+    return (str(resolved), True, stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=16)
+def _cached_known_node_packs(
+    resolved_lockfile_path: str,
+    exists: bool,
+    mtime_ns: int,
+    size: int,
+) -> tuple[CustomNodePack, ...]:
+    del exists, mtime_ns, size
+    return _known_node_packs(Path(resolved_lockfile_path))
+
+
+def get_known_node_packs(lockfile_path: Path = Path("custom_nodes.lock")) -> tuple[CustomNodePack, ...]:
+    """Return known custom-node packs with lockfile-aware in-process caching.
+
+    ``custom_nodes.lock`` changes are reflected in the same interpreter when the
+    resolved file path, existence, ``mtime_ns``, or size changes. Edits to this
+    module's static pack seed list still require a process restart because that
+    source is imported only once per interpreter.
+    """
+    return _cached_known_node_packs(*_lockfile_fingerprint(lockfile_path))
+
+
+def clear_known_node_packs_cache() -> None:
+    """Clear the lazy node-pack catalog cache for tests and diagnostics."""
+    _cached_known_node_packs.cache_clear()
 
 
 def resolve_node_packs(class_types: set[str]) -> list[CustomNodePack]:
-    packs = [pack for pack in _known_node_packs() if class_types & pack.classes]
+    packs = [pack for pack in get_known_node_packs() if class_types & pack.classes]
     return sorted(packs, key=lambda pack: pack.name.lower())
 
 
 def unresolved_class_types(class_types: set[str]) -> list[str]:
-    packs = _known_node_packs()
+    packs = get_known_node_packs()
     covered = set().union(*(pack.classes for pack in packs)) if packs else set()
     return sorted(class_types - covered)
