@@ -254,6 +254,158 @@ def _shannon_random_handshake_delay_seconds() -> float:
 
 
 # ---------------------------------------------------------------------------
+# Session-continuity strategy
+# ---------------------------------------------------------------------------
+#
+# Shannon can reload a Claude conversation by uuid via the Claude CLI's on-disk
+# session store: the deterministic per-(plan,step) tmux pane is torn down and
+# recreated on every run (see run_shannon_step), so continuity rides on
+# ``--resume <id>`` reloading the persisted session, not on pane liveness.
+#
+# Policy: NEVER plain-resume a session. Carrying the full prior conversation
+# forward clouds the next turn's context (and megaplan re-sends everything a
+# phase needs from disk on every call, so the old in-session history is dead
+# weight). So whenever a session COULD be reused we shed its context instead:
+#
+#   clear    resume, inject ``/clear`` first — wipe context (Claude rotates to a
+#            fresh session id, which the work turn then resumes). The common case.
+#   compact  resume, inject ``/compact`` first — keep a trimmed summary instead
+#            of a full wipe. The occasional case.
+#   new      no prior session (first use) or an explicit --refresh → fresh session.
+#
+# ``resume`` survives only as the legacy path when the strategy is disabled.
+# The clear/compact split is env-tunable; clear dominates by default.
+
+_SESSION_STRATEGIES = ("resume", "compact", "clear", "new")
+
+
+def _shannon_session_roulette_enabled() -> bool:
+    """Whether to apply the shed-context session strategy (clear/compact on reuse).
+
+    Default on. Set ``MEGAPLAN_SHANNON_SESSION_ROULETTE=0`` to restore the legacy
+    deterministic behavior (execute plain-resumes when it can; every other phase
+    always starts fresh).
+    """
+    configured = _env_truthy("MEGAPLAN_SHANNON_SESSION_ROULETTE")
+    return True if configured is None else configured
+
+
+def _session_strategy_probability(env_name: str, default: float) -> float:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return default
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except ValueError:
+        return default
+
+
+def _select_session_strategy(
+    step: str, *, has_session: bool, explicit_fresh: bool, slash_supported: bool = True
+) -> str:
+    """Pick a session strategy for this Shannon run.
+
+    Returns one of :data:`_SESSION_STRATEGIES`. With the strategy enabled we
+    never plain-``resume`` (full prior context clouds the turn): a reusable
+    session is always shed — ``clear`` most of the time, ``compact`` occasionally
+    (``MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY``, default 0.25). ``new`` is
+    used only when there is no prior session or the caller forced a refresh.
+
+    ``slash_supported`` reflects whether the installed shannon can actually
+    complete a ``/clear``/``/compact`` turn (the patch is present). When it can't
+    — a different shannon version, a read-only package dir, or auto-patch off on
+    another user's machine — keep the SAME policy (never carry stale context) but
+    switch the MECHANISM to a fresh ``new`` session: it sheds context just as
+    cleanly, with no op turn that would otherwise burn the op timeout.
+    """
+    if not has_session:
+        return "new"
+    if not _shannon_session_roulette_enabled():
+        # Legacy: only execute resumed, and only when not explicitly refreshed.
+        return "resume" if (step == "execute" and not explicit_fresh) else "new"
+    if explicit_fresh:
+        # Honor an explicit refresh. Only execute carries a real refresh signal;
+        # a non-execute phase's blanket fresh is policy, not user intent, so the
+        # caller passes explicit_fresh=False for those and the roll proceeds.
+        return "new"
+    if not slash_supported:
+        # No working /clear or /compact — shed context the safe way: fresh session.
+        return "new"
+    # Reuse path: shed context every time — clear most of the time, compact some.
+    compact_p = _session_strategy_probability(
+        "MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", 0.25
+    )
+    return "compact" if random.random() < compact_p else "clear"
+
+
+def _shannon_context_op_timeout_seconds() -> int:
+    """Bounded timeout for an injected ``/compact`` or ``/clear`` turn.
+
+    Compaction/clear turns may not emit a normal assistant reply, so they run
+    under a short cap (best-effort) rather than the full execute budget; on
+    timeout the run silently proceeds with a plain resume. Override via
+    ``MEGAPLAN_SHANNON_CONTEXT_OP_TIMEOUT_SECONDS``.
+    """
+    raw = os.getenv("MEGAPLAN_SHANNON_CONTEXT_OP_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return 180
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 180
+
+
+def _shannon_context_op_delay_seconds() -> float:
+    """Randomized human-like pause before a ``/compact`` or ``/clear`` turn fires.
+
+    A context op shouldn't trigger the instant the strategy is rolled — a short
+    random jitter makes the pacing less mechanical (so a resumed session isn't
+    cleared the moment it's picked up). Range is tunable via
+    ``MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MIN_SECONDS`` /
+    ``MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS`` (defaults 1.0..15.0,
+    matching the readiness-handshake jitter). Set MAX to 0 to disable.
+    """
+    def _read(name: str, default: float) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            return default
+
+    low = _read("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MIN_SECONDS", 1.0)
+    high = _read("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", 15.0)
+    if high <= 0:
+        return 0.0
+    if low > high:
+        low = high
+    # Tenth-second granularity, mirroring _shannon_random_handshake_delay_seconds.
+    return random.randrange(int(low * 10), int(high * 10) + 1) / 10
+
+
+def _shannon_paste_first_turn_enabled() -> bool:
+    """Deliver the real phase prompt as a pasted first turn, not an argv launcher.
+
+    When on (and the Shannon paste-first-turn patch is present), the main turn's
+    full prompt is sent over stdin (stream-json) and Shannon launches Claude bare
+    then pastes it as turn 1 — so Claude receives the actual task instead of a
+    "read this file and follow it" pointer, with no argv size limit. Non-root
+    interactive path only.
+
+    EXPERIMENTAL, default OFF. The bare-launch path is timing-sensitive: Shannon's
+    waitForPrompt can fire on Claude's welcome banner before the input box is
+    ready, racing the turn-1 paste (mitigated here by a bootstrap-enter nudge, but
+    not yet bulletproof across machine speeds). Keep opt-in until waitForPrompt is
+    hardened. The caller additionally gates on the patch being present
+    (``_shannon_supports_paste_first_turn``) so enabling it on an unpatched
+    shannon safely falls back to the argv launcher. Set
+    ``MEGAPLAN_SHANNON_PASTE_FIRST_TURN=1`` to enable.
+    """
+    return _env_truthy("MEGAPLAN_SHANNON_PASTE_FIRST_TURN") is True
+
+
+# ---------------------------------------------------------------------------
 # Prompt shaping
 # ---------------------------------------------------------------------------
 
@@ -287,11 +439,10 @@ def _append_json_output_contract(prompt: str, *, step: str, schema_text: str) ->
     return (
         prompt.rstrip()
         + "\n\n"
-        + "SHANNON STRUCTURED OUTPUT CONTRACT:\n"
-        + f"- This megaplan phase is `{step}`.\n"
-        + "- Your final answer MUST be exactly one valid JSON object and nothing else.\n"
+        + "Output format:\n"
+        + "- Your final answer must be exactly one valid JSON object and nothing else.\n"
         + "- Do not wrap the JSON in markdown fences. Do not include prose before or after it.\n"
-        + "- The JSON object MUST conform to this schema. If a field is markdown, put the markdown as a JSON string value.\n"
+        + "- The JSON object must conform to this schema. If a field is markdown, put the markdown as a JSON string value.\n"
         + schema_text
         + "\n"
         + extra_contract
@@ -331,6 +482,46 @@ def _shannon_package_entrypoint() -> Path | None:
     bin_path = Path(executable).resolve()
     candidate = bin_path.parent.parent / "index.ts"
     return candidate if candidate.is_file() else None
+
+
+def _shannon_entrypoint_contains(marker: str) -> bool:
+    """Whether the installed shannon entrypoint carries a given megaplan patch.
+
+    The megaplan Shannon patches are applied in-place to whatever ``@dexh/shannon``
+    is on PATH. On another user's machine that copy may be a different version
+    (anchors miss), live in a read-only/system dir (cannot be written), or have
+    auto-patch disabled — in any of which the patch is simply absent. Features
+    that REQUIRE a patch must detect this and degrade safely rather than assume
+    the patch landed. Best-effort: any read failure reports "not present".
+    """
+    entrypoint = _shannon_package_entrypoint()
+    if entrypoint is None:
+        return False
+    try:
+        return marker in entrypoint.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
+def _shannon_supports_paste_first_turn() -> bool:
+    # Marker spliced by the paste-first-turn patch (see
+    # _ensure_shannon_parent_timeout_control). Without it, sending the prompt via
+    # stdin/no-``-p`` would make an unpatched shannon argv-launch turn 1 and hit
+    # ARG_MAX, so callers fall back to the argv launcher.
+    return _shannon_entrypoint_contains("let launchedWithPrompt = !(")
+
+
+def _shannon_supports_slash_completion() -> bool:
+    # Marker spliced by the slash-command completion patch. Without it, a
+    # ``/compact``/``/clear`` turn cannot be detected as complete and burns the op
+    # timeout, so callers shed context via a fresh session ("new") instead.
+    return _shannon_entrypoint_contains("function megaplanSlashCompletionRow(")
+
+
+# Version of the megaplan helper block. Bump when any helper body changes so an
+# already-patched install replaces the stale block (see the sentinel-replace
+# logic in _ensure_shannon_parent_timeout_control) instead of keeping the old one.
+_SHANNON_HELPERS_VERSION = "v2"
 
 
 def _ensure_shannon_parent_timeout_control() -> None:
@@ -545,15 +736,214 @@ async function maybeSendStartupEnterKeys(tmuxSession: string) {
             entrypoint,
         )
 
+    # --- megaplan: slash-command turn completion (/compact, /clear) ---------
+    # Stock Shannon both discovers a session (rowContainsPromptAfter) and
+    # detects a turn's completion (assistantReplyFromRows) by an EXACT
+    # prompt-echo match: row.message.content === prompt. A slash command is
+    # recorded in the transcript as "<command-name>/compact</command-name>…",
+    # never the bare "/compact", so both gates miss it and the turn burns the
+    # full turn timeout before exiting non-zero — even though the command ran.
+    # Teach both gates to recognise a slash-command turn, and complete it on the
+    # real on-disk markers (verified against Claude Code v2.1.x transcripts):
+    #   /compact done -> a row with subtype "compact_boundary" (or isCompactSummary
+    #                    true, or a <local-command-stdout>/"Compacted"/"Not enough
+    #                    messages to compact" line for the no-op case).
+    #   /clear  done -> the "<command-name>/clear" row, which Claude writes into a
+    #                    freshly-ROTATED session file; discovery lands on that new
+    #                    file so Shannon emits the new session_id (the work turn
+    #                    must resume THAT, not the cleared id).
+    slash_helpers = (
+        f"// >>> megaplan-shannon-helpers {_SHANNON_HELPERS_VERSION} >>>\n"
+    ) + r'''
+function megaplanSlashCommand(prompt) {
+  if (typeof prompt !== "string") return undefined;
+  const trimmed = prompt.trimStart();
+  if (!trimmed.startsWith("/")) return undefined;
+  return trimmed.trim().split(/\s+/)[0];
+}
+
+function megaplanSlashPromptMatches(prompt, content) {
+  const cmd = megaplanSlashCommand(prompt);
+  if (!cmd || typeof content !== "string") return false;
+  return content.includes("<command-name>" + cmd);
+}
+
+function megaplanRowText(row) {
+  const top = typeof row.content === "string" ? row.content : "";
+  const msg = typeof row.message?.content === "string" ? row.message.content : "";
+  return top + "\n" + msg;
+}
+
+function megaplanSlashSynthReply(cmd, sessionId, row) {
+  const sid = (row && (row.sessionId ?? row.session_id)) ?? sessionId;
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "[megaplan] slash command " + cmd + " completed" }],
+      stop_reason: "end_turn",
+      usage: {},
+      model: "unknown",
+    },
+    sessionId: sid,
+    session_id: sid,
+    uuid: (row && row.uuid) ?? randomUUID(),
+  };
+}
+
+function megaplanSlashCompletionRow(prompt, rows) {
+  const cmd = megaplanSlashCommand(prompt);
+  if (!cmd) return undefined;
+  // Anchor on the LAST freshly-submitted command row: a resumed session may
+  // already contain earlier /compact|/clear command rows, prior
+  // <local-command-stdout> rows, or content that merely mentions the markers,
+  // and scanning from the first match would falsely complete on stale rows.
+  let cmdIdx = -1;
+  for (let i = 0; i < rows.length; i += 1) {
+    if (megaplanRowText(rows[i]).includes("<command-name>" + cmd)) cmdIdx = i;
+  }
+  if (cmdIdx < 0) return undefined;
+  let sessionId = rows[cmdIdx].sessionId ?? rows[cmdIdx].session_id;
+  // /clear is instantaneous and rotates the session; the command row in the new
+  // transcript IS the completion.
+  if (cmd === "/clear") return megaplanSlashSynthReply(cmd, sessionId, rows[cmdIdx]);
+  // Only markers AFTER the freshly-submitted command row count as completion.
+  for (let i = cmdIdx + 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    sessionId = row.sessionId ?? row.session_id ?? sessionId;
+    const text = megaplanRowText(row);
+    if (row.subtype === "compact_boundary" || row.isCompactSummary === true) {
+      return megaplanSlashSynthReply(cmd, sessionId, row);
+    }
+    if (text.includes("<local-command-stdout>") || text.includes("Compacted") || text.includes("Not enough messages to compact")) {
+      return megaplanSlashSynthReply(cmd, sessionId, row);
+    }
+    if (row.type === "assistant" && row.message?.role === "assistant" && row.message?.stop_reason !== "tool_use" && textFromContent(row.message?.content)) {
+      return megaplanSlashSynthReply(cmd, sessionId, row);
+    }
+  }
+  return undefined;
+}
+// <<< megaplan-shannon-helpers <<<
+'''.lstrip()
+
+    # Sentinel-delimited so a helper body change actually propagates: if the
+    # CURRENT version block isn't present, strip any older megaplan helper block
+    # and (re)insert the current one. (String-anchored insertion alone can't
+    # update an already-inserted helper — it would keep the stale version.)
+    _helpers_begin = "// >>> megaplan-shannon-helpers"
+    _helpers_current = f"{_helpers_begin} {_SHANNON_HELPERS_VERSION} >>>"
+    if _helpers_current not in patched:
+        patched = re.sub(
+            re.escape(_helpers_begin) + r".*?// <<< megaplan-shannon-helpers <<<\n",
+            "",
+            patched,
+            flags=re.DOTALL,
+        )
+        patched = _insert_before_build_args(patched, slash_helpers)
+
+    # Discovery gate: accept the wrapped slash-command row.
+    discovery_target = (
+        '  if (row.type !== "user" || row.message?.content !== prompt) return false;\n'
+    )
+    discovery_replacement = (
+        '  if (row.type !== "user") return false;\n'
+        "  if (row.message?.content !== prompt && "
+        "!megaplanSlashPromptMatches(prompt, row.message?.content)) return false;\n"
+    )
+    if discovery_target in patched and discovery_replacement not in patched:
+        patched = patched.replace(discovery_target, discovery_replacement, 1)
+
+    # Completion gate: short-circuit assistantReplyFromRows for slash commands.
+    completion_target = (
+        "export function assistantReplyFromRows(prompt: string, rows: TranscriptRow[]): TranscriptRow | undefined {\n"
+        "  let sawPrompt = false;\n"
+    )
+    completion_replacement = (
+        "export function assistantReplyFromRows(prompt: string, rows: TranscriptRow[]): TranscriptRow | undefined {\n"
+        "  const megaplanSlashReply = megaplanSlashCompletionRow(prompt, rows);\n"
+        "  if (megaplanSlashReply) return megaplanSlashReply;\n"
+        "  let sawPrompt = false;\n"
+    )
+    if completion_target in patched and completion_replacement not in patched:
+        patched = patched.replace(completion_target, completion_replacement, 1)
+
+    # --- megaplan: paste the first turn instead of cramming it into argv ----
+    # Stock Shannon launches ``claude … <prompt>`` with the FIRST prompt in argv,
+    # which (a) caps prompt size at ARG_MAX and (b) forces megaplan to send a
+    # "read this file and follow it" launcher pointer rather than the real task —
+    # an in-session tell and an extra layer of indirection. When
+    # MEGAPLAN_SHANNON_PASTE_FIRST_TURN is set (non-root interactive path only),
+    # launch claude with NO prompt and deliver turn 1 through the same
+    # waitForPrompt→sendPrompt paste path used for every later turn, so the real
+    # phase prompt (fed via --input-format=stream-json on stdin) arrives as a
+    # normal pasted first message with no argv limit.
+    paste_args_target = "      : [\"claude\", ...options.claudeArgs, prompt];\n"
+    paste_args_replacement = (
+        "      : (Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN\n"
+        "          ? [\"claude\", ...options.claudeArgs]\n"
+        "          : [\"claude\", ...options.claudeArgs, prompt]);\n"
+    )
+    if paste_args_target in patched and paste_args_replacement not in patched:
+        patched = patched.replace(paste_args_target, paste_args_replacement, 1)
+
+    paste_flag_target = "    let launchedWithPrompt = true;\n"
+    paste_flag_replacement = (
+        "    let launchedWithPrompt = !(Bun.env.MEGAPLAN_SHANNON_PASTE_FIRST_TURN && !isRootProcess());\n"
+    )
+    if paste_flag_target in patched and "let launchedWithPrompt = !(" not in patched:
+        patched = patched.replace(paste_flag_target, paste_flag_replacement, 1)
+
+    # --- megaplan: feed the tmux buffer via stdin, not argv -----------------
+    # Stock sendPrompt does `tmux set-buffer -b <name> <prompt>` — the prompt is
+    # an ARGV argument to tmux, whose command parser caps at ~16KB, far below
+    # ARG_MAX. Real megaplan prompts are 70-128KB, so set-buffer truncates/fails
+    # and the turn dies. Feed the buffer over stdin (`load-buffer -b <name> -`)
+    # instead — no size cap — and paste with `-p` (bracketed paste) so a
+    # multi-line prompt isn't submitted line-by-line.
+    send_prompt_target = (
+        '  await runCommand(["tmux", "set-buffer", "-b", `shannon-${tmuxSession}`, prompt]);\n'
+        '  await runCommand(["tmux", "paste-buffer", "-b", `shannon-${tmuxSession}`, "-t", tmuxSession]);\n'
+    )
+    send_prompt_replacement = (
+        "  const _mpBuf = `shannon-${tmuxSession}`;\n"
+        '  const _mpLoad = Bun.spawn(["tmux", "load-buffer", "-b", _mpBuf, "-"], '
+        '{ stdin: "pipe", stdout: "pipe", stderr: "pipe" });\n'
+        "  _mpLoad.stdin.write(prompt);\n"
+        "  await _mpLoad.stdin.end();\n"
+        "  if ((await _mpLoad.exited) !== 0) {\n"
+        "    throw new Error(`tmux load-buffer failed: ${await new Response(_mpLoad.stderr).text()}`);\n"
+        "  }\n"
+        '  await runCommand(["tmux", "paste-buffer", "-p", "-b", _mpBuf, "-t", tmuxSession]);\n'
+    )
+    if send_prompt_target in patched and "tmux load-buffer" not in patched:
+        patched = patched.replace(send_prompt_target, send_prompt_replacement, 1)
+
     if patched == original:
         return
 
     backup = entrypoint.with_suffix(entrypoint.suffix + ".bak.megaplan-shannon")
+    tmp = entrypoint.with_name(f"{entrypoint.name}.megaplan.tmp.{os.getpid()}")
     try:
         if not backup.exists():
             backup.write_text(original, encoding="utf-8")
-        entrypoint.write_text(patched, encoding="utf-8")
+        # Atomic publish: write a temp file in the same dir, then os.replace it
+        # into place. megaplan launches `bun index.ts` constantly and runs many
+        # Shannon processes concurrently (epics, bakeoffs, `megaplan cloud`
+        # multi-tenancy); a non-atomic write_text would let a bun launch — or
+        # another patcher's read — observe a half-written file (truncated TS →
+        # syntax error → the whole turn crashes; partial read → duplicate helper
+        # inserts). os.replace is atomic on POSIX, so every reader/launcher sees
+        # either the old or the fully-patched file, never a torn one. Combined
+        # with the idempotent anchor gates, concurrent writers converge on the
+        # same content (last-writer-wins is harmless).
+        tmp.write_text(patched, encoding="utf-8")
+        os.replace(tmp, entrypoint)
     except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
         return
 
 
@@ -1056,9 +1446,19 @@ def _claude_transcript_paths(session_id: str | None, work_dir: Path) -> list[Pat
         if session_id:
             paths.extend(projects_root.glob(f"*/{session_id}.jsonl"))
         if not paths:
-            # Fall back to the work_dir-derived project slug: Claude encodes the
-            # absolute project path with separators replaced by ``-``.
-            slug = str(work_dir.resolve()).replace("/", "-")
+            # Fall back to the work_dir-derived project slug. This MUST match
+            # shannon's ``projectKeyForCwd`` byte-for-byte, otherwise we glob a
+            # directory that does not exist, find no transcript, and the probe
+            # degenerates to its "no signal" branch (returns True forever) — the
+            # exact bug that let a wedged turn keep its idle clock reset past the
+            # 300s bound. shannon (index.ts ``projectKeyForCwd``) computes the
+            # Claude project slug as ``resolve(cwd).replace(/[^a-zA-Z0-9_-]/g,
+            # '-')`` — it replaces EVERY non-alphanumeric character (``/`` AND
+            # ``.``, spaces, etc.) with ``-``. The previous code replaced only
+            # ``/``, so a worktree path like ``.../Documents/.megaplan-worktrees/
+            # ...`` produced ``...Documents-.megaplan-worktrees...`` while shannon
+            # (and Claude itself) wrote to ``...Documents--megaplan-worktrees...``.
+            slug = re.sub(r"[^a-zA-Z0-9_-]", "-", str(work_dir.resolve()))
             candidate_dir = projects_root / slug
             if candidate_dir.is_dir():
                 paths.extend(candidate_dir.glob("*.jsonl"))
@@ -1081,20 +1481,28 @@ def _make_shannon_liveness_probe(
     turn, would kill it at the idle bound with a misleading ``worker_stall``.
 
     This probe gives ``run_command`` a REAL liveness signal so it only kills a
-    worker that is genuinely stuck. It reports progress (``True``) when EITHER:
+    worker that is genuinely stuck. It reports progress (``True``) ONLY when:
 
-    * the tmux pane content has changed since the last probe — Claude streams
-      tokens into its interactive pane even while stdout stays buffered (the
-      only token-by-token signal per the module-level comment in ``_impl``); or
     * a candidate Claude transcript ``.jsonl`` mtime has advanced — the turn is
-      flushing completed content blocks to disk.
+      flushing completed content blocks / tool events to disk. This is the only
+      TRUSTWORTHY signal of genuine work.
 
-    It reports ``False`` (no progress) only when the session is alive but BOTH
-    signals are static across the idle window — i.e. a genuinely hung turn — or
-    when the tmux session has vanished entirely. Every tmux/FS call degrades
-    gracefully; a probe that cannot read any signal returns ``True`` so the
-    conservative wall-clock ``timeout`` stays the sole bound rather than risking
-    a false kill.
+    Crucially, tmux pane-content churn is NOT treated as progress on its own.
+    A wedged Claude (HTTP/SSE stream stalled — sockets ESTABLISHED, 0% CPU, no
+    tokens) still repaints its interactive pane (cursor redraws, spinner
+    animations, status-line refreshes) while writing NOTHING to its transcript.
+    Counting that pane churn as "progress" reset the idle clock forever, so a
+    wedged turn never tripped the inter-event ``stalled_stream`` bound and burned
+    the full window before retrying — and re-wedging. Requiring transcript growth
+    makes a wedged turn correctly read as idle so the bound bites within its
+    intended window.
+
+    It reports ``False`` (no progress) when the session is alive but the
+    transcript mtime is static across the idle window — i.e. a genuinely hung
+    turn — or when the tmux session has vanished entirely. Every tmux/FS call
+    degrades gracefully; a probe that cannot read ANY signal at all (no
+    transcript found AND pane unreadable) returns ``True`` so the conservative
+    wall-clock ``timeout`` stays the sole bound rather than risking a false kill.
     """
     # Captured-snapshot state across probe calls.
     last_pane = [""]
@@ -1146,11 +1554,13 @@ def _make_shannon_liveness_probe(
             primed[0] = True
             return True
 
-        progressing = False
-        if pane is not None and pane != last_pane[0]:
-            progressing = True
-        if mtime > last_mtime[0]:
-            progressing = True
+        # Transcript mtime advancing is the ONLY trusted progress signal: it
+        # means completed content blocks / tool events are being flushed to
+        # disk. Pane churn is deliberately ignored as a standalone signal — a
+        # wedged Claude repaints its pane without writing any transcript, and
+        # counting that as progress reset the idle clock forever (the root-cause
+        # bug). We still refresh the pane baseline for diagnostics/parity.
+        progressing = mtime > last_mtime[0]
 
         # Refresh baselines for the next comparison.
         if pane is not None:
@@ -1161,12 +1571,13 @@ def _make_shannon_liveness_probe(
         if progressing:
             return True
 
-        # No movement on either signal. If we have NO observable signal at all
-        # (pane unreadable AND no transcript found) and the session still
-        # exists, stay conservative (return True) and let the wall-clock cap
-        # govern. Only declare "not progressing" when we genuinely observed a
-        # static-but-alive pane/transcript.
-        have_signal = pane is not None or mtime > 0.0
+        # No transcript movement. If we have NO observable transcript signal at
+        # all (no transcript file found yet) and the session still exists, stay
+        # conservative (return True) and let the wall-clock cap govern — we
+        # cannot distinguish a hang from a turn that simply has not opened its
+        # transcript. Only declare "not progressing" when we genuinely observed
+        # a static-but-alive transcript.
+        have_signal = mtime > 0.0
         if not have_signal and session_alive:
             return True
         return False
@@ -1228,6 +1639,118 @@ def _repair_execute_envelope(
         return None
     repaired_raw = repair.stdout or repair.stderr
     return repaired_raw or None
+
+
+def _stream_session_id(raw: str) -> str | None:
+    """Extract the session id Shannon landed on from its NDJSON stream output.
+
+    The op turn (/compact, /clear) emits ``--output-format=stream-json`` — one
+    JSON object per line, not a single array — so ``_envelope_session_id`` (which
+    ``json.loads`` the whole blob) can't read it. ``/clear`` in particular ROTATES
+    to a new session id, which Shannon reports in its ``result`` / ``shannon_session``
+    rows. Return the last session id seen across the stream.
+    """
+    found: str | None = None
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        sid = obj.get("session_id")
+        if not sid and isinstance(obj.get("message"), dict):
+            sid = obj["message"].get("sessionId") or obj["message"].get("session_id")
+        if sid:
+            found = str(sid)
+    return found
+
+
+def _run_shannon_context_op(
+    *,
+    base_command: list[str],
+    slash_command: str,
+    session_id: str,
+    launch_command,
+    work_dir: Path,
+    env: dict[str, str],
+    state: PlanState,
+    plan_dir: Path,
+    tmux_session: TmuxSession,
+) -> str | None:
+    """Inject a Claude slash command (``/compact`` / ``/clear``) into a resumed session.
+
+    Shannon pastes the ``-p`` prompt straight into Claude's interactive input and
+    presses Enter (``tmux set-buffer`` → ``paste-buffer`` → ``send-keys C-m``), so
+    a prompt that is exactly a slash command fires that command as if typed by a
+    human. The op runs as its own turn against ``--resume <session_id>`` before the
+    real work turn.
+
+    ``/compact`` summarises in place and keeps the same session id; ``/clear``
+    ROTATES to a fresh session id (and a new transcript file). The megaplan
+    Shannon patch (see ``_ensure_shannon_parent_timeout_control``) teaches Shannon
+    to complete the slash-command turn on the real on-disk markers instead of the
+    exact prompt-echo it can never match, and to report the landed session id.
+
+    Returns the session id the work turn should resume (the same id for compact,
+    the rotated id for clear), or ``None`` if the op did not complete. Best-effort:
+    any failure (timeout, non-zero exit) is logged and swallowed so the caller
+    falls back to a plain resume of the original session — context hygiene must
+    never fail the phase.
+    """
+    # Rebuild argv so the turn's ``-p`` prompt is the slash command, not the
+    # original "read the prompt file" launcher prompt.
+    op_command: list[str] = []
+    index = 0
+    while index < len(base_command):
+        token = base_command[index]
+        if token == "-p" and index + 1 < len(base_command):
+            op_command.extend(["-p", slash_command])
+            index += 2
+            continue
+        op_command.append(token)
+        index += 1
+    op_command.extend(["--resume", session_id])
+    print(
+        f"[megaplan] shannon session strategy: injecting {slash_command} into "
+        f"resumed session {session_id} before the main turn.",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        op_result = run_command(
+            launch_command(op_command),
+            cwd=work_dir,
+            stdin_text=None,
+            env=env,
+            timeout=_shannon_context_op_timeout_seconds(),
+            activity_callback=_activity_callback_for_state(state, plan_dir),
+            idle_timeout=_worker_stream_idle_timeout_seconds(),
+            liveness_probe=_make_shannon_liveness_probe(
+                tmux_session, session_id, work_dir
+            ),
+            tmux_session=tmux_session,
+        )
+    except CliError as error:
+        print(
+            f"[megaplan] shannon {slash_command} turn did not complete cleanly "
+            f"({error.code}); proceeding with a plain resume.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+    landed = _stream_session_id((op_result.stdout or "") + (op_result.stderr or ""))
+    if landed and landed != session_id:
+        print(
+            f"[megaplan] shannon {slash_command} rotated session "
+            f"{session_id} -> {landed}; work turn will resume the new session.",
+            file=sys.stderr,
+            flush=True,
+        )
+    return landed or session_id
 
 
 # ---------------------------------------------------------------------------
@@ -1379,6 +1902,11 @@ def run_shannon_step(
     session_key = session_key_for(step, session_agent, model=model)
     session = state["sessions"].get(session_key, {})
     session_id: str | None = session.get("id")
+    # The id actually persisted in state["sessions"] right now. A /clear op
+    # rotates ``session_id`` to a new value mid-run, so the stall/timeout handler
+    # must clear the entry whose id is EITHER the original (persisted) id OR the
+    # current one — otherwise the stale leased id is never dropped.
+    persisted_session_id = session_id
 
     # ── (c) build prompt ────────────────────────────────────────────────
     base_prompt = (
@@ -1449,19 +1977,100 @@ def run_shannon_step(
         "--allow-dangerously-skip-permissions",
     ])
 
-    new_session = not (session_id and not fresh)
-    if session_id and not fresh:
-        # Shannon sessions are tmux-scoped; pass the session_id so the
-        # downstream CLI can resume the tmux pane if supported.
-        command = [*base_command, "--resume", session_id]
+    # Prompt delivery. Default: the launcher prompt rides in argv (``-p``) and
+    # points Claude at the on-disk prompt file. Paste-first-turn (non-root only,
+    # requires the Shannon patch): deliver the REAL phase prompt over stdin as a
+    # stream-json user message; Shannon launches Claude bare and pastes it as
+    # turn 1, so Claude works the actual task with no argv limit and no
+    # "read this file" pointer. ``main_flags`` is the main turn's argv minus the
+    # ``-p`` launcher; op/repair turns keep their own small ``-p`` prompts.
+    # Gate paste-first-turn on the Shannon patch actually being present: on
+    # another user's machine the patch may be absent (different version,
+    # read-only package dir, auto-patch off), and feeding a stdin/no-``-p`` prompt
+    # to an unpatched shannon would argv-launch turn 1 and hit ARG_MAX. When the
+    # patch is missing we fall back to the argv launcher.
+    _is_root = hasattr(os, "geteuid") and os.geteuid() == 0
+    paste_mode = (
+        _shannon_paste_first_turn_enabled()
+        and not _is_root
+        and _shannon_supports_paste_first_turn()
+    )
+    if (
+        _shannon_paste_first_turn_enabled()
+        and not _is_root
+        and not _shannon_supports_paste_first_turn()
+    ):
+        # Operator asked for paste-first-turn but the installed shannon lacks the
+        # patch (different version / read-only package dir / auto-patch off).
+        # Surface it once rather than silently using the argv launcher.
+        print(
+            "[megaplan] MEGAPLAN_SHANNON_PASTE_FIRST_TURN is set but the shannon "
+            "paste-first-turn patch is not present; using the argv launcher. "
+            "Ensure MEGAPLAN_SHANNON_AUTO_PATCH is on and the @dexh/shannon "
+            "package dir is writable.",
+            file=sys.stderr,
+            flush=True,
+        )
+    main_stdin: str | None = None
+    if paste_mode:
+        main_flags: list[str] = []
+        _i = 0
+        while _i < len(base_command):
+            if base_command[_i] == "-p" and _i + 1 < len(base_command):
+                _i += 2
+                continue
+            main_flags.append(base_command[_i])
+            _i += 1
+        main_flags.append("--input-format=stream-json")
+        main_stdin = json.dumps(
+            {"type": "user", "message": {"role": "user", "content": prompt}}
+        )
     else:
+        main_flags = list(base_command)
+
+    # Roll a session-continuity strategy (resume / compact / clear / new). Only
+    # execute carries a genuine refresh signal in ``fresh``; for every other
+    # phase ``fresh`` is the blanket force-fresh policy (set above), not user
+    # intent, so we pass explicit_fresh=False there and let the roll decide.
+    strategy = _select_session_strategy(
+        step,
+        has_session=bool(session_id),
+        explicit_fresh=fresh if step == "execute" else False,
+        slash_supported=_shannon_supports_slash_completion(),
+    )
+    new_session = strategy == "new"
+    if new_session:
         session_id = str(uuid.uuid4())
-        command = [*base_command, "--session-id", session_id]
+        command = [*main_flags, "--session-id", session_id]
+    else:
+        # Resume the stored session by id. The downstream Claude CLI reloads the
+        # persisted conversation in a fresh tmux pane (the prior pane was already
+        # torn down above), so resume rides on the session id, not pane liveness.
+        command = [*main_flags, "--resume", session_id]
+    print(
+        f"[megaplan] shannon session strategy for {step}: {strategy} "
+        f"(session {session_id}).",
+        file=sys.stderr,
+        flush=True,
+    )
 
     # ── (e) execute with timeout / activity callback ────────────────────
     started = time.monotonic()
     env = _external_worker_env(turn_id=f'plan_worker_{state["name"]}')
     env["SHANNON_TMUX_SESSION_NAME"] = session_name
+    if paste_mode:
+        # Activate the Shannon paste-first-turn patch for these invocations so the
+        # bare-launched Claude receives the prompt as a pasted turn 1 (the main
+        # turn over stdin; readiness/op turns paste their small ``-p`` prompts).
+        env["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] = "1"
+        # Bare launch has a startup race: Shannon's waitForPrompt returns as soon
+        # as the pane shows "❯"/">", which Claude's welcome banner prints BEFORE
+        # the input box is ready, so the turn-1 paste can land before Claude
+        # accepts input and get dropped (observed: empty output, op times out).
+        # Nudge a couple of delayed Enters during startup to settle past the
+        # banner. Tunable; overridable by the operator's own values.
+        env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_COUNT", "2")
+        env.setdefault("MEGAPLAN_SHANNON_BOOTSTRAP_ENTER_DELAY_MS", "2500")
     # Shannon normally drives an interactive Claude Code session. Do not let an
     # inherited API key force local interactive Claude into its first-run "use
     # this key?" prompt. Root cloud workers are different: the Shannon package
@@ -1565,12 +2174,48 @@ def run_shannon_step(
                 extra={"raw_output": "", "session_id": session_id},
             )
         time.sleep(_shannon_random_handshake_delay_seconds())
-        command = [*base_command, "--resume", session_id]
+        command = [*main_flags, "--resume", session_id]
+    if strategy in ("compact", "clear") and not new_session:
+        # Human-like pacing: pause a randomized beat before touching the session
+        # so it isn't compacted/cleared the instant it's picked up.
+        time.sleep(_shannon_context_op_delay_seconds())
+        # Trim the resumed context before the real work turn. Best-effort: on any
+        # failure we keep ``command`` as the plain resume and carry on. ``/clear``
+        # rotates to a new session id, so resume whatever the op landed on.
+        op_session_id = _run_shannon_context_op(
+            base_command=base_command,
+            slash_command="/compact" if strategy == "compact" else "/clear",
+            session_id=session_id,
+            launch_command=_launch_command,
+            work_dir=work_dir,
+            env=env,
+            state=state,
+            plan_dir=plan_dir,
+            tmux_session=tmux_session,
+        )
+        if op_session_id:
+            # op completed (compact: same id; clear: rotated id) — resume it.
+            if op_session_id != session_id:
+                session_id = op_session_id
+                command = [*main_flags, "--resume", session_id]
+        else:
+            # op FAILED (timeout / non-zero). The policy is "never carry stale
+            # context", so do NOT fall back to plain-resuming the original
+            # (un-shed) session — shed it the safe way with a fresh session.
+            new_session = True
+            session_id = str(uuid.uuid4())
+            command = [*main_flags, "--session-id", session_id]
+            print(
+                f"[megaplan] shannon context-op did not complete; starting a "
+                f"fresh session {session_id} instead of resuming stale context.",
+                file=sys.stderr,
+                flush=True,
+            )
     try:
         result = run_command(
             _launch_command(command),
             cwd=work_dir,
-            stdin_text=None,
+            stdin_text=main_stdin,
             env=env,
             timeout=_shannon_execute_timeout_seconds(),
             activity_callback=_activity_callback_for_state(state, plan_dir),
@@ -1598,11 +2243,16 @@ def run_shannon_step(
                 sessions = state.get("sessions")
                 if isinstance(sessions, dict):
                     entry = sessions.get(session_key)
-                    if isinstance(entry, dict) and entry.get("id") == session_id:
+                    # Dual-compare: a /clear op rotates ``session_id`` mid-run, so
+                    # the persisted entry still holds the ORIGINAL id. Drop it if
+                    # it matches either, else the stale leased id is never cleared
+                    # and the next cycle races an orphan on ``--resume``.
+                    entry_id = entry.get("id") if isinstance(entry, dict) else None
+                    if entry_id is not None and entry_id in {session_id, persisted_session_id}:
                         sessions.pop(session_key, None)
                         print(
                             f"[megaplan] Cleared persisted shannon session "
-                            f"{session_key}={session_id} after {error.code}; "
+                            f"{session_key}={entry_id} after {error.code}; "
                             "next attempt will start a fresh session.",
                             file=sys.stderr,
                             flush=True,
@@ -1637,7 +2287,15 @@ def run_shannon_step(
         if step == "execute" and error.code in {"parse_error", "schema_error"}:
             repaired = _repair_execute_envelope(
                 base_command=base_command,
-                session_id=str((_envelope_session_id(raw)) or session_id),
+                # The work turn runs under --output-format=stream-json (NDJSON),
+                # which _envelope_session_id (single json.loads) can't parse — try
+                # the NDJSON-aware extractor first, then the legacy-array one, then
+                # the (possibly rotated) session_id the work turn actually ran under.
+                session_id=str(
+                    _stream_session_id(raw)
+                    or _envelope_session_id(raw)
+                    or session_id
+                ),
                 launch_command=_launch_command,
                 work_dir=work_dir,
                 env=env,
