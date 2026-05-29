@@ -2727,3 +2727,345 @@ def test_auto_driver_criteria_awaiting_human_has_generic_reason(
     assert "plan has criteria requiring human verification" in outcome.reason
     assert "override add-note" not in outcome.reason
     assert "override resume-clarify" not in outcome.reason
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Auto-ESCALATE-up: respond to repeated execute failures by climbing to a
+# more capable tier model (capped at the ceiling), forcing a fresh session.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Canonical premium ladder: tiers 1-2 = DeepSeek (same model), 3 = Sonnet,
+# 4-5 = Opus (same model). Exercises both the distinct-model climb and the
+# skip-same-model edge case (4→5 is a no-op).
+_PREMIUM_LADDER = {
+    1: "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+    2: "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro",
+    3: "claude:claude-sonnet-4-6",
+    4: "claude:claude-opus-4-7",
+    5: "claude:claude-opus-4-7",
+}
+
+
+def _write_tier_state(
+    plan_dir: Path,
+    *,
+    ladder: dict[int, str] | None = _PREMIUM_LADDER,
+    max_tier: int | None = None,
+) -> None:
+    """Stamp state.json with a tier_models.execute ladder and (optionally) an
+    execute history entry recording the highest tier the last execute used.
+    """
+    state: dict = {"name": plan_dir.name, "current_state": "finalized"}
+    if ladder is not None:
+        state["config"] = {
+            "tier_models": {"execute": {str(k): v for k, v in ladder.items()}}
+        }
+    if max_tier is not None:
+        state["history"] = [
+            {
+                "step": "execute",
+                "result": "blocked",
+                "cost_usd": 0.1,
+                "batch_to_tier": [
+                    {"batch_number": 1, "batch_complexity": max_tier},
+                ],
+            }
+        ]
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+# ── Pure helper unit tests ───────────────────────────────────────────────
+
+
+def test_next_escalation_tier_skips_same_model_step() -> None:
+    # Baseline tier 3 (Sonnet) escalates to tier 4 (Opus) — a distinct model.
+    nxt = auto._next_escalation_tier(_PREMIUM_LADDER, current_tier=3)
+    assert nxt == (4, "claude:claude-opus-4-7")
+    # Baseline tier 4 (Opus): tier 5 is also Opus (same spec) → no distinct
+    # stronger model → ceiling reached → None.
+    assert auto._next_escalation_tier(_PREMIUM_LADDER, current_tier=4) is None
+    # Baseline tier 1 (DeepSeek): tier 2 is the same DeepSeek spec, so the
+    # first *distinct* model up is tier 3 (Sonnet), not tier 2.
+    assert auto._next_escalation_tier(_PREMIUM_LADDER, current_tier=1) == (
+        3,
+        "claude:claude-sonnet-4-6",
+    )
+
+
+def test_next_escalation_tier_empty_ladder_is_noop() -> None:
+    assert auto._next_escalation_tier({}, current_tier=None) is None
+
+
+def test_read_execute_tier_ladder_missing_is_empty(tmp_path: Path) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "no-tiers")
+    # _make_plan_dir writes a state with no config.tier_models.
+    assert auto._read_execute_tier_ladder(plan_dir) == {}
+
+
+def test_latest_execute_max_tier_reads_history(tmp_path: Path) -> None:
+    plan_dir = _make_plan_dir(tmp_path, "tier-hist")
+    _write_tier_state(plan_dir, max_tier=3)
+    assert auto._latest_execute_max_tier(plan_dir) == 3
+
+
+# ── (a) Consecutive failures escalate up to the next distinct model ──────
+
+
+def test_consecutive_failures_escalate_up_to_next_distinct_model(
+    tmp_path: Path,
+) -> None:
+    plan = "escalate-up"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    # Failing execute routed at tier 3 (Sonnet); escalate should pin tier 4 Opus.
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        # Always fail execute with internal_error; distinct invocation_id each
+        # call so _run_phase sees a changed phase_result signature.
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="internal_error",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "boom"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=3,
+            max_iterations=6,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # First two execute dispatches run un-escalated; on the 2nd failure the
+    # driver escalates, so the 3rd execute carries the stronger-model pin.
+    escalated_cmds = [
+        c for c in seen_cmds
+        if "--phase-model" in c
+        and "execute=claude:claude-opus-4-7" in c
+    ]
+    assert escalated_cmds, f"expected an Opus-pinned execute, saw: {seen_cmds}"
+    assert outcome.tier_escalations_used >= 1
+    assert outcome.escalation_tier_pin == 4
+    # The escalation is observable as a tier_escalated event carrying the
+    # from→to model + tier and the failure count.
+    lines = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    tier_events = [
+        e
+        for e in (json.loads(ln) for ln in lines if ln.strip())
+        if e.get("kind") == "tier_escalated"
+    ]
+    assert tier_events, "expected a tier_escalated event"
+    payload = tier_events[0].get("payload", {})
+    assert payload.get("from_tier") == 3
+    assert payload.get("to_tier") == 4
+    assert payload.get("to_model") == "claude:claude-opus-4-7"
+    assert payload.get("failure_count") == 2
+
+
+# ── (b) At the ceiling it does NOT escalate; manual_review halt still fires ─
+
+
+def test_at_ceiling_no_escalation_and_manual_review_halt_fires(
+    tmp_path: Path,
+) -> None:
+    plan = "escalate-ceiling"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    # Failing execute already routed at tier 4 (Opus). Tier 5 is also Opus
+    # (same model) → no distinct stronger model → nothing to escalate to.
+    _write_tier_state(plan_dir, max_tier=4)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="internal_error",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "boom"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=3,
+            max_iterations=8,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # No execute command should carry a phase-model escalation pin.
+    assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
+    assert outcome.tier_escalations_used == 0
+    assert outcome.escalation_tier_pin is None
+    # The existing state-stall manual_review halt is the genuine last resort.
+    assert outcome.status == "stalled"
+    state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state_data["resume_cursor"]["retry_strategy"] == "manual_review"
+
+
+# ── (c) Escalate forces fresh dispatch (no resume of old session) ─────────
+
+
+def test_escalate_forces_fresh_dispatch(tmp_path: Path) -> None:
+    plan = "escalate-fresh"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="internal_error",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "boom"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=3,
+            max_iterations=6,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Every escalated (phase-model-pinned) execute MUST also carry --fresh so
+    # the stronger model starts a new session instead of resuming the failed
+    # worker's old session on the old model.
+    pinned = [c for c in seen_cmds if "--phase-model" in c]
+    assert pinned, f"expected at least one escalated execute, saw {seen_cmds}"
+    for c in pinned:
+        assert "--fresh" in c, f"escalated execute missing --fresh: {c}"
+
+
+# ── (d) Non-tier-routed run no-ops gracefully ─────────────────────────────
+
+
+def test_non_tier_routed_run_no_ops_gracefully(tmp_path: Path) -> None:
+    plan = "escalate-no-tiers"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    # No config.tier_models at all (flat execute pin) — write history only.
+    _write_tier_state(plan_dir, ladder=None, max_tier=None)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    call = {"n": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan)
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        call["n"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="internal_error",
+            invocation_id=f"inv-{call['n']}",
+        )
+        return 1, "", "boom"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=3,
+            max_iterations=8,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Nothing to escalate to — no pin, no crash, falls through to the halt.
+    assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
+    assert outcome.tier_escalations_used == 0
+    assert outcome.status == "stalled"
+
+
+# ── (e) Counter resets on progress ────────────────────────────────────────
+
+
+def test_failure_streak_resets_on_progress(tmp_path: Path) -> None:
+    plan = "escalate-progress-reset"
+    plan_dir = _make_plan_dir(tmp_path, plan)
+    _write_tier_state(plan_dir, max_tier=3)
+    from tests.conftest import make_fake_phase_result
+
+    seen_cmds: list[list[str]] = []
+    state = {"n": 0, "done": 0}
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        resp = _execute_status(plan)
+        # Report increasing progress so the streak resets each iteration.
+        resp["progress"] = {"tasks_done": state["done"], "tasks_skipped": 0}
+        return resp
+
+    def fake_run(cmd, *, cwd=None, timeout=None, idle_timeout=None,
+                 progress_env=None, liveness_plan_dir=None):
+        seen_cmds.append(list(cmd))
+        state["n"] += 1
+        # Make forward progress on every execute (one more task done), but still
+        # report a failure exit_kind — progress must win and reset the streak.
+        state["done"] += 1
+        make_fake_phase_result(
+            plan_dir,
+            exit_kind="internal_error",
+            invocation_id=f"inv-{state['n']}",
+        )
+        return 1, "", "boom"
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            escalate_after_fails=2,
+            stall_threshold=4,
+            max_iterations=6,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    # Because each iteration makes forward progress, the failure streak never
+    # reaches the escalate threshold — no escalation occurs.
+    assert not any("--phase-model" in c for c in seen_cmds), seen_cmds
+    assert outcome.tier_escalations_used == 0
