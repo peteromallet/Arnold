@@ -29,7 +29,7 @@ from typing import Any, Dict, Generator, Iterator, Optional, Sequence, Set
 # ---------------------------------------------------------------------------
 
 class EventKind:
-    """String-literal constants for all 25 event kinds.
+    """String-literal constants for all 26 event kinds.
 
     Use these instead of bare strings so typos are caught at import time.
     """
@@ -65,6 +65,9 @@ class EventKind:
     FLAG_RAISED: str = "flag_raised"
     FLAG_RESOLVED: str = "flag_resolved"
     NOTE_ADDED: str = "note_added"
+    # Auto-driver escalated execute to a more capable tier model after
+    # repeated failures (payload: model/tier from→to, task/batch, fail count).
+    TIER_ESCALATED: str = "tier_escalated"
 
     # ── Cost (1) ───────────────────────────────────────────────────────
     COST_RECORDED: str = "cost_recorded"
@@ -99,6 +102,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.FLAG_RAISED,
         EventKind.FLAG_RESOLVED,
         EventKind.NOTE_ADDED,
+        EventKind.TIER_ESCALATED,
         EventKind.COST_RECORDED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,

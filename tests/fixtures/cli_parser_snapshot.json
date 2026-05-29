@@ -517,6 +517,21 @@
             },
             {
               "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": 2,
+              "dest": "escalate_after_fails",
+              "help": "Consecutive execute failures (with no forward progress) before the driver escalates UP to the next more-capable distinct model in tier_models.execute and retries with a fresh session (default 2; 0 disables). It keeps climbing on further failures and caps at the most powerful distinct tier; once at that ceiling and still failing, control falls through to the state-stall manual_review halt. No-ops on runs without tier_models.execute.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--escalate-after-fails"
+              ],
+              "required": false,
+              "type": "_non_negative_int"
+            },
+            {
+              "action": "_StoreAction",
               "choices": [
                 "abort",
                 "fail",
