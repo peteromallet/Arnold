@@ -10,6 +10,7 @@ from vibecomfy.errors import RuntimeNodeError, VibeComfyError
 from vibecomfy.runtime.client import ComfyClient
 from vibecomfy.runtime.eval_plan import EvalNodePlan, plan_eval_node
 from vibecomfy.runtime.server import comfy_server
+from vibecomfy.runtime.execution import normalize_prompt_id
 from vibecomfy.runtime.session import SessionConfig, _outputs_from_server_history, _wait_for_server_history
 
 
@@ -53,7 +54,7 @@ async def eval_node(
         async with comfy_server(server_url=server_url, log_path=log_path, config=SessionConfig()) as active_url:
             client = ComfyClient(active_url)
             queued = await client.queue_prompt(queue_api)
-            prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
+            prompt_id = normalize_prompt_id(queued)
             history = await _wait_for_server_history(active_url, prompt_id, config=SessionConfig())
             outputs = _outputs_from_server_history(history, prompt_id)
             return EvalNodeResult(

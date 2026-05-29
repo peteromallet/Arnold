@@ -2,6 +2,7 @@
 
 Release notes live under [`docs/release_notes/`](release_notes/).
 
+- [v2.8.0](release_notes/v2.8.0.md) — seams, IR purity, and contract foundation (controlled breaking minor under 2.x).
 - [v2.7.0](release_notes/v2.7.0.md) — documentation reconciliation and public API surface alignment.
 
 ## v2.7 Sprint 1 Foundation

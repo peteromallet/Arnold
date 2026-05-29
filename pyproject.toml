@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vibecomfy"
-version = "2.7.0"
+version = "2.8.0"
 description = "Python scratchpads for discovering, editing, validating, and running ComfyUI workflows."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "hypothesis>=6.100",
+  "import-linter>=2.3",
   "pytest>=7",
   "pytest-asyncio>=0.23",
   "pytest-cov>=4",

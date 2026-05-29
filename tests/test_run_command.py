@@ -1,10 +1,8 @@
-"""Tests for the family-aware ``--prompt``/``--steps`` enforcement in ``vibecomfy run``.
+"""Tests for the family-aware public-input enforcement in ``vibecomfy run``.
 
-When a user passes ``--prompt`` or ``--steps`` against a workflow whose nodes
-have not been registered as eligible targets (typically WanVideoWrapper, ACE
-Step audio, or any other custom-node family whose textual fields mean
-something other than "free-form image prompt"), the CLI must error loudly
-rather than silently no-op or mutate the wrong field.
+When a user passes a universal override against a workflow whose nodes have not
+been registered as eligible targets, the CLI must error loudly rather than
+silently no-op or mutate the wrong field.
 """
 
 from __future__ import annotations
@@ -133,19 +131,20 @@ def test_cmd_run_errors_when_steps_supplied_without_target(
     assert "STEPS_NODE_CLASSES" in err
 
 
-def test_cmd_run_seed_remains_universal_for_unwired_overrides(
+def test_cmd_run_errors_when_seed_supplied_without_target(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     workflow = _no_inputs_workflow("wan-wrapper")
     runs = _stub_run(monkeypatch, workflow)
 
-    # --seed alone (no --prompt/--steps) must succeed even when prompt/steps
-    # would have been refused.
     rc = _cmd_run(_make_args(seed=123))
 
-    assert rc == 0
-    assert runs == [(workflow, {"backend": "api", "ensure_models": True})]
-    assert capsys.readouterr().err == ""
+    assert rc == 2
+    assert runs == []
+    err = capsys.readouterr().err
+    assert "wan-wrapper" in err
+    assert "--seed" in err
+    assert "seed" in err
 
 
 def test_cmd_run_applies_prompt_and_steps_for_image_workflow(

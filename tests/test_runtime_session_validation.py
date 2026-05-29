@@ -3,22 +3,46 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import vibecomfy.runtime.session as session_module
+from vibecomfy.errors import SchemaValidationError
 from vibecomfy.runtime.session import (
+    EmbeddedSession,
     ServerSession,
     SessionConfig,
     _prepare_prompt_async,
     _warm_schema_provider,
 )
+from vibecomfy.schema import InputSpec, NodeSchema
 
 from tests._runtime_session_helpers import (
     WarmProvider,
     _workflow,
+    fake_comfy,  # noqa: F401 -- pytest fixture imported for use in tests
     fake_server,  # noqa: F401 -- pytest fixture imported for use in tests
+    _patch_fast_runtime_run,
 )
+
+
+class _StrictProvider:
+    """Pre-warmed schema provider that only knows one class type.
+
+    Any workflow node whose class_type is not in _known_classes will trigger
+    an unknown_class_type validation error → SchemaValidationError.
+    """
+
+    def __init__(self, known_classes: dict[str, Any]) -> None:
+        self._object_info: dict[str, Any] = {"ready": True}
+        self._known_classes = known_classes
+
+    def schemas(self) -> dict[str, Any]:
+        return self._known_classes
+
+    def get_schema(self, class_type: str) -> Any | None:
+        return self._known_classes.get(class_type)
 
 
 def test_async_warmup_populates_cache_then_validates() -> None:
@@ -209,3 +233,131 @@ def test_embedded_path_does_not_spawn_extra_comfy_server(
     assert entered is False
     assert len(unavailable) == 1
     assert "using structural validation only" in unavailable[0]
+
+
+def _patch_watchdog_and_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch only the watchdog and flush helpers, leaving schema/prepare paths intact."""
+
+    async def fake_maybe_flush(_session, _fp):
+        return None
+
+    async def fake_start_watchdog(*, server_url, client_id, api_dict):
+        return object()
+
+    async def fake_finalize_watchdog(_watchdog, *, run_dir, reason):
+        return None
+
+    monkeypatch.setattr(session_module, "_maybe_flush_for_policy", fake_maybe_flush)
+    monkeypatch.setattr(session_module, "_start_watchdog", fake_start_watchdog)
+    monkeypatch.setattr(session_module, "_finalize_watchdog", fake_finalize_watchdog)
+
+
+def _strict_provider() -> _StrictProvider:
+    """Pre-warmed provider that knows only CheckpointLoaderSimple; KSampler triggers rejection."""
+    return _StrictProvider(
+        {
+            "CheckpointLoaderSimple": NodeSchema(
+                "CheckpointLoaderSimple", None, {"ckpt_name": InputSpec("STRING")}, []
+            )
+        }
+    )
+
+
+def test_embedded_session_rejects_schema_invalid_workflow(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Embedded path raises SchemaValidationError for a schema-backed unknown class type."""
+    monkeypatch.chdir(tmp_path)
+    _patch_watchdog_and_flush(monkeypatch)
+    monkeypatch.setattr(session_module, "_build_schema_provider", lambda _url: _strict_provider())
+
+    async def run_once() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(_workflow())
+        finally:
+            await session.stop()
+
+    with pytest.raises(SchemaValidationError):
+        asyncio.run(run_once())
+
+
+def test_server_session_rejects_schema_invalid_workflow(
+    fake_server,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server path raises SchemaValidationError for the same schema-backed unknown class type."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module, "_build_schema_provider", lambda _url: _strict_provider())
+
+    async def run_once() -> None:
+        session = ServerSession(SessionConfig(port=8200))
+        try:
+            await session.run(_workflow())
+        finally:
+            await session.stop()
+
+    with pytest.raises(SchemaValidationError):
+        asyncio.run(run_once())
+
+
+def test_embedded_session_schema_validate_env_off_ramp(
+    fake_comfy,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VIBECOMFY_SCHEMA_VALIDATE=0 disables the schema gate for embedded sessions."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_VALIDATE", "0")
+    _patch_watchdog_and_flush(monkeypatch)
+
+    async def run_once() -> EmbeddedSession:
+        session = EmbeddedSession()
+        try:
+            await session.run(_workflow())
+            return session
+        finally:
+            await session.stop()
+
+    session = asyncio.run(run_once())
+    assert session._schema_provider is None
+
+
+def test_embedded_and_server_schema_validate_env_off_ramp_parity(
+    fake_comfy,
+    fake_server,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VIBECOMFY_SCHEMA_VALIDATE=0 disables the schema gate consistently for both embedded and server paths."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_VALIDATE", "0")
+    _patch_watchdog_and_flush(monkeypatch)
+
+    embedded_provider = []
+    server_provider = []
+
+    async def run_embedded() -> None:
+        session = EmbeddedSession()
+        try:
+            await session.run(_workflow())
+            embedded_provider.append(session._schema_provider)
+        finally:
+            await session.stop()
+
+    async def run_server() -> None:
+        session = ServerSession(SessionConfig(port=8200))
+        try:
+            await session.run(_workflow())
+            server_provider.append(session._schema_provider)
+        finally:
+            await session.stop()
+
+    asyncio.run(run_embedded())
+    asyncio.run(run_server())
+
+    assert embedded_provider == [None]
+    assert server_provider == [None]

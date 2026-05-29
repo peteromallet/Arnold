@@ -24,6 +24,7 @@ from vibecomfy.workflow import VibeWorkflow
 from .attempt import build_attempt_bundle, build_shared_fields, write_attempt_json
 from .client import ComfyClient
 from .drift import enforce_strict_drift
+from .execution import normalize_prompt_id
 from .model_policy import apply_model_preflight, resolve_model_preflight_policy
 from .watchdog import Watchdog, write_report
 
@@ -292,7 +293,6 @@ class EmbeddedSession:
             backend=backend,
             schema_provider=self._schema_provider,
             on_unavailable=self._on_schema_unavailable,
-            cache_only=True,
         )
         schema_validation_skipped = list(getattr(api_dict, "schema_validation_skipped", []))
         timings["prepare_prompt_sec"] = round(time.monotonic() - phase_start, 3)
@@ -363,7 +363,7 @@ class EmbeddedSession:
         metadata_path = atomic_write_json(run_dir / "metadata.json", metadata)
         return RunResult(
             run_id=run_id,
-            prompt_id=getattr(queued, "prompt_id", None),
+            prompt_id=normalize_prompt_id(queued),
             outputs=outputs,
             metadata_path=str(metadata_path),
             log_path=str(log_path),
@@ -525,7 +525,7 @@ class ServerSession:
         self.last_fingerprint = fp
 
         phase_start = time.monotonic()
-        prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
+        prompt_id = normalize_prompt_id(queued)
         history = await _wait_for_server_history(self.url, prompt_id, config=self.config)
         comfy_outputs = _outputs_from_server_history(history, prompt_id)
         outputs = _collect_output_paths(

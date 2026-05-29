@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+
+OPAQUE_COMPONENT_CLASS_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -12,6 +20,52 @@ class ContractIssue:
     message: str
     severity: str = "error"  # "error" | "warning"
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+def comfyui_node_issue_specs(
+    nodes: Iterable[tuple[Any, str, dict[str, Any]]],
+) -> list[ContractIssue]:
+    """Neutral ComfyUI-specific node validation specs.
+
+    ``nodes`` is an iterable of ``(node_id, class_type, inputs)`` tuples. Returns
+    neutral ``ContractIssue`` objects; callers convert them to their own issue
+    type. This keeps ComfyUI validation policy in the contracts layer without a
+    reverse dependency on the IR workflow module.
+    """
+    specs: list[ContractIssue] = []
+    for node_id, class_type, inputs in nodes:
+        if OPAQUE_COMPONENT_CLASS_RE.match(class_type):
+            specs.append(
+                ContractIssue(
+                    code="opaque_component_class_type",
+                    message=(
+                        f"Node {node_id} has opaque component class_type "
+                        f"{class_type!r}; inline or replace the subgraph before runtime."
+                    ),
+                    severity="warning",
+                    detail={"node_id": str(node_id), "class_type": class_type},
+                )
+            )
+        if class_type == "VAELoaderKJ":
+            vae_name = inputs.get("vae_name") or inputs.get("widget_0")
+            if isinstance(vae_name, str):
+                normalized_vae_name = vae_name.lower().replace("\\", "/")
+                if "ltx" in normalized_vae_name and "audio" in normalized_vae_name:
+                    specs.append(
+                        ContractIssue(
+                            code="ltx_audio_vae_wrong_loader",
+                            message=(
+                                f"Node {node_id} loads LTX audio VAE {vae_name!r} with VAELoaderKJ; "
+                                "use LTXVAudioVAELoader and stage the file under checkpoints."
+                            ),
+                            detail={
+                                "node_id": str(node_id),
+                                "class_type": class_type,
+                                "vae_name": vae_name,
+                            },
+                        )
+                    )
+    return specs
 
 
 @dataclass

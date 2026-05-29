@@ -12,6 +12,7 @@ from vibecomfy.workflow import VibeWorkflow
 
 from .attempt import build_attempt_bundle, write_attempt_json
 from .client import ComfyClient
+from .execution import normalize_prompt_id
 from .drift import enforce_strict_drift
 from vibecomfy.utils import atomic_write_json
 from .model_policy import apply_model_preflight, resolve_model_preflight_policy
@@ -87,7 +88,7 @@ async def run(
                 _workflow_queue_failure_message(workflow, exc),
                 next_action="vibecomfy runtime doctor",
             ) from exc
-        prompt_id = queued.get("prompt_id") if isinstance(queued, dict) else None
+        prompt_id = normalize_prompt_id(queued)
         history = await _wait_for_server_history(active_url, prompt_id, config=resolved_config)
         comfy_outputs = _outputs_from_server_history(history, prompt_id)
         outputs = _collect_output_paths(

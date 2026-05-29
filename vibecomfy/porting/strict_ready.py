@@ -428,7 +428,7 @@ def _helper_in_emitted_output_diagnostics(workflow: VibeWorkflow) -> list[PortIs
     (which pass through workbench.py) do not hard-error on helpers that conversion
     is expected to strip.
     """
-    from vibecomfy.porting.helpers import RESOLVABLE_HELPER_CLASS_TYPES
+    from vibecomfy._workflow_helpers import RESOLVABLE_HELPER_CLASS_TYPES
 
     issues: list[PortIssue] = []
     for node_id, node in sorted(workflow.nodes.items(), key=lambda item: _sort_key(item[0])):

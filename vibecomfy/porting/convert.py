@@ -176,7 +176,7 @@ def port_convert_workflow(
     # their sources.  Capturing this snapshot avoids a use-after-delete
     # race between resolve_helpers (which deletes SetNode) and
     # resolve_subgraph_helpers (which needs SetNode broadcast data).
-    from vibecomfy.porting.helpers import collect_broadcast_sources as _collect_broadcasts
+    from vibecomfy._workflow_helpers import collect_broadcast_sources as _collect_broadcasts
     _pre_resolve_broadcasts = _collect_broadcasts(workflow.nodes, workflow.edges)
 
     # Resolve helper nodes inside UUID subgraph definitions FIRST, using
@@ -205,7 +205,7 @@ def port_convert_workflow(
     # channel (FG-005): convert each HelperDiagnostic into an
     # EmissionDiagnostic so they flow through the standard
     # PortConvertValidation.to_json() reporting path.
-    from vibecomfy.porting.helpers import HelperDiagnostic
+    from vibecomfy._workflow_helpers import HelperDiagnostic
 
     for hd in resolve_diagnostics.diagnostics:
         sev: EmissionSeverity = "warning"

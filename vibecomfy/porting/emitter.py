@@ -15,7 +15,7 @@ from typing import Any, Literal, Mapping
 
 from vibecomfy.errors import ConversionParityError
 from vibecomfy.node_packs_lockfile import LockEntry, read_lockfile
-from vibecomfy.porting.helpers import RESOLVABLE_HELPER_CLASS_TYPES
+from vibecomfy._workflow_helpers import RESOLVABLE_HELPER_CLASS_TYPES
 from vibecomfy.porting.widget_aliases import resolve_widget_key_with_provenance
 from vibecomfy.porting.object_info import class_defaults, class_has_list_output, class_output_count
 from vibecomfy.porting.object_info import output_names as class_output_names

@@ -286,9 +286,8 @@ def finalize_ready_template(
 ) -> VibeWorkflow:
     """Call ``finalize_metadata()`` then ``apply_ready_template_policy()``.
 
-    The order is **critical**: ``finalize_metadata()`` clears inputs/outputs
-    and re-infers them, so any ``bind_input``/``bind_output`` calls must come
-    **after** this function returns.
+    The order remains conventional for generated templates: finalize first to
+    infer graph metadata, then bind any explicit public inputs/outputs.
     """
     wf.finalize_metadata()
     return apply_ready_template_policy(

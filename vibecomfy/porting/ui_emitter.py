@@ -73,7 +73,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.porting.helpers import (
+from vibecomfy._workflow_helpers import (
     broadcast_name,
     collect_broadcast_sources,
     is_broadcast_helper_class_type,

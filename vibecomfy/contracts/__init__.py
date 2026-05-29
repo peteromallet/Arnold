@@ -1,42 +1,63 @@
 from __future__ import annotations
 
-from vibecomfy.contracts.model import WorkflowRuntimeContract, build_contract
-
 __all__ = [
-    "WorkflowRuntimeContract",
-    "build_contract",
-    "doctor_contract",
+    "COMPILED_EDGE_ENDPOINT_RESOLVED",
     "ContractDoctorDiagnostic",
     "ContractDoctorReport",
     "ContractIssue",
     "ContractReport",
+    "HELPER_EDGE_REWIRED_OR_REPORTED",
+    "IR_CONTRACT_ANCHORS",
+    "IR_CONTRACT_CODES",
+    "IR_CONTRACT_SHAPE",
+    "IR_CONTRACT_VERSION",
+    "IRContractAnchor",
     "LTXFirstLastTwoStageContract",
+    "PUBLIC_INPUT_STALE_TARGET",
+    "PUBLIC_INPUT_UNREGISTERED",
+    "VALIDATION_OK_COMPILES_API",
+    "VALIDATION_REPORT_OK_FIELD",
+    "WorkflowRuntimeContract",
+    "build_contract",
+    "doctor_contract",
+    "ir_contract_codes",
+    "is_ir_contract_code",
+    "require_ir_contract_code",
 ]
 
 
+_LAZY_ATTRS = {
+    "COMPILED_EDGE_ENDPOINT_RESOLVED": ("vibecomfy.contracts.ir", "COMPILED_EDGE_ENDPOINT_RESOLVED"),
+    "ContractDoctorDiagnostic": ("vibecomfy.contracts.doctor", "ContractDoctorDiagnostic"),
+    "ContractDoctorReport": ("vibecomfy.contracts.doctor", "ContractDoctorReport"),
+    "ContractIssue": ("vibecomfy.contracts.validation", "ContractIssue"),
+    "ContractReport": ("vibecomfy.contracts.validation", "ContractReport"),
+    "HELPER_EDGE_REWIRED_OR_REPORTED": ("vibecomfy.contracts.ir", "HELPER_EDGE_REWIRED_OR_REPORTED"),
+    "IR_CONTRACT_ANCHORS": ("vibecomfy.contracts.ir", "IR_CONTRACT_ANCHORS"),
+    "IR_CONTRACT_CODES": ("vibecomfy.contracts.ir", "IR_CONTRACT_CODES"),
+    "IR_CONTRACT_SHAPE": ("vibecomfy.contracts.ir", "IR_CONTRACT_SHAPE"),
+    "IR_CONTRACT_VERSION": ("vibecomfy.contracts.ir", "IR_CONTRACT_VERSION"),
+    "IRContractAnchor": ("vibecomfy.contracts.ir", "IRContractAnchor"),
+    "LTXFirstLastTwoStageContract": ("vibecomfy.contracts.ltx_first_last", "LTXFirstLastTwoStageContract"),
+    "PUBLIC_INPUT_STALE_TARGET": ("vibecomfy.contracts.ir", "PUBLIC_INPUT_STALE_TARGET"),
+    "PUBLIC_INPUT_UNREGISTERED": ("vibecomfy.contracts.ir", "PUBLIC_INPUT_UNREGISTERED"),
+    "VALIDATION_OK_COMPILES_API": ("vibecomfy.contracts.ir", "VALIDATION_OK_COMPILES_API"),
+    "VALIDATION_REPORT_OK_FIELD": ("vibecomfy.contracts.ir", "VALIDATION_REPORT_OK_FIELD"),
+    "WorkflowRuntimeContract": ("vibecomfy.contracts.model", "WorkflowRuntimeContract"),
+    "build_contract": ("vibecomfy.contracts.model", "build_contract"),
+    "doctor_contract": ("vibecomfy.contracts.doctor", "doctor_contract"),
+    "ir_contract_codes": ("vibecomfy.contracts.ir", "ir_contract_codes"),
+    "is_ir_contract_code": ("vibecomfy.contracts.ir", "is_ir_contract_code"),
+    "require_ir_contract_code": ("vibecomfy.contracts.ir", "require_ir_contract_code"),
+}
+
+
 def __getattr__(name: str):
-    if name == "doctor_contract":
-        from vibecomfy.contracts.doctor import doctor_contract
+    if name in _LAZY_ATTRS:
+        module_name, attr_name = _LAZY_ATTRS[name]
+        from importlib import import_module
 
-        return doctor_contract
-    if name == "ContractDoctorDiagnostic":
-        from vibecomfy.contracts.doctor import ContractDoctorDiagnostic
-
-        return ContractDoctorDiagnostic
-    if name == "ContractDoctorReport":
-        from vibecomfy.contracts.doctor import ContractDoctorReport
-
-        return ContractDoctorReport
-    if name == "ContractIssue":
-        from vibecomfy.contracts.validation import ContractIssue
-
-        return ContractIssue
-    if name == "ContractReport":
-        from vibecomfy.contracts.validation import ContractReport
-
-        return ContractReport
-    if name == "LTXFirstLastTwoStageContract":
-        from vibecomfy.contracts.ltx_first_last import LTXFirstLastTwoStageContract
-
-        return LTXFirstLastTwoStageContract
+        value = getattr(import_module(module_name), attr_name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

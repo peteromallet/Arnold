@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
+import types
 import warnings
 from pathlib import Path
 
@@ -12,7 +14,7 @@ from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_s
 from vibecomfy.registry.library import load_workflow_reference, workflow_from_id
 from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
 from vibecomfy.handles import Handle
-from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
+from vibecomfy.workflow import VibeEdge, VibeInput, VibeNode, VibeWorkflow, WorkflowCompileError, WorkflowSource
 
 
 class _FakeSchemaProvider:
@@ -158,6 +160,127 @@ def test_register_input_descriptor_default_survives_alias_set_input() -> None:
     assert workflow.inputs["filename_prefix"].value == "new"
     assert workflow.inputs["filename_prefix"].default == "old"
     assert workflow.inputs["filename_prefix"].media_semantics == "image"
+    assert workflow.nodes["1"].inputs["filename_prefix"] == "new"
+    assert workflow.compile("api")["1"]["inputs"]["filename_prefix"] == "new"
+
+
+def test_set_input_rejects_unknown_name_without_unbound_metadata_write() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input(
+        "filename_prefix",
+        "1",
+        "filename_prefix",
+        "old",
+        aliases=["prefix"],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        workflow.set_input("missing", "new")
+
+    message = str(exc_info.value)
+    assert "no registered public input or alias" in message
+    assert "Available public inputs: 'filename_prefix'" in message
+    assert "'prefix' -> 'filename_prefix'" in message
+    assert "unbound_inputs" not in workflow.metadata
+    assert workflow.nodes["1"].inputs["filename_prefix"] == "old"
+
+
+def test_set_input_rejects_unknown_alias() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input("filename_prefix", "1", "filename_prefix", "old", aliases=["prefix"])
+
+    with pytest.raises(ValueError, match="Available aliases: 'prefix' -> 'filename_prefix'"):
+        workflow.set_input("file_prefix", "new")
+
+
+def test_set_input_rejects_stale_missing_target_node() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input("filename_prefix", "1", "filename_prefix", "old", aliases=["prefix"])
+    workflow.nodes.pop("1")
+
+    with pytest.raises(ValueError) as exc_info:
+        workflow.set_input("prefix", "new")
+
+    message = str(exc_info.value)
+    assert "target node '1' is missing" in message
+    assert "Registered target: 1.filename_prefix" in message
+    assert "unbound_inputs" not in workflow.metadata
+
+
+def test_set_input_rejects_stale_missing_target_field() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "SaveImage",
+        inputs={"filename_prefix": "old", "other": "old"},
+        widgets={"preview": True},
+    )
+    workflow.register_input("filename_prefix", "1", "filename_prefix", "old")
+    workflow.nodes["1"].inputs.pop("filename_prefix")
+
+    with pytest.raises(ValueError) as exc_info:
+        workflow.set_input("filename_prefix", "new")
+
+    message = str(exc_info.value)
+    assert "target field 'filename_prefix' is missing" in message
+    assert "node '1' (SaveImage)" in message
+    assert "Available fields on node '1': 'other', 'preview'" in message
+    assert "unbound_inputs" not in workflow.metadata
+
+
+def test_set_input_rejects_stale_missing_target_field_after_node_replacement() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input("filename_prefix", "1", "filename_prefix", "old", aliases=["prefix"])
+    workflow.nodes["1"] = VibeNode(
+        "1",
+        "PreviewImage",
+        inputs={"images": ["2", 0]},
+        widgets={"preview": False},
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        workflow.set_input("prefix", "new")
+
+    message = str(exc_info.value)
+    assert "target field 'filename_prefix' is missing" in message
+    assert "node '1' (PreviewImage)" in message
+    assert "Available fields on node '1': 'images', 'preview'" in message
+
+
+def test_set_input_rejects_ambiguous_alias_with_matching_public_inputs() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "one"})
+    workflow.nodes["2"] = VibeNode("2", "SaveImage", inputs={"filename_prefix": "two"})
+    workflow.register_input("first", "1", "filename_prefix", "one", aliases=["prefix"])
+    workflow.inputs["second"] = VibeInput(
+        name="second",
+        node_id="2",
+        field="filename_prefix",
+        value="two",
+        aliases=("prefix",),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        workflow.set_input("prefix", "new")
+
+    message = str(exc_info.value)
+    assert "alias 'prefix' is ambiguous" in message
+    assert "first" in message
+    assert "second" in message
+
+
+def test_set_input_updates_primary_name_when_aliases_exist() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "old"})
+    workflow.register_input("filename_prefix", "1", "filename_prefix", "old", aliases=["prefix"])
+
+    workflow.set_input("filename_prefix", "new")
+
+    assert workflow.inputs["filename_prefix"].value == "new"
     assert workflow.nodes["1"].inputs["filename_prefix"] == "new"
     assert workflow.compile("api")["1"]["inputs"]["filename_prefix"] == "new"
 
@@ -372,13 +495,145 @@ def test_helper_diagnostics_report_unresolved_broadcasts_before_compile() -> Non
     workflow.connect("2.0", "3.images")
 
     diagnostics = workflow.helper_diagnostics()
-    api = workflow.compile("api")
-
-    assert set(api) == {"1", "3"}
-    assert "images" not in api["3"]["inputs"]
     assert [(issue.code, issue.severity, issue.detail["node_id"]) for issue in diagnostics] == [
         ("helper_broadcast_unresolved", "warning", "2")
     ]
+
+    with pytest.raises(WorkflowCompileError) as exc_info:
+        workflow.compile("api")
+    assert exc_info.value.code == "helper_edge_unresolved"
+
+    report = workflow.validate(schema_provider=None)
+    compile_issues = [issue for issue in report.issues if issue.code == "api_compile_failed"]
+    assert not report.ok
+    assert len(compile_issues) == 1
+    assert compile_issues[0].severity == "error"
+    assert compile_issues[0].detail["compile_code"] == "helper_edge_unresolved"
+    assert compile_issues[0].detail["helper_node_id"] == "2"
+
+
+def test_compile_rewrites_multi_hop_set_get_edge_chains() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "SetNode", inputs={"widget_0": "first"})
+    workflow.nodes["3"] = VibeNode("3", "GetNode", inputs={"widget_0": "first"})
+    workflow.nodes["4"] = VibeNode("4", "SetNode", inputs={"widget_0": "second"})
+    workflow.nodes["5"] = VibeNode("5", "GetNode", inputs={"widget_0": "second"})
+    workflow.nodes["6"] = VibeNode("6", "SaveImage", inputs={})
+    workflow.connect("1.0", "2.IMAGE")
+    workflow.connect("3.0", "4.IMAGE")
+    workflow.connect("5.0", "6.images")
+
+    api = workflow.compile("api")
+
+    assert set(api) == {"1", "6"}
+    assert api["6"]["inputs"]["images"] == ["1", 0]
+
+
+def test_graphbuilder_backend_uses_shared_resolved_edge_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph_utils = types.ModuleType("comfy_execution.graph_utils")
+
+    class FakeGraphBuilder:
+        def __init__(self, prefix: str = "") -> None:
+            self.prefix = prefix
+            self.nodes: dict[str, dict[str, object]] = {}
+
+        def node(self, class_type: str, id: str, **inputs: object) -> None:
+            self.nodes[str(id)] = {"class_type": class_type, "inputs": inputs}
+
+        def finalize(self) -> dict[str, dict[str, object]]:
+            return self.nodes
+
+    graph_utils.GraphBuilder = FakeGraphBuilder
+    monkeypatch.setitem(sys.modules, "comfy_execution", types.ModuleType("comfy_execution"))
+    monkeypatch.setitem(sys.modules, "comfy_execution.graph_utils", graph_utils)
+
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "SetNode", inputs={"widget_0": "first"})
+    workflow.nodes["3"] = VibeNode("3", "GetNode", inputs={"widget_0": "first"})
+    workflow.nodes["4"] = VibeNode("4", "SetNode", inputs={"widget_0": "second"})
+    workflow.nodes["5"] = VibeNode("5", "GetNode", inputs={"widget_0": "second"})
+    workflow.nodes["6"] = VibeNode("6", "SaveImage", inputs={})
+    workflow.connect("1.0", "2.IMAGE")
+    workflow.connect("3.0", "4.IMAGE")
+    workflow.connect("5.0", "6.images")
+
+    assert workflow.compile("graphbuilder") == workflow.compile("api")
+
+
+def test_compile_raises_stable_code_for_helper_edge_cycles() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SetNode", inputs={"widget_0": "first"})
+    workflow.nodes["2"] = VibeNode("2", "SetNode", inputs={"widget_0": "second"})
+    workflow.nodes["3"] = VibeNode("3", "GetNode", inputs={"widget_0": "first"})
+    workflow.nodes["4"] = VibeNode("4", "SaveImage", inputs={})
+    workflow.connect("2.0", "1.IMAGE")
+    workflow.connect("1.0", "2.IMAGE")
+    workflow.connect("3.0", "4.images")
+
+    with pytest.raises(WorkflowCompileError) as exc_info:
+        workflow.compile("api")
+
+    assert exc_info.value.code == "helper_edge_cycle"
+    assert exc_info.value.detail["target_node_id"] == "4"
+    assert exc_info.value.detail["target_input"] == "images"
+
+
+def test_compile_raises_stable_code_for_missing_edge_endpoint() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={})
+    workflow.edges.append(VibeEdge("missing", "0", "1", "images"))
+
+    with pytest.raises(WorkflowCompileError) as exc_info:
+        workflow.compile("api")
+
+    assert exc_info.value.code == "compiled_edge_missing_endpoint"
+    assert exc_info.value.detail["source_node_id"] == "missing"
+
+
+def test_validate_records_api_compile_failures_without_schema_provider() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SaveImage", inputs={})
+    workflow.edges.append(VibeEdge("missing", "0", "1", "images"))
+
+    report = workflow.validate(schema_provider=None)
+
+    compile_issues = [issue for issue in report.issues if issue.code == "api_compile_failed"]
+    assert not report.ok
+    assert len(compile_issues) == 1
+    assert compile_issues[0].severity == "error"
+    assert compile_issues[0].detail["compile_code"] == "compiled_edge_missing_endpoint"
+    assert compile_issues[0].detail["source_node_id"] == "missing"
+
+
+def test_validate_keeps_schema_checks_conditional(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vibecomfy.schema import validate as schema_validate
+
+    calls: list[str] = []
+
+    def fake_validate_against_schema(workflow, schema_provider):
+        calls.append("schema")
+        return []
+
+    def fake_validate_api_link_shapes(api, schema_provider):
+        calls.append("links")
+        return []
+
+    monkeypatch.setattr(schema_validate, "validate_against_schema", fake_validate_against_schema)
+    monkeypatch.setattr(schema_validate, "validate_api_link_shapes", fake_validate_api_link_shapes)
+
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "SaveImage", inputs={})
+    workflow.connect("1.0", "2.images")
+
+    assert workflow.validate(schema_provider=None).ok
+    assert calls == []
+
+    provider = _FakeSchemaProvider({})
+    assert workflow.validate(schema_provider=provider).ok
+    assert calls == ["schema", "links"]
 
 
 def test_runtime_views_strip_helper_nodes_without_changing_compile_rewrite() -> None:
@@ -402,6 +657,135 @@ def test_runtime_views_strip_helper_nodes_without_changing_compile_rewrite() -> 
         ("helper_broadcast_resolved", "info"),
         ("helper_broadcast_resolved", "info"),
     ]
+
+
+def test_compile_strips_only_ui_and_broadcast_helpers_not_conversion_helpers() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "Note", inputs={"widget_0": "editor note"})
+    workflow.nodes["2"] = VibeNode("2", "MarkdownNote", inputs={"widget_0": "editor note"})
+    workflow.nodes["3"] = VibeNode("3", "SetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["4"] = VibeNode("4", "GetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["5"] = VibeNode("5", "Reroute", inputs={})
+    workflow.nodes["6"] = VibeNode("6", "PrimitiveNode", inputs={"value": 7})
+    workflow.nodes["7"] = VibeNode("7", "PrimitiveInt", inputs={"value": 8})
+
+    api = workflow.compile("api")
+
+    assert set(api) == {"5", "6", "7"}
+    assert api["5"]["class_type"] == "Reroute"
+    assert api["6"]["class_type"] == "PrimitiveNode"
+    assert api["7"]["class_type"] == "PrimitiveInt"
+
+
+def test_compile_resolves_supported_note_markdown_set_get_helper_chain() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "Note", inputs={"widget_0": "editor note"})
+    workflow.nodes["3"] = VibeNode("3", "MarkdownNote", inputs={"widget_0": "## doc"})
+    workflow.nodes["4"] = VibeNode("4", "SetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["5"] = VibeNode("5", "GetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["6"] = VibeNode("6", "SaveImage", inputs={})
+    workflow.connect("1.0", "4.IMAGE")
+    workflow.connect("5.0", "6.images")
+
+    api = workflow.compile("api")
+    report = workflow.validate(schema_provider=None)
+
+    assert set(api) == {"1", "6"}
+    assert api["6"]["inputs"]["images"] == ["1", 0]
+    assert report.ok
+    assert not [issue for issue in report.issues if issue.code == "api_compile_failed"]
+
+
+def test_compile_strips_standalone_helpers_silently() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "Note", inputs={"widget_0": "loose note"})
+    workflow.nodes["2"] = VibeNode("2", "MarkdownNote", inputs={"widget_0": "## loose doc"})
+    workflow.nodes["3"] = VibeNode("3", "SetNode", inputs={"widget_0": "loose_bus"})
+    workflow.nodes["4"] = VibeNode("4", "GetNode", inputs={"widget_0": "loose_bus"})
+    workflow.nodes["5"] = VibeNode("5", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["6"] = VibeNode("6", "SaveImage", inputs={"images": ["5", 0]})
+
+    api = workflow.compile("api")
+    report = workflow.validate(schema_provider=None)
+
+    assert set(api) == {"5", "6"}
+    assert api["6"]["inputs"]["images"] == ["5", 0]
+    assert report.ok
+    assert not [issue for issue in report.issues if issue.code == "api_compile_failed"]
+
+
+def test_compile_raises_for_unrewirable_helper_path_through_ui_only_source() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "Note", inputs={"widget_0": "editor note"})
+    workflow.nodes["2"] = VibeNode("2", "SetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["3"] = VibeNode("3", "GetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["4"] = VibeNode("4", "SaveImage", inputs={})
+    workflow.connect("1.0", "2.IMAGE")
+    workflow.connect("3.0", "4.images")
+
+    with pytest.raises(WorkflowCompileError) as exc_info:
+        workflow.compile("api")
+
+    assert exc_info.value.code == "helper_edge_unresolved"
+    assert exc_info.value.detail["helper_node_id"] == "1"
+    assert exc_info.value.detail["class_type"] == "Note"
+    assert exc_info.value.detail["target_node_id"] == "4"
+    assert exc_info.value.detail["target_input"] == "images"
+
+
+def test_compile_raises_when_traced_helper_source_missing_from_compiled_api() -> None:
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "SetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["2"] = VibeNode("2", "GetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["3"] = VibeNode("3", "SaveImage", inputs={})
+    workflow.edges.append(VibeEdge("missing", "0", "1", "IMAGE"))
+    workflow.connect("2.0", "3.images")
+
+    with pytest.raises(WorkflowCompileError) as exc_info:
+        workflow.compile("api")
+
+    assert exc_info.value.code == "compiled_edge_missing_endpoint"
+    assert exc_info.value.detail["source_node_id"] == "missing"
+    assert exc_info.value.detail["target_node_id"] == "3"
+    assert exc_info.value.detail["target_input"] == "images"
+
+
+def test_compile_backend_parity_for_helper_edge_target_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph_utils = types.ModuleType("comfy_execution.graph_utils")
+
+    class FakeGraphBuilder:
+        def __init__(self, prefix: str = "") -> None:
+            self.prefix = prefix
+            self.nodes: dict[str, dict[str, object]] = {}
+
+        def node(self, class_type: str, id: str, **inputs: object) -> None:
+            self.nodes[str(id)] = {"class_type": class_type, "inputs": inputs}
+
+        def finalize(self) -> dict[str, dict[str, object]]:
+            return self.nodes
+
+    graph_utils.GraphBuilder = FakeGraphBuilder
+    monkeypatch.setitem(sys.modules, "comfy_execution", types.ModuleType("comfy_execution"))
+    monkeypatch.setitem(sys.modules, "comfy_execution.graph_utils", graph_utils)
+
+    workflow = VibeWorkflow("test", WorkflowSource("test"))
+    workflow.nodes["1"] = VibeNode("1", "LoadImage", inputs={"image": "reference.png"})
+    workflow.nodes["2"] = VibeNode("2", "Note", inputs={"widget_0": "editor note"})
+    workflow.nodes["3"] = VibeNode("3", "SetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["4"] = VibeNode("4", "GetNode", inputs={"widget_0": "bus"})
+    workflow.nodes["5"] = VibeNode("5", "SaveImage", inputs={})
+    workflow.connect("1.0", "3.IMAGE")
+    workflow.connect("4.0", "5.images")
+
+    api = workflow.compile("api")
+    graph = workflow.compile("graphbuilder")
+
+    def target_inputs(compiled: dict[str, dict]) -> dict[str, dict]:
+        return {node_id: payload["inputs"] for node_id, payload in compiled.items()}
+
+    assert target_inputs(graph) == target_inputs(api)
+    assert target_inputs(api)["5"]["images"] == ["1", 0]
 
 
 def test_compile_replaces_known_positional_widget_aliases() -> None:

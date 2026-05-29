@@ -271,6 +271,28 @@ def test_bind_input_records_descriptor_metadata_and_alias_sets_compiled_field() 
     assert wf.compile("api")["10"]["inputs"]["filename_prefix"] == "out/alias"
 
 
+def test_bind_input_alias_raises_after_target_node_replacement() -> None:
+    wf = ready_workflow("test", source_path="/tmp/test.py")
+    ready_node(wf, "SaveImage", source_id="10", filename_prefix="out/default")
+
+    bind_input(
+        wf,
+        "filename_prefix",
+        "10",
+        "filename_prefix",
+        aliases=["prefix"],
+    )
+    wf.nodes["10"] = wf.node("PreviewImage", images=["5", 0], _source_id="10").node
+
+    with pytest.raises(ValueError) as exc_info:
+        wf.set_input("prefix", "out/alias")
+
+    message = str(exc_info.value)
+    assert "target field 'filename_prefix' is missing" in message
+    assert "node '10' (PreviewImage)" in message
+    assert "Available fields on node '10': '_source_id', 'images'" in message
+
+
 # ---------------------------------------------------------------------------
 # (d) bind_output produces a semantic output name in workflow.outputs with
 #     artifact_kind/mime_type/filename_prefix
@@ -478,27 +500,21 @@ def test_bind_input_rejects_primary_collision_with_existing_alias() -> None:
 
 
 # ---------------------------------------------------------------------------
-# (g) calling finalize_metadata after bind_input clears the manual binding
-#     (regression doc)
+# (g) calling finalize_metadata after bind_input preserves valid manual binding
 # ---------------------------------------------------------------------------
-def test_finalize_metadata_after_bind_input_clears_manual_binding() -> None:
-    """Documented regression: finalize_metadata clears inputs/outputs completely,
-    so any bind_input calls before it are wiped.  This is why bind MUST come
-    after finalize_ready_template."""
+def test_finalize_metadata_after_bind_input_preserves_manual_binding() -> None:
     wf = ready_workflow("test", source_path="/tmp/test.py")
     ready_node(wf, "LoadImage", source_id="10")
     ready_node(wf, "SaveImage", source_id="20", filename_prefix="out/default")
     wf.connect("10.0", "20.images")
 
-    # Bind BEFORE finalize
     bind_input(wf, "filename_prefix", "20", "filename_prefix")
-    assert "filename_prefix" in wf.inputs  # It's there now
+    assert "filename_prefix" in wf.inputs
 
-    # finalize_metadata clears inputs
     wf.finalize_metadata()
 
-    # The binding should be gone
-    assert "filename_prefix" not in wf.inputs
+    assert "filename_prefix" in wf.inputs
+    assert wf.inputs["filename_prefix"].node_id == "20"
 
 
 def test_bind_after_finalize_survives() -> None:

@@ -908,3 +908,355 @@ def test_session_config_strict_drift_explicit():
     """SessionConfig.strict_drift can be set explicitly."""
     config = SessionConfig(strict_drift=True)
     assert config.strict_drift is True
+
+
+# ---------------------------------------------------------------------------
+# T21: normalize_prompt_id queue return shape tests
+# ---------------------------------------------------------------------------
+# normalize_prompt_id must extract prompt_id from both dict and object queue
+# return shapes.  Each path that writes RunResult.prompt_id or metadata must
+# be covered.
+# ---------------------------------------------------------------------------
+
+
+def _make_one_shot_run_wf() -> VibeWorkflow:
+    """Minimal workflow usable in one-shot run tests."""
+    wf = VibeWorkflow("one-shot-test", WorkflowSource("one-shot-test"))
+    wf.nodes["1"] = VibeNode("1", "SaveImage", inputs={"filename_prefix": "t21"})
+    return wf
+
+
+class _ObjectQueueResult:
+    """Simulates a queue result returned as an object (attribute access)."""
+
+    def __init__(self, prompt_id: str, outputs: list | None = None) -> None:
+        self.prompt_id = prompt_id
+        self.outputs = outputs or []
+
+
+def test_normalize_prompt_id_dict_shape() -> None:
+    """normalize_prompt_id extracts prompt_id from a dict return."""
+    from vibecomfy.runtime.execution import normalize_prompt_id
+
+    result = normalize_prompt_id({"prompt_id": "abc-123", "extra": "ignored"})
+    assert result == "abc-123"
+
+
+def test_normalize_prompt_id_object_shape() -> None:
+    """normalize_prompt_id extracts prompt_id from an object return."""
+    from vibecomfy.runtime.execution import normalize_prompt_id
+
+    result = normalize_prompt_id(_ObjectQueueResult("obj-456"))
+    assert result == "obj-456"
+
+
+def test_normalize_prompt_id_dict_missing_key() -> None:
+    """normalize_prompt_id returns None when prompt_id key absent in dict."""
+    from vibecomfy.runtime.execution import normalize_prompt_id
+
+    assert normalize_prompt_id({}) is None
+    assert normalize_prompt_id({"other": "x"}) is None
+
+
+def test_normalize_prompt_id_object_missing_attr() -> None:
+    """normalize_prompt_id returns None when object lacks prompt_id attr."""
+    from vibecomfy.runtime.execution import normalize_prompt_id
+
+    class _NoId:
+        pass
+
+    assert normalize_prompt_id(_NoId()) is None
+
+
+def test_normalize_prompt_id_numeric_coerced_to_str() -> None:
+    """normalize_prompt_id stringifies numeric prompt_ids for both shapes."""
+    from vibecomfy.runtime.execution import normalize_prompt_id
+
+    assert normalize_prompt_id({"prompt_id": 7}) == "7"
+
+    class _NumId:
+        prompt_id = 99
+
+    assert normalize_prompt_id(_NumId()) == "99"
+
+
+def test_one_shot_run_dict_queue_result_sets_run_result_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One-shot run path: dict queue result → RunResult.prompt_id via normalize_prompt_id."""
+
+    @asynccontextmanager
+    async def fake_server(*args, **kwargs):
+        yield "http://127.0.0.1:8188"
+
+    class _DictClient:
+        def __init__(self, server_url: str) -> None:
+            pass
+
+        async def queue_prompt(self, prompt: dict) -> dict:
+            return {"prompt_id": "dict-prompt-id"}
+
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {}}}
+
+    async def _fake_history_dict(url: str, pid: str | None, config=None) -> dict:
+        return {pid: {"outputs": {}}} if pid else {}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "ComfyClient", _DictClient)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+    monkeypatch.setattr(runtime_run_module, "_wait_for_server_history", _fake_history_dict)
+
+    result = asyncio.run(runtime_run_module.run(_make_one_shot_run_wf()))
+    assert result.prompt_id == "dict-prompt-id"
+
+
+def test_one_shot_run_object_queue_result_sets_run_result_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One-shot run path: object queue result → RunResult.prompt_id via normalize_prompt_id."""
+
+    @asynccontextmanager
+    async def fake_server(*args, **kwargs):
+        yield "http://127.0.0.1:8188"
+
+    class _ObjectClient:
+        def __init__(self, server_url: str) -> None:
+            pass
+
+        async def queue_prompt(self, prompt: dict) -> _ObjectQueueResult:
+            return _ObjectQueueResult("obj-prompt-id")
+
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {}}}
+
+    async def _fake_history_obj(url: str, pid: str | None, config=None) -> dict:
+        return {pid: {"outputs": {}}} if pid else {}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "ComfyClient", _ObjectClient)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+    monkeypatch.setattr(runtime_run_module, "_wait_for_server_history", _fake_history_obj)
+
+    result = asyncio.run(runtime_run_module.run(_make_one_shot_run_wf()))
+    assert result.prompt_id == "obj-prompt-id"
+
+
+def test_embedded_session_dict_queue_result_sets_run_result_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Embedded session: dict queue result → RunResult.prompt_id via normalize_prompt_id."""
+
+    class FakeComfy:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def queue_prompt_api(self, api_dict: dict) -> dict:
+            return {"prompt_id": "emb-dict-id", "outputs": []}
+
+        async def clear_cache(self) -> None:
+            pass
+
+    import sys
+    import types as _types
+
+    monkeypatch.setitem(sys.modules, "comfy", _types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", _types.ModuleType("comfy.client"))
+    embedded = _types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = lambda configuration=None: FakeComfy()
+
+    def _default_config():
+        class _C(dict):
+            def __getattr__(self, k):
+                try:
+                    return self[k]
+                except KeyError as e:
+                    raise AttributeError(k) from e
+
+        return _C({"cwd": None})
+
+    embedded.default_configuration = _default_config
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
+    monkeypatch.delenv("VIBECOMFY_COMFY_CONFIGURATION", raising=False)
+    monkeypatch.delenv("VIBECOMFY_WARM", raising=False)
+    monkeypatch.chdir(tmp_path)
+    # Disable schema validation so schema provider is not needed
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_VALIDATE", "0")
+
+    wf = _make_one_shot_run_wf()
+    result = asyncio.run(
+        session_module.EmbeddedSession().run(wf)
+    )
+    assert result.prompt_id == "emb-dict-id"
+
+
+def test_embedded_session_object_queue_result_sets_run_result_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Embedded session: object queue result → RunResult.prompt_id via normalize_prompt_id."""
+
+    class FakeComfy:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def queue_prompt_api(self, api_dict: dict) -> _ObjectQueueResult:
+            return _ObjectQueueResult("emb-obj-id")
+
+        async def clear_cache(self) -> None:
+            pass
+
+    import sys
+    import types as _types
+
+    monkeypatch.setitem(sys.modules, "comfy", _types.ModuleType("comfy"))
+    monkeypatch.setitem(sys.modules, "comfy.client", _types.ModuleType("comfy.client"))
+    embedded = _types.ModuleType("comfy.client.embedded_comfy_client")
+    embedded.Comfy = lambda configuration=None: FakeComfy()
+
+    def _default_config():
+        class _C(dict):
+            def __getattr__(self, k):
+                try:
+                    return self[k]
+                except KeyError as e:
+                    raise AttributeError(k) from e
+
+        return _C({"cwd": None})
+
+    embedded.default_configuration = _default_config
+    monkeypatch.setitem(sys.modules, "comfy.client.embedded_comfy_client", embedded)
+    monkeypatch.delenv("VIBECOMFY_COMFY_CONFIGURATION", raising=False)
+    monkeypatch.delenv("VIBECOMFY_WARM", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_VALIDATE", "0")
+
+    wf = _make_one_shot_run_wf()
+    result = asyncio.run(
+        session_module.EmbeddedSession().run(wf)
+    )
+    assert result.prompt_id == "emb-obj-id"
+
+
+def test_server_session_dict_queue_result_sets_run_result_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Server session: dict queue result → RunResult.prompt_id via normalize_prompt_id."""
+
+    class _FakeClient:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        async def queue_prompt(self, api_dict: dict) -> dict:
+            return {"prompt_id": "srv-dict-id"}
+
+    async def _fake_history(url: str, pid: str | None, *, config=None) -> dict:
+        return {pid: {"outputs": {}}} if pid else {}
+
+    async def _fake_start(self) -> None:
+        self.url = "http://fake-srv.test"
+
+    async def _fake_watchdog(*args, **kwargs):
+        return None
+
+    async def _fake_finalize_watchdog(*args, **kwargs):
+        pass
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module.ServerSession, "start", _fake_start)
+    monkeypatch.setattr(session_module, "ComfyClient", _FakeClient)
+    monkeypatch.setattr(session_module, "_wait_for_server_history", _fake_history)
+    monkeypatch.setattr(session_module, "_start_watchdog", _fake_watchdog)
+    monkeypatch.setattr(session_module, "_finalize_watchdog", _fake_finalize_watchdog)
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_VALIDATE", "0")
+
+    wf = _make_one_shot_run_wf()
+    result = asyncio.run(session_module.ServerSession()._run_untracked(wf))
+    assert result.prompt_id == "srv-dict-id"
+
+
+def test_server_session_object_queue_result_sets_run_result_prompt_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Server session: object queue result → RunResult.prompt_id via normalize_prompt_id."""
+
+    class _FakeClient:
+        def __init__(self, url: str) -> None:
+            self.url = url
+
+        async def queue_prompt(self, api_dict: dict) -> _ObjectQueueResult:
+            return _ObjectQueueResult("srv-obj-id")
+
+    async def _fake_history(url: str, pid: str | None, *, config=None) -> dict:
+        return {pid: {"outputs": {}}} if pid else {}
+
+    async def _fake_start(self) -> None:
+        self.url = "http://fake-srv.test"
+
+    async def _fake_watchdog(*args, **kwargs):
+        return None
+
+    async def _fake_finalize_watchdog(*args, **kwargs):
+        pass
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(session_module.ServerSession, "start", _fake_start)
+    monkeypatch.setattr(session_module, "ComfyClient", _FakeClient)
+    monkeypatch.setattr(session_module, "_wait_for_server_history", _fake_history)
+    monkeypatch.setattr(session_module, "_start_watchdog", _fake_watchdog)
+    monkeypatch.setattr(session_module, "_finalize_watchdog", _fake_finalize_watchdog)
+    monkeypatch.setenv("VIBECOMFY_SCHEMA_VALIDATE", "0")
+
+    wf = _make_one_shot_run_wf()
+    result = asyncio.run(session_module.ServerSession()._run_untracked(wf))
+    assert result.prompt_id == "srv-obj-id"
+
+
+def test_prompt_id_consistency_across_run_result_and_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """RunResult.prompt_id matches the prompt_id stored in the metadata.json queued field.
+
+    The 'queued' value is written verbatim into metadata.json, while RunResult.prompt_id
+    is the normalized string.  For a dict return the two must agree without expansion.
+    """
+    import json as _json
+
+    @asynccontextmanager
+    async def fake_server(*args, **kwargs):
+        yield "http://127.0.0.1:8188"
+
+    class _DictClient:
+        def __init__(self, server_url: str) -> None:
+            pass
+
+        async def queue_prompt(self, prompt: dict) -> dict:
+            return {"prompt_id": "meta-check-id", "extra_field": "ignored"}
+
+        async def history(self, prompt_id: str) -> dict:
+            return {prompt_id: {"outputs": {}}}
+
+    async def _fake_history_meta(url: str, pid: str | None, config=None) -> dict:
+        return {pid: {"outputs": {}}} if pid else {}
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(runtime_run_module, "comfy_server", fake_server)
+    monkeypatch.setattr(runtime_run_module, "ComfyClient", _DictClient)
+    monkeypatch.setattr(runtime_run_module, "_build_schema_provider", lambda active_url: None)
+    monkeypatch.setattr(runtime_run_module, "_wait_for_server_history", _fake_history_meta)
+
+    result = asyncio.run(runtime_run_module.run(_make_one_shot_run_wf()))
+
+    assert result.prompt_id == "meta-check-id"
+    metadata = _json.loads(Path(result.metadata_path).read_text())
+    # queued is stored verbatim; prompt_id in RunResult is the normalized string
+    assert metadata["queued"]["prompt_id"] == "meta-check-id"
+    # RunResult does not gain extra fields beyond what is already in its dataclass
+    assert not hasattr(result, "extra_field")

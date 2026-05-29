@@ -30,6 +30,11 @@ _OVERRIDE_HINTS = {
         "step count directly, or extend STEPS_NODE_CLASSES if a custom-node class exposes "
         "a true sample-step count."
     ),
+    "seed": (
+        "--seed is only wired when the workflow registers a public seed input. "
+        "Edit the source workflow's seed fields directly, or register the seed input "
+        "with bind_input()/InputSpec before using the universal CLI override."
+    ),
 }
 
 
@@ -75,6 +80,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 return 2
             workflow.set_prompt(args.prompt)
         if args.seed is not None:
+            if workflow.inputs.get("seed") is None:
+                print(_override_unwired_message(workflow.id, "--seed", "seed"), file=sys.stderr)
+                return 2
             workflow.set_seed(args.seed)
         if args.steps is not None:
             if workflow.inputs.get("steps") is None:
