@@ -74,6 +74,47 @@ panel's confidence was discounted on grounds the (repo-bounded) reviewers couldn
    `_run_parallel_stage` shallow-copies only top-level state. Multi-branch (not single-winner) merge
    needs a post-merge semantic gate before any Phase-4 best-of-N — clean `git apply` ≠ correct.
 
+---
+
+## 0.1 UPDATE 2026-05-30 — blast radius confirmed; first slice bundled into the critique-routing sprint
+
+A 4-agent code-grounded sweep (2026-05-30) made the duplication concrete and surfaced a partial implementation that already exists on a branch. Net: the primitive is needed, the mechanism is proven, and DECIDED — its first real extraction rides the **critique-complexity-routing** sprint (`briefs/critique-complexity-routing.md`), not a standalone Phase-0.
+
+**The Hermes per-unit scaffold is copied 4× (5th counting a re-defined importer), each hardcoding `_import_hermes_runtime()` → fan-out is HERMES-ONLY:**
+- `orchestration/parallel_critique.py::_run_check`
+- `review/parallel.py::_run_check`
+- `review/parallel.py::_run_criteria_verdict`
+- `orchestration/prep_research.py::_run_research_child` (+ its OWN duplicate `_import_hermes_runtime` at `:644`) — **NEW fan-out site not in the §1 table below; prep post-dates this brief.**
+
+**The 3 collapse gates that exist ONLY because the runners are Hermes-pinned** (kill the pinning → all three dissolve, unlocking Claude/Codex parallelism at once): `handlers/critique.py:378`, `handlers/review.py:527`, the prep-fanout gates (`prep_research.py:226/613/947`, `profiles/__init__.py:261`).
+
+**Proof-of-mechanism already exists (prep-vendor-agnostic branch, commit 6e536827).** `scatter_over_worker_step` / `_process` (NOT in `_core` — they live prep-local at `orchestration/prep_research.py:240/284`). What it proves and what it lacks:
+- ✅ **Genuinely vendor-agnostic** — each unit dispatches via `run_step_with_worker` → claude(Shannon)/codex/hermes (`_impl.py:2552/2589/2601/2645`), not a pinned `AIAgent`. Prep consumes it live (`:970-974`). This is the first empirical proof of Axis A on CLI backends.
+- ⚠️ **NOTE — it rides `run_step_with_worker` directly**, contradicting this brief's §2 thesis that `run_oneshot` must be a *separate* stateless contract. The read/vendor-agnostic path worked through the execute-shaped contract anyway (via `read_only=True` + caller-owned output path + ephemeral mode). The `run_oneshot`-vs-`run_step_with_worker` split may be softer than §1's root-cause analysis assumed — at least for the read family. Re-test the separation assumption when extracting.
+- ❌ **Pins ONE model per scatter** — the per-unit `resolved_model_spec` mechanism exists (`:252`) but the only caller stamps one model on every unit (`:957-967`). **This is the decisive gap:** critique complexity-routing needs lens-by-lens *different* models in the same scatter. Per-unit model must become a first-class parameter.
+- ❌ **Prep-local, prompt/parse hardcoded** — it's a per-unit *adapter*, not a fan-out primitive. Promote the *pattern*, not the function.
+
+**Target shape to lift into `_core`** (smallest form that serves critique's per-lens routing AND prep/review's one-model-per-scatter):
+```python
+# megaplan/_core/worker_fanout.py
+@dataclass(frozen=True)
+class WorkerUnit:
+    step: str
+    resolved: AgentMode          # PER-UNIT agent+model+effort → enables lens-by-lens routing
+    prompt: str                  # PER-UNIT prompt (caller's make_prompt(unit))
+    output_path: Path
+    read_only: bool = True
+    extra: dict[str, Any] = field(default_factory=dict)
+
+def scatter_over_worker_step(units, *, state, plan_dir, root,
+    parse, reduce, isolation="thread", max_concurrent=None, on_unit_error=None): ...
+```
+The one load-bearing change vs. the branch: `resolved` + `prompt` + `parse` move into the per-unit `WorkerUnit` (caller varies them per unit) instead of being hardcoded to prep. Critique passes a different `resolved` per lens; prep/review pass the same to every unit.
+
+**DECIDED sequencing (supersedes §5's "Phase 0 standalone" for the immediate path):** extract this `_core` primitive **inside** the critique-complexity-routing sprint (its Block B) — the primitive is born serving its hardest first consumer (per-lens routing), then prep and review migrate onto it as **follow-ups**. The wider epic below (write/WORKTREE isolation, bakeoff re-expression, `compete`) remains future work; only the read-family vendor-agnostic core is pulled forward. Landing the prep-vendor-agnostic branch first still helps (gives the proven `run_step_with_worker` dispatch code to lift + avoids a `prep_research.py` collision), but is no longer a hard blocker since this sprint does the generalization itself.
+
+---
+
 Everything below this line is the **original full proposal**, retained for the record.
 
 ---
