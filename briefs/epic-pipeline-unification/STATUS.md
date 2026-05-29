@@ -1,5 +1,13 @@
 # Status — Arnold SDK epic (event-sourced-ledger runtime)
 
+**⚠️ NOT self-runnable as-is (pre-launch sense-check 2026-05-29 · ../validation/prelaunch/SYNTHESIS.md).** The triple is spec-valid but the chain HARNESS does not honor the autonomy ladder / require_clean_base, M0 is a bootstrap paradox as milestone #1, and auto-merge has no oracle in its path. Launch is NOT one t0 go yet.
+
+**Pre-t0 fix path (the real M-1 / M0):** (1) engine-readiness PATCH on main (ladder+bump+bounded-retry-counter, parse require_clean_base, auto-handle clarify/tiebreaker) then pin; (2) operator pre-step — frozen venv from main@t0-sha + wire gate CI as base-branch REQUIRED CHECKS + external wallet ceiling (~$500-1200) + launch with --no-git-refresh; (3) chain milestone #1 becomes harness-code-only; add a real depends_on/gate field (M1) or treat ∥ as topo-sort-over-serial; fix the brief seams (RoutingKey in M2, M5b->M5c type+mapping, M5d owns auto-merge, M5-cal->M5-eval taint, M2.5 four-way resume, M4 "stop new path" not "kill", M5c method name). See EPIC "## ⚠️ PRE-LAUNCH" + prelaunch/SYNTHESIS.md.
+
+---
+
+# Status — Arnold SDK epic (event-sourced-ledger runtime)
+
 **TRIPLE COMPLETE + VALIDATED (2026-05-29). Review-ready; launch = a single t0 "go".**
 chain.yaml: success=true, 14 milestones, merge_policy: auto, failure/escalate = auto-ladders, require_clean_base.
 
