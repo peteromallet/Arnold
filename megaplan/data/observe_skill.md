@@ -1,11 +1,11 @@
 ---
 name: megaplan-observe
-description: Observe an in-flight megaplan — introspect state, trace events, diagnose blockages, detect drift. Companion to megaplan-decision. Use during and after a run, not before.
+description: Observe an in-flight megaplan — introspect state, trace events, diagnose blockages, detect drift. Companion to megaplan-setup. Use during and after a run, not before.
 ---
 
 # Megaplan Observe
 
-When a megaplan is running — or stuck — `megaplan introspect`, `megaplan trace`, and `megaplan doctor` tell you *what it's doing, why, since when, and how to intervene*. This skill covers the observation surface; `megaplan-decision` covers profile/robustness/depth selection before a run.
+When a megaplan is running — or stuck — `megaplan introspect`, `megaplan trace`, and `megaplan doctor` tell you *what it's doing, why, since when, and how to intervene*. This skill covers the observation surface; `megaplan-setup` covers profile/robustness/depth selection before a run.
 
 ---
 
@@ -40,7 +40,7 @@ The list is drawn from `workflow_next()` / `infer_next_steps()` — the single-s
 
 ### `rubric_doc.drift` — tooling/doc misalignment before it bites
 
-If `rubric_doc.drift.missing_locally` is non-empty, the megaplan-decision skill references profile names your binary doesn't expose. This is the exact failure mode that wastes hours: the skill says `--profile thoughtful`, the binary says `Unknown profile 'thoughtful'`. `drift` catches it before the invocation. Use a profile from `profiles_available_locally` whose recipe matches what the rubric describes, or pin the binary to a state that has the canonical names.
+If `rubric_doc.drift.missing_locally` is non-empty, the megaplan-setup skill references profile names your binary doesn't expose. This is the exact failure mode that wastes hours: the skill says `--profile thoughtful`, the binary says `Unknown profile 'thoughtful'`. `drift` catches it before the invocation. Use a profile from `profiles_available_locally` whose recipe matches what the rubric describes, or pin the binary to a state that has the canonical names.
 
 ---
 
@@ -147,7 +147,7 @@ Read `block_details.recoverable_via`. Execute the first applicable option. Verif
 megaplan trace --plan my-sprint --format narrative --since 10m
 ```
 
-The narrative format groups consecutive LLM calls into prose summaries. Look for which model is being called, how frequently, and at what token volume. Cross-reference against the tier's expected cost profile from `megaplan-decision`. If the model is correct but call frequency is high, the plan may be looping — check `phase_retry` events. If the model is wrong (e.g., premium model on a solo-tier phase), check for an unintended `override set-profile`.
+The narrative format groups consecutive LLM calls into prose summaries. Look for which model is being called, how frequently, and at what token volume. Cross-reference against the tier's expected cost profile from `megaplan-setup`. If the model is correct but call frequency is high, the plan may be looping — check `phase_retry` events. If the model is wrong (e.g., premium model on a solo-tier phase), check for an unintended `override set-profile`.
 
 ### "I switched branches and now megaplan is broken"
 

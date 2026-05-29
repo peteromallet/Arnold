@@ -45,6 +45,90 @@ def _check_credential(env_var: str) -> bool:
     return bool(os.environ.get(env_var, "").strip())
 
 
+# Slots that are opt-in / non-blocking and so must NOT hard-fail preflight.
+# ``feedback`` only runs under --with-feedback and is deliberately pinned to a
+# fixed vendor (claude:low) for cross-run ratings comparability — see
+# ``apply_vendor_rewrite``. Demanding its credential would make every
+# single-vendor profile (all-codex, all-deepseek-*, solo) unrunnable for a
+# user who lacks that one extra key, even though they never invoke feedback.
+# If feedback IS used without the key, it fails at runtime on a throwaway
+# template rather than blocking the whole run.
+_SOFT_SLOTS: frozenset[str] = frozenset({"feedback"})
+
+
+# Which single-vendor profile to recommend when a given premium credential is
+# present but the chosen profile demands one the user lacks.
+_VENDOR_FALLBACK_PROFILES: tuple[tuple[str, str, str], ...] = (
+    # (env var present → recommend this profile → one-line why)
+    ("ANTHROPIC_API_KEY", "all-claude", "Claude-only, every phase on Anthropic"),
+    ("OPENAI_API_KEY", "all-codex", "Codex-only, every phase on OpenAI"),
+)
+
+
+def _credential_guidance(profile_name: str) -> list[str]:
+    """Return guidance lines tailored to the credentials actually present.
+
+    Three distinct situations, kept honestly separate:
+
+    * **You already have a usable vendor key** (but not the one this profile
+      wants): point at the matching single-vendor profile you can run *right
+      now* — e.g. you have Anthropic, so `--profile all-claude` works.
+    * **You have no model credentials at all**: a getting-started list of every
+      supported key and what it unlocks — not a misleading "run with what you
+      have" header when you have nothing.
+    * **You lack a DeepSeek/Fireworks key**: a note that adding one unlocks the
+      cheaper cost-tiered profiles (only shown when it adds information).
+    """
+    have_deepseek = _check_credential("DEEPSEEK_API_KEY") or _check_credential(
+        "FIREWORKS_API_KEY"
+    )
+    have_any = (
+        have_deepseek
+        or _check_credential("ANTHROPIC_API_KEY")
+        or _check_credential("OPENAI_API_KEY")
+    )
+
+    # Single-vendor profiles you can run immediately with a key you already
+    # have (skip the profile you just tried — re-running it won't help).
+    runnable: list[str] = []
+    for env_var, rec_profile, why in _VENDOR_FALLBACK_PROFILES:
+        if rec_profile != profile_name and _check_credential(env_var):
+            runnable.append(
+                f"  • re-run with `--profile {rec_profile}` ({why}) — "
+                f"works with your {env_var}."
+            )
+
+    lines: list[str] = []
+    if runnable:
+        lines.append("You can run right now with credentials you already have:")
+        lines.extend(runnable)
+
+    if not have_any:
+        # Brand-new user: nothing usable is configured. Note: uses "profile X"
+        # (no `--` token) so it reads as a key-setup guide, not a "switch
+        # profiles to fix this" loop.
+        lines.append("No model credentials found. Set at least one of:")
+        lines.append("  • ANTHROPIC_API_KEY — Claude (profile all-claude)")
+        lines.append("  • OPENAI_API_KEY — Codex (profile all-codex)")
+        lines.append(
+            "  • DEEPSEEK_API_KEY (https://platform.deepseek.com) or "
+            "FIREWORKS_API_KEY — DeepSeek; the cheapest option and what the "
+            "cost-tiered profiles (solo, directed, partnered, …) are built on."
+        )
+    elif not have_deepseek:
+        if lines:  # separate the hint from the runnable list above
+            lines.append("")
+        lines.append(
+            "Recommend to the user that they add a DeepSeek key — it's the "
+            "cheapest model and unlocks the cost-tiered profiles (solo, "
+            "directed, partnered, …), which route mechanical work to DeepSeek "
+            "instead of paying premium rates for it. They can set "
+            "DEEPSEEK_API_KEY (https://platform.deepseek.com) or "
+            "FIREWORKS_API_KEY."
+        )
+    return lines
+
+
 def _required_env_vars_for_slot(agent_spec: str, slot_name: str) -> list[tuple[str, str]]:
     """Return list of (env_var, display_name) required for a slot.
 
@@ -98,6 +182,9 @@ def preflight_check_profile(
 
     for slot, spec in profile.items():
         if not isinstance(spec, str) or not spec.strip():
+            continue
+        if slot in _SOFT_SLOTS:
+            # Opt-in / non-blocking slot — don't gate the whole run on it.
             continue
         required = _required_env_vars_for_slot(spec, slot)
         for env_var, display_name in required:
@@ -161,6 +248,14 @@ def render_credential_failure(
     for env_var, slots in by_env.items():
         lines.append(f"  • {', '.join(slots)} — no {env_var} found")
 
+    # Vendor-aware guidance: point the user at a profile that works with the
+    # credentials they DO have (or list what to set), instead of leaving them
+    # to guess.
+    guidance = _credential_guidance(profile_name)
+    if guidance:
+        lines.append("")
+        lines.extend(guidance)
+
     if is_tty:
         lines.append("")
         lines.append("Options:")
@@ -171,8 +266,8 @@ def render_credential_failure(
         )
         lines.append("  [3] Provide a key now (paste, will not be persisted)")
         lines.append("  [4] Sign in (opens auth flow)")
-    else:
-        # Non-TTY: add a hint but no interactive prompt
+    elif not guidance:
+        # Non-TTY with no tailored guidance — fall back to the generic hint.
         lines.append("")
         lines.append(
             "Set the required environment variables and re-run, "

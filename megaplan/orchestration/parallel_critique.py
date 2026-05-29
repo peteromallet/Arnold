@@ -169,6 +169,7 @@ def run_parallel_critique(
     root: Path,
     model: str | None,
     checks: tuple[dict[str, Any], ...],
+    effort: str | None = None,
     max_concurrent: int | None = None,
 ) -> WorkerResult:
     started = time.monotonic()

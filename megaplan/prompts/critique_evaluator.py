@@ -20,7 +20,7 @@ from megaplan._core import (
     read_json,
 )
 from megaplan.audits.robustness import CRITIQUE_CHECKS
-from megaplan.audits.critique_evaluator import CRITIC_MODEL_ROSTER
+from megaplan.audits.critique_evaluator import CRITIC_MODEL_ROSTER, roster_for_vendor
 from megaplan.types import PlanState
 
 
@@ -146,13 +146,14 @@ def _render_differential_section(
     return "\n".join(lines)
 
 
-def _format_roster() -> str:
+def _format_roster(vendor: str | None = None) -> str:
     """Render the critic model roster as a sorted markdown table."""
+    roster = roster_for_vendor(vendor) if vendor in ("claude", "codex") else CRITIC_MODEL_ROSTER
     lines = [
         "| Rank | Model | Cost hint |",
         "|------|-------|-----------|",
     ]
-    for entry in CRITIC_MODEL_ROSTER:
+    for entry in roster:
         lines.append(f"| {entry.rank} | {entry.model} | {entry.cost_hint} |")
     return "\n".join(lines)
 
@@ -261,7 +262,8 @@ def _critique_evaluator_prompt(
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     intent_block = intent_and_notes_block(state)
 
-    roster_table = _format_roster()
+    vendor = state["config"].get("vendor")
+    roster_table = _format_roster(vendor if vendor in ("claude", "codex") else None)
     lens_catalog = _format_lens_catalog()
 
     # Collect all known check ids for the contract
@@ -366,6 +368,9 @@ def _critique_evaluator_prompt(
         {intent_block}
 
         {prep_section}{differential_section}{verify_section}## Critic Model Roster (rank 1 = strongest)
+
+        Active vendor filter: {vendor if vendor in ("claude", "codex") else "none"}.
+        Only models shown in this table are dispatchable for this critique run.
 
         {roster_table}
 

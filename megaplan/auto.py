@@ -815,6 +815,88 @@ def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] |
         return {"reconciled": False, "reason": str(error)}
 
 
+def _shadow_completion_verdict(
+    plan: str,
+    plan_dir: Path | None,
+    cwd: Path | None,
+    *,
+    log: Callable[..., None],
+) -> None:
+    """Compute + persist + log a completion verdict for a done plan.
+
+    SHADOW-MODE FAIL-OPEN. This NEVER alters control flow: it computes a
+    :class:`CompletionVerdict` from objective evidence, writes
+    ``completion_verdict.json``, and logs a one-line summary. Any exception is
+    caught and swallowed so a verdict bug can never break a run. The contract
+    mode is read from the plan's ``state.json`` config
+    (``completion_contract_mode``); modes "warn"/"enforce" are not yet
+    implemented and currently behave like shadow plus a logged WARNING. The
+    suite is NEVER run.
+    """
+    if plan_dir is None:
+        return
+    try:
+        from megaplan.orchestration.completion_contract import (
+            CONTRACT_MODE_OFF,
+            CompletionSubject,
+            compute_verdict,
+            normalize_contract_mode,
+        )
+        from megaplan.orchestration.completion_io import write_completion_verdict
+
+        state: dict[str, Any] = {}
+        try:
+            raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                state = raw
+        except Exception:
+            state = {}
+
+        config = state.get("config") if isinstance(state.get("config"), dict) else {}
+        mode = normalize_contract_mode(config.get("completion_contract_mode"))
+        if mode == CONTRACT_MODE_OFF:
+            return
+
+        project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
+        if isinstance(project_dir_str, str) and project_dir_str:
+            project_dir = Path(project_dir_str)
+        else:
+            project_dir = cwd or Path.cwd()
+
+        subject = CompletionSubject(
+            kind="plan",
+            name=plan,
+            to_state="done",
+            plan_name=plan,
+        )
+        verdict = compute_verdict(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state,
+            subject=subject,
+            mode=mode,
+        )
+        try:
+            write_completion_verdict(plan_dir, verdict)
+        except Exception:
+            pass  # persistence failure must never break the run
+
+        log(verdict.one_line())
+        # warn/enforce are not yet implemented: behave like shadow + a WARNING.
+        if mode in ("warn", "enforce") and verdict.would_block:
+            logging.getLogger("megaplan.auto").warning(
+                "completion_contract_mode=%r requested but blocking is NOT yet "
+                "implemented (shadow behaviour); verdict would block plan %r: %s",
+                mode,
+                plan,
+                ", ".join(verdict.failures),
+            )
+    except Exception as exc:  # fail-open: a verdict bug must never break a run
+        logging.getLogger("megaplan.auto").debug(
+            "shadow completion verdict failed for plan %r: %s", plan, exc
+        )
+
+
 def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
     """Restore a successfully executed plan after an external callback failure."""
     if plan_dir is None:
@@ -1368,6 +1450,12 @@ def drive(
                 STATE_CANCELLED: "cancelled",
             }.get(state, state)
             log(f"terminal state reached: {state}")
+            # Completion-verification contract (SHADOW-MODE, fail-open): on a
+            # done plan, compute + persist + log a verdict. NEVER blocks, NEVER
+            # alters the outcome, NEVER runs the suite. See
+            # megaplan/orchestration/completion_contract.py.
+            if terminal_status == "done":
+                _shadow_completion_verdict(plan, plan_dir, cwd, log=log)
             # Emit plan_finished or plan_aborted
             if plan_dir is not None:
                 try:

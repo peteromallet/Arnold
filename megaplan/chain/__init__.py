@@ -448,6 +448,10 @@ class ChainState:
     chain_session: str | None = None
     resolved_workspace: str | None = None
     extra_repo_sync: list[dict[str, Any]] = field(default_factory=list)
+    # Completion-verification contract mode pinned for the whole chain
+    # (off | shadow | warn | enforce). Default "shadow" = compute + persist +
+    # log a milestone verdict, never block, never run the suite.
+    completion_contract_mode: str = "shadow"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -466,6 +470,7 @@ class ChainState:
             "chain_session": self.chain_session,
             "resolved_workspace": self.resolved_workspace,
             "extra_repo_sync": list(self.extra_repo_sync),
+            "completion_contract_mode": self.completion_contract_mode,
         }
 
     @classmethod
@@ -494,6 +499,14 @@ class ChainState:
         if not isinstance(extra_repo_sync, list):
             extra_repo_sync = []
 
+        from megaplan.orchestration.completion_contract import (
+            normalize_contract_mode,
+        )
+
+        completion_contract_mode = normalize_contract_mode(
+            raw.get("completion_contract_mode")
+        )
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -510,6 +523,7 @@ class ChainState:
             chain_session=chain_session,
             resolved_workspace=resolved_workspace,
             extra_repo_sync=extra_repo_sync,
+            completion_contract_mode=completion_contract_mode,
         )
 
 
@@ -965,6 +979,97 @@ def _latest_execute_result(plan_dir: Path) -> str | None:
     return None
 
 
+def _shadow_milestone_completion_verdict(
+    root: Path,
+    plan_name: str,
+    milestone_label: str,
+    outcome_status: str,
+    contract_mode: str,
+    *,
+    log_fn: Callable[[str], None],
+) -> None:
+    """Compute + persist + log a milestone-level completion verdict.
+
+    SHADOW-MODE FAIL-OPEN. Mirrors ``auto._shadow_completion_verdict`` at the
+    milestone boundary: it NEVER alters ``state.completed``, NEVER blocks the
+    chain, and NEVER runs the suite. Any exception is caught and swallowed.
+    """
+    try:
+        from megaplan.orchestration.completion_contract import (
+            CONTRACT_MODE_OFF,
+            CompletionSubject,
+            compute_verdict,
+            normalize_contract_mode,
+        )
+        from megaplan.orchestration.completion_io import write_completion_verdict
+
+        mode = normalize_contract_mode(contract_mode)
+        if mode == CONTRACT_MODE_OFF:
+            return
+        # Only compute a milestone verdict for an accepted/done milestone — a
+        # stopped/blocked milestone already failed loudly through normal paths.
+        if outcome_status != "done":
+            return
+
+        plan_dir = resolve_plan_dir(root, plan_name)
+        if plan_dir is None:
+            return
+
+        state: dict[str, Any] = {}
+        try:
+            raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                state = raw
+        except Exception:
+            state = {}
+
+        config = state.get("config") if isinstance(state.get("config"), dict) else {}
+        project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
+        if isinstance(project_dir_str, str) and project_dir_str:
+            project_dir = Path(project_dir_str)
+        else:
+            project_dir = root
+
+        subject = CompletionSubject(
+            kind="milestone",
+            name=milestone_label,
+            to_state="done",
+            plan_name=plan_name,
+            milestone_label=milestone_label,
+        )
+        verdict = compute_verdict(
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state,
+            subject=subject,
+            mode=mode,
+        )
+        try:
+            write_completion_verdict(plan_dir, verdict)
+        except Exception:
+            pass
+
+        try:
+            log_fn(verdict.one_line())
+        except Exception:
+            pass
+        if mode in ("warn", "enforce") and verdict.would_block:
+            log.warning(
+                "completion_contract_mode=%r requested but blocking is NOT yet "
+                "implemented (shadow behaviour); verdict would block milestone "
+                "%r: %s",
+                mode,
+                milestone_label,
+                ", ".join(verdict.failures),
+            )
+    except Exception as exc:  # fail-open: never break a chain
+        log.debug(
+            "shadow milestone completion verdict failed for %r: %s",
+            milestone_label,
+            exc,
+        )
+
+
 def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
@@ -1414,6 +1519,18 @@ def run_chain(
                     )
                 state.pr_state = _enable_auto_merge(root, state.pr_number, writer=writer)
                 save_chain_state(spec_path, state)
+        # Completion-verification contract (SHADOW-MODE, fail-open): compute +
+        # persist + log a milestone-level verdict. NEVER alters the append,
+        # NEVER blocks the chain, NEVER runs the suite. See
+        # megaplan/orchestration/completion_contract.py.
+        _shadow_milestone_completion_verdict(
+            root,
+            plan_name,
+            milestone.label,
+            outcome.status,
+            state.completion_contract_mode,
+            log_fn=log,
+        )
         # advance or skip
         state.completed.append(
             {

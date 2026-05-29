@@ -1,0 +1,15 @@
+/Users/peteromalley/.codex/sessions/2026/05/27/rollout-2026-05-27T23-07-32-019e6b43-9807-7cc2-b354-9ea287475586.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/27/rollout-2026-05-27T23-09-42-019e6b45-93ac-7ac0-86b1-2207ffb64a74.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/27/rollout-2026-05-27T23-16-23-019e6b4b-b27c-7820-a711-8021d4d4bfe6.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/27/rollout-2026-05-27T23-24-35-019e6b53-3390-7c42-bb3e-9ab5ce17be0e.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/27/rollout-2026-05-27T23-49-19-019e6b69-d8f8-7083-a367-764ff3601782.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/27/rollout-2026-05-27T23-52-28-019e6b6c-b96d-7f12-84d9-161bf1e7efa1.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-00-07-019e6b73-ba9e-7252-b6bd-309f6a9098c0.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-05-18-019e6b78-7937-7c43-af0d-4cceeda1fee7.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-05-55-019e6b79-0a3f-7232-91e5-56bfc0bbcb6e.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-09-04-019e6b7b-ebf0-7d22-ad86-dab9ed7d1054.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-22-12-019e6b87-f300-73e2-8ee8-1eccbbc80b9f.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-23-16-019e6b88-efb2-7d81-8363-21e4326612ea.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-27-00-019e6b8c-5855-7e43-8551-5cf56c6df47e.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-40-41-019e6b98-de86-7ad2-8e47-0d6c8204d4eb.jsonl
+/Users/peteromalley/.codex/sessions/2026/05/28/rollout-2026-05-28T00-41-36-019e6b99-b67a-7ad2-bb73-64a28fc9fa00.jsonl

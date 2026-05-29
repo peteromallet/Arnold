@@ -112,6 +112,104 @@ def test_compute_scope_drift_without_state_is_safe(
     assert drift.severity == "high"
 
 
+def _write_batch_artifact(
+    plan_dir: Path, batch_number: int, files_changed: list[str]
+) -> None:
+    import json
+
+    (plan_dir / f"execution_batch_{batch_number}.json").write_text(
+        json.dumps({"files_changed": files_changed}), encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def patched_snapshot_multi(monkeypatch: pytest.MonkeyPatch):
+    """Working tree shows three deliverables spread across prior batches."""
+
+    def _snapshot(_: Path) -> tuple[dict[str, str], str | None]:
+        return (
+            {"src/a.py": "h1", "src/b.py": "h2", "src/c.py": "h3"},
+            None,
+        )
+
+    monkeypatch.setattr(execute_agg, "_capture_git_status_snapshot", _snapshot)
+
+
+def test_per_batch_claims_unioned_from_disk(
+    tmp_path: Path,
+    patched_snapshot_multi: None,
+    patched_loc: None,
+) -> None:
+    """A fully-claimed multi-batch run is not flagged even when the current
+    aggregate payload is empty (e.g. a test-only final batch). Claims are
+    unioned across every on-disk ``execution_batch_*.json``."""
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_batch_artifact(plan_dir, 1, ["src/a.py", "src/b.py"])
+    _write_batch_artifact(plan_dir, 2, ["src/c.py"])
+    # Final batch is test-only: empty files_changed.
+    _write_batch_artifact(plan_dir, 3, [])
+
+    state: dict[str, Any] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+
+    drift = execute_agg._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+        state,
+        plan_dir=plan_dir,
+    )
+
+    assert drift.files_added == []
+    assert drift.severity != "high"
+
+
+def test_per_batch_union_still_flags_genuinely_unclaimed_file(
+    tmp_path: Path,
+    patched_snapshot_multi: None,
+    patched_loc: None,
+) -> None:
+    """A file changed in the tree but claimed by no batch still flags high."""
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_batch_artifact(plan_dir, 1, ["src/a.py", "src/b.py"])
+    # src/c.py is in the working tree (patched_snapshot_multi) but unclaimed.
+    _write_batch_artifact(plan_dir, 2, [])
+
+    state: dict[str, Any] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+
+    drift = execute_agg._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+        state,
+        plan_dir=plan_dir,
+    )
+
+    assert drift.files_added == ["src/c.py"]
+    assert drift.severity == "high"
+
+
+def test_single_shot_behavior_unchanged_without_plan_dir(
+    tmp_path: Path,
+    patched_snapshot: None,
+    patched_loc: None,
+) -> None:
+    """Single-shot (no plan_dir) path is unchanged: an unclaimed deliverable
+    is still flagged exactly as before."""
+
+    state: dict[str, Any] = {"config": {"project_dir": str(tmp_path), "mode": "code"}}
+
+    drift = execute_agg._compute_execute_scope_drift(
+        tmp_path,
+        _empty_payload(),
+        state,
+    )
+
+    assert drift.files_added == ["docs/foo.md"]
+    assert drift.severity == "high"
+
+
 def test_compute_scope_drift_halts_on_snapshot_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

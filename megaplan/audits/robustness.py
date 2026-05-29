@@ -45,12 +45,19 @@ CRITIQUE_CHECKS: Final[tuple[CritiqueCheckSpec, ...]] = (
     },
     {
         "id": "scope",
-        "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader?",
+        "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?",
         "guidance": (
             "Look at how the changed function is used across the codebase. Does the fix only address "
             "one caller's scenario while others remain broken? Flag missing required work or out-of-scope "
             "edits. A minimal patch is often right, but check whether the underlying problem is bigger "
-            "than what the issue describes."
+            "than what the issue describes. Also audit step SIZING: each step/task is executed in ONE "
+            "worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A "
+            "single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules "
+            "AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — "
+            "is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. "
+            "Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any "
+            "such step and recommend splitting along the natural seam (one step to add the abstraction + its "
+            "unit tests, then one step per consumer/module to migrate, parity tests on the last)."
         ),
         "category": "completeness",
         "default_severity": "likely-significant",

@@ -2,7 +2,7 @@
 
 This document describes how to compose pipelines in megaplan 0.22.0+ using
 the Python composition framework. The previous YAML runtime was removed in
-0.22.0; see `docs/yaml-pipelines-migration.md` for the experiment write-up.
+0.22.0; see `docs/archive/yaml-pipelines-migration.md` for the experiment write-up.
 
 ## Conceptual model
 

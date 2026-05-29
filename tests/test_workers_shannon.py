@@ -475,6 +475,9 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     assert ("--session-id" in command) or ("--resume" in command)
     assert run_command.call_args.kwargs["stdin_text"] is None
     assert run_command.call_args.kwargs["env"]["SHANNON_TURN_TIMEOUT_MS"] == "7200000"
+    # Output ceiling is raised above the inherited ~64k default so opus is not
+    # cut off mid-run before emitting the structured envelope.
+    assert run_command.call_args.kwargs["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
     # On non-root systems, ANTHROPIC_API_KEY is set to "" to block Bun's dotenv auto-load.
     api_key_val = run_command.call_args.kwargs["env"].get("ANTHROPIC_API_KEY")
     assert api_key_val is None or api_key_val == ""
@@ -994,7 +997,164 @@ def test_run_shannon_step_mock_worker_no_deps(
     assert result.payload is not None
     assert "output" in result.payload or "plan" in result.payload
 
+def test_run_shannon_execute_repairs_truncated_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A truncated/invalid execute output triggers one envelope-repair resume."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+
+    # First turn: cut off at max_tokens before emitting required keys.
+    truncated = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps({"output": "partial reasoning..."}),
+            "stop_reason": "max_tokens",
+            "session_id": "sess-123",
+            "total_cost_usd": 0.5,
+            "usage": {"input_tokens": 1000, "output_tokens": 64000},
+        }
+    ])
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    repaired = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "stop_reason": "end_turn",
+            "session_id": "sess-123",
+            "total_cost_usd": 0.1,
+            "usage": {"input_tokens": 1200, "output_tokens": 200},
+        }
+    ])
+
+    calls = []
+
+    def _fake_run_command(command, **kwargs):
+        calls.append(command)
+        raw = truncated if len(calls) == 1 else repaired
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=10,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=_fake_run_command):
+        result = run_shannon_step(
+            "execute", state, plan_dir,
+            root=tmp_path, fresh=True, prompt_override="do the batch",
+        )
+
+    assert result.payload == payload
+    # Exactly one main turn + one repair resume turn.
+    assert len(calls) == 2
+    repair_cmd = calls[1]
+    assert "--resume" in repair_cmd and "sess-123" in repair_cmd
+    # The repair turn re-prompts only for the structured envelope.
+    p_idx = repair_cmd.index("-p")
+    assert "structured result" in repair_cmd[p_idx + 1]
+
+
 def test_shannon_accepted_in_agent_choice_surfaces() -> None:
     """All --agent choice surfaces accept 'shannon'."""
     from megaplan.types import KNOWN_AGENTS
     assert "shannon" in KNOWN_AGENTS
+
+
+# ---------------------------------------------------------------------------
+# Buffered-mode liveness probe (shannon --output-format=json rescue)
+# ---------------------------------------------------------------------------
+
+
+def _fake_tmux_capture(outputs):
+    """Build a subprocess.run stand-in that serves successive capture-pane outputs.
+
+    ``outputs`` is a list of pane snapshots returned on consecutive
+    capture-pane calls; ``has-session`` always reports the session alive.
+    """
+    capture_idx = [0]
+
+    class _Result:
+        def __init__(self, rc, out):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = ""
+
+    def _run(cmd, *a, **kw):
+        if "has-session" in cmd:
+            return _Result(0, "")
+        if "capture-pane" in cmd:
+            i = min(capture_idx[0], len(outputs) - 1)
+            snap = outputs[i]
+            capture_idx[0] += 1
+            return _Result(0, snap)
+        return _Result(0, "")
+
+    return _run
+
+
+def test_liveness_probe_reports_progress_on_pane_change() -> None:
+    """Probe returns True while the tmux pane content keeps changing (Claude is
+    streaming tokens into its pane even though stdout is buffered)."""
+    from megaplan.runtime.process import TmuxSession
+    from megaplan.workers.shannon import _make_shannon_liveness_probe
+
+    panes = ["frame-0", "frame-1", "frame-2"]
+    with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
+        with patch("megaplan.workers.shannon._claude_transcript_paths", return_value=[]):
+            probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", Path.cwd())
+            assert probe() is True  # priming call
+            assert probe() is True  # pane changed frame-0 -> frame-1
+            assert probe() is True  # pane changed frame-1 -> frame-2
+
+
+def test_liveness_probe_reports_no_progress_on_static_pane() -> None:
+    """Probe returns False when the pane is observably static and no transcript
+    is advancing — a genuinely hung turn that the watchdog must be allowed to
+    kill."""
+    from megaplan.runtime.process import TmuxSession
+    from megaplan.workers.shannon import _make_shannon_liveness_probe
+
+    panes = ["frozen", "frozen", "frozen"]
+    with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
+        with patch("megaplan.workers.shannon._claude_transcript_paths", return_value=[]):
+            probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", Path.cwd())
+            assert probe() is True   # priming call always reports progress
+            assert probe() is False  # pane unchanged, no transcript movement
+            assert probe() is False
+
+
+def test_liveness_probe_reports_progress_on_transcript_mtime(tmp_path) -> None:
+    """Even with a static pane, an advancing transcript .jsonl mtime counts as
+    progress (the turn is flushing completed content blocks to disk)."""
+    from megaplan.runtime.process import TmuxSession
+    from megaplan.workers.shannon import _make_shannon_liveness_probe
+
+    transcript = tmp_path / "sid.jsonl"
+    transcript.write_text("{}\n")
+    import os as _os
+
+    panes = ["static", "static", "static"]
+    with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
+        with patch(
+            "megaplan.workers.shannon._claude_transcript_paths",
+            return_value=[transcript],
+        ):
+            probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", tmp_path)
+            assert probe() is True  # prime (also records baseline mtime)
+            assert probe() is False  # nothing moved yet
+            # Advance the transcript mtime: simulates a content block flush.
+            base = transcript.stat().st_mtime
+            _os.utime(transcript, (base + 100, base + 100))
+            assert probe() is True  # mtime advanced -> progress

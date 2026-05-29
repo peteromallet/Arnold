@@ -155,6 +155,102 @@ def test_heartbeat_alone_does_not_keep_a_silent_stream_alive() -> None:
     )
 
 
+def test_liveness_probe_keeps_buffered_live_worker_alive() -> None:
+    """A buffered worker that emits NO stdout for the whole turn (the shannon
+    ``--output-format=json`` failure mode) must NOT be killed by the idle bound
+    while a ``liveness_probe`` reports the worker is alive and progressing.
+
+    Models the real bug: the subprocess stays silent on stdout far past the idle
+    bound, but a tmux-pane/transcript probe shows it is still working. The
+    watchdog must treat the probe's progress as activity (reset the idle clock)
+    and let the turn complete — bounded only by the wall-clock ``timeout``.
+    """
+    probe_calls = [0]
+
+    def _always_progressing() -> bool:
+        probe_calls[0] += 1
+        return True  # alive + progressing on every probe
+
+    # Silent on stdout for 6s — many multiples of the 1s idle bound — then exits
+    # 0. With the legacy stdout-only bound this trips worker_stall almost
+    # immediately; with the probe it must run to completion.
+    script = "import time; time.sleep(6)"
+
+    start = time.monotonic()
+    result = run_command(
+        [sys.executable, "-c", script],
+        cwd=Path.cwd(),
+        timeout=60,  # generous wall-clock — must NOT fire
+        activity_callback=lambda *a: None,
+        idle_timeout=1.0,  # tight idle bound the probe must override
+        liveness_probe=_always_progressing,
+    )
+    elapsed = time.monotonic() - start
+
+    assert result.returncode == 0
+    assert elapsed >= 5.0, "worker exited too early — was it killed?"
+    # The idle bound expired repeatedly (~1s cadence over 6s); the probe must
+    # have been consulted each time to keep the turn alive.
+    assert probe_calls[0] >= 2, (
+        f"liveness_probe was barely consulted ({probe_calls[0]}x); idle clock "
+        "may not be deferring to it"
+    )
+
+
+def test_liveness_probe_still_kills_genuinely_hung_buffered_worker() -> None:
+    """A buffered worker that is alive but NOT progressing (probe returns False)
+    must STILL be killed promptly at the idle bound. The liveness rescue must not
+    turn the watchdog into a no-op for genuinely hung/dead turns.
+    """
+    probe_calls = [0]
+
+    def _not_progressing() -> bool:
+        probe_calls[0] += 1
+        return False  # alive process, but no real progress observed
+
+    # Silent and idle for 30s (well under the 60s wall-clock) — a genuine hang.
+    script = "import time; time.sleep(30)"
+
+    start = time.monotonic()
+    with pytest.raises(CliError) as excinfo:
+        run_command(
+            [sys.executable, "-c", script],
+            cwd=Path.cwd(),
+            timeout=60,
+            activity_callback=lambda *a: None,
+            idle_timeout=1.0,
+            liveness_probe=_not_progressing,
+        )
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.code == "worker_stall"
+    # Killed shortly after the idle bound, NOT after the 30s sleep or 60s budget.
+    assert elapsed < 10.0, f"hung worker not killed promptly (took {elapsed:.2f}s)"
+    assert probe_calls[0] >= 1, "probe was never consulted before the kill"
+
+
+def test_liveness_probe_exception_is_treated_as_progress() -> None:
+    """A probe that raises must never cause a false kill: the watchdog falls back
+    to the conservative 'treat as progress' stance and lets the wall-clock bound
+    govern. Guarantees a probe bug can never collateral-kill a live worker.
+    """
+
+    def _boom() -> bool:
+        raise RuntimeError("probe blew up")
+
+    script = "import time; time.sleep(5)"
+
+    result = run_command(
+        [sys.executable, "-c", script],
+        cwd=Path.cwd(),
+        timeout=60,
+        activity_callback=lambda *a: None,
+        idle_timeout=1.0,
+        liveness_probe=_boom,
+    )
+    assert result.returncode == 0
+
+
 def test_no_idle_timeout_preserves_legacy_behavior() -> None:
     """When idle_timeout is None (codex/claude-native paths), a silent-but-alive
     subprocess must NOT be aborted early — only the coarse phase timeout governs.

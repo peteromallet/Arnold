@@ -44,12 +44,6 @@ agent = [
     "faster-whisper>=1.0.0",
     "PyJWT[crypto]",
 ]
-# Install sisypy editable: pip install -e /Users/peteromalley/Documents/reigh-workspace/sisypy
-test-agentic = [
-    "sisypy @ file:///Users/peteromalley/Documents/reigh-workspace/sisypy",
-    "pyyaml",
-]
-
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"
 
@@ -70,3 +64,8 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "editorial_*.py"]
+markers = [
+    "asyncio: async tests, primarily for the vendored agent runtime",
+    "integration: integration tests that may exercise external process boundaries",
+    "slow: tests that require Docker or other external runtime dependencies",
+]
