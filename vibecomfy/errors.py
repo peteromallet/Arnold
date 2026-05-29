@@ -13,25 +13,47 @@ class VibeComfyError(RuntimeError):
 
     Accepts an optional ``next_action`` string that callers can use to
     suggest remediation steps.  When set, ``str(exc)`` appends
-    ``\\nNext action: <value>`` to the original message.
+    `` next action: <value>`` to the original message.
+
+    Provides an agent-facing diagnostic surface: ``severity`` classifies
+    the error (``error`` / ``warning`` / ``info``), ``default_next_action``
+    supplies a class-level remediation hint used when no explicit
+    ``next_action`` is passed, and ``to_dict()`` renders a structured
+    payload for programmatic / agentic consumption.
     """
+
+    # Diagnostic surface (class-level defaults; subclasses may override).
+    severity: str = "error"
+    default_next_action: str | None = None
 
     def __init__(self, message: str, *, next_action: str | None = None) -> None:
         self.message: str = str(message)
         # Preserve legacy attribute name used by Block A code paths.
         self._orig_message: str = self.message
-        self.next_action: str | None = next_action
+        # Fall back to the class-level hint when no explicit action is given.
+        self.next_action: str | None = (
+            next_action if next_action is not None else self.default_next_action
+        )
         super().__init__(self.message)
 
     def __str__(self) -> str:
-        if not self.next_action:
+        if self.next_action is None:
             return self.message
-        return f"{self.message}\nNext action: {self.next_action}"
+        return f"{self.message} next action: {self.next_action}"
 
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}({self.message!r}, next_action={self.next_action!r})"
         )
+
+    def to_dict(self) -> dict[str, object]:
+        """Structured representation for agentic / JSON consumption."""
+        return {
+            "error": type(self).__name__,
+            "message": self.message,
+            "severity": self.severity,
+            "next_action": self.next_action,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +124,40 @@ class NodePackInstallError(VibeComfyError):
 
 class RuntimeStartupError(VibeComfyError):
     """A managed runtime failed to start."""
+
+
+# ---------------------------------------------------------------------------
+# Agent-facing semantic subclasses
+#
+# These carry class-level ``default_next_action`` hints so an agent gets a
+# remediation suggestion even when the raise site does not supply one.  They
+# specialise the existing hierarchy (aliasing where shapes match) rather than
+# introducing a parallel one.
+# ---------------------------------------------------------------------------
+
+
+class MissingModelAssetError(ModelAssetError):
+    """A model asset referenced by the workflow is missing and unresolved."""
+
+    default_next_action = "vibecomfy doctor --models"
+
+
+class SchemaMismatchError(SchemaValidationError):
+    """A node's inputs/outputs do not match its schema."""
+
+    default_next_action = "vibecomfy schema refresh"
+
+
+class UnknownClassError(SchemaValidationError):
+    """A workflow references a node class that is not known to the schema."""
+
+    default_next_action = "vibecomfy schema refresh"
+
+
+class CanonicalParityFailure(ConversionParityError):
+    """Emitted code lost parity with the canonical source workflow."""
+
+    default_next_action = "vibecomfy port --reconvert <template>"
 
 
 __all__ = [

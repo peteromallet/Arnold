@@ -22,7 +22,7 @@ from vibecomfy.errors import (
     SchemaMismatchError,
     UnknownClassError,
 )
-from vibecomfy.runtime.eval import plan_eval_node
+from vibecomfy.runtime.eval_plan import plan_eval_node
 from vibecomfy import workflow_from_ready
 
 

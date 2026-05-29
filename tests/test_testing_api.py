@@ -7,8 +7,6 @@ from vibecomfy.handles import Handle
 from vibecomfy.runtime.session import RunResult
 from vibecomfy.workflow import VibeWorkflow
 
-pytest_plugins = ("vibecomfy.testing._pytest_plugin",)
-
 
 def test_testing_api_exports_required_names() -> None:
     for name in (
