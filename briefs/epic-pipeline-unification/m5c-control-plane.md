@@ -27,14 +27,31 @@ as the first binding, and the per-run inspectors reading the general vocabulary 
 
 1. **The run-outcome enum** `{succeeded, failed, escalated, blocked, awaiting_human}` — the SDK-owned terminal/
    pausable vocabulary both F7 (control) and (later) F8 (supervisor, M5d) branch on. Replaces branching on
-   planning's terminal `STATE_*` literals.
+   planning's terminal `STATE_*` literals. **The handoff from M5b is concrete:** M5c's planning binding
+   consumes M5b's named `BatchReduceResult` (= `Reduce[BatchOutcome]`) and applies the **4→5 mapping table**
+   (the silent-downgrade-class fix — every M5b outcome resolves to exactly one run-outcome, no implicit drop):
+   | M5b `BatchOutcome` (execute reducer) | M5c run-outcome | rationale |
+   |---|---|---|
+   | `success`            | `succeeded`        | batch completed, gate may still advance/iterate downstream |
+   | `blocked_by_quality` | `blocked`          | worker produced unacceptable work → recover-blocked target |
+   | `blocked_by_prereq`  | `blocked`          | upstream dep unmet → recover-blocked target (same blocked outcome, distinct `blocking_reason`) |
+   | `timeout`            | `failed`           | a timeout is a hard failure for the run-outcome layer → on_failure ladder (NOT silently "blocked") |
+   No M5b outcome maps to `escalated` or `awaiting_human` at this seam — those arise from the gate/clarify
+   layer, not the execute reducer. `escalated` is produced by the gate-escalate path; `awaiting_human` by F6
+   clarify / verify-human. The `blocking_reason` (prereq vs quality) is preserved as metadata on the `blocked`
+   outcome so `recover_targets` can distinguish them, even though both map to `blocked`.
 2. **Queryable projections** — `valid_targets(state)` (forward) and `recover_targets(state)` (reverse), both
    **computed on demand from M3's realized graph** (`recover_targets` = `predecessors(stage)`), NOT a fourth
    persisted copy that drifts after a mid-run `set-robustness`.
 3. **The control interface** — a `(read_valid_targets, apply_transition, synthesize_artifacts)` trio the binding
    IMPLEMENTS. The SDK owns ONLY: invocation, event emission, the **versioned-mutation envelope** (M3 — mutation
    = a CAS event, not LWW), and the **projection** (queried from the realized graph). Everything domain-shaped
-   lives in the binding.
+   lives in the binding. **NAMING (locked, aligned across M5c + M5d):** `read_valid_targets(run_state)` is the
+   **SDK INTERFACE method** every run-type/supervisor calls; `valid_targets(state)` (and its reverse peer
+   `recover_targets(state)`) is the **planning-BINDING implementation** that `read_valid_targets` dispatches to.
+   Callers (M5d supervisor, inspectors) invoke `read_valid_targets`; the planning binding implements it AS
+   `valid_targets`/`recover_targets` over the realized-graph projection. Do not use the two names
+   interchangeably for the caller seam — supervisors call `read_valid_targets`.
 4. **F6 — `clarify` / human-gate**: a general `clarify` node (ask → block → resume on answer) + a driver-level
    pause/resume hook persisting a resume cursor (`awaiting_user.json`). Planning's prep-clarification +
    `STATE_AWAITING_HUMAN` / `STATE_AWAITING_HUMAN_VERIFY` semantics are the binding.
@@ -59,6 +76,11 @@ M2's `GateRecommendation` gate). The three phase↔state maps collapse to ONE re
 - **Piece (general, SDK).** (i) a `clarify` node in the M5a library (ask → block → resume); (ii) a driver
   pause/resume hook — "halt for external input, persist a resume cursor, resume from cursor" — riding M3's
   loop/process hook. F6 is **halt-and-wait**; F7 is **the operator action that mutates and un-halts**.
+  **F6 ships ONLY halt + the `awaiting_user.json` resume cursor + the resume-from-cursor path. It ships NO
+  `gh` auto-merger and NO auto-merge-on-green actor** — the run-granularity orchestration that watches CI/gates
+  green and fires `gh pr merge` is the SUPERVISOR's job (M5d, over `chain/__init__.py`'s PR-merge
+  choreography). M5c only ships the `awaiting_human` run-outcome that the PR-merge wait binds onto; M5d owns
+  the actor that resolves it.
 - **Binding (planning).** prep's clarification content + `clarification.source` discrimination; the criteria-
   verification gate content; `STATE_AWAITING_HUMAN` / `_VERIFY` mapped onto the general `awaiting_human` outcome.
 

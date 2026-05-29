@@ -68,8 +68,9 @@ self-hosts on the frozen old engine.
   `blocked` run-OUTCOME (REGISTER §75): auto-invoke `recover-from-stuck` with a bounded retry ladder (>1) →
   escalate/abort.
 - The literal `escalate_action="force-proceed"` (`:308`) is replaced by a general M5c target via
-  `valid_targets()` + `apply_transition`; default escalate ladder = retry → re-route → force-advance → abort
-  (REGISTER §74).
+  the interface method `read_valid_targets(run_state)` + `apply_transition` (the supervisor calls the
+  interface method, NOT the planning binding's `valid_targets` directly); default escalate ladder = retry →
+  re-route → force-advance → abort (REGISTER §74).
 - Bakeoff's "run N profiles → blind-judge → select winner → merge" is the **parallel/compare variant** of the
   same tier (`bakeoff/orchestrator.py` 346 LOC, `judge.py` 256, `merge.py` 167, `worktree.py`); `select` is M2's
   run-granularity primitive (REGISTER §111: "bakeoff's reduce IS M2 select at run granularity").
@@ -80,8 +81,9 @@ The milestone-chain YAML schema (`MilestoneSpec` `:171`, `ChainSpec` `:291`), `a
 (`:65–73`, `_drive_plan` `:923`), git/worktree isolation (`chain/git_ops.py`, `_init_plan` `:810`), the
 escalate-action vocabulary, the `STATE_AWAITING_PR_MERGE` PR-merge choreography (`:1318–1514`), the
 blocked-execute recovery (`:1141–1234`), and bakeoff's profile-matrix + blind-judge rubric. Each maps onto a
-general control op via the M5c interface — the chain reads `valid_targets(run_state)` and calls
-`apply_transition(target)`; it does not name planning's transitions.
+general control op via the M5c interface — the chain calls the interface method `read_valid_targets(run_state)`
+and `apply_transition(target)` (planning implements `read_valid_targets` AS `valid_targets`/`recover_targets`);
+it does not name planning's transitions.
 
 ---
 
@@ -120,9 +122,12 @@ general control op via the M5c interface — the chain reads `valid_targets(run_
    granularity** (winner + losers + scores over completed runs), not a distinct supervisor reduce. Chain adds
    sequential dependency + per-run failure policy on the same contract.
 3. **Resume cursor across the M3 process boundary (the `STATE_AWAITING_PR_MERGE` out-of-band human pause).** —
-   **RESOLVED (REGISTER §73, §111):** the PR-merge wait **binds onto M5c's `awaiting_human` outcome + F6
-   auto-merge** — green CI+gates → supervisor auto-merges (`gh`); red → auto-escalate. It is NOT a
-   supervisor-local cursor and NOT a human park.
+   **RESOLVED (REGISTER §73, §111):** the PR-merge wait **binds onto M5c's `awaiting_human` run-outcome; the
+   auto-merge-on-green ACTOR is OWNED HERE in M5d** (M5c F6 is halt-only and ships no `gh` auto-merger). The
+   supervisor watches CI+gates: green → it fires `gh pr merge` (the run-granularity orchestration over
+   `chain/__init__.py`'s existing PR-merge choreography `:1318–1514`); red → auto-escalate via the ladder. It
+   is NOT a supervisor-local cursor and NOT a human park. M5c contributes only the `awaiting_human` outcome the
+   wait resolves to.
 
 ## Constraints
 
@@ -163,8 +168,9 @@ general control op via the M5c interface — the chain reads `valid_targets(run_
       deletion is even proposed (and never in this PR).
 - [ ] **The cloud boundary (Open-Q#1) is stated in writing** so `cloud/supervise.py` (`_chain_tick_command`
       `:23` → `_chain_start_command` `cli.py:539`) does not break at the seam.
-- [ ] **PR-merge choreography (`:1318–1514`) binds onto M5c `awaiting_human` + F6 auto-merge** (green→auto-merge,
-      red→auto-escalate); a unit/integration test proves no human park.
+- [ ] **PR-merge choreography (`:1318–1514`) binds onto M5c's `awaiting_human` run-outcome, with the
+      auto-merge-on-green actor OWNED HERE in M5d** (green→M5d fires `gh pr merge`, red→auto-escalate); a
+      unit/integration test proves no human park. (M5c F6 is halt-only and ships no auto-merger.)
 
 ## Touchpoints
 

@@ -279,6 +279,15 @@ class MilestoneSpec:
     phase_model: list[str] = field(default_factory=list)
     bakeoff: dict[str, Any] | None = None
     notes: str | None = None
+    # Validation-only dependency edges (labels of milestones that MUST appear
+    # earlier in the list). The chain runs strictly serial-in-listed-order — a
+    # single cursor — so ``depends_on`` does NOT reorder or parallelize
+    # execution. It is a topological-sort ASSERTION: ``ChainSpec.from_dict``
+    # fails loud if a milestone declares a dependency that is not listed before
+    # it, so the non-negotiable edges (e.g. m5-eval → m5-cal) cannot silently
+    # drift out of order in a hand-edited chain.yaml. ``∥`` parallel tracks stay
+    # prose — concurrency is never introduced here.
+    depends_on: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
@@ -361,6 +370,18 @@ class MilestoneSpec:
         notes = raw.get("notes")
         if notes is not None and not isinstance(notes, str):
             raise CliError("invalid_spec", f"milestones[{index}].notes must be a string")
+        depends_on_raw = raw.get("depends_on") or []
+        if isinstance(depends_on_raw, str):
+            depends_on = [depends_on_raw]
+        elif isinstance(depends_on_raw, list) and all(
+            isinstance(item, str) and item.strip() for item in depends_on_raw
+        ):
+            depends_on = [item.strip() for item in depends_on_raw]
+        else:
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].depends_on must be a label or list of non-empty labels",
+            )
         return cls(
             label=label,
             idea=idea,
@@ -378,6 +399,7 @@ class MilestoneSpec:
             phase_model=phase_model,
             bakeoff=bakeoff,
             notes=notes,
+            depends_on=depends_on,
         )
 
 
@@ -422,6 +444,33 @@ class ChainSpec:
         if not isinstance(milestones_raw, list):
             raise CliError("invalid_spec", "`milestones` must be a list")
         milestones = [MilestoneSpec.from_dict(m, i) for i, m in enumerate(milestones_raw)]
+        # Validation-only topological-order assertion: a milestone's declared
+        # ``depends_on`` labels must each be a real milestone listed BEFORE it.
+        # The chain executes strictly serial-in-listed-order; this only proves
+        # the hand-authored list order respects the declared edges (e.g. the
+        # non-negotiable m5-eval → m5-cal edge). It introduces no concurrency.
+        seen_labels: set[str] = set()
+        all_labels = {m.label for m in milestones}
+        for i, m in enumerate(milestones):
+            for dep in m.depends_on:
+                if dep == m.label:
+                    raise CliError(
+                        "invalid_spec",
+                        f"milestones[{i}] ({m.label!r}) cannot depend on itself",
+                    )
+                if dep not in all_labels:
+                    raise CliError(
+                        "invalid_spec",
+                        f"milestones[{i}] ({m.label!r}) depends_on unknown milestone {dep!r}",
+                    )
+                if dep not in seen_labels:
+                    raise CliError(
+                        "invalid_spec",
+                        f"milestones[{i}] ({m.label!r}) depends_on {dep!r} which is not "
+                        f"listed before it; the chain runs serial-in-listed-order, so a "
+                        f"dependency must appear earlier in `milestones`",
+                    )
+            seen_labels.add(m.label)
         seed_raw = raw.get("seed") or {}
         seed_plan: str | None = None
         if seed_raw:

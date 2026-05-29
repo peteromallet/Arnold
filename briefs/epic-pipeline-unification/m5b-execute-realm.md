@@ -112,8 +112,9 @@ without inheriting any planning outcome name. Planning's execute phase then read
   the planning reducer, mapped onto M5c's run-outcome vocabulary later — never owned by the general scheduler.
 - **Primitive invokes a binding-supplied reducer** (REGISTER §109, Open-Q#3 lean). The scheduler owns
   scatter/batch/`process`/collect; the binding owns "what does this result mean."
-- **F5 returns a typed `Reduce[T]` (M2)** — a frozen per-batch result type; the planning binding maps it to
-  `phase_outcome`; **M5c re-homes `STATE_*` later** (REGISTER §109). M5b never re-imports `STATE_BLOCKED`.
+- **F5 returns a typed `Reduce[T]` (M2), NAMED `BatchReduceResult = Reduce[BatchOutcome]`** — a frozen
+  per-batch result type M5b defines; the planning binding maps it to `phase_outcome`; **M5c's binding consumes
+  `BatchReduceResult` and applies its 4→5 mapping table** (REGISTER §109). M5b never re-imports `STATE_BLOCKED`.
 - **Keep the arbitrary-deps DAG** (`io.py:58`) — it is already pure and app-vocab-free; F5 extracts the
   *scheduling policy + process loop* around it, not the topo-sort itself. Don't gold-plate beyond what's
   already pure (REGISTER §109).
@@ -134,8 +135,12 @@ without inheriting any planning outcome name. Planning's execute phase then read
 1. **F5 dependency semantics (real DAG vs batch-with-ordering)?** → **RESOLVED: keep the arbitrary-deps
    DAG** (`io.py:58` already supports arbitrary `depends_on`); don't gold-plate beyond what's already pure.
 2. **Where does the app-defined-outcome reducer hand off to M5c?** → **RESOLVED: F5 returns a typed
-   `Reduce[T]`; the planning binding (in M5b) maps it to `phase_outcome`; M5c re-homes `STATE_*` later.** M5b
-   defines the reducer's return TYPE so M5c can consume it without F5 re-importing `STATE_BLOCKED`.
+   `Reduce[T]` instantiated as the NAMED type `BatchReduceResult` (a frozen `Reduce[BatchOutcome]`); the
+   planning binding (in M5b) maps it to `phase_outcome`; M5c re-homes `STATE_*` later.** M5b defines this
+   return type (`BatchReduceResult = Reduce[BatchOutcome]`, where `BatchOutcome` is the planning binding's
+   `{success, blocked_by_quality, blocked_by_prereq, timeout}` enum) so M5c consumes a real named symbol
+   without F5 re-importing `STATE_BLOCKED`. **M5c's `read_valid_targets`/`apply_transition` binding consumes
+   `BatchReduceResult` and applies the 4→5 mapping table defined in M5c.**
 3. **Does `_is_blocking_deviation` (`merge.py:152`) stay in merge or move to the reducer?** → **RESOLVED:
    merge stays mechanical; classification (deviation→outcome) moves to the reducer.**
 4. **rater≥dispatchee gap on cheap-finalize profiles?** → **RESOLVED: carry as a recorded KNOWN GAP** (log →
