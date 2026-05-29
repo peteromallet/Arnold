@@ -33,7 +33,7 @@ Three names, three meanings:
 
 ## The spec — `chain.yaml`
 
-A chain spec is a YAML file declaring the base branch, an optional seed plan, and an ordered list of milestones. Each milestone has its own rubric knobs (profile, robustness, depth, vendor, critic, prep/feedback flags).
+A chain spec is a YAML file declaring the base branch, an optional seed plan, and an ordered list of milestones. Each milestone has its own rubric knobs (profile, robustness, depth, vendor, prep/feedback flags).
 
 ```yaml
 base_branch: main
@@ -88,7 +88,6 @@ driver:
 | `robustness` | no | `bare` / `light` / `full` / `thorough` / `extreme`. Falls back to `driver.robustness`. |
 | `depth` | no | `low` / `medium` / `high` / `xhigh` / `max`. |
 | `vendor` | no | `claude` / `codex`. |
-| `critic` | no | `cross` / `kimi`. |
 | `with_prep`, `with_feedback` | no | Booleans. |
 | `phase_model` | no | List of `phase=spec` strings — the surgical escape hatch. |
 | `deepseek_provider` | no | `direct` / `fireworks`. |

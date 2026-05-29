@@ -47,6 +47,12 @@ agent = [
 [project.scripts]
 megaplan = "megaplan.cli:cli_entry"
 
+[tool.uv]
+# The hermes/agent backend (critique, agentic phases) requires the `agent` extra.
+# Make it a default extra so `uv sync` / venv rebuilds keep the harness functional
+# rather than silently dropping it and crashing phases with `agent_deps_missing`.
+default-extras = ["agent"]
+
 [tool.hatch.build]
 exclude = [
     "megaplan/cloud/_reference/**",

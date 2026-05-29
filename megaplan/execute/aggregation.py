@@ -158,7 +158,11 @@ def _compute_execute_scope_drift(
     state: PlanState | None = None,
     plan_dir: Path | None = None,
 ):
-    files_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    # This call's own claims drive the per-call ``files_missing`` (fabrication)
+    # signal; the per-batch union below only widens ``files_claimed`` so prior
+    # batches' writes aren't flagged as unclaimed additions.
+    per_call_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    files_claimed = set(per_call_claimed)
     # Union per-batch claims from disk so per-batch execute mode compares the
     # working-tree diff against every batch's claims, not just this call's.
     files_claimed |= _collect_per_batch_claimed_paths(plan_dir, project_dir)
@@ -167,9 +171,9 @@ def _compute_execute_scope_drift(
         if config.get("mode") == "doc":
             output_path = config.get("output_path")
             if isinstance(output_path, str) and output_path.strip():
-                files_claimed.add(
-                    _normalize_execute_claimed_path(output_path, project_dir)
-                )
+                doc_path = _normalize_execute_claimed_path(output_path, project_dir)
+                files_claimed.add(doc_path)
+                per_call_claimed.add(doc_path)
     try:
         observed_snapshot, observed_error = _capture_git_status_snapshot(project_dir)
     except Exception as exc:
@@ -185,6 +189,7 @@ def _compute_execute_scope_drift(
         files_claimed=files_claimed,
         files_in_diff=files_in_diff,
         loc_by_file=loc_by_file,
+        files_claimed_for_missing=per_call_claimed,
     )
 
 

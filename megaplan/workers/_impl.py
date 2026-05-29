@@ -947,6 +947,64 @@ def _sandbox_fingerprint(work_dir: Path | str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def _worker_isolated_env_vars() -> list[str]:
+    """Return the list of env var names to per-worker filesystem-isolate.
+
+    Driven by the config key ``execution.worker_isolated_env_vars`` (a list
+    of env var names). Opt-in: an empty / unset list means no isolation and
+    the worker env is built exactly as before. This is intentionally general
+    — megaplan core knows nothing about any specific project's var names.
+
+    A project whose CLI honours a "home"-style env var (e.g. Astrid's
+    ``ASTRID_HOME`` / ``ASTRID_PROJECTS_ROOT``) can list those vars so each
+    concurrent worker gets an isolated, throwaway state directory instead of
+    sharing one global per-user dir — which otherwise lets one worker's stray
+    session/state files spuriously fail another worker's test suite.
+    """
+    try:
+        raw = get_effective("execution", "worker_isolated_env_vars")
+    except KeyError:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[str] = []
+    for name in raw:
+        if isinstance(name, str) and name.strip():
+            out.append(name.strip())
+    return out
+
+
+def _apply_worker_state_isolation(env: dict[str, str]) -> dict[str, str]:
+    """Redirect configured env vars to fresh per-worker temp directories.
+
+    For each var name in ``execution.worker_isolated_env_vars`` we mint a
+    unique directory under the OS temp dir and point the var at it, mutating
+    *env* in place. This isolates per-user filesystem state across concurrent
+    workers. Directories are NOT eagerly deleted (a worker may spawn child
+    processes that outlive this call); they are uniquely named under the
+    system temp dir and left for the OS tmp reaper, which bounds leakage.
+
+    No-ops when the config list is empty, so the existing env is untouched.
+    Existing keys are overwritten only for the listed vars; every other key
+    (API keys, codex/hermes/claude paths, MEGAPLAN_* ids) is preserved.
+    """
+    names = _worker_isolated_env_vars()
+    if not names:
+        return env
+    base = Path(tempfile.gettempdir()) / "megaplan-worker-isolation"
+    token = uuid.uuid4().hex[:12]
+    for name in names:
+        worker_dir = base / token / name
+        try:
+            worker_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # If we cannot create the dir, leave the var as-is rather than
+            # pointing the worker at a path that does not exist.
+            continue
+        env[name] = str(worker_dir)
+    return env
+
+
 def _codex_child_env(
     turn_id: str | None = None,
     actor_id: str | None = None,
@@ -961,6 +1019,7 @@ def _codex_child_env(
         env["MEGAPLAN_TURN_ID"] = turn_id
     if actor_id is not None:
         env["MEGAPLAN_ACTOR_ID"] = actor_id
+    _apply_worker_state_isolation(env)
     return env
 
 
@@ -973,6 +1032,7 @@ def _external_worker_env(
         env["MEGAPLAN_TURN_ID"] = turn_id
     if actor_id is not None:
         env["MEGAPLAN_ACTOR_ID"] = actor_id
+    _apply_worker_state_isolation(env)
     return env
 
 

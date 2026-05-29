@@ -43,9 +43,20 @@ def compute_scope_drift(
     files_claimed: set[str],
     files_in_diff: set[str],
     loc_by_file: dict[str, int],
+    files_claimed_for_missing: set[str] | None = None,
 ) -> ScopeDriftReport:
     files_added = sorted(path for path in files_in_diff - files_claimed if not _is_benign(path))
-    files_missing = sorted(files_claimed - files_in_diff)
+    # ``files_missing`` (claimed-but-not-in-diff = fabrication / wrong-tree) is a
+    # PER-CALL signal. In per-batch execute mode the caller unions every batch's
+    # claims into ``files_claimed`` to suppress false ``files_added``; but a file
+    # legitimately changed in one batch and reverted/superseded in a later batch
+    # is absent from the final diff by design, so the union must NOT drive
+    # ``files_missing``. Callers pass ``files_claimed_for_missing`` (this call's
+    # own claims only); it defaults to ``files_claimed`` for single-call callers.
+    missing_baseline = (
+        files_claimed if files_claimed_for_missing is None else files_claimed_for_missing
+    )
+    files_missing = sorted(missing_baseline - files_in_diff)
     loc_added = sum(loc_by_file.values())
     loc_added_outside_claimed = sum(loc_by_file.get(path, 0) for path in files_added)
     # ``files_missing`` means the executor claimed it changed a file that
