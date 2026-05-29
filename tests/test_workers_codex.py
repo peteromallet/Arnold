@@ -1841,3 +1841,30 @@ def test_apply_session_update_preserves_codex_last_total_tokens_after_worker_run
         refreshed=True,
     )
     assert state["sessions"]["codex_planner"]["last_total_tokens"]["input_tokens"] == 1000
+
+
+# ---------------------------------------------------------------------------
+# Codex-model dispatch guard (specfix)
+# ---------------------------------------------------------------------------
+
+
+def test_codex_model_flag_accepts_valid_models() -> None:
+    """Recognised codex/GPT-5.x models build a clean -c model='...' flag."""
+    from megaplan.workers._impl import _codex_model_flag
+
+    assert _codex_model_flag(None) == []
+    assert _codex_model_flag("gpt-5.5") == ["-c", "model='gpt-5.5'"]
+    assert _codex_model_flag("gpt-5.3-codex") == ["-c", "model='gpt-5.3-codex'"]
+    assert _codex_model_flag("gpt-5.1-codex-max") == ["-c", "model='gpt-5.1-codex-max'"]
+
+
+@pytest.mark.parametrize("bad_model", ["claude", "claude-sonnet-4-6", "sonnet", "deepseek-v4-pro"])
+def test_codex_model_flag_rejects_non_codex_models(bad_model: str) -> None:
+    """A non-codex model (e.g. from a malformed 'codex:claude:sonnet' spec) must
+    never be passed verbatim to the codex CLI as -c model='...'."""
+    from megaplan.workers._impl import _codex_model_flag
+
+    with pytest.raises(CliError) as exc:
+        _codex_model_flag(bad_model)
+    assert exc.value.code == "invalid_codex_model"
+    assert bad_model in str(exc.value)

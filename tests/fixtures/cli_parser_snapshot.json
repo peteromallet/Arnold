@@ -5059,6 +5059,21 @@
             },
             {
               "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "vendor",
+              "help": "(set-vendor) Target premium vendor for the phase: claude or codex.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--vendor"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
               "choices": [
                 "user",
                 "driver"
@@ -5102,7 +5117,8 @@
                 "recover-blocked",
                 "set-robustness",
                 "set-profile",
-                "set-model"
+                "set-model",
+                "set-vendor"
               ],
               "const": null,
               "default": null,

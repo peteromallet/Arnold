@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import tomllib
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("megaplan")
+
+# One-shot guard so the stale-override warning fires at most once per phase
+# per process (apply_profile_expansion runs many times per plan).
+_WARNED_STALE_OVERRIDE: set[tuple[str, str]] = set()
 
 from .._core.io import config_dir
 from .._core import user_config as _user_config_module
@@ -1693,14 +1700,40 @@ def apply_profile_expansion(
         persisted = list((state.get("config") or {}).get("phase_model") or [])
         # Index where profile defaults start (right after live CLI entries).
         profile_block_start = len(cli_phase_models)
+        # Map of the profile defaults currently in force, so we can detect a
+        # persisted pin that shadows a profile default that has since drifted.
+        profile_default_specs: dict[str, str] = {}
+        for entry in phase_models[profile_block_start:]:
+            if isinstance(entry, str) and "=" in entry:
+                _ps, _pv = entry.split("=", 1)
+                profile_default_specs.setdefault(_ps, _pv)
         for pm in persisted:
             if "=" not in pm:
                 continue
             step = pm.split("=", 1)[0]
+            persisted_spec = pm.split("=", 1)[1]
             if step in cli_steps:
                 # Live CLI already covers this phase on the current invocation.
                 continue
             if step in profile_steps:
+                # Persisted CLI override must beat the profile default — but if
+                # the profile default has since drifted away from the persisted
+                # pin, the operator is silently running a stale override. Warn
+                # once so the shadowing is visible (specfix #4).
+                current_default = profile_default_specs.get(step)
+                if (
+                    current_default is not None
+                    and current_default != persisted_spec
+                    and (step, persisted_spec) not in _WARNED_STALE_OVERRIDE
+                ):
+                    _WARNED_STALE_OVERRIDE.add((step, persisted_spec))
+                    log.warning(
+                        "M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin "
+                        "%s=%s shadows the profile default %s=%s, which has since "
+                        "changed. The persisted pin still wins. If this is stale, "
+                        "clear it with `megaplan override set-model` / `set-vendor`.",
+                        step, persisted_spec, step, current_default,
+                    )
                 # Persisted CLI override must beat the profile default.
                 phase_models.insert(profile_block_start, pm)
                 profile_block_start += 1

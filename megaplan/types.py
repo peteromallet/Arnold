@@ -445,15 +445,103 @@ def normalize_robustness(value: Any) -> str:
 # Premium agent vendors that support model:effort three-part specs.
 _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 
+# Canonical per-vendor valid effort sets — the SINGLE source of truth for
+# what an effort token may be in an agent spec. These are the *spec-layer*
+# effort tokens (the thinking-depth ladder applied by --depth / --phase-model),
+# NOT the narrower codex-CLI reasoning-effort set in
+# megaplan.workers._impl (_VALID_CODEX_EFFORTS), which is a downstream concern
+# where xhigh/max get clamped before the codex binary is invoked.
+#
+# Both premium vendors accept the full depth ladder at the spec layer because
+# --depth (VALID_DEPTH_CHOICES) can produce e.g. ``codex:max`` / ``claude:minimal``.
+_VALID_CLAUDE_SPEC_EFFORTS: frozenset[str] = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh", "max"}
+)
+_VALID_CODEX_SPEC_EFFORTS: frozenset[str] = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh", "max"}
+)
+
+_VALID_PREMIUM_EFFORTS: dict[str, frozenset[str]] = {
+    "claude": _VALID_CLAUDE_SPEC_EFFORTS,
+    "codex": _VALID_CODEX_SPEC_EFFORTS,
+}
+
 # All known effort tokens across both premium agents — used for
 # disambiguation in parse_agent_spec (reserved tokens can never be
 # interpreted as model-only strings for premium agents).
-_PREMIUM_EFFORT_TOKENS: frozenset[str] = frozenset({
-    # Claude effort tokens
-    "low", "medium", "high", "xhigh", "max",
-    # Codex effort tokens
-    "minimal",
-})
+_PREMIUM_EFFORT_TOKENS: frozenset[str] = (
+    _VALID_CLAUDE_SPEC_EFFORTS | _VALID_CODEX_SPEC_EFFORTS
+)
+
+
+def _is_claude_model_name(name: str) -> bool:
+    """True if *name* names a Claude model.
+
+    Accepts the full pins used across profiles/tier_models/tests
+    (``claude-sonnet-4-6``, ``claude-opus-4-7``), the shorthand model
+    pins (``sonnet-4.6``, ``sonnet``, ``opus``), and any
+    ``anthropic/claude-*`` / ``claude/`` form.
+    """
+    lowered = name.lower()
+    return (
+        "claude" in lowered
+        or "sonnet" in lowered
+        or "opus" in lowered
+        or "haiku" in lowered
+    )
+
+
+def _is_codex_model_name(name: str) -> bool:
+    """True if *name* names a Codex / GPT-5.x model.
+
+    Accepts ``gpt-5.5``, ``gpt-5.4``, ``gpt-5.3-codex``, ``gpt-5.1-codex-max``,
+    and ``openai/gpt-5*`` forms.
+    """
+    lowered = name.lower()
+    return lowered.startswith("gpt-5") or "/gpt-5" in lowered or "codex" in lowered
+
+
+_PREMIUM_MODEL_PREDICATES = {
+    "claude": _is_claude_model_name,
+    "codex": _is_codex_model_name,
+}
+
+
+def _validate_premium_spec(agent: str, model: str | None, effort: str | None, spec: str) -> None:
+    """Reject semantically-malformed premium (claude/codex) specs.
+
+    The grammar is syntactically closed but historically semantically open:
+    ANY token was accepted in the model/effort slot. This is the single
+    chokepoint that closes it. A premium spec must be one of:
+
+    * bare agent (``codex``)
+    * ``agent:effort`` (effort in that agent's valid set)
+    * ``agent:model`` (model in that agent's family)
+    * ``agent:model:effort`` (both valid)
+
+    A token that is NEITHER a valid effort NOR a recognised model for that
+    agent raises ``CliError`` naming the offending spec. This is what turns
+    ``codex:claude:sonnet`` (model='claude', effort='sonnet') from a silent
+    mis-parse into a loud failure.
+    """
+    valid_efforts = _VALID_PREMIUM_EFFORTS[agent]
+    model_ok = _PREMIUM_MODEL_PREDICATES[agent]
+
+    if effort is not None and effort not in valid_efforts:
+        raise CliError(
+            "invalid_agent_spec",
+            f"Invalid {agent} agent spec {spec!r}: effort token {effort!r} is not a "
+            f"valid {agent} effort ({', '.join(sorted(valid_efforts))}) "
+            f"and the spec is not a recognised {agent} model.",
+        )
+    if model is not None and not model_ok(model):
+        raise CliError(
+            "invalid_agent_spec",
+            f"Invalid {agent} agent spec {spec!r}: {model!r} is neither a valid "
+            f"{agent} effort ({', '.join(sorted(valid_efforts))}) nor a recognised "
+            f"{agent} model. A {agent} spec must be a bare agent, "
+            f"{agent}:<effort>, or {agent}:<model>[:<effort>].",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,6 +629,7 @@ def parse_agent_spec(spec: str) -> AgentSpec:
     # If the first token after ':' is a reserved effort token, treat
     # this as the legacy effort-only shape (claude:low, codex:high, etc.).
     if rest in _PREMIUM_EFFORT_TOKENS:
+        _validate_premium_spec(agent, None, rest, spec)
         return AgentSpec(agent=agent, effort=rest)
 
     # Everything after the first colon could be <model> or <model>:<effort>.
@@ -549,9 +638,11 @@ def parse_agent_spec(spec: str) -> AgentSpec:
         # Effort may be empty string if spec ends with colon; normalize to None.
         if not effort:
             effort = None
+        _validate_premium_spec(agent, model, effort, spec)
         return AgentSpec(agent=agent, model=model, effort=effort)
 
     # Single token that is not a reserved effort token → model-only.
+    _validate_premium_spec(agent, rest, None, spec)
     return AgentSpec(agent=agent, model=rest)
 
 

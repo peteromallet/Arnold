@@ -439,3 +439,126 @@ def test_reserved_effort_token_disambiguation() -> None:
         assert spec.agent == "codex"
         assert spec.model is None, f"codex:{token} should be effort-only, not model='{token}'"
         assert spec.effort == token
+
+
+# ---------------------------------------------------------------------------
+# Semantic validation of premium agent specs (specfix)
+#
+# Regression: a plan initialised with --vendor codex once ended up with a
+# malformed phase-routing spec ``critique=codex:claude:sonnet`` persisted to
+# state.json -> config.phase_model. parse_agent_spec did NOT raise — it
+# positionally yielded agent=codex, model='claude', effort='sonnet'. The bad
+# spec rode silently through three sprints. These tests close the grammar.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_spec",
+    [
+        "codex:claude:sonnet",   # the original bug: model='claude', effort='sonnet'
+        "codex:claude:opus",     # variant
+        "claude:gpt-5.5",        # codex model on the claude agent
+        "claude:gpt-5.4",        # codex model on the claude agent
+        "codex:claude-sonnet-4-6",   # claude model on the codex agent
+        "codex:opus",            # claude model shorthand on codex
+        "claude:sonnet:bogus",   # valid model, bogus effort
+        "codex:gpt-5.5:bogus",   # valid model, bogus effort
+        "codex:nonsense",        # neither effort nor model
+        "claude:totally-made-up-model",
+    ],
+)
+def test_parse_agent_spec_rejects_malformed_premium_specs(bad_spec: str) -> None:
+    """Premium specs whose token is neither a valid effort nor a recognised
+    model for that vendor must raise (not silently mis-parse)."""
+    from megaplan.types import CliError, parse_agent_spec
+
+    with pytest.raises(CliError) as exc:
+        parse_agent_spec(bad_spec)
+    assert bad_spec in str(exc.value), f"error should name the offending spec {bad_spec!r}"
+
+
+@pytest.mark.parametrize(
+    "good_spec",
+    [
+        # Bare agents
+        "claude",
+        "codex",
+        "hermes",
+        "shannon",
+        # Claude effort ladder (= VALID_DEPTH_CHOICES)
+        "claude:minimal",
+        "claude:low",
+        "claude:medium",
+        "claude:high",
+        "claude:xhigh",
+        "claude:max",
+        # Codex effort ladder
+        "codex:minimal",
+        "codex:low",
+        "codex:medium",
+        "codex:high",
+        "codex:xhigh",   # produced by --depth xhigh on a codex slot
+        "codex:max",     # produced by --depth max on a codex slot
+        # Claude model shorthands + full pins
+        "claude:sonnet",
+        "claude:opus",
+        "claude:sonnet-4.6",
+        "claude:sonnet-4.6:medium",
+        "claude:claude-sonnet-4-6",
+        "claude:claude-opus-4-7",
+        # Codex full pins
+        "codex:gpt-5.4",
+        "codex:gpt-5.5",
+        "codex:gpt-5.3-codex",
+        "codex:gpt-5.3-codex:high",
+        # Hermes / shannon 3-segment provider:model form (non-premium passthrough)
+        "hermes:deepseek:deepseek-v4-pro",
+        "hermes:deepseek:deepseek-v4-flash",
+        "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+        "hermes:glm-5.1",
+        "shannon:some-payload",
+    ],
+)
+def test_parse_agent_spec_accepts_all_legit_forms(good_spec: str) -> None:
+    """Every spec form actually used in profiles/tier_models/defaults must parse."""
+    from megaplan.types import parse_agent_spec
+
+    spec = parse_agent_spec(good_spec)
+    assert spec.agent == good_spec.split(":", 1)[0]
+
+
+def test_parse_agent_spec_accepts_every_spec_in_loaded_profiles() -> None:
+    """Self-maintaining non-regression guard: enumerate EVERY agent spec across
+    all built-in profiles (flat slots + nested tier_models) and assert each
+    parses. If a future profile introduces a spec the validator rejects, this
+    fails loudly at the source rather than at run time."""
+    from megaplan.profiles import load_profiles
+    from megaplan.types import parse_agent_spec
+
+    specs: set[str] = set()
+
+    def _collect(value: object) -> None:
+        if isinstance(value, str):
+            specs.add(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                _collect(v)
+
+    for pdict in load_profiles().values():
+        _collect(pdict)
+
+    failures: list[tuple[str, str]] = []
+    for s in sorted(specs):
+        try:
+            parse_agent_spec(s)
+        except Exception as exc:  # pragma: no cover - failure path
+            failures.append((s, str(exc)))
+    assert not failures, f"profile specs failed to parse: {failures}"
+
+
+def test_parse_agent_spec_accepts_default_routing_specs() -> None:
+    """DEFAULT_AGENT_ROUTING values must all parse."""
+    from megaplan.types import DEFAULT_AGENT_ROUTING, parse_agent_spec
+
+    for spec in set(DEFAULT_AGENT_ROUTING.values()):
+        parse_agent_spec(spec)
