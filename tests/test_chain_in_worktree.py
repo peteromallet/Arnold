@@ -71,6 +71,7 @@ def test_chain_start_in_worktree_reroots_whole_chain(
         no_git_refresh: bool,
         no_push: bool,
         one: bool,
+        mode: str = "start",
     ) -> dict[str, Any]:
         seen["spec_path"] = spec_path
         seen["root"] = root
