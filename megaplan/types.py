@@ -108,6 +108,11 @@ class PlanConfig(TypedDict, total=False):
     tiebreaker_time_budget_minutes: int
     strict_notes: NotRequired[bool]
     prep_clarify: NotRequired[bool]
+    # Completion-verification contract mode: off | shadow | warn | enforce.
+    # Default "shadow" = compute + persist + log a verdict, never block, never
+    # run the suite. warn/enforce are not yet implemented (behave like shadow +
+    # a logged WARNING). See megaplan/orchestration/completion_contract.py.
+    completion_contract_mode: NotRequired[str]
 
 
 class PlanMeta(TypedDict, total=False):
@@ -401,7 +406,7 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "tiebreaker_challenger": "codex",
 }
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
-# Canonical robustness names — match docs/megaplan-decision.md.
+# Canonical robustness names — match docs/megaplan-setup.md.
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 # Legacy → canonical alias map. Old names remain accepted on the CLI and
 # in stored state for backward compatibility; ``normalize_robustness``
@@ -677,6 +682,14 @@ DEFAULTS = {
     "execution.max_review_rework_cycles": 3,
     "execution.max_robust_review_rework_cycles": 2,
     "execution.max_execute_no_progress": 3,
+    # Plan-critique loop cap (mirrors the execute-review rework cap). Counts
+    # ITERATE rounds; full/light use max_critique_iterations, thorough/extreme
+    # use max_robust_critique_iterations. max_critique_no_progress is the
+    # trailing-window length for the no-net-progress early stop. Defaults are
+    # generous: a healthy plan converges in 1-2 rounds, well under the cap.
+    "execution.max_critique_iterations": 4,
+    "execution.max_robust_critique_iterations": 6,
+    "execution.max_critique_no_progress": 2,
     "execution.max_tasks_per_batch": 5,
     "orchestration.max_critique_concurrency": 6,
     "orchestration.mode": "subagent",
@@ -687,6 +700,13 @@ DEFAULTS = {
     # static lenses. Default False for backward compatibility. Recommended for
     # production / CI / important runs. See docs/critique.md.
     "execution.strict_adaptive_critique": False,
+    # Completion-verification contract mode. "shadow" (default) computes +
+    # persists + logs a verdict at every terminal transition but NEVER blocks
+    # and NEVER runs the test suite. "off" disables it; "warn"/"enforce" are
+    # stubs that currently behave like shadow + a logged WARNING (the
+    # fail-closed behaviour is a documented TODO). See
+    # megaplan/orchestration/completion_contract.py.
+    "execution.completion_contract_mode": "shadow",
 }
 
 # Valid pin values for execution.critic_model. Mirrors CRITIC_MODEL_ROSTER in
@@ -712,6 +732,7 @@ _SETTABLE_BOOL = {
 _SETTABLE_ENUM = {
     "execution.robustness": ROBUSTNESS_ACCEPTED,
     "execution.critic_model": CRITIC_MODEL_CHOICES,
+    "execution.completion_contract_mode": ("off", "shadow", "warn", "enforce"),
 }
 
 _SETTABLE_NUMERIC = {
@@ -720,6 +741,9 @@ _SETTABLE_NUMERIC = {
     "execution.max_robust_review_rework_cycles",
     "execution.max_execute_no_progress",
     "execution.max_tasks_per_batch",
+    "execution.max_critique_iterations",
+    "execution.max_robust_critique_iterations",
+    "execution.max_critique_no_progress",
     "orchestration.max_critique_concurrency",
 }
 

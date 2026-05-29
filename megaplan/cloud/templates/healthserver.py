@@ -9,7 +9,7 @@ PORT = int(os.environ.get("PORT", "8080"))
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
-        body = b"OK - reigh-megaplan-dev container alive\n"
+        body = b"OK - megaplan cloud container alive\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

@@ -58,9 +58,26 @@ echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, sandbox: dange
 
 # Megaplan install: always re-pull on boot so entrypoint restarts pick up the
 # requested ref without rebuilding the base image.
+#
+# MEGAPLAN_INSTALL_SPEC – pip install spec; defaults to PyPI megaplan-harness[agent].
+#   Set to a git URL (e.g. "megaplan-harness[agent] @ git+https://github.com/...")
+#   to install from source. When using a git spec, MEGAPLAN_REF appends @ref.
+# MEGAPLAN_REF – git ref (branch/tag/commit); only used when MEGAPLAN_INSTALL_SPEC
+#   contains "git+". Ignored (with a warning) for PyPI install specs.
+MEGAPLAN_INSTALL_SPEC="$${MEGAPLAN_INSTALL_SPEC:-megaplan-harness[agent]}"
 MEGAPLAN_REF="$${MEGAPLAN_REF:-${MEGAPLAN_REF}}"
-echo "Installing/upgrading megaplan from github:$$MEGAPLAN_REF"
-pip install --upgrade --force-reinstall --no-cache-dir "megaplan-harness[agent] @ git+https://github.com/peteromallet/megaplan.git@$$MEGAPLAN_REF" 2>&1 | tail -3
+
+if [[ -n "$$MEGAPLAN_REF" ]] && [[ "$$MEGAPLAN_INSTALL_SPEC" == *git+* ]]; then
+  echo "Installing/upgrading megaplan from git: $$MEGAPLAN_INSTALL_SPEC@$$MEGAPLAN_REF"
+  pip install --upgrade --force-reinstall --no-cache-dir "$$MEGAPLAN_INSTALL_SPEC@$$MEGAPLAN_REF" 2>&1 | tail -3
+elif [[ -n "$$MEGAPLAN_REF" ]]; then
+  echo "MEGAPLAN_REF=$$MEGAPLAN_REF is set but MEGAPLAN_INSTALL_SPEC is a PyPI spec — ref ignored"
+  echo "Installing/upgrading megaplan: $$MEGAPLAN_INSTALL_SPEC"
+  pip install --upgrade --force-reinstall --no-cache-dir "$$MEGAPLAN_INSTALL_SPEC" 2>&1 | tail -3
+else
+  echo "Installing/upgrading megaplan: $$MEGAPLAN_INSTALL_SPEC"
+  pip install --upgrade --force-reinstall --no-cache-dir "$$MEGAPLAN_INSTALL_SPEC" 2>&1 | tail -3
+fi
 
 echo "Configuring megaplan agent routing and execution defaults"
 ${AGENT_ROUTING_BLOCK}

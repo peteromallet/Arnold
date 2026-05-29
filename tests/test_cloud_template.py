@@ -141,6 +141,9 @@ def test_materialize_deploy_dir_creates_expected_layout(tmp_path: Path) -> None:
     assert (deploy_dir / "Dockerfile").is_file()
     assert (deploy_dir / "entrypoint.sh").is_file()
     assert (deploy_dir / "healthserver.py").is_file()
+    healthserver = (deploy_dir / "healthserver.py").read_text(encoding="utf-8")
+    assert "reigh-megaplan-dev" not in healthserver
+    assert "OK - megaplan cloud container alive" in healthserver
     assert (deploy_dir / "railway.toml").is_file()
 
     wrappers = deploy_dir / "wrappers"

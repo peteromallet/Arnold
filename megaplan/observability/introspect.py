@@ -2,7 +2,7 @@
 
 Produces a single JSON payload with all four killer fields:
 - ``now_utc``: anti-stale-timestamp anchor.
-- ``rubric_doc.drift``: drift between decision_skill.md and installed profiles.
+- ``rubric_doc.drift``: drift between setup_skill.md and installed profiles.
 - ``active_phase.liveness``: progressing | quiet | stalled | timeout-imminent.
 - ``block_details.recoverable_via``: enumerated valid recoveries.
 """
@@ -155,7 +155,7 @@ def _get_profiles_list() -> list[str]:
 
 
 def _parse_decision_skill_profiles() -> list[str]:
-    """Parse decision_skill.md for profile name references."""
+    """Parse the megaplan-setup skill (setup_skill.md) for profile references."""
     try:
         import megaplan.data
 
@@ -167,7 +167,7 @@ def _parse_decision_skill_profiles() -> list[str]:
             data_dir = Path(next(iter(megaplan.data.__path__)))
         else:
             return []
-        skill_path = data_dir / "decision_skill.md"
+        skill_path = data_dir / "setup_skill.md"
         if not skill_path.exists():
             return []
         content = skill_path.read_text(encoding="utf-8")
@@ -304,7 +304,7 @@ def _compute_liveness(
 
 
 def _compute_rubric_drift() -> dict:
-    """Compute rubric_doc.drift between decision_skill.md and installed profiles.
+    """Compute rubric_doc.drift between setup_skill.md and installed profiles.
 
     Returns: {"drifted": bool, "referenced_profiles": [...], "available_profiles": [...],
                "missing": [...], "extra_in_skill": [...]}

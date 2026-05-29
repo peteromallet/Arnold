@@ -37,7 +37,7 @@ Each phase can run on a different model. For example, here's how the default **`
 
 That split isn't fixed. The harder the work, the more it justifies premium models on more phases; the simpler it is, the more aggressively it can run on open models. The named profiles are five rungs of exactly this trade-off — `solo` (all-open, for mechanical work) → `directed` → `partnered` (the default) → `premium` → `apex` (all-premium) — and you can define custom profiles to combine models any way you like.
 
-**[docs/megaplan-decision.md](docs/megaplan-decision.md)** is a skill document for you and your agents — hand it the task and it picks the profile, robustness level, and thinking tier to match.
+**[docs/megaplan-setup.md](docs/megaplan-setup.md)** is a skill document for you and your agents — hand it the task and it picks the profile, robustness level, and thinking tier to match.
 
 ## Quick start
 

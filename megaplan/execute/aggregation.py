@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from megaplan._core import configured_robustness, is_creative_mode, is_prose_mode
+from megaplan._core.io import list_batch_artifacts, read_json
 from megaplan.execute.quality import (
     _capture_git_status_snapshot,
     _collect_execute_claimed_paths,
@@ -125,12 +126,42 @@ def _build_aggregate_execution_payload(
     return result
 
 
+def _collect_per_batch_claimed_paths(
+    plan_dir: Path | None,
+    project_dir: Path,
+) -> set[str]:
+    """Union of top-level ``files_changed`` across every on-disk batch artifact.
+
+    In per-batch execute mode each ``--batch N`` invocation writes its claims to
+    ``execution_batch_N.json``; the final aggregate transition only sees the
+    current call's payload (empty for a test-only final batch or a plain
+    post-batch ``execute``). Seeding the claim baseline from every on-disk
+    artifact makes the scope-drift gate compare the working-tree diff against the
+    UNION of all per-batch claims, not just the current call's.
+    """
+    if plan_dir is None:
+        return set()
+    claimed: set[str] = set()
+    for artifact in list_batch_artifacts(plan_dir):
+        try:
+            payload = read_json(artifact)
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            claimed |= _collect_execute_claimed_paths(payload, project_dir)
+    return claimed
+
+
 def _compute_execute_scope_drift(
     project_dir: Path,
     aggregate_payload: dict[str, Any],
     state: PlanState | None = None,
+    plan_dir: Path | None = None,
 ):
     files_claimed = _collect_execute_claimed_paths(aggregate_payload, project_dir)
+    # Union per-batch claims from disk so per-batch execute mode compares the
+    # working-tree diff against every batch's claims, not just this call's.
+    files_claimed |= _collect_per_batch_claimed_paths(plan_dir, project_dir)
     if state is not None:
         config = state.get("config") or {}
         if config.get("mode") == "doc":
@@ -176,9 +207,12 @@ def _compute_scope_drift_for_execute_surface(
     aggregate_payload: dict[str, Any],
     state: PlanState,
     phase_context: str,
+    plan_dir: Path | None = None,
 ) -> Any:
     try:
-        return _compute_execute_scope_drift(project_dir, aggregate_payload, state)
+        return _compute_execute_scope_drift(
+            project_dir, aggregate_payload, state, plan_dir=plan_dir
+        )
     except CliError as exc:
         if exc.code != "scope_drift_snapshot":
             raise
