@@ -123,7 +123,7 @@ from .skills import (
     _canonical_bakeoff_skill,
     _canonical_cloud_skill,
     _canonical_composed,
-    _canonical_decision_skill,
+    _canonical_prep_skill,
     _canonical_epic_skill,
     _canonical_instructions,
     _canonical_observe_skill,

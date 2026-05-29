@@ -406,7 +406,7 @@ DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "tiebreaker_challenger": "codex",
 }
 KNOWN_AGENTS = ["claude", "codex", "hermes", "shannon"]
-# Canonical robustness names — match docs/megaplan-setup.md.
+# Canonical robustness names — match docs/megaplan-prep.md.
 ROBUSTNESS_LEVELS = ("bare", "light", "full", "thorough", "extreme")
 # Legacy → canonical alias map. Old names remain accepted on the CLI and
 # in stored state for backward compatibility; ``normalize_robustness``

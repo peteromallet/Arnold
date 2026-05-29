@@ -155,7 +155,7 @@ def _get_profiles_list() -> list[str]:
 
 
 def _parse_decision_skill_profiles() -> list[str]:
-    """Parse the megaplan-setup skill (setup_skill.md) for profile references.
+    """Parse the megaplan-prep skill (prep_skill.md) for profile references.
 
     Extracts profile names from --profile mentions, tier-name lists,
     and table entries. Returns a deduplicated list.
@@ -163,7 +163,7 @@ def _parse_decision_skill_profiles() -> list[str]:
     try:
         import megaplan.data
 
-        skill_path = Path(megaplan.data.__file__).parent / "setup_skill.md"
+        skill_path = Path(megaplan.data.__file__).parent / "prep_skill.md"
         if not skill_path.exists():
             return []
         content = skill_path.read_text(encoding="utf-8")
@@ -440,7 +440,7 @@ def _check_outstanding_flags(plan_dir: Path) -> tuple[str, str, str]:
 
 
 def _check_rubric_drift() -> list[tuple[str, str, str]]:
-    """Check rubric/binary drift: diff setup_skill.md profiles vs installed profiles."""
+    """Check rubric/binary drift: diff prep_skill.md profiles vs installed profiles."""
     results: list[tuple[str, str, str]] = []
 
     referenced = _parse_decision_skill_profiles()
@@ -458,7 +458,7 @@ def _check_rubric_drift() -> list[tuple[str, str, str]]:
     missing = [p for p in referenced if p not in installed_set]
     if missing:
         results.append(_check_status(
-            f"Rubric/binary drift: {len(missing)} profile(s) in setup_skill.md not found in binary",
+            f"Rubric/binary drift: {len(missing)} profile(s) in prep_skill.md not found in binary",
             False,
             severity="WARN",
             remediation=(
@@ -539,7 +539,7 @@ def _check_skill_sync() -> list[tuple[str, str, str]]:
     results: list[tuple[str, str, str]] = []
 
     skill_pairs = [
-        ("megaplan-setup", "setup_skill.md"),
+        ("megaplan-prep", "prep_skill.md"),
         ("megaplan-observe", "observe_skill.md"),
     ]
 
