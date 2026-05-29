@@ -919,6 +919,19 @@ function megaplanSlashCompletionRow(prompt, rows) {
     if send_prompt_target in patched and "tmux load-buffer" not in patched:
         patched = patched.replace(send_prompt_target, send_prompt_replacement, 1)
 
+    # --- megaplan: match Claude Code's project-folder slug for dotted paths ---
+    # Shannon derives the ~/.claude/projects/<slug> folder by replacing non
+    # [A-Za-z0-9._-] with "-", which KEEPS ".". Claude Code replaces "." too, so
+    # for a cwd under ".megaplan-worktrees" Shannon searches
+    # "…-.megaplan-worktrees-…" while Claude wrote "…--megaplan-worktrees-…" →
+    # the transcript is never found and EVERY claude phase times out
+    # ("Timed out waiting for Claude transcript…"). Drop "." from the kept set so
+    # the slug matches. Fixes all worktree-based runs.
+    slug_target = 'return resolve(cwd).normalize("NFC").replace(/[^a-zA-Z0-9._-]/g, "-");'
+    slug_replacement = 'return resolve(cwd).normalize("NFC").replace(/[^a-zA-Z0-9_-]/g, "-");'
+    if slug_target in patched:
+        patched = patched.replace(slug_target, slug_replacement, 1)
+
     if patched == original:
         return
 
