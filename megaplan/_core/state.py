@@ -90,6 +90,40 @@ def load_plan(root: Path, requested_name: str | None) -> tuple[Path, PlanState]:
     return load_plan_from_dir(plan_dir)
 
 
+def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
+    """Surface a corrupt persisted ``config.phase_model`` pin loudly at load.
+
+    Specfix: a plan once persisted a malformed routing spec
+    (``critique=codex:claude:sonnet``) that ``parse_agent_spec`` accepted
+    silently and that rode through three sprints. ``parse_agent_spec`` now
+    rejects such specs at the chokepoint; this load-time check ensures an
+    *already-corrupt* on-disk plan fails loudly on the next load/resume
+    instead of mis-dispatching. No migration is attempted — the operator
+    fixes the pin via ``megaplan override set-model`` / ``set-vendor``.
+    """
+    from megaplan.types import parse_agent_spec
+
+    if not isinstance(state, dict):
+        return
+    phase_models = state.get("config", {}).get("phase_model") or []
+    if not isinstance(phase_models, list):
+        return
+    for entry in phase_models:
+        if not isinstance(entry, str) or "=" not in entry:
+            continue
+        phase, spec = entry.split("=", 1)
+        try:
+            parse_agent_spec(spec)
+        except CliError as exc:
+            raise CliError(
+                "corrupt_phase_model",
+                f"Plan '{plan_dir.name}' has a malformed persisted routing pin "
+                f"for phase '{phase}': {spec!r}. {exc.message} "
+                f"Fix it with `megaplan override set-model --phase {phase} "
+                f"--model <model>` (or `set-vendor`) before resuming.",
+            ) from exc
+
+
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     state = read_json(plan_dir / "state.json")
     if isinstance(state, dict) and (
@@ -98,6 +132,7 @@ def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
         or "last_gate" not in state
     ):
         state = write_plan_state(plan_dir, mode="legacy-migration")
+    _validate_persisted_phase_models(plan_dir, state)
     return plan_dir, state
 
 
