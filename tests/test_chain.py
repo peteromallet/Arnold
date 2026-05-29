@@ -322,6 +322,75 @@ def test_load_spec_rejects_missing_label(tmp_path: Path) -> None:
     assert excinfo.value.code == "invalid_spec"
 
 
+def test_load_spec_parses_depends_on_in_order(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "m5-eval", "idea": "/tmp/a.txt"},
+                {"label": "m5-cal", "idea": "/tmp/b.txt", "depends_on": ["m5-eval"]},
+            ]
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.milestones[1].depends_on == ["m5-eval"]
+    # A bare string is normalized to a single-element list.
+    assert spec.milestones[0].depends_on == []
+
+
+def test_load_spec_accepts_depends_on_string(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "a", "idea": "/tmp/a.txt"},
+                {"label": "b", "idea": "/tmp/b.txt", "depends_on": "a"},
+            ]
+        },
+    )
+    spec = load_spec(spec_path)
+    assert spec.milestones[1].depends_on == ["a"]
+
+
+def test_load_spec_rejects_depends_on_listed_after(tmp_path: Path) -> None:
+    # m5-cal depends on m5-eval but is listed BEFORE it -> fail loud.
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "m5-cal", "idea": "/tmp/b.txt", "depends_on": ["m5-eval"]},
+                {"label": "m5-eval", "idea": "/tmp/a.txt"},
+            ]
+        },
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "listed before" in excinfo.value.message
+
+
+def test_load_spec_rejects_depends_on_unknown(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "a", "idea": "/tmp/a.txt", "depends_on": ["ghost"]}]},
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "unknown milestone" in excinfo.value.message
+
+
+def test_load_spec_rejects_depends_on_self(tmp_path: Path) -> None:
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "a", "idea": "/tmp/a.txt", "depends_on": ["a"]}]},
+    )
+    with pytest.raises(CliError) as excinfo:
+        load_spec(spec_path)
+    assert excinfo.value.code == "invalid_spec"
+    assert "itself" in excinfo.value.message
+
+
 def test_load_spec_rejects_bad_failure_action(tmp_path: Path) -> None:
     spec_path = _write_spec(
         tmp_path,

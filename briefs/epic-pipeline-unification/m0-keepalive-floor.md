@@ -1,30 +1,37 @@
-# M0 — Keep-alive floor: pinned engine + report-only schema + dual-run rig + oracle skeleton
+# M0′ — Harness floor: report-only schema validator + dual-run rig + oracle skeleton (IN-REPO ONLY)
 
-**Milestone label:** `m0-keepalive-floor` · **Tier:** T0 (keep-alive floor) · **Profile:** apex/thorough
+**Milestone label:** `m0-harness-floor` · **Tier:** T0 (keep-alive floor) · **Profile:** premium/thorough
 (this is the scaffold the entire epic self-hosts on — a wrong floor poisons every milestone).
 **Authoritative sources:** `validation/sequencing/PROGRAM.md` §"M0", §"Strangler discipline", §"Open
 sequencing risks"; `pipeline-unification-EPIC.md` §"Sequenced build program — FINAL" (M0 bullet),
+§"⚠️ PRE-LAUNCH — operator pre-step" (the pinned-venv launch parts live there, NOT here),
 §"Cross-cutting/guardrails"; `validation/premortem/p3-self-reference.md` (the four recommendations);
 MEMORY `project_dogfood_engine_shadow_and_openrouter`; `validation/human-blockers/REGISTER.md`.
+
+> **⚠️ SCOPE BOUNDARY (pre-launch correction).** The PINNED-ENGINE / FROZEN-VENV / LAUNCH part of the old
+> M0 (old W1) is NOT this milestone — a milestone cannot pin the engine that is already driving it
+> (bootstrap paradox). That work is the **OPERATOR PRE-STEP** performed by the human before
+> `megaplan chain start` (build the frozen venv from `main@t0-sha`, launch with `--no-git-refresh`); it is
+> documented in `pipeline-unification-EPIC.md` §"⚠️ PRE-LAUNCH — operator pre-step". This milestone
+> (m0-harness-floor) is the **IN-REPO HARNESS SUBSET ONLY**: W2 (report-only schema validator), W3
+> (dual-run rig), W4 (behavioral-replay oracle harness + corpus), W5 (substrate-swap oracle skeleton),
+> W6 (strangler-gate entrypoint). All default-OFF / report-only; lands no organ.
 
 ---
 
 ## Outcome
 
-The epic can self-host **safely**. After M0, a single t0 "go" arms a `megaplan chain` that drives the
-11-organ build where the code *executing* the build is a **pinned, frozen external engine in its own
-venv** — never the working tree it is mutating — so no merged milestone ever changes the driver
-mid-flight (the p3 H1/H2/H3 deadlock class is structurally impossible). M0 lands **no organ and no
-reshaper**; it is pure risk-removal. It delivers three things, all default-OFF / report-only so they
-cannot perturb the live driver:
+The epic can self-host **safely**. The code *executing* the build is a **pinned, frozen external engine in
+its own venv** (the OPERATOR PRE-STEP, not this milestone) — never the working tree it is mutating — so no
+merged milestone ever changes the driver mid-flight (the p3 H1/H2/H3 deadlock class is structurally
+impossible). This milestone lands **no organ and no reshaper**; it is pure in-repo risk-removal — the
+harness/oracle code the pinned engine and every later milestone consume. It delivers, all default-OFF /
+report-only so they cannot perturb the live driver:
 
-1. **A pinned-engine harness** — a frozen megaplan installed from a tag into a dedicated venv, driving
-   this epic against the worktree as *target repo*, with `--no-git-refresh` so the engine source on
-   disk is never `git pull`-stomped under the running process.
-2. **A schema-version validator in report-only / accept-missing-as-v0 mode** — so when M1 stamps
-   `schema_version`, an old writer can never deadlock a new reader (p3 H1). M0 ships the validator
-   *plumbing*; M1 ships the *stamp*. The fail-closed flip is deferred to after the epic.
-3. **The standing dual-run rig + oracle harnesses** — (a) the OLD frozen engine drives a throwaway
+1. **A schema-version validator in report-only / accept-missing-as-v0 mode** — so when M1 stamps
+   `schema_version`, an old writer can never deadlock a new reader (p3 H1). This milestone ships the
+   validator *plumbing*; M1 ships the *stamp*. The fail-closed flip is deferred to after the epic.
+2. **The standing dual-run rig + oracle harnesses** — (a) the OLD frozen engine drives a throwaway
    1-milestone plan end-to-end (OLD-alive); (b) a planning-shaped throwaway plan runs on whatever NEW
    pieces exist (NEW-alive); (c) a **behavioral-replay oracle harness** that compares NEW-path traces
    against recorded REAL-run traces (incl. recovery/escalate/blocked, not just happy path); (d) a
@@ -35,16 +42,13 @@ cannot perturb the live driver:
 
 ## Scope (work items tied to current file:line)
 
-**W1 — Pinned-engine launcher + verification probe.** Add a launcher (script + thin test) that
-(i) builds/installs a frozen megaplan from a pinned tag/sha into its own venv, (ii) invokes
-`megaplan chain` from THAT interpreter against the epic worktree as target, and (iii) asserts at phase
-boundary that `megaplan.__file__` resolved inside a phase subprocess points at the **pinned** copy, not
-the editable target tree. The subprocess seam already exists — `auto._run_megaplan` shells
-`[sys.executable, "-m", "megaplan", *args]` (`megaplan/auto.py:266,287`); the probe verifies
-`sys.executable`/`PATH` resolve to the pinned venv (defeats p3 H3 / MEMORY dogfood-shadow). The
-`--no-git-refresh` plumbing is **already present** (`chain/__init__.py:1242,1382,1386,1713,1746,1915,1922`;
-honored by `git_ops._refresh_base_branch` at `chain/git_ops.py:23,41-43`) — W1 wires it ON for the epic
-and adds the missing *verification* that it is on, not the flag itself.
+> **W1 (pinned-engine launcher) MOVED OUT — it is the OPERATOR PRE-STEP, not this milestone.** Building the
+> frozen venv from `main@t0-sha`, launching `megaplan chain` from that interpreter against the worktree as
+> target with `--no-git-refresh`, and verifying `megaplan.__file__` resolves to the pinned copy are done by
+> the human before `chain start` (a milestone cannot pin the engine driving it). See
+> `pipeline-unification-EPIC.md` §"⚠️ PRE-LAUNCH — operator pre-step". The `--no-git-refresh` plumbing is
+> **already present** (`chain/__init__.py` `no_git_refresh`; honored by `git_ops._refresh_base_branch`); the
+> operator passes it on the `chain start` invocation. This milestone's scope is W2–W6 below.
 
 **W2 — Report-only schema validator (accept-missing-as-v0).** Add a validator entered by
 `load_plan_from_dir` (`megaplan/_core/state.py:93`) and the chain-state path

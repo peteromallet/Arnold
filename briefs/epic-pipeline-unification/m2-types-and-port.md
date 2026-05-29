@@ -72,6 +72,18 @@ default-ON and live):
    `last_fanout_results` becomes a **typed `value`-kind Port the fan-out join writes** (exists nowhere today —
    confirmed empty grep).
 
+8. **`RoutingKey` — the one routing type the downstream control/eval/calibration layers cite.** Per EPIC §206
+   "collapse the 3 routing concepts to ONE": a Step emits a **routing key**, a binding maps key→consequence,
+   edges are declared by key. M2 defines `RoutingKey` as an explicit, frozen type — a typed label (NOT a bare
+   string, NOT `GateRecommendation`) a Step's `produces` may carry to drive edge dispatch: `RoutingKey =
+   (name: str, kind: Literal["advance","revise","restore","escalate","select","custom"])`, content-type
+   `application/x-routing-key+json`, surfaced as a `value`-kind Port. The 4-verdict
+   `proceed|iterate|tiebreaker|escalate` mapping is a PLANNING BINDING that produces concrete `RoutingKey`s;
+   `SelectionResult.winner` and a `ReduceResult` label are produced AS `RoutingKey`s when they drive routing.
+   **M5a (node-library edge dispatch), M5c (`read_valid_targets`/`valid_targets` keys), and M5-eval (the
+   judge's routing-bearing produce) all cite THIS type** — it is named here so they bind to a real symbol, not
+   a phantom. `RoutingKey` carries no domain meaning (meaning lives in the binding's key→consequence map).
+
 **The load-bearing proof (acceptance):** a deliberately **NON-planning select-tournament** built entirely on
 these pieces — (i) **NO hand-rolled inter-step plumbing — every cross-step datum crosses a declared Port** (no
 `state["specs"]` string channel, no `plan_dir`/`v1.md` path convention); (ii) **NO `GateRecommendation` /
@@ -148,6 +160,15 @@ the flat-key LWW merge — `state.update(patch); executor_owned_keys.update(patc
 grep). The fan-out join writes a typed `value`-kind Port named `last_fanout_results`; W4's wired predicate
 reads it as a Port — the concrete proof the Port carries fan-out results across the loop boundary with no
 hand-rolled channel.
+
+**W10 — `RoutingKey` type (the one routing concept).** Add a frozen `RoutingKey = (name, kind ∈
+{advance, revise, restore, escalate, select, custom})` to `types.py` with content-type
+`application/x-routing-key+json`, surfaced as a `value`-kind Port. A Step may declare it in `produces`; the
+binding maps `RoutingKey → consequence` and edges are declared by key (EPIC §206 — `restore_and_diverge`
+becomes one `kind="restore"` edge, not a parallel map). The planning 4-verdict→`RoutingKey` mapping is a
+planning binding (under the `GateRecommendation` allow-list). Named HERE so M5a/M5c/M5-eval cite a real
+symbol. **Anti-scope:** the key→consequence binding map and the run-outcome vocabulary are M5c, not M2 — M2
+ships only the type + the Port surfacing.
 
 ---
 
@@ -249,9 +270,10 @@ hand-rolled channel.
 - `megaplan/_pipeline/pattern_types.py` (`PromoteFn` :16, `JoinFn` :19 — drop `GateRecommendation` :14).
 - `megaplan/_pipeline/pattern_joins.py` (`majority_vote` :17, `weighted_vote` :46 — structured data; drop
   `GateRecommendation`/`PipelineVerdict` :10–11).
-- `megaplan/_pipeline/types.py` — additive `Port`, `ReduceResult`, `SelectionResult`, `StateDelta`, the open
-  content-type registry, the taint-lattice field; `produces`/`consumes` on the `Step` Protocol (:168–183);
-  keep `GateRecommendation` (:76) for the gate edge-dispatch (:45) only.
+- `megaplan/_pipeline/types.py` — additive `Port`, `ReduceResult`, `SelectionResult`, `StateDelta`,
+  `RoutingKey` (W10), the open content-type registry (incl. `application/x-routing-key+json`), the
+  taint-lattice field; `produces`/`consumes` on the `Step` Protocol (:168–183); keep `GateRecommendation`
+  (:76) for the gate edge-dispatch (:45) only.
 - `megaplan/_pipeline/builder.py` (`_input_refs` :146,:178 → resolved/checked `consumes`; `build()` :400 runs
   the Contract-Ledger binder).
 - NEW `megaplan/_pipeline/contracts.py` (the Contract Ledger: Port-contract registry + legal-coercions +
