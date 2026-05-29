@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -1240,6 +1241,79 @@ def _tmux_slug(text: str) -> str:
     return slug or "plan"
 
 
+def _ensure_workspace_trusted(work_dir: Path) -> None:
+    """Pre-accept Claude Code's folder-trust dialog for *work_dir* before launch.
+
+    Shannon launches the real ``claude`` CLI in an *interactive* tmux session,
+    which prompts "Is this a project you trust?" for any directory that has not
+    already been accepted. That dialog is NOT suppressed by
+    ``--dangerously-skip-permissions`` / ``--permission-mode bypassPermissions``;
+    in a fresh dir (a ``/tmp`` worktree, a pinned-engine clone, a cloud checkout)
+    it blocks on stdin and the readiness probe times out, stalling the phase.
+
+    There is no global "trust all folders" switch in Claude Code (verified: only
+    the per-directory ``~/.claude.json`` → ``projects[path]`` acceptance persists).
+    So we write that acceptance ourselves, for every folder Shannon runs in —
+    effectively auto-trusting everything the app touches.
+
+    Trust is keyed on the RESOLVED real path: ``claude`` resolves the workspace
+    via realpath, so on macOS ``/tmp/x`` is checked as ``/private/tmp/x``. We
+    write both the given and resolved paths to be safe. Best-effort: any failure
+    is logged and ignored (a missing entry only re-surfaces the dialog).
+    """
+    try:
+        cfg_path = Path(os.path.expanduser("~/.claude.json"))
+        candidates = {str(work_dir)}
+        try:
+            candidates.add(str(work_dir.resolve()))
+        except OSError:
+            pass
+        data: dict[str, Any] = {}
+        if cfg_path.exists():
+            try:
+                data = json.loads(cfg_path.read_text())
+            except (ValueError, OSError):
+                data = {}
+        if not isinstance(data, dict):
+            return
+        projects = data.setdefault("projects", {})
+        if not isinstance(projects, dict):
+            return
+        changed = False
+        for path in candidates:
+            entry = projects.get(path)
+            if not isinstance(entry, dict):
+                entry = {}
+            if not (
+                entry.get("hasTrustDialogAccepted")
+                and entry.get("hasCompletedProjectOnboarding")
+            ):
+                entry["hasTrustDialogAccepted"] = True
+                entry["hasCompletedProjectOnboarding"] = True
+                entry.setdefault("projectOnboardingSeenCount", 1)
+                projects[path] = entry
+                changed = True
+        if not changed:
+            return  # already trusted — avoid clobbering a concurrent claude write
+        fd, tmp = tempfile.mkstemp(dir=str(cfg_path.parent), prefix=".claude.json.")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                json.dump(data, fh, indent=2)
+            os.replace(tmp, cfg_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except Exception as exc:  # best-effort: never let trust-prep crash the worker
+        print(
+            f"[megaplan] could not pre-trust workspace {work_dir} for Shannon: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def run_shannon_step(
     step: str,
     state: PlanState,
@@ -1301,6 +1375,7 @@ def run_shannon_step(
     # ── (b) resolve working directory and session ───────────────────────
     _ensure_shannon_parent_timeout_control()
     work_dir = resolve_work_dir(state)
+    _ensure_workspace_trusted(work_dir)
     session_key = session_key_for(step, session_agent, model=model)
     session = state["sessions"].get(session_key, {})
     session_id: str | None = session.get("id")

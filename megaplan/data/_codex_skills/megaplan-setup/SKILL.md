@@ -283,10 +283,10 @@ Write `profile/robustness/depth`, omit defaults, append modifiers. Order is fixe
 | `solo` | Tier 1, defaults throughout |
 | `partnered//high` | Tier 3, high depth, default robustness |
 | `partnered//high @codex +prep` | Tier 3, high depth, codex vendor, with prep phase |
-| `premium/thorough/high, critic=cross` | Tier 4, thorough, high depth, cross-vendor critic |
+| `premium/thorough/high` | Tier 4, thorough, high depth |
 | `apex/thorough/high` | Tier 5, thorough, high depth (no `+prep` needed — apex includes prep at thorough) |
 
-Modifier conventions: `@<vendor>` for vendor override, `, critic=<kind>` for critic override, `+prep` to enable prep, `+feedback` to enable feedback. Append modifiers without disturbing the spine.
+Modifier conventions: `@<vendor>` for vendor override, `+prep` to enable prep, `+feedback` to enable feedback. Append modifiers without disturbing the spine.
 
 The shorthand is for recording (sprint notes, brief headers, commit messages), not for the CLI. The actual invocation is still `megaplan init --profile … --robustness … --depth …` — see "Running it" below.
 
@@ -305,7 +305,6 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 ### The modifier flags
 
 - **`--vendor claude|codex`** — vendor override at tiers 2-4. Defaults to `[defaults].vendor` in `~/.config/megaplan/config.toml` (or `claude` if unset). Tier 1 ignores it — `solo` is all-DeepSeek, finalize included. Tiers 2–4 use it to pick the premium vendor (which now includes finalize, the adjudicator). Tier 5 silently ignores it (vendor-locked).
-- **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`. Silently ignored at tier 5.
 - **`--deepseek-provider fireworks|direct`** — swaps canonical DeepSeek v4-pro slots between Fireworks and DeepSeek's direct API. Defaults to `direct`; use `fireworks` as the explicit secondary/fallback route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.
 - **`--prep-direction "…"`** — steering text shown to the prep worker (when prep runs) as a "User direction for prep" section. Points prep at specific files / subsystems / questions to explore. Can also be set or replaced later with `megaplan prep --direction "…"` before the phase runs. No-op if prep is skipped. See "Optional phases" above.
@@ -335,7 +334,7 @@ critic-worker routing.
 
 The model that critiques the plan also reviews the executed work — same mind pre-execution and post-execution. Wiring them to the same non-author model gives you one coherent second mind across both checkpoints and keeps the author's blindspots out of the sense-check loop.
 
-`--critic` bundles the two phases in one flag and preserves the invariant. Bare `--phase-model` does not — if you override critique with `--phase-model`, override review the same way, or use `--critic` instead.
+Bare `--phase-model` does not preserve the invariant on its own — if you override critique with `--phase-model`, override review the same way.
 
 ### Worktree isolation — `--in-worktree`
 
@@ -368,7 +367,7 @@ Skip `--in-worktree` for small one-shot plans, bakeoff runs (orchestrator manage
 > *"Tier 3, brief is clear, but I want the critic specifically to deliberate more — leave the planner alone."*
 > `megaplan init <brief> --profile partnered --phase-model critique=claude:medium --phase-model review=claude:medium` *(surgical: bumps just the critic+review pair — preserving the critique==review invariant — and leaves plan/revise at the profile's default. `--depth` can't express this because it's by-phase-name, not by-author-vs-critic.)*
 
-Three pieces of intent → three flags (`--profile`, `--robustness`, `--depth`), plus `--vendor` / `--critic` / `--with-prep` / `--with-feedback` / `--in-worktree` when you need them.
+Three pieces of intent → three flags (`--profile`, `--robustness`, `--depth`), plus `--vendor` / `--with-prep` / `--with-feedback` / `--in-worktree` when you need them.
 
 ### Config defaults
 

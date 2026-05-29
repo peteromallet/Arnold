@@ -1,5 +1,4 @@
-base_branch: main
-
+base_branch: arnold-epic   # protected epic base — milestone auto-merges land here, NOT main
 # Epic: Arnold SDK — event-sourced-ledger runtime, sequencing-panel-final program.
 # Design of record: ../pipeline-unification-EPIC.md  (single source of truth)
 # Sequenced program: ../validation/sequencing/PROGRAM.md  | Architecture/organs: EPIC "## The architecture"

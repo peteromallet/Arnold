@@ -362,3 +362,79 @@ def test_resolve_work_dir_explicit_override_still_wins(tmp_path: Path) -> None:
         set_work_dir_override(None)
 
     assert resolved == forced
+
+
+# ---------------------------------------------------------------------------
+# Per-worker filesystem-state isolation (execution.worker_isolated_env_vars)
+# ---------------------------------------------------------------------------
+
+
+def _patch_isolated_vars(names: list[str]):
+    """Patch get_effective so worker_isolated_env_vars resolves to *names*."""
+    from megaplan.types import DEFAULTS
+
+    def _fake_get_effective(section: str, key: str):
+        if (section, key) == ("execution", "worker_isolated_env_vars"):
+            return names
+        return DEFAULTS[f"{section}.{key}"]
+
+    return patch("megaplan.workers._impl.get_effective", _fake_get_effective)
+
+
+def test_isolation_unset_leaves_env_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty config list = no isolation; the worker env is built as before."""
+    monkeypatch.setenv("ASTRID_HOME", "/real/home")
+    with _patch_isolated_vars([]):
+        env = _external_worker_env()
+        codex_env = _codex_child_env()
+    # Existing value preserved verbatim (no temp redirect injected).
+    assert env["ASTRID_HOME"] == "/real/home"
+    assert codex_env["ASTRID_HOME"] == "/real/home"
+
+
+def test_isolation_redirects_configured_vars_to_temp_dirs() -> None:
+    """Configured vars get fresh, existing, unique temp dirs in the built env."""
+    import tempfile
+
+    with _patch_isolated_vars(["ASTRID_HOME", "ASTRID_PROJECTS_ROOT"]):
+        env = _external_worker_env()
+
+    tmp_root = str(Path(tempfile.gettempdir()))
+    for var in ("ASTRID_HOME", "ASTRID_PROJECTS_ROOT"):
+        assert var in env
+        p = Path(env[var])
+        assert p.is_dir(), f"{var} temp dir was not created"
+        assert str(p).startswith(tmp_root), f"{var} not under OS temp dir"
+    # The two vars get DISTINCT directories.
+    assert env["ASTRID_HOME"] != env["ASTRID_PROJECTS_ROOT"]
+
+
+def test_isolation_unique_per_worker_invocation() -> None:
+    """Each worker spawn (each env build) mints distinct temp dirs."""
+    with _patch_isolated_vars(["ASTRID_HOME"]):
+        env_a = _external_worker_env()
+        env_b = _external_worker_env()
+        codex_env = _codex_child_env()
+
+    homes = {env_a["ASTRID_HOME"], env_b["ASTRID_HOME"], codex_env["ASTRID_HOME"]}
+    assert len(homes) == 3, "worker isolation dirs collided across invocations"
+    for home in homes:
+        assert Path(home).is_dir()
+
+
+def test_isolation_overwrites_only_listed_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only listed vars are redirected; every other env key is preserved."""
+    monkeypatch.setenv("ASTRID_HOME", "/real/home")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-secret")
+    with _patch_isolated_vars(["ASTRID_HOME"]):
+        env = _external_worker_env(turn_id="t1", actor_id="a1")
+
+    # Listed var redirected away from the real value...
+    assert env["ASTRID_HOME"] != "/real/home"
+    assert Path(env["ASTRID_HOME"]).is_dir()
+    # ...while unrelated keys (API keys, megaplan ids) are untouched.
+    assert env["OPENAI_API_KEY"] == "secret-key"
+    assert env["ANTHROPIC_API_KEY"] == "anthropic-secret"
+    assert env["MEGAPLAN_TURN_ID"] == "t1"
+    assert env["MEGAPLAN_ACTOR_ID"] == "a1"

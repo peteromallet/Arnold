@@ -798,6 +798,13 @@ DEFAULTS = {
     # fail-closed behaviour is a documented TODO). See
     # megaplan/orchestration/completion_contract.py.
     "execution.completion_contract_mode": "shadow",
+    # Opt-in per-worker filesystem-state isolation. A list of env var names;
+    # for EACH worker spawn megaplan mints a fresh unique temp dir per listed
+    # var (under the OS temp dir) and exports VAR=<that tmpdir> into the
+    # worker subprocess env, so concurrent workers don't share per-user state
+    # behind those vars. Default [] = no isolation (env built as before). See
+    # _apply_worker_state_isolation in megaplan/workers/_impl.py.
+    "execution.worker_isolated_env_vars": [],
 }
 
 # Valid pin values for execution.critic_model. Mirrors CRITIC_MODEL_ROSTER in
