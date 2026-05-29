@@ -222,6 +222,40 @@ realized-graph / strangler edges. The three most under-served are made crisp by:
 The outward surface — builder docs and the command-edge migration — is owned by **M7** / **M6**
 (`builder-docs.md`, `cli-migration.md`).
 
+## ⚠️ PRE-LAUNCH — NOT self-runnable as-is (verification 2026-05-29 · `validation/prelaunch/SYNTHESIS.md`)
+A pre-launch sense-check found the triple is spec-valid but **not autonomously runnable** until a small set of
+pre-t0 fixes. Launch-blockers (all code-verified):
+- **The autonomy ladder is unbuilt.** `chain/__init__.py:339` reads only `abort:`; `bump_profile/bump_robustness`
+  unimplemented; `retry_milestone` has no counter (would loop); `require_clean_base` unread. → first failure on
+  any milestone **halts on a human.** The "zero blockers" policy is fiction until the harness is patched.
+- **M0 is a bootstrap paradox as chain milestone #1** — its deliverable is the *pinned engine that drives the
+  chain*; a milestone can't pin the engine running it, and there's no `--engine`/venv flag. **M0 = a manual
+  operator pre-step, not a chain milestone.**
+- **`merge_policy: auto` has no oracle in the merge path** — `gh pr merge --auto` defers to GitHub branch
+  protection and *falls back to an unconditional squash merge*. Oracle-gated merge is real ONLY if the
+  parity/strangler/grep gates are wired as **base-branch REQUIRED CHECKS** (a pre-t0 operator step).
+- **`∥`/`depends_on` are prose-only** — `MilestoneSpec` has no dependency/gate field; the chain is a single
+  serial cursor. The non-negotiable M5-eval→M5-cal edge is enforced only by YAML line order.
+- **Brief seam mismatches** (parallel-written): M2 never defines the `RoutingKey` M5a/M5c/M5-eval cite; M5b→M5c
+  has no named handoff type / 4→5 mapping (silent-downgrade class); M5d binds onto a non-existent "M5c
+  auto-merger" (own it in M5d); M5-cal needs M5-eval's taint field not M4's record; M2.5 has
+  `_pipeline_paused_stage`'s home wrong (`run_cli.py:267`) and resume is *four-way* (add `awaiting_user.json`);
+  M4 "kill the vendor-substring classifier" should be "stop the *new* path reading it; old retires at M6";
+  M5c control method has two names — pick `read_valid_targets` (interface) / `valid_targets` (binding).
+
+**Pre-t0 fix path (cheap; this is the real M-1 / M0):**
+1. **M(-1) engine-readiness patch on main** (a milestone can't fix the engine driving it): make `_action` read
+   the ladder; add `bump_*` + a *bounded* retry counter (cap apex at 1); parse `require_clean_base`; auto-handle
+   clarify/tiebreaker in the live driver. Merge to main, then pin.
+2. **Operator pre-step (not a milestone):** build the frozen venv from `main@t0-sha`; wire the gate CI checks as
+   base-branch **required checks**; set an **external wallet ceiling** (~$500–$1,200 run; the in-band Governor
+   isn't built until M3); launch `megaplan chain` from that interpreter with `--no-git-refresh`.
+3. **Chain milestone #1 becomes harness-code-only** (M0′ = the in-repo report-only validator + dual-run/oracle/
+   replay harnesses + corpus). Add a real `depends_on`/gate field as an M1 deliverable, or treat every `∥` as a
+   topological-sort assertion over serial order. Fix the brief seams above. Re-pin stale file:lines by symbol.
+4. The real authorization is the single human `megaplan chain start` — **drop the "auto-arm on lint-green"
+   framing** (the lint is M1's own output; it can't gate the run that produces it).
+
 ## Sequenced build program — FINAL (sequencing panel, 2026-05-29 · `validation/sequencing/PROGRAM.md`)
 Three architects (dependency-DAG / strangler-keep-alive / risk-value) reconciled into one order: DAG edges are
 forced; the **strangler envelope is the binding constraint** (adopted wholesale); risk-value reshapes only
