@@ -86,8 +86,102 @@ from megaplan.types import CliError, STATE_AWAITING_PR_MERGE, STATE_EXECUTED
 log = logging.getLogger("megaplan")
 
 
-VALID_FAILURE_ACTIONS = ("stop_chain", "skip_milestone", "retry_milestone")
+VALID_FAILURE_ACTIONS = (
+    "stop_chain",
+    "skip_milestone",
+    "retry_milestone",
+    "bump_profile",
+    "bump_robustness",
+)
 VALID_MERGE_POLICIES = ("auto", "review")
+
+# Autonomy-ladder bump ordering. These are the *one-tier-up* escalation maps
+# the chain applies when a milestone exhausts its retry budget. There is no
+# tier above ``apex`` (apex.toml is the top premium profile) — a bump_profile
+# at apex is a no-op + warning, never an error.
+PROFILE_BUMP_ORDER = ("premium", "apex")
+ROBUSTNESS_BUMP_ORDER = ("thorough", "extreme")
+DEPTH_BUMP_ORDER = ("high", "max")
+
+# Default per-milestone retry budget (FRESH re-inits) before the ladder bumps.
+# Capped at 1 for apex profile / extreme robustness milestones to bound cost.
+DEFAULT_MILESTONE_RETRY_CAP = 2
+APEX_EXTREME_RETRY_CAP = 1
+
+
+def _bump_one_tier(current: str | None, order: tuple[str, ...]) -> tuple[str | None, bool]:
+    """Return (next_tier, bumped). At/above the top tier this is a no-op.
+
+    *current* of ``None`` (unset) is treated as the bottom of the ladder so a
+    bump moves to the second rung — the first explicit escalation tier.
+    """
+    if current is None:
+        return order[1] if len(order) > 1 else order[0], len(order) > 1
+    try:
+        idx = order.index(current)
+    except ValueError:
+        # Unknown/custom tier — leave it alone rather than guess.
+        return current, False
+    if idx >= len(order) - 1:
+        return current, False
+    return order[idx + 1], True
+
+
+@dataclass(frozen=True)
+class FailurePolicy:
+    """Structured autonomy ladder for ``on_failure`` / ``on_escalate``.
+
+    YAML may declare either a plain string (abort-only, back-compat)::
+
+        on_failure: stop_chain
+
+    or a structured ladder mapping::
+
+        on_failure:
+          retry: retry_milestone     # walked first, bounded by a counter
+          escalate: bump_profile     # walked once after retries exhaust
+          abort: stop_chain          # terminal action
+
+    ``retry`` / ``escalate`` are optional; ``abort`` defaults to ``stop_chain``.
+    """
+
+    abort: str = "stop_chain"
+    retry: str | None = None
+    escalate: str | None = None
+
+    @classmethod
+    def from_yaml(cls, value: Any, section: str, default_abort: str = "stop_chain") -> "FailurePolicy":
+        # Plain string (or absent) → abort-only, back-compat.
+        if value is None:
+            return cls(abort=default_abort)
+        if isinstance(value, str):
+            if value not in VALID_FAILURE_ACTIONS:
+                raise CliError(
+                    "invalid_spec",
+                    f"{section} must be one of {VALID_FAILURE_ACTIONS}; got {value!r}",
+                )
+            return cls(abort=value)
+        if not isinstance(value, dict):
+            raise CliError(
+                "invalid_spec",
+                f"`{section}` must be a string or a mapping of retry/escalate/abort",
+            )
+
+        def _check(key: str, fallback: str | None) -> str | None:
+            raw = value.get(key, fallback)
+            if raw is None:
+                return None
+            if raw not in VALID_FAILURE_ACTIONS:
+                raise CliError(
+                    "invalid_spec",
+                    f"{section}.{key} must be one of {VALID_FAILURE_ACTIONS}; got {raw!r}",
+                )
+            return raw
+
+        abort = _check("abort", default_abort) or default_abort
+        retry = _check("retry", None)
+        escalate = _check("escalate", None)
+        return cls(abort=abort, retry=retry, escalate=escalate)
 
 # Chain-level policy enums — conservative values following the
 # VALID_MERGE_POLICIES module-level tuple pattern.  These are
@@ -294,7 +388,14 @@ class ChainSpec:
     base_branch: str = "main"
     on_failure: str = "stop_chain"
     on_escalate: str = "stop_chain"
+    # Structured autonomy ladders. ``on_failure``/``on_escalate`` above remain
+    # the abort-only string for back-compat; these carry the full ladder.
+    on_failure_policy: FailurePolicy = field(default_factory=FailurePolicy)
+    on_escalate_policy: FailurePolicy = field(default_factory=FailurePolicy)
     merge_policy: str = "auto"
+    # When true, assert each milestone's working base is a clean fork off the
+    # base branch before plan init (auto-clean or fail-loud).
+    require_clean_base: bool = False
     # Chain-level policies — conservative defaults (see VALID_* tuples above).
     prerequisite_policy: str = "none"
     validation_policy: str = "none"
@@ -332,20 +433,18 @@ class ChainSpec:
             if isinstance(seed_plan, str) and not seed_plan.strip():
                 seed_plan = None
 
-        def _action(section: str, default: str) -> str:
-            block = raw.get(section) or {}
-            if not isinstance(block, dict):
-                raise CliError("invalid_spec", f"`{section}` must be a mapping")
-            value = block.get("abort", default)
-            if value not in VALID_FAILURE_ACTIONS:
-                raise CliError(
-                    "invalid_spec",
-                    f"{section}.abort must be one of {VALID_FAILURE_ACTIONS}; got {value!r}",
-                )
-            return value
-
-        on_failure = _action("on_failure", "stop_chain")
-        on_escalate = _action("on_escalate", "stop_chain")
+        # Parse the failure/escalate sections as STRUCTURED ladders. A plain
+        # string (or absence) is back-compat abort-only; a mapping reads
+        # retry:/escalate:/abort: into a FailurePolicy.
+        on_failure_policy = FailurePolicy.from_yaml(
+            raw.get("on_failure"), "on_failure", "stop_chain"
+        )
+        on_escalate_policy = FailurePolicy.from_yaml(
+            raw.get("on_escalate"), "on_escalate", "stop_chain"
+        )
+        # Back-compat scalar mirrors (the terminal abort action).
+        on_failure = on_failure_policy.abort
+        on_escalate = on_escalate_policy.abort
         merge_policy = raw.get("merge_policy", "auto")
         if merge_policy not in VALID_MERGE_POLICIES:
             raise CliError(
@@ -399,6 +498,12 @@ class ChainSpec:
         if not isinstance(robustness, str):
             raise CliError("invalid_spec", "driver.robustness must be a string")
         auto_approve = bool(driver_raw.get("auto_approve", True))
+        require_clean_base_raw = driver_raw.get("require_clean_base", False)
+        if not isinstance(require_clean_base_raw, bool):
+            raise CliError(
+                "invalid_spec", "driver.require_clean_base must be a boolean"
+            )
+        require_clean_base = require_clean_base_raw
 
         return cls(
             milestones=milestones,
@@ -406,6 +511,9 @@ class ChainSpec:
             base_branch=base_branch,
             on_failure=on_failure,
             on_escalate=on_escalate,
+            on_failure_policy=on_failure_policy,
+            on_escalate_policy=on_escalate_policy,
+            require_clean_base=require_clean_base,
             merge_policy=merge_policy,
             prerequisite_policy=prerequisite_policy,
             validation_policy=validation_policy,
@@ -452,6 +560,17 @@ class ChainState:
     # (off | shadow | warn | enforce). Default "shadow" = compute + persist +
     # log a milestone verdict, never block, never run the suite.
     completion_contract_mode: str = "shadow"
+    # Autonomy-ladder bookkeeping, keyed by milestone label so it survives
+    # resume regardless of index drift. ``retry_counts`` is the number of FRESH
+    # re-inits already spent on a milestone; ``ladder_stage`` records how far up
+    # the bump ladder a milestone has climbed ("retry" → "bump" → terminal);
+    # ``profile_bumps`` / ``robustness_bumps`` / ``depth_bumps`` persist the
+    # escalated tier overrides applied for the next re-init.
+    retry_counts: dict[str, int] = field(default_factory=dict)
+    ladder_stage: dict[str, str] = field(default_factory=dict)
+    profile_bumps: dict[str, str] = field(default_factory=dict)
+    robustness_bumps: dict[str, str] = field(default_factory=dict)
+    depth_bumps: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -471,6 +590,11 @@ class ChainState:
             "resolved_workspace": self.resolved_workspace,
             "extra_repo_sync": list(self.extra_repo_sync),
             "completion_contract_mode": self.completion_contract_mode,
+            "retry_counts": dict(self.retry_counts),
+            "ladder_stage": dict(self.ladder_stage),
+            "profile_bumps": dict(self.profile_bumps),
+            "robustness_bumps": dict(self.robustness_bumps),
+            "depth_bumps": dict(self.depth_bumps),
         }
 
     @classmethod
@@ -507,6 +631,27 @@ class ChainState:
             raw.get("completion_contract_mode")
         )
 
+        def _str_int_map(value: Any) -> dict[str, int]:
+            if not isinstance(value, dict):
+                return {}
+            out: dict[str, int] = {}
+            for key, val in value.items():
+                if isinstance(key, str):
+                    try:
+                        out[key] = int(val)
+                    except (TypeError, ValueError):
+                        continue
+            return out
+
+        def _str_str_map(value: Any) -> dict[str, str]:
+            if not isinstance(value, dict):
+                return {}
+            return {
+                key: val
+                for key, val in value.items()
+                if isinstance(key, str) and isinstance(val, str)
+            }
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -524,6 +669,11 @@ class ChainState:
             resolved_workspace=resolved_workspace,
             extra_repo_sync=extra_repo_sync,
             completion_contract_mode=completion_contract_mode,
+            retry_counts=_str_int_map(raw.get("retry_counts")),
+            ladder_stage=_str_str_map(raw.get("ladder_stage")),
+            profile_bumps=_str_str_map(raw.get("profile_bumps")),
+            robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
+            depth_bumps=_str_str_map(raw.get("depth_bumps")),
         )
 
 
@@ -1199,39 +1349,278 @@ def _drive_plan_with_blocked_execute_recovery(
     )
 
 
+def _milestone_retry_cap(milestone: "MilestoneSpec | None", spec: ChainSpec) -> int:
+    """Per-milestone FRESH-reinit cap.
+
+    Default ``DEFAULT_MILESTONE_RETRY_CAP`` (2); CAPPED at
+    ``APEX_EXTREME_RETRY_CAP`` (1) for apex profile or extreme robustness
+    milestones to bound the cost of the most-expensive nodes.
+    """
+    profile = (milestone.profile if milestone else None) or None
+    robustness = (
+        (milestone.robustness if milestone and milestone.robustness else spec.robustness)
+        or "standard"
+    )
+    if profile == "apex" or robustness == "extreme":
+        return APEX_EXTREME_RETRY_CAP
+    return DEFAULT_MILESTONE_RETRY_CAP
+
+
+def _apply_ladder_action(
+    action: str,
+    *,
+    milestone: "MilestoneSpec | None",
+    state: ChainState,
+    spec: ChainSpec,
+    writer,
+) -> str:
+    """Translate a single ladder action into a chain decision.
+
+    Returns one of "advance"/"stop"/"retry"/"skip". For the bump actions the
+    escalated tier is persisted into ``state.*_bumps`` keyed by milestone label
+    so the next FRESH re-init picks it up, then the milestone is retried once.
+    ``bump_profile`` at apex (the top tier) is a no-op + warning that falls
+    through to ``stop`` since there is nothing left to escalate.
+    """
+    label = milestone.label if milestone else "seed"
+    if action == "stop_chain":
+        return "stop"
+    if action == "skip_milestone":
+        return "skip"
+    if action == "retry_milestone":
+        return "retry"
+    if action == "bump_profile":
+        current = state.profile_bumps.get(label) or (milestone.profile if milestone else None)
+        nxt, bumped = _bump_one_tier(current, PROFILE_BUMP_ORDER)
+        if not bumped:
+            writer(
+                f"[chain] {label}: bump_profile requested but already at top tier "
+                f"({current or 'apex'}); no tier above apex — stopping\n"
+            )
+            return "stop"
+        state.profile_bumps[label] = nxt or ""
+        # Couple a depth bump so a harder retry also thinks deeper.
+        cur_depth = state.depth_bumps.get(label) or (milestone.depth if milestone else None)
+        d_next, d_bumped = _bump_one_tier(cur_depth, DEPTH_BUMP_ORDER)
+        if d_bumped and d_next:
+            state.depth_bumps[label] = d_next
+        writer(f"[chain] {label}: bumping profile → {nxt}; retrying once\n")
+        return "retry"
+    if action == "bump_robustness":
+        current = state.robustness_bumps.get(label) or (
+            (milestone.robustness if milestone and milestone.robustness else spec.robustness)
+        )
+        nxt, bumped = _bump_one_tier(current, ROBUSTNESS_BUMP_ORDER)
+        if not bumped:
+            writer(
+                f"[chain] {label}: bump_robustness requested but already at top tier "
+                f"({current or 'extreme'}); stopping\n"
+            )
+            return "stop"
+        state.robustness_bumps[label] = nxt or ""
+        writer(f"[chain] {label}: bumping robustness → {nxt}; retrying once\n")
+        return "retry"
+    return "stop"
+
+
 def _handle_outcome(
     outcome: DriverOutcome,
     *,
     spec: ChainSpec,
     writer,
+    milestone: "MilestoneSpec | None" = None,
+    state: ChainState | None = None,
 ) -> str:
-    """Decide the next action given a DriverOutcome.
+    """Decide the next action given a DriverOutcome, walking the ladder.
 
     Returns one of: "advance" (move to next milestone), "stop" (chain halts),
-    "retry" (re-run the same milestone), "skip" (advance without waiting).
+    "retry" (re-run the same milestone FRESH), "skip" (advance without waiting).
+
+    On a failure/escalate outcome the structured ladder is walked with a
+    BOUNDED, persisted per-milestone retry counter:
+
+      retry_milestone (up to cap; 1 for apex/extreme) →
+      bump_profile / bump_robustness (once) →
+      abort (stop_chain by default).
+
+    The counter is keyed by milestone label in ``state`` so it survives resume
+    and CANNOT loop forever on a deterministic failure.
     """
     status = outcome.status
     if status == "done":
         return "advance"
-    if status == "aborted":
-        # auto.drive returns aborted both for user aborts and on-escalate=abort.
-        # Treat according to on_escalate policy so the chain can skip if asked.
-        writer(f"[chain] plan {outcome.plan} ended aborted\n")
-        policy = spec.on_escalate
-    elif status == "escalated":
-        writer(f"[chain] plan {outcome.plan} escalated — applying on_escalate policy\n")
-        policy = spec.on_escalate
+    if status in ("aborted", "escalated"):
+        if status == "aborted":
+            writer(f"[chain] plan {outcome.plan} ended aborted\n")
+        else:
+            writer(f"[chain] plan {outcome.plan} escalated — applying on_escalate policy\n")
+        policy = spec.on_escalate_policy
     else:
-        # failed, stalled, cap → treat as failure
+        # failed, stalled, cap, awaiting_human, blocked, … → treat as failure
         writer(f"[chain] plan {outcome.plan} ended {status}: {outcome.reason}\n")
-        policy = spec.on_failure
-    if policy == "stop_chain":
-        return "stop"
-    if policy == "skip_milestone":
-        return "skip"
-    if policy == "retry_milestone":
-        return "retry"
-    return "stop"
+        policy = spec.on_failure_policy
+
+    # No state to track the counter (e.g. legacy seed path) → honor abort only.
+    if state is None:
+        action = policy.retry or policy.escalate or policy.abort
+        if action == "retry_milestone":
+            # Without a counter a bare retry is unsafe; degrade to abort.
+            action = policy.abort
+        return _apply_ladder_action(
+            action, milestone=milestone, state=ChainState(), spec=spec, writer=writer
+        )
+
+    label = milestone.label if milestone else "seed"
+    stage = state.ladder_stage.get(label, "retry")
+
+    if stage == "retry" and policy.retry == "retry_milestone":
+        cap = _milestone_retry_cap(milestone, spec)
+        spent = state.retry_counts.get(label, 0)
+        if spent < cap:
+            state.retry_counts[label] = spent + 1
+            writer(
+                f"[chain] {label}: retry {spent + 1}/{cap} (fresh re-init)\n"
+            )
+            return "retry"
+        # Retries exhausted → climb to the bump rung.
+        writer(f"[chain] {label}: retries exhausted ({spent}/{cap})\n")
+        state.ladder_stage[label] = "bump"
+        stage = "bump"
+
+    if stage in ("retry", "bump") and policy.escalate:
+        # Take the escalate rung once, then mark terminal so the next failure
+        # aborts (no infinite bump loop).
+        state.ladder_stage[label] = "terminal"
+        decision = _apply_ladder_action(
+            policy.escalate, milestone=milestone, state=state, spec=spec, writer=writer
+        )
+        if decision == "retry":
+            # Reset the retry counter so the post-bump run gets a fresh re-init
+            # but the ladder will not re-enter the retry rung (stage=terminal).
+            return "retry"
+        return decision
+
+    # No retry/escalate rungs left (or already terminal) → abort action.
+    return _apply_ladder_action(
+        policy.abort, milestone=milestone, state=state, spec=spec, writer=writer
+    )
+
+
+def _carried_wip_paths(root: Path) -> list[Path]:
+    """Dirty worktree paths that are NOT megaplan's own ``.megaplan/`` artifacts.
+
+    These represent carried working-state (the recurring carried-WIP review
+    false-positive class). ``.megaplan/`` runtime artifacts are expected to be
+    dirty mid-chain and never count as a dirty base.
+    """
+    carried: list[Path] = []
+    for path in _dirty_worktree_paths(root):
+        try:
+            rel = path.resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            rel = path.as_posix()
+        if rel.startswith(".megaplan/") or rel == ".megaplan":
+            continue
+        carried.append(path)
+    return carried
+
+
+def _assert_clean_base(
+    root: Path,
+    milestone: "MilestoneSpec",
+    *,
+    no_push: bool,
+    writer,
+) -> None:
+    """Assert the working base is a clean fork off main (no carried WIP).
+
+    With ``driver.require_clean_base: true`` this runs before each milestone's
+    plan init. Carried WIP (non-``.megaplan/`` dirty paths) is the documented
+    source of the review false-positive halt class. We auto-clean by stashing
+    when running locally (``--no-push`` / no-network), and fail loud otherwise
+    so a CI/orchestrator run never silently discards real work.
+    """
+    carried = _carried_wip_paths(root)
+    if not carried:
+        return
+    sample = ", ".join(p.name for p in carried[:5])
+    if no_push:
+        # Local/no-network: auto-clean by stashing the carried WIP.
+        writer(
+            f"[chain] require_clean_base: {milestone.label} base has carried WIP "
+            f"({sample}); auto-stashing before init\n"
+        )
+        proc = subprocess.run(
+            ["git", "stash", "push", "--include-untracked", "-m",
+             f"megaplan-chain require_clean_base {milestone.label}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            raise CliError(
+                "unclean_base",
+                f"require_clean_base: failed to auto-clean carried WIP for "
+                f"{milestone.label}: {proc.stderr.strip() or proc.stdout.strip()}",
+            )
+        remaining = _carried_wip_paths(root)
+        if remaining:
+            raise CliError(
+                "unclean_base",
+                f"require_clean_base: carried WIP persists after auto-clean for "
+                f"{milestone.label}: {', '.join(p.name for p in remaining[:5])}",
+            )
+        return
+    raise CliError(
+        "unclean_base",
+        f"require_clean_base: milestone {milestone.label} cannot start — the "
+        f"working base carries uncommitted WIP ({sample}). Commit, stash, or run "
+        f"off a clean fork of {root.name}.",
+    )
+
+
+def _maybe_file_ladder_ticket(
+    root: Path,
+    spec_path: Path,
+    milestone: "MilestoneSpec",
+    outcome: DriverOutcome,
+    state: ChainState,
+    *,
+    writer,
+) -> None:
+    """Auto-file a megaplan ticket when a milestone halts after exhausting the
+    autonomy ladder. Best-effort + fail-open: a ticketing failure never changes
+    the chain outcome (the chain is already stopping)."""
+    if state.ladder_stage.get(milestone.label) != "terminal":
+        # Only file when the ladder was actually walked to exhaustion.
+        return
+    try:
+        ticket = {
+            "kind": "chain_ladder_exhaustion",
+            "milestone": milestone.label,
+            "plan": outcome.plan,
+            "status": outcome.status,
+            "reason": outcome.reason,
+            "retries": state.retry_counts.get(milestone.label, 0),
+            "profile_bump": state.profile_bumps.get(milestone.label),
+            "robustness_bump": state.robustness_bumps.get(milestone.label),
+            "needs": "human attention — milestone halted after retry+bump ladder",
+        }
+        ticket_dir = _state_path_for(spec_path).parent / "tickets"
+        ticket_dir.mkdir(parents=True, exist_ok=True)
+        ticket_path = ticket_dir / f"{milestone.label}-ladder-exhaustion.json"
+        ticket_path.write_text(json.dumps(ticket, indent=2) + "\n", encoding="utf-8")
+        writer(
+            f"[chain] filed ladder-exhaustion ticket for {milestone.label} "
+            f"at {ticket_path}\n"
+        )
+    except Exception as exc:  # fail-open
+        writer(
+            f"[chain] note: could not auto-file ladder ticket for "
+            f"{milestone.label}: {exc}\n"
+        )
 
 
 def run_chain(
@@ -1385,6 +1774,13 @@ def run_chain(
                 writer=writer,
                 no_git_refresh=no_git_refresh,
             )
+            if spec.require_clean_base:
+                _assert_clean_base(
+                    root,
+                    milestone,
+                    no_push=not push_enabled,
+                    writer=writer,
+                )
             if use_pr:
                 _checkout_milestone_branch(
                     root,
@@ -1395,14 +1791,28 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=None
                 )
+            eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
+            eff_robustness = (
+                state.robustness_bumps.get(milestone.label)
+                or milestone.robustness
+                or spec.robustness
+            )
+            eff_depth = state.depth_bumps.get(milestone.label) or milestone.depth
+            if eff_profile != milestone.profile or eff_robustness != (
+                milestone.robustness or spec.robustness
+            ) or eff_depth != milestone.depth:
+                log(
+                    f"milestone {milestone.label} using bumped tiers "
+                    f"profile={eff_profile} robustness={eff_robustness} depth={eff_depth}"
+                )
             plan_name = _init_plan(
                 root,
                 milestone.idea,
-                robustness=milestone.robustness or spec.robustness,
+                robustness=eff_robustness,
                 auto_approve=spec.auto_approve,
-                profile=milestone.profile,
+                profile=eff_profile,
                 vendor=milestone.vendor,
-                depth=milestone.depth,
+                depth=eff_depth,
                 critic=milestone.critic,
                 deepseek_provider=milestone.deepseek_provider,
                 with_prep=milestone.with_prep,
@@ -1464,9 +1874,15 @@ def run_chain(
         )
         state.last_state = outcome.status
         save_chain_state(spec_path, state)
-        decision = _handle_outcome(outcome, spec=spec, writer=writer)
+        decision = _handle_outcome(
+            outcome, spec=spec, writer=writer, milestone=milestone, state=state
+        )
 
         if decision == "stop":
+            _maybe_file_ladder_ticket(
+                root, spec_path, milestone, outcome, state, writer=writer
+            )
+            save_chain_state(spec_path, state)
             return _result(
                 "stopped",
                 state,
