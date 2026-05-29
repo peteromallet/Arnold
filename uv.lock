@@ -967,10 +967,6 @@ agent = [
 db = [
     { name = "psycopg", extra = ["binary"] },
 ]
-test-agentic = [
-    { name = "pyyaml" },
-    { name = "sisypy" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -990,12 +986,10 @@ requires-dist = [
     { name = "python-dotenv", marker = "extra == 'agent'" },
     { name = "python-ulid", specifier = ">=3.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "pyyaml", marker = "extra == 'test-agentic'" },
     { name = "requests", marker = "extra == 'agent'" },
     { name = "rich", marker = "extra == 'agent'" },
-    { name = "sisypy", marker = "extra == 'test-agentic'", directory = "/Users/peteromalley/Documents/reigh-workspace/sisypy" },
 ]
-provides-extras = ["db", "agent", "test-agentic"]
+provides-extras = ["db", "agent"]
 
 [[package]]
 name = "msgpack"
@@ -1805,17 +1799,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686", size = 9755, upload-time = "2023-10-24T04:13:38.866Z" },
 ]
-
-[[package]]
-name = "sisypy"
-version = "0.1.0"
-source = { directory = "/Users/peteromalley/Documents/reigh-workspace/sisypy" }
-dependencies = [
-    { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "pyyaml", specifier = ">=6" }]
 
 [[package]]
 name = "sniffio"
