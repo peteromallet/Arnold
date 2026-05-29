@@ -1,8 +1,8 @@
 """Regression tests for the shannon (Claude-via-shannon-CLI) idle-output stall fix.
 
 Background: a megaplan critique/finalize phase on a shannon-backed profile (e.g.
-``partnered``, which runs ``shannon --model claude-... --output-format=json``)
-can establish its SSE stream, emit some output, then STALL — the subprocess
+``partnered``, which runs ``shannon --model claude-... --output-format=stream-json``)
+can establish its stream, emit some output, then STALL — the subprocess
 stays alive (a packaged turn watchdog is raised above the megaplan budget) but
 produces no further stdout/stderr for many minutes. The blocking reader threads
 in ``run_command`` sit in ``stream.read(4096)`` with no idle bound, and the

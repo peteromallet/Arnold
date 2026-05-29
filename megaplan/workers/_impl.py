@@ -103,44 +103,52 @@ class CommandResult:
     duration_ms: int
 
 
-# Per-turn duration cap for the shannon worker (Claude via the shannon CLI).
+# Inter-event idle bound for the shannon worker (Claude via the shannon CLI).
 #
-# IMPORTANT — why this is a coarse DURATION cap, not a true inter-chunk idle
-# bound (empirically established 2026-05-24): shannon does NOT passthrough
-# Claude's token stream. It drives Claude in a tmux session and reconstructs
-# output by polling Claude's transcript .jsonl, emitting to its OWN stdout only
-# at turn start (init) and turn end (result). And the transcript file itself is
-# written one row per COMPLETED content block — it stays byte-static for the
-# entire duration of a single long thinking/answer block. So during a long
-# single-block Opus turn there is NO incremental signal on stdout OR the
-# transcript (the only token-by-token signal is the live tmux pane). An
-# "inter-chunk inactivity" bound therefore degenerates into a total-turn
-# duration cap for shannon: the timer effectively counts turn-start → turn-end.
+# HISTORY (2026-05-24): shannon was launched with ``--output-format=json``, a
+# FULLY BUFFERED format — shannon accumulated the whole turn (init + per-turn
+# assistant/result) and wrote ONE ``JSON.stringify([...])`` array to stdout only
+# at turn end. With no incremental stdout, the watchdog below (which resets
+# ``last_output`` only on real stdout/stderr chunks, _impl.py:420) degenerated
+# into a coarse total-turn DURATION cap: it effectively timed turn-start →
+# turn-end. A legitimately long single Opus turn that ran silent past this bound
+# was killed as a false ``worker_stall``.
 #
-# Consequence: this value must exceed the longest LEGITIMATE single turn (real
-# transcripts show within-turn gaps up to ~363s) while still catching the
-# original failure mode (a genuinely hung turn that would otherwise run until the
-# ~30m+ phase wall-clock and fail the whole plan). 900s gives ~2.5x headroom over
-# observed legit turns and still kills an infinite hang at 15 min, well inside
-# the phase cap. Override via SHANNON_STREAM_READ_TIMEOUT.
-# (A true fine-grained liveness signal would require scraping the tmux pane —
-# deliberately NOT done; a duration cap is the honest mechanism for a worker with
-# no incremental output. The hermes path, which DOES stream real SSE chunks, uses
-# a genuine inter-chunk bound — HERMES_STREAM_READ_TIMEOUT — and is unaffected.)
+# FIX (2026-05-28): shannon is now launched with ``--output-format=stream-json``
+# (megaplan/workers/shannon.py), which emits one JSON event per line (NDJSON) AS
+# work happens — ``system/init`` after session discovery, optional ``hook_*``
+# rows, per-turn ``assistant`` + ``result``, and a trailing ``shannon_session``
+# metadata row on cleanup. Each line flushes to stdout, so the watchdog resets
+# ``last_output`` on real progress and this value once again behaves as a TRUE
+# inter-event idle bound rather than a duration cap. A long legit turn keeps the
+# timer reset via incremental events; only a genuinely hung turn (no event for
+# the whole window) trips it.
+#
+# CAVEAT: the bound is only as fine-grained as shannon's event cadence. The
+# heaviest gap is WITHIN a single ``waitForAssistantReply`` — shannon polls
+# Claude's transcript .jsonl, which is written one row per COMPLETED content
+# block, so a single very long thinking/answer block still emits no event until
+# it finishes. Real transcripts show within-block gaps up to ~363s. 900s keeps
+# ~2.5x headroom over that observed worst case while still killing an infinite
+# hang well inside the ~30m+ phase wall-clock. Override via
+# SHANNON_STREAM_READ_TIMEOUT.
+# (The hermes path, which streams real SSE chunks, uses its own inter-chunk
+# bound — HERMES_STREAM_READ_TIMEOUT — and is unaffected.)
 DEFAULT_WORKER_STREAM_IDLE_TIMEOUT_SECONDS = 900.0
 DEFAULT_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS = 80_000_000
 CODEX_EXECUTOR_SESSION_HEADROOM_ENV = "MEGAPLAN_CODEX_EXECUTOR_SESSION_HEADROOM_TOKENS"
 
 
 def _worker_stream_idle_timeout_seconds() -> float:
-    """Per-turn duration cap (seconds) for the shannon worker.
+    """Inter-event idle bound (seconds) for the shannon worker.
 
-    Because shannon emits no incremental stdout/transcript signal within a
-    content block (see the module comment above), this bound functions as a
-    total-turn duration cap, not a true inter-chunk idle bound. Configurable via
+    With shannon on ``--output-format=stream-json`` (see the constant comment
+    above) this is a genuine inter-event idle bound: incremental NDJSON events
+    reset the watchdog, so it only trips when shannon emits NO event for the
+    whole window (a hung turn or a >window within-block gap). Configurable via
     ``SHANNON_STREAM_READ_TIMEOUT``. Defaults to 15 min — generous for the
-    longest legitimate Opus turn (~363s observed) while still catching a hung
-    turn well before the coarse phase wall-clock. Clamped to a sane floor.
+    longest legitimate within-block gap (~363s observed) while still catching a
+    hung turn well before the coarse phase wall-clock. Clamped to a sane floor.
     """
     try:
         value = float(os.getenv(
