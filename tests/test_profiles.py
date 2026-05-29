@@ -14,6 +14,7 @@ from megaplan.profiles import (
     CANONICAL_PREP_MODELS,
     apply_profile_expansion,
     load_profiles,
+    validate_prep_stage_provider,
 )
 from megaplan.types import CliError
 from megaplan.workers import resolve_agent_mode
@@ -463,23 +464,164 @@ def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
     }
 
 
+def test_default_agent_routing_prep_is_hermes_flat_phase_models_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``DEFAULT_AGENT_ROUTING['prep']`` is ``hermes`` (read-only).
+
+    The flat ``phase_models['prep']`` key may still appear in resolution
+    output but real prep execution uses ``config.prep_models`` through
+    ``resolve_prep_stage_model``, not the flat agent routing.
+
+    The ``flat_agent == 'codex'`` resolver exception (variable-codex
+    triage/distill) is preserved this sprint per SD2.
+    """
+    from megaplan.types import DEFAULT_AGENT_ROUTING
+
+    # prep is a valid phase key in the routing table
+    assert "prep" in DEFAULT_AGENT_ROUTING
+
+    # Its default is now hermes, not claude — a read-only agent.
+    assert DEFAULT_AGENT_ROUTING["prep"] == "hermes"
+
+    # Prove the flat_agent=='codex' deferred exception is still present.
+    from megaplan.profiles import resolve_prep_models
+
+    # With flat_prep_spec='codex' and no explicit prep_models, the legacy
+    # variable-codex exception must still route triage/distill to codex.
+    resolved, trace = resolve_prep_models(flat_prep_spec="codex", prep_models=None)
+    assert resolved["triage"] == "codex"
+    assert resolved["distill"] == "codex"
+    # fanout still falls through to CANONICAL_PREP_MODELS (DeepSeek v4 Pro)
+    assert trace["flat_prep_input"] == "codex"
+    assert trace["canonical_fallback_used"]["fanout"] is True
+    assert trace["canonical_fallback_used"]["triage"] is False
+    assert trace["canonical_fallback_used"]["distill"] is False
+
+
 @pytest.mark.parametrize(
-    ("profile_name", "expected_flat", "expected_models", "expected_fallback"),
+    ("profile_name", "expected_flat", "expected_models", "expected_fallback", "expects_explicit_prep_models"),
     [
+        # Profiles with explicit [prep_models] tables — canonical_fallback_used=false
         (
             "all-claude",
             "claude",
+            {
+                "triage": "claude:claude-sonnet-4-6",
+                "fanout": "claude:claude-sonnet-4-6",
+                "distill": "claude:claude-sonnet-4-6",
+            },
+            {"triage": False, "fanout": False, "distill": False},
+            True,
+        ),
+        (
+            "all-codex",
+            "codex",
+            {
+                "triage": "codex:gpt-5.4",
+                "fanout": "codex:gpt-5.4",
+                "distill": "codex:gpt-5.4",
+            },
+            {"triage": False, "fanout": False, "distill": False},
+            True,
+        ),
+        # Profiles that inherit CANONICAL_PREP_MODELS (DeepSeek v4 Pro) via canonical fallback
+        (
+            "all-deepseek-flash",
+            "hermes:deepseek:deepseek-v4-flash",
             CANONICAL_PREP_MODELS,
             {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-deepseek-pro",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-deepseek-pro-direct",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-fireworks-deepseek",
+            "hermes:fireworks:accounts/fireworks/models/deepseek-v3p2",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "all-open",
+            "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "apex",
+            "claude",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "arnold-openrouter",
+            "hermes:openrouter:deepseek/deepseek-chat",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "directed",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "partnered",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
         ),
         (
             "premium",
             "claude:low",
             CANONICAL_PREP_MODELS,
             {"triage": True, "fanout": True, "distill": True},
+            False,
         ),
         (
-            "all-codex",
+            "solo",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "variable",
+            "hermes:deepseek:deepseek-v4-pro",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        (
+            "variable-claude",
+            "claude",
+            CANONICAL_PREP_MODELS,
+            {"triage": True, "fanout": True, "distill": True},
+            False,
+        ),
+        # variable-codex: flat_agent='codex' exception routes triage/distill to codex,
+        # fanout falls back to CANONICAL_PREP_MODELS (per SD2, preserved this sprint).
+        (
+            "variable-codex",
             "codex",
             {
                 "triage": "codex",
@@ -487,12 +629,7 @@ def test_profile_expansion_resolves_prep_models_with_canonical_fallback_trace(
                 "distill": "codex",
             },
             {"triage": False, "fanout": True, "distill": False},
-        ),
-        (
-            "all-open",
-            "hermes:fireworks:accounts/fireworks/models/kimi-k2p6",
-            CANONICAL_PREP_MODELS,
-            {"triage": True, "fanout": True, "distill": True},
+            False,
         ),
     ],
 )
@@ -503,16 +640,30 @@ def test_builtin_profiles_smoke_stage_aware_prep_fallbacks(
     expected_flat: str,
     expected_models: dict[str, str],
     expected_fallback: dict[str, bool],
+    expects_explicit_prep_models: bool,
 ) -> None:
     _isolate_user_config(tmp_path, monkeypatch)
 
     args = _worker_args(profile=profile_name)
     apply_profile_expansion(args, None)
 
+    trace = args.prep_model_resolver_trace
+
     assert args.prep_models == expected_models
-    assert args.prep_model_resolver_trace["flat_prep_input"] == expected_flat
-    assert args.prep_model_resolver_trace["resolved_stage_models"] == expected_models
-    assert args.prep_model_resolver_trace["canonical_fallback_used"] == expected_fallback
+    assert trace["flat_prep_input"] == expected_flat
+    assert trace["resolved_stage_models"] == expected_models
+    assert trace["canonical_fallback_used"] == expected_fallback
+
+    # No unintended profiles gained explicit prep_models tables.
+    explicit = trace.get("explicit_prep_models", {})
+    if expects_explicit_prep_models:
+        assert explicit, (
+            f"{profile_name} should report explicit prep_models but got empty dict"
+        )
+    else:
+        assert explicit == {}, (
+            f"{profile_name} must not have explicit prep_models; got {explicit!r}"
+        )
 
 
 def test_profile_expansion_prefers_explicit_prep_models_subtable_over_flat_prep(
@@ -586,7 +737,7 @@ def test_profile_expansion_inherits_prep_models_and_falls_back_omitted_slots(
     apply_profile_expansion(args, project_dir)
 
     assert args.prep_models == {
-        "triage": "codex:gpt-5.4",
+        "triage": "claude:claude-sonnet-4-6",
         "fanout": "hermes:deepseek:deepseek-v4-flash",
         "distill": "hermes:deepseek:deepseek-v4-pro",
     }
@@ -607,21 +758,109 @@ def test_vendor_codex_routes_flat_claude_prep_to_codex_triage_and_distill(
     args = _worker_args(profile="all-claude", vendor="codex")
     apply_profile_expansion(args, None)
 
+    # Explicit prep_models in all-claude inherit first, then vendor rewrite
+    # swaps the prep stages onto codex before they are persisted.
     assert args.prep_models == {
-        "triage": "codex",
-        "fanout": CANONICAL_PREP_MODELS["fanout"],
-        "distill": "codex",
+        "triage": "codex:gpt-5.4",
+        "fanout": "codex:gpt-5.4",
+        "distill": "codex:gpt-5.4",
     }
     assert args.prep_model_resolver_trace["flat_prep_input"] == "codex"
+    assert args.prep_model_resolver_trace["explicit_prep_models"] == args.prep_models
     assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
         "triage": False,
-        "fanout": True,
+        "fanout": False,
         "distill": False,
     }
 
 
-@pytest.mark.parametrize("spec", ["claude:low", "shannon:opus"])
-def test_profile_loader_rejects_write_capable_prep_model_metadata(
+def test_vendor_claude_routes_explicit_codex_prep_models_to_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _isolate_user_config(tmp_path, monkeypatch)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    _write_profiles(
+        project_dir / ".megaplan" / "profiles.toml",
+        """
+        [profiles.codex-prep]
+        prep = "codex"
+        plan = "codex"
+        feedback = "claude:low"
+
+        [profiles.codex-prep.prep_models]
+        triage = "codex:gpt-5.4"
+        fanout = "codex:gpt-5.4"
+        distill = "codex:gpt-5.4"
+        """,
+    )
+
+    args = _worker_args(profile="codex-prep", vendor="claude")
+    apply_profile_expansion(args, project_dir)
+
+    assert args.prep_models == {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "claude:claude-sonnet-4-6",
+        "distill": "claude:claude-sonnet-4-6",
+    }
+    assert args.prep_model_resolver_trace["flat_prep_input"] == "claude"
+    assert args.prep_model_resolver_trace["explicit_prep_models"] == args.prep_models
+    assert args.prep_model_resolver_trace["canonical_fallback_used"] == {
+        "triage": False,
+        "fanout": False,
+        "distill": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("stage", "spec"),
+    [
+        ("triage", "claude:low"),
+        ("fanout", "shannon:claude-opus-4-7"),
+        ("triage", "codex:gpt-5.4"),
+        ("triage", "codex"),
+        ("distill", "hermes:deepseek:deepseek-v4-pro"),
+        ("fanout", "hermes:fireworks:accounts/fireworks/models/deepseek-v4-flash"),
+    ],
+)
+def test_validate_prep_stage_provider_accepts_read_only_agents(stage: str, spec: str) -> None:
+    assert validate_prep_stage_provider(spec, stage=stage) == spec
+
+
+@pytest.mark.parametrize(
+    ("stage", "spec"),
+    [
+        ("triage", "openai:gpt-5"),
+        ("fanout", "fireworks:accounts/fireworks/models/deepseek-v3"),
+    ],
+)
+def test_validate_prep_stage_provider_rejects_non_read_only_agents(
+    stage: str, spec: str,
+) -> None:
+    with pytest.raises(CliError) as exc_info:
+        validate_prep_stage_provider(spec, stage=stage)
+    assert exc_info.value.code == "invalid_profile"
+    assert f"prep_models.{stage}" in exc_info.value.message
+    assert "unknown agent" in exc_info.value.message.lower()
+
+
+def test_validate_prep_stage_provider_rejects_with_profile_context() -> None:
+    with pytest.raises(CliError) as exc_info:
+        validate_prep_stage_provider(
+            "openai:gpt-5",
+            stage="triage",
+            path="/fake/profiles.toml",
+            profile_name="bad-profile",
+        )
+    assert exc_info.value.code == "invalid_profile"
+    assert "bad-profile" in exc_info.value.message
+    assert "/fake/profiles.toml" in exc_info.value.message
+    assert "prep_models.triage" in exc_info.value.message
+
+
+@pytest.mark.parametrize("spec", ["openai:gpt-5", "fireworks:accounts/fireworks/models/deepseek-v3"])
+def test_profile_loader_rejects_non_read_only_prep_model_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     spec: str,
@@ -644,6 +883,8 @@ def test_profile_loader_rejects_write_capable_prep_model_metadata(
         load_profiles(project_dir=project_dir)
 
     assert exc_info.value.code == "invalid_profile"
+    assert "bad-prep" in exc_info.value.message
+    assert ".megaplan/profiles.toml" in exc_info.value.message
     assert "prep_models.triage" in exc_info.value.message
 
 
@@ -664,10 +905,10 @@ def test_handle_init_persists_resolved_prep_model_trace(
     state_path = megaplan.plans_root(root) / response["plan"] / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
 
-    assert state["config"]["prep_models"]["triage"] == "codex"
+    assert state["config"]["prep_models"]["triage"] == "codex:gpt-5.4"
     assert state["config"]["prep_model_resolver_trace"]["flat_prep_input"] == "codex"
     assert state["config"]["prep_model_resolver_trace"]["resolved_stage_models"]["fanout"] == (
-        "hermes:deepseek:deepseek-v4-flash"
+        "codex:gpt-5.4"
     )
 
 
@@ -2398,6 +2639,110 @@ def test_vendor_rewrite_propagates_to_tier_entries() -> None:
     # Premium tiers flipped
     assert tier_models["execute"][4] == "codex:medium"
     assert tier_models["execute"][5] == "codex:high"
+
+
+def test_vendor_rewrite_propagates_to_prep_models_and_leaves_hermes_unchanged() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "shannon:claude-opus-4-7",
+    }
+
+    result = apply_vendor_rewrite({"plan": "claude:low"}, "codex", prep_models=prep_models)
+
+    assert result["plan"] == "codex:low"
+    assert prep_models == {
+        "triage": "codex:gpt-5.4",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "shannon:claude-opus-4-7",
+    }
+
+
+def test_vendor_rewrite_maps_codex_prep_models_back_to_claude() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "codex:gpt-5.4",
+        "fanout": "codex:gpt-5.5",
+        "distill": "hermes:deepseek:deepseek-v4-pro",
+    }
+
+    _result = apply_vendor_rewrite({"plan": "codex:low"}, "claude", prep_models=prep_models)
+
+    assert prep_models == {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "claude:claude-opus-4-7",
+        "distill": "hermes:deepseek:deepseek-v4-pro",
+    }
+
+
+def test_vendor_rewrite_prep_model_conflict_names_stage() -> None:
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "claude:sonnet-4.6:high",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+    }
+
+    with pytest.raises(CliError) as exc_info:
+        apply_vendor_rewrite({"plan": "claude:low"}, "codex", prep_models=prep_models)
+
+    assert exc_info.value.code == "vendor_swap_model_conflict"
+    message = str(exc_info.value)
+    assert "prep stage 'triage'" in message
+    assert "sonnet-4.6" in message
+
+
+def test_vendor_rewrite_prep_models_full_claude_to_codex_mapping() -> None:
+    """All three Claude model tiers (haiku, sonnet, opus) map to Codex prep models."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    prep_models = {
+        "triage": "claude:claude-haiku-4-5",
+        "fanout": "claude:claude-sonnet-4-6",
+        "distill": "claude:claude-opus-4-7",
+    }
+
+    _result = apply_vendor_rewrite({"plan": "claude:low"}, "codex", prep_models=prep_models)
+
+    # haiku → gpt-5.4 (collapses to same as sonnet per design doc)
+    assert prep_models["triage"] == "codex:gpt-5.4"
+    # sonnet → gpt-5.4
+    assert prep_models["fanout"] == "codex:gpt-5.4"
+    # opus → gpt-5.5
+    assert prep_models["distill"] == "codex:gpt-5.5"
+
+
+def test_vendor_rewrite_tier_and_prep_models_share_premium_swap_logic() -> None:
+    """Tier models and prep models are both rewritten by the same _swap_premium_spec
+    logic when passed together to apply_vendor_rewrite."""
+    from megaplan.profiles import apply_vendor_rewrite
+
+    tier_models = {"execute": {4: "claude:medium", 5: "claude:high"}}
+    prep_models = {
+        "triage": "claude:claude-sonnet-4-6",
+        "fanout": "hermes:deepseek:deepseek-v4-pro",
+        "distill": "shannon:claude-opus-4-7",
+    }
+    profile = {"plan": "claude:low"}
+
+    result = apply_vendor_rewrite(profile, "codex", tier_models=tier_models, prep_models=prep_models)
+
+    # Phase profiles use _swap_premium_spec
+    assert result["plan"] == "codex:low"
+
+    # Tier entries use _swap_premium_spec: effort-only premium tier flips vendor
+    assert tier_models["execute"][4] == "codex:medium"
+    assert tier_models["execute"][5] == "codex:high"
+
+    # Prep models use the same _swap_premium_spec: sonnet model pin → codex:gpt-5.4
+    assert prep_models["triage"] == "codex:gpt-5.4"
+    # Hermes/DeepSeek prep spec unchanged by premium swap
+    assert prep_models["fanout"] == "hermes:deepseek:deepseek-v4-pro"
+    # Shannon prep spec unchanged by premium swap
+    assert prep_models["distill"] == "shannon:claude-opus-4-7"
 
 
 def test_deepseek_provider_rewrite_propagates_to_tier_entries() -> None:

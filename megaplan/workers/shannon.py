@@ -154,6 +154,24 @@ _SHANNON_READINESS_PROMPTS = (
     "Hey, ready check before I pass over the brief. Say good to go when ready.",
 )
 
+_SHANNON_READ_ONLY_ALLOWED_TOOLS = (
+    "Read",
+    "Grep",
+    "Glob",
+    "WebFetch",
+    "WebSearch",
+)
+
+_SHANNON_READ_ONLY_DISALLOWED_TOOLS = (
+    "Bash",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "TodoWrite",
+    "Task",
+    "Write",
+)
+
 
 def _env_truthy(name: str) -> bool | None:
     raw = os.getenv(name)
@@ -1849,6 +1867,7 @@ def run_shannon_step(
     effort: str | None = None,
     session_agent: str = "shannon",
     model: str | None = None,
+    read_only: bool = False,
 ) -> WorkerResult:
     """Run a megaplan phase via Shannon (Claude in an interactive tmux session).
 
@@ -1970,12 +1989,22 @@ def run_shannon_step(
         base_command.append("--bare")
     if effort is not None:
         base_command.extend(["--effort", effort])
-    base_command.extend([
-        "--permission-mode",
-        "bypassPermissions",
-        "--dangerously-skip-permissions",
-        "--allow-dangerously-skip-permissions",
-    ])
+    if read_only:
+        base_command.extend(
+            [
+                "--allowedTools",
+                *_SHANNON_READ_ONLY_ALLOWED_TOOLS,
+                "--disallowedTools",
+                *_SHANNON_READ_ONLY_DISALLOWED_TOOLS,
+            ]
+        )
+    else:
+        base_command.extend([
+            "--permission-mode",
+            "bypassPermissions",
+            "--dangerously-skip-permissions",
+            "--allow-dangerously-skip-permissions",
+        ])
 
     # Prompt delivery. Default: the launcher prompt rides in argv (``-p``) and
     # points Claude at the on-disk prompt file. Paste-first-turn (non-root only,
@@ -2123,16 +2152,25 @@ def run_shannon_step(
             readiness_command.extend(["--effort", effort])
         if drop_root_requested:
             readiness_command.append("--bare")
-        readiness_command.extend(
-            [
-                "--permission-mode",
-                "bypassPermissions",
-                "--dangerously-skip-permissions",
-                "--allow-dangerously-skip-permissions",
-                "--session-id",
-                session_id,
-            ]
-        )
+        if read_only:
+            readiness_command.extend(
+                [
+                    "--allowedTools",
+                    *_SHANNON_READ_ONLY_ALLOWED_TOOLS,
+                    "--disallowedTools",
+                    *_SHANNON_READ_ONLY_DISALLOWED_TOOLS,
+                ]
+            )
+        else:
+            readiness_command.extend(
+                [
+                    "--permission-mode",
+                    "bypassPermissions",
+                    "--dangerously-skip-permissions",
+                    "--allow-dangerously-skip-permissions",
+                ]
+            )
+        readiness_command.extend(["--session-id", session_id])
         # Both the readiness-probe and the main run_command below share the
         # same tmux_session (deterministic session_name from above). They are
         # serialized by run_command's finally block (probe returns →
@@ -2326,4 +2364,3 @@ def run_shannon_step(
         completion_tokens=_extract_claude_usage(envelope)[1],
         total_tokens=sum(_extract_claude_usage(envelope)),
     )
-
