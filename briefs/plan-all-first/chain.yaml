@@ -1,0 +1,31 @@
+# Epic: plan-all-first epic mode — opt-in two-pass (plan-all → review → execute) for `megaplan chain`.
+# Design of record: ../plan-all-first-epic-mode.md  (4-lens sense-checked; build order + corrections C1-C4).
+#
+# Two sprints, serial. M1 delivers the two-pass plumbing + durability (the mode exists, loose epics work,
+# plans persist). M2 makes coupled-epic advance-plans EXECUTABLE: Provides/Assumes interface contracts,
+# a chain-level review.md, and an execute-time reground gate. M2 depends_on M1 (validation-only edge;
+# the chain is a single serial cursor and runs them in listed order regardless).
+#
+# merge_policy: review — the human reviews + merges M1's PR before M2 plans/builds against it. This is
+# deliberate: M2 builds directly on M1's surface, so a human gate between the sprints is wanted here.
+# (Note: this is how we RUN this epic; it is unrelated to the plan_only mode the epic itself BUILDS.)
+
+base_branch: main
+merge_policy: review
+
+milestones:
+  - label: m1-plumbing-durability
+    idea: /Users/peteromalley/Documents/megaplan/briefs/plan-all-first/m1-plumbing-durability.md
+    branch: plan-all-first/m1-plumbing-durability
+    profile: partnered
+    robustness: full
+    depth: medium
+
+  - label: m2-contracts-review-reground
+    idea: /Users/peteromalley/Documents/megaplan/briefs/plan-all-first/m2-contracts-review-reground.md
+    branch: plan-all-first/m2-contracts-review-reground
+    profile: partnered
+    robustness: full
+    depth: high
+    with_prep: true
+    depends_on: [m1-plumbing-durability]

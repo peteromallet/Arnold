@@ -2,6 +2,8 @@
 
 **Status:** design / discussion. Not yet scheduled into the pipeline-unification epic.
 **Owner:** Peter. **Drafted:** 2026-05-29.
+**⚠️ See "Review findings" at the bottom (4-lens sense-check, 2026-05-29) — it corrects two
+factually wrong claims below (persistence + stop-at-finalized) and reframes the scope decision.**
 
 ## What we want
 
@@ -165,3 +167,125 @@ than the full run.
    ticket?
 4. `--then-execute` + cloud: if auto-continuing, do we still need the planning
    branch commit, or only when there's a review gap between passes?
+
+---
+
+## Review findings (4-lens sense-check, 2026-05-29)
+
+Sense-checked from four angles: agent-UX + architecture (Claude), operator-UX +
+simplicity (DeepSeek). Each lens saw only its own brief. Summary of what they
+converged on, what they corrected, and the one decision they fork to.
+
+### Factual corrections (verified against code — these hold regardless of scope)
+
+- **C1 — Persistence is broken as written.** The brief claims `git add -A` commits
+  plan artifacts on the planning branch. `.gitignore:3` is `.megaplan/` (whole
+  dir) and `git_ops.py:652` uses plain `git add -A`, which **silently skips
+  gitignored paths** (no `git add -f` anywhere). So the "planning branch" commit
+  would contain *nothing* — plans vanish on any fresh checkout / cloud box. Fix:
+  an explicit `git add -f` of only the immutable artifacts (`final.md`,
+  `finalize.json`, idea) committed to **`base_branch`** (not a side branch — a
+  side branch isn't on the per-milestone checkout, so the execute pass can't find
+  the plans).
+- **C2 — Stopping at `finalized` is NOT free.** `STATE_FINALIZED` is *not* in
+  `AUTOMATION_TERMINAL_STATES` (`types.py:74`), so `auto.drive` runs straight
+  through into execute unless the `plan_only` check is added (scoped, fine). The
+  deeper miss: the chain's `_handle_outcome` (`chain/__init__.py:~1507`) routes
+  **anything that isn't `status=="done"` into the failure ladder** (retry → bump →
+  abort). A finalized-stop therefore looks like a *failure* to the chain. Fix: a
+  first-class `finalized` **success** outcome wired through `_outcome` +
+  `_handle_outcome` → "advance" (skipping the execution commit/merge/PR block).
+  Both DeepSeek and Claude independently flagged this; even the "minimal" version
+  needs it.
+- **C3 — `auto_approve` carry.** Pass-1 finalized plans persist their gate/approval
+  state. If pass 2 inherits a `user_approved_gate`, execution could auto-proceed
+  without a fresh human gate — defeating the whole "review before spend" premise.
+  The execute pass must require a fresh approval, not carry pass-1's.
+- **C4 — `merge_policy: review` breaks "serial ordering is sound".** Under per-
+  milestone branches, N+1 only sees N's code once N's PR *merges*; with
+  `merge_policy: review` the execute pass halts awaiting a human merge after every
+  milestone. The two-pass story must state this.
+
+### Strong convergences (independent lenses arriving at the same point)
+
+- **The single highest-leverage addition: a structured Provides/Assumes contract.**
+  Agent-UX and operator-UX reached this from opposite ends. `final.md` is loose
+  prose; when M4 and M5 both plan against M3's *planned* (not built) interface,
+  they invent mutually-incompatible APIs, and the human reviewing 8 separate
+  `final.md`s can't see the seams either. Fix solves **both**: add a structured
+  **Provides** (interfaces/paths/signatures this milestone commits to create) and
+  **Assumes** (upstream interfaces copied verbatim from upstream's Provides) block
+  to `final.md`, and emit a chain-level **`review.md`** that tabulates
+  Provides→Assumes across milestones and flags mismatches. Siblings agree by
+  construction; the human gets a decision surface instead of a file-crawl; and the
+  future reground gate gets a machine-comparable thing to diff.
+- **The flag surface is too big.** Operator-UX wants subcommands (`megaplan chain
+  plan` / `megaplan chain execute`); simplicity wants one flag (`--plan-only`,
+  re-run without it to execute). Both agree: **drop `--then-execute` and
+  `--execute-pending`.** Resolve the ambiguity (what does a bare re-run against a
+  planned chain do?) — subcommands are the cleaner answer.
+- **Mode-conditioned prompts are mandatory, not polish.** The existing prep/plan
+  prompts are saturated with "inspect the repo / ground against the tree"
+  instructions, and `_cross_reference_prep_output` (`prep_research.py:452`)
+  auto-flags upstream paths as `missing_files` → every milestone correctly
+  referencing upstream gets *penalized*. A single "planned-not-built" framing line
+  fights a dozen contrary instructions and loses. Need a `plan_only`-conditioned
+  prompt variant + a cross-reference that partitions paths into "exists-now" vs
+  "to-be-built-by-<milestone>". Triage's built-in minimization bias also means
+  "hand pointers, let triage decide" will systematically *under-read* — force a
+  summary of `depends_on` upstreams, offer the rest as optional.
+
+### The central decision they fork to: what is this feature FOR?
+
+The drift risk (plan written against upstream's *plan*, executed against its
+*divergent actual output*) is **not uniform** — and it determines scope:
+
+- **Loosely-coupled milestones** (independent work, no shared interface):
+  plan-all-first is safe and cheap. The simplicity lens's minimal build wins —
+  one `plan_only` field + a `stop_at:finalized` param + the C2 success-outcome
+  wiring; drop the planning branch, pointer injection, contract, and reground.
+- **Tightly-coupled milestones** (N+1 builds against an interface N defines — i.e.
+  the seam-fixing pipeline-unification epic this is *motivated by*): the minimal
+  build produces **net-negative** plans (a just-in-time plan against N's real code
+  — what default serial mode already does — is strictly more accurate). Here you
+  need the Provides/Assumes contract + `review.md` + a reground gate that's
+  **MVP-mandatory for any `depends_on` milestone**, not a follow-on.
+
+So: is plan-all-first a cheap *preview* of a loosely-coupled epic's shape, or a
+*seam-coherence tool* for a coupled epic? That answer sizes everything else.
+
+### DECISION (Peter, 2026-05-29): full execution-ready plans in advance, both cases
+
+Goal: produce **full plans for the whole epic in advance that are genuinely
+executable later** — supporting both loose and coupled milestones. Consequence:
+because the motivating epic is coupled and the bar is "executable, not just
+reviewable," the contract + reground machinery is **load-bearing, not optional** —
+it's what keeps an advance-made plan executable once upstream reality diverges. The
+loose case is the same build with empty `Assumes` blocks (no special path).
+
+**Build order (each step independently useful, later steps make plans executable):**
+
+1. **Plumbing (makes the mode exist).** `plan_only` flag → `state.config`;
+   `auto.drive` stops at `STATE_FINALIZED`; **first-class `finalized` success
+   outcome** through `_outcome`/`_handle_outcome` → advance, skipping the
+   exec commit/merge/PR block (C2). Subcommands `chain plan` / `chain execute`;
+   drop `--then-execute` / `--execute-pending`. Fresh approval required on the
+   execute pass (C3).
+2. **Durability.** Force-add (`git add -f`) the immutable artifacts to
+   `base_branch` so the execute pass (possibly on another checkout) finds them
+   (C1). Handle `merge_policy: review` halts in the execute pass (C4).
+3. **Cross-milestone context, structured.** Add **Provides/Assumes** blocks to
+   `final.md` (finalize.py); inject upstream Provides into N+1's prep/plan; force a
+   `depends_on`-upstream summary (don't leave it to triage's minimization bias).
+   Mode-conditioned prep/plan prompts + a cross-reference that partitions
+   exists-now vs to-be-built (so upstream paths aren't penalized as missing).
+4. **Review surface.** Emit chain-level `review.md` tabulating Provides→Assumes
+   across milestones, flagging mismatches — the operator's actual decision surface.
+5. **Reground gate (what makes coupled plans executable).** Before each milestone's
+   execute pass, diff its `Assumes` against the upstream's *actual* committed
+   Provides; on material drift, halt-for-human or auto-`override replan` that one
+   milestone. MVP-mandatory for any `depends_on` milestone.
+
+Steps 1–2 are the tiny version (loose epics, reviewable). Steps 3–5 are what make
+the plans executable for the coupled epic — the stated goal — so they're in scope,
+just sequenced after the plumbing proves out.
