@@ -26,7 +26,7 @@
 #     `partnered` if you want premium reasoning end-to-end.
 #   * `--phase-model phase=spec` — always honored.
 #
-# See docs/megaplan-decision.md for the full rubric.
+# See docs/megaplan-setup.md for the full rubric.
 [profiles.directed]
 plan                  = "claude:low"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"

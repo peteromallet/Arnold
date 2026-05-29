@@ -201,7 +201,7 @@ Second sprint of the built-in cloud runner. Core megaplan gains chain ergonomics
 - **Toolchain extensibility**: `toolchains:` block in `cloud.yaml` accepts named recipes (rust, go, java, or `custom` with a user-supplied install snippet). Template renderer appends matching Dockerfile stages so the baked image carries only what the target repo needs.
 - **Secret redaction**: `megaplan cloud logs` output is passed through `megaplan/cloud/redact.py`, which masks values of declared `secrets:` keys as `***REDACTED***`. Follow-mode (`-f`) streams with the same redaction applied line-by-line.
 - **`Provider.supports_session` capability**: session gating is now a capability flag on the provider ABC rather than a hardcoded `provider == "railway"` check in the CLI.
-- **Reigh parity migration**: `docs/cloud-migration-from-reigh.md` documents the one-to-one field mapping between the old `~/Documents/reigh-megaplan-dev/` env vars and the new `cloud.yaml`. The external folder can be retired after running the parity deploy.
+- **Reigh parity migration**: `docs/archive/cloud-migration-from-reigh.md` documents the one-to-one field mapping between the old `~/Documents/reigh-megaplan-dev/` env vars and the new `cloud.yaml`. The external folder can be retired after running the parity deploy.
 
 Concurrent refactors landing alongside sprint 2:
 - `megaplan/handlers.py` (~6k lines) split into a `megaplan/handlers/` package by phase.

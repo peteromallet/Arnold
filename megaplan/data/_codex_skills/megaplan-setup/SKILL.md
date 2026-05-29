@@ -1,9 +1,9 @@
 ---
-name: megaplan-decision
-description: Pick the right megaplan profile, thinking-strength tier, and robustness level for the work in front of you — for both Codex and Claude harnesses. Consult before invoking megaplan.
+name: megaplan-setup
+description: Set up a megaplan run before invoking it — size the work, write the brief, and pick the profile (intelligence tier), robustness level, and thinking depth. For both Codex and Claude harnesses. Consult before every `megaplan init`.
 ---
 
-# Megaplan Decision
+# Megaplan Setup
 
 Three dials decide how to run a sprint:
 
@@ -38,12 +38,14 @@ If the work is bigger, **split it into an epic** — a chain of sprint-sized meg
 Signs you should split:
 
 - Multiple major architectural decisions — each deserves its own sprint.
-- Deliverables with different stakes — high-stakes infra warrants its own sprint, at a higher tier; bundling it with cheap work either over-pays for the cheap work or under-protects the expensive part.
+- Deliverables with different stakes — high-stakes infra warrants its own sprint and tighter robustness; bundling it with cheap work either over-protects the cheap work or under-protects the expensive part. (Stakes raise the *gate*, not automatically the *driver* — see the difficulty-not-stakes rule below.)
 - You can't describe the outcome in one or two sentences.
 
 When you split, structure the dependency graph explicitly. Each handoff is a written artifact — schema, API surface, doc — that the next brief can cite. Sprints without that artifact between them are really one sprint pretending to be two.
 
-**But: one profile per sprint.** Within a sprint, pick the profile that matches the **highest-stakes deliverable** — lower-stakes items inherit the tier. Operational simplicity beats the savings from splitting by stakes alone. Only split when the lower-stakes work is *substantial* (multiple days) **and** independent. Structure the plan so cheap work lives in cheap sprints, not interleaved inside expensive ones.
+**But: one profile per sprint.** Within a single sprint you chose *not* to split, pick the profile that matches the **highest-stakes deliverable** — lower-stakes items inherit the tier. Operational simplicity beats the savings from splitting by stakes alone. Only split when the lower-stakes work is *substantial* (multiple days) **and** independent. Structure the plan so cheap work lives in cheap sprints, not interleaved inside expensive ones. Once you *have* split into per-front milestones, the inheritance stops: tier each milestone on its own decision difficulty, not on the riskiest milestone in the chain.
+
+**The driver tier tracks decision DIFFICULTY, not stakes — especially behind an objective gate.** Stakes raise the *robustness* and the *execute routing ceiling*; they do not by themselves justify a premium **driver** (plan / critique / review). When the work is **behavior-preserving** — renames, file splits, re-exports, dead-code removal, mechanical decomposition — **and an objective gate backstops it** (characterization tests, a green e2e baseline, exact-count gates), default the driver to **`solo`**: the gate is the safety net, not the tier. A high-stakes *noun* (store, schema, state machine) does not raise the driver if the *decision* is "move code, keep behavior" and a test proves it. Reserve a premium driver for the milestone(s) where the planner faces a genuinely novel or cross-cutting decision, or where there is no cheap recovery from a wrong call. In a split epic that is the exception, not the rule.
 
 ### What goes in the brief
 
@@ -81,7 +83,7 @@ Five tiers, named for the **social configuration of minds** working on the probl
 | 1 | **`solo`** | All DeepSeek, end to end — every reasoning phase, finalize, and execute, with execute routed only within the DeepSeek family (flash for trivial tasks, pro otherwise). Discovery, docs, schema migrations, ports of self-contained code, utility scripts, config changes, mechanical refactors, CRUD over existing schemas, test fixtures — anything where patterns are stable and overlapping concerns are few. This is already the floor; if it feels like too much, `bare` robustness is the answer, not a lower tier. | ~$0.50-2 |
 | 2 | **`directed`** | A premium model writes the plan; DeepSeek executes it. Complex schema migrations where step ordering matters, multi-step refactors needing careful sequencing, features whose architecture demands deliberation but whose code follows patterns, greenfield implementations with non-trivial design but well-shaped pieces. Drop down to `solo` when the plan is obvious — DeepSeek can plan mechanical work just fine. | ~$1-3 |
 | 3 | **`partnered`** | Premium and DeepSeek working together — premium handles every reasoning phase (plan, critique, revise, review), DeepSeek handles mechanical phases. New CLI commands with cross-cutting concerns, inbox/routing rewrites, adapters with non-trivial edge cases, export/import surfaces with format edge cases, novel features in known architecture, refactors with real cross-system implications. Drop down to `directed` when patterns are stable and variables are few — `partnered` is for genuinely novel or cross-cutting work. | ~$5-15 |
-| 4 | **`premium`** | Premium mind everywhere — DeepSeek exits; single-vendor premium end-to-end. Schema definitions, wire formats, security-critical code paths, public API contracts, migration logic against production data, kernel-invariant changes. Drop down to `partnered` when the execution is mechanical once mapped out — decision-difficulty alone doesn't justify tier 4. | ~$30-70 |
+| 4 | **`premium`** | Premium mind everywhere — DeepSeek exits; single-vendor premium end-to-end. Schema definitions, wire formats, security-critical code paths, public API contracts, migration logic against production data, kernel-invariant changes. Drop down to `partnered` when the execution is mechanical once mapped out — decision-difficulty alone doesn't justify tier 4, and high stakes alone don't justify a premium *driver*: behind a green gate, behavior-preserving work drops to `solo` regardless of the noun it touches. | ~$30-70 |
 | 5 | **`apex`** | Both Claude and Codex contributing — the only tier where the two premium models stop being interchangeable. Concurrency primitives that cascade, schemas all later sprints build on, wire formats / claim semantics, multi-system migration decisions, huge architectural choices. Drop down to `premium` unless (a) high-stakes — regression = production incident — or (b) the sprint is making a huge architectural decision, and the execution has enough detail to warrant premium implementing it. | ~$30-50 |
 
 A premium model now executes the code on any tier — routing sends the high-complexity (tier-4/5) tasks to Sonnet/Opus regardless of the reasoning tier you picked. So you no longer pick a tier to get "premium on the implementation"; the router does that per task. What tiers 4–5 buy is **premium reasoning everywhere** (prep, gate, and the full critique/revise/review loop), and the option to **pin execute to premium for every task** when high stakes mean you don't want even trivial tasks on a cheap model (`--phase-model execute=…`). Tier 5 specifically combines Claude and Codex's different strengths (Opus on author/repo-reading, Codex on critique/structural-analysis); that pairing is its whole rationale.
@@ -136,6 +138,17 @@ A single run sends its trivial tasks to a cheap model and its dangerous tasks to
 **Claude and Codex are treated as mostly interchangeable at tiers 2-4 — by policy, not just by observation.** The marginal quality difference between them on a given task is small relative to picking the wrong tier or robustness; encoding per-task vendor preferences would add a dial that doesn't earn its keep. Users may prefer one or the other depending on which subscription has more credits available — pick a preferred vendor once (`--vendor`, or `[defaults].vendor` in config) and the preference flows through every tier-2-through-4 profile.
 
 **Tier 5 is the exception** — its whole rationale is using both vendors' different strengths together. `--vendor` is silently ignored there. The phase table above shows the claude variant for tiers 2-4; for the codex variant, swap `claude`↔`codex` throughout.
+
+### Single-vendor: only Claude, or only Codex
+
+The five-tier ladder above silently **assumes DeepSeek is available** — its whole economy is "cheap mechanical work on DeepSeek, premium reasoning on Claude/Codex." If you have **only** Anthropic credentials (no DeepSeek / Fireworks / Codex key), every tiered profile — including `solo`, the most common recommendation — fails preflight, because `solo` routes all reasoning *and* execute to DeepSeek. There is **no silent fallback to Claude**: the run exits with a credential error (exit 7) that now names the profile to use instead. `--vendor` on `solo` is a no-op and won't rescue a DeepSeek-less setup.
+
+For a single-vendor setup, reach for the dedicated end-to-end profiles:
+
+- **`all-claude`** — every reasoning phase on Opus; execute complexity-routed *within the Claude family* (Haiku for trivial tasks → Sonnet → Opus for the hardest). The Claude-only counterpart to the tier ladder: cheap work stays cheap without ever leaving Claude.
+- **`all-codex`** — same shape on GPT-5.5; execute routed by *reasoning effort* (`minimal`→`high`), since Codex has no budget-tier model to drop to. `vendor_locked`.
+
+These ignore the tier dial (there's no DeepSeek to trade against), so for single-vendor work you're really only choosing **robustness** and **depth** on top of the fixed vendor. The cost-tiered profiles remain the better deal once a DeepSeek key is added — the preflight error spells out how to get there.
 
 ---
 
@@ -302,6 +315,21 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 ### The escape hatch
 
 **`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it. Note `--phase-model execute=<spec>` is also how you **disable complexity routing** and pin one model on every execute task (the high-stakes "premium on everything" case).
+
+For an in-flight plan, `megaplan override set-model --phase PHASE --model MODEL`
+updates that phase's persisted `phase_model` entry. If you are switching premium
+vendors, pass a full premium spec such as `--model claude:sonnet` or
+`--model codex:gpt-5.5`; passing only `--model sonnet` keeps the phase's
+currently inferred premium agent and changes only its model token.
+
+Important: `--phase-model critique=...` and `override set-model --phase critique`
+pin the critique **phase/orchestrator**. They do not by themselves pin the
+per-lens critics chosen by adaptive critique. In the normal adaptive path, a
+premium evaluator/director may run first and then dispatch the selected critique
+lenses to cheaper DeepSeek/Kimi-style workers; seeing `critique_evaluator` on a
+premium model followed by `critique` on Hermes/DeepSeek is expected. Only pin
+`execution.critic_model` when you intentionally want to override that adaptive
+critic-worker routing.
 
 ### The critique == review invariant
 

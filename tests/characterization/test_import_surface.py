@@ -381,3 +381,227 @@ class TestExecuteImportSurface:
 
     def test_all_symbols_resolve(self) -> None:
         _assert_resolves("megaplan.execute", EXECUTE_SYMBOLS)
+
+
+# ====================================================================
+# Cloud import-surface
+# ====================================================================
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.spec — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_SPEC_SYMBOLS = [
+    # Dataclasses — used by tests and runtime
+    "AutoSpec",
+    "ChainSubSpec",
+    "CloudSpec",
+    "CodexSpec",
+    "LocalSpec",
+    "MegaplanSpec",
+    "RailwaySpec",
+    "RepoSpec",
+    "ResourcesSpec",
+    "SshSpec",
+    "ToolchainSpec",
+    # Public functions
+    "apply_repo_overrides",
+    "load_spec",
+]
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.template — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_TEMPLATE_SYMBOLS = [
+    # Constants
+    "PLACEHOLDERS",
+    # Rendering / materialisation functions
+    "materialize_deploy_dir",
+    "render_dockerfile",
+    "render_entrypoint",
+    "render_ensure_repo_command",
+    "render_ensure_repos_block",
+]
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.cli — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_CLI_SYMBOLS = [
+    # Public entrypoints
+    "build_cloud_parser",
+    "run_cloud_cli",
+    "load_spec",
+    "cloud_status_payload",
+    "cloud_chain_status_payload",
+    # Private helpers imported by tests
+    "_chain_start_command",
+    "_classify_effective_status",
+    "_ensure_repo_checkout",
+    "_ensure_repo_command",
+    "_marker_dir",
+    "_materialized_deploy_dir",
+    "_persistent_deploy_dir",
+    "_register_cloud_subcommands",
+    "_relay_output",
+    "_resolve_remote_chain_spec",
+    "_run_supervise_tick",
+    "_tmux_chain_restart_command",
+    # Private helpers imported by runtime (supervise.py)
+    "_remote_human_verification_status_command",
+]
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.providers.base — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_PROVIDERS_BASE_SYMBOLS = [
+    # Abstract base class and factory
+    "Provider",
+    "ProviderFactory",
+    "get_provider",
+    # Helpers imported by provider implementations and tests
+    "_logs_follow",
+    "_missing_cli_error",
+    "_write_redacted_output",
+]
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.providers.local — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_PROVIDERS_LOCAL_SYMBOLS = [
+    "LocalProvider",
+]
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.providers.railway — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_PROVIDERS_RAILWAY_SYMBOLS = [
+    "RailwayProvider",
+]
+
+# ---------------------------------------------------------------------------
+# megaplan.cloud.providers.ssh — de-facto public surface
+# ---------------------------------------------------------------------------
+
+CLOUD_PROVIDERS_SSH_SYMBOLS = [
+    "SshProvider",
+]
+
+
+class TestCloudSpecImportSurface:
+    """De-facto surface: every symbol that tests and runtime import from
+    ``megaplan.cloud.spec`` must resolve."""
+
+    def test_surveyed_symbols_resolve(self) -> None:
+        _assert_resolves("megaplan.cloud.spec", CLOUD_SPEC_SYMBOLS)
+
+
+class TestCloudTemplateImportSurface:
+    """De-facto surface: every symbol that tests and runtime import from
+    ``megaplan.cloud.template`` must resolve."""
+
+    def test_surveyed_symbols_resolve(self) -> None:
+        _assert_resolves("megaplan.cloud.template", CLOUD_TEMPLATE_SYMBOLS)
+
+
+class TestCloudCliImportSurface:
+    """De-facto surface: every symbol that tests and runtime import from
+    ``megaplan.cloud.cli`` must resolve."""
+
+    def test_surveyed_symbols_resolve(self) -> None:
+        _assert_resolves("megaplan.cloud.cli", CLOUD_CLI_SYMBOLS)
+
+
+class TestCloudProvidersBaseImportSurface:
+    """De-facto surface: every symbol that tests and runtime import from
+    ``megaplan.cloud.providers.base`` must resolve."""
+
+    def test_surveyed_symbols_resolve(self) -> None:
+        _assert_resolves(
+            "megaplan.cloud.providers.base", CLOUD_PROVIDERS_BASE_SYMBOLS
+        )
+
+    def test_provider_is_abstract_class(self) -> None:
+        """``Provider`` must be an abstract base class so that new provider
+        implementations are forced to implement the full contract."""
+        import abc
+        from megaplan.cloud.providers.base import Provider
+
+        assert inspect.isclass(Provider), "Provider must be a class"
+        assert issubclass(Provider, abc.ABC), (
+            "Provider must be an ABC"
+        )
+        # At least one abstract method must exist (the contract is non-trivial).
+        assert Provider.__abstractmethods__, (
+            "Provider must declare abstract methods"
+        )
+
+    def test_get_provider_is_callable(self) -> None:
+        """``get_provider`` must be callable so the CLI can resolve providers
+        by name at runtime."""
+        from megaplan.cloud.providers.base import get_provider
+
+        assert callable(get_provider), "get_provider must be callable"
+
+
+class TestCloudProvidersLocalImportSurface:
+    """De-facto surface: ``LocalProvider`` must resolve and be a valid
+    ``Provider`` subclass."""
+
+    def test_symbol_resolves(self) -> None:
+        _assert_resolves(
+            "megaplan.cloud.providers.local", CLOUD_PROVIDERS_LOCAL_SYMBOLS
+        )
+
+    def test_local_provider_is_provider_subclass(self) -> None:
+        from megaplan.cloud.providers.base import Provider
+        from megaplan.cloud.providers.local import LocalProvider
+
+        assert inspect.isclass(LocalProvider), "LocalProvider must be a class"
+        assert issubclass(LocalProvider, Provider), (
+            "LocalProvider must be a Provider subclass"
+        )
+
+
+class TestCloudProvidersRailwayImportSurface:
+    """De-facto surface: ``RailwayProvider`` must resolve and be a valid
+    ``Provider`` subclass."""
+
+    def test_symbol_resolves(self) -> None:
+        _assert_resolves(
+            "megaplan.cloud.providers.railway", CLOUD_PROVIDERS_RAILWAY_SYMBOLS
+        )
+
+    def test_railway_provider_is_provider_subclass(self) -> None:
+        from megaplan.cloud.providers.base import Provider
+        from megaplan.cloud.providers.railway import RailwayProvider
+
+        assert inspect.isclass(RailwayProvider), (
+            "RailwayProvider must be a class"
+        )
+        assert issubclass(RailwayProvider, Provider), (
+            "RailwayProvider must be a Provider subclass"
+        )
+
+
+class TestCloudProvidersSshImportSurface:
+    """De-facto surface: ``SshProvider`` must resolve and be a valid
+    ``Provider`` subclass."""
+
+    def test_symbol_resolves(self) -> None:
+        _assert_resolves(
+            "megaplan.cloud.providers.ssh", CLOUD_PROVIDERS_SSH_SYMBOLS
+        )
+
+    def test_ssh_provider_is_provider_subclass(self) -> None:
+        from megaplan.cloud.providers.base import Provider
+        from megaplan.cloud.providers.ssh import SshProvider
+
+        assert inspect.isclass(SshProvider), "SshProvider must be a class"
+        assert issubclass(SshProvider, Provider), (
+            "SshProvider must be a Provider subclass"
+        )

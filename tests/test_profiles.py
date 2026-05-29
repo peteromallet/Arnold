@@ -1028,7 +1028,9 @@ def test_vendor_codex_without_profile_selects_all_codex(
 
     resolved = _phase_models_to_map(args.phase_model)
     assert args.profile == "all-codex"
-    assert getattr(args, "tier_models", None) is None
+    # all-codex now carries a within-Codex execute effort ladder.
+    assert getattr(args, "tier_models", None) is not None
+    assert "execute" in args.tier_models
     for phase in ("plan", "prep", "critique", "revise", "gate", "finalize",
                   "execute", "loop_plan", "loop_execute", "review",
                   "tiebreaker_researcher", "tiebreaker_challenger"):
@@ -2782,7 +2784,9 @@ def test_all_codex_byte_identical_across_independent_expansions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two independent `--profile all-codex` expansions produce byte-identical
-    phase_model lists and no tier_models metadata."""
+    phase_model lists and tier_models (the effort ladder is stable — no
+    in-place mutation leaks, since vendor_locked skips swap and execute is not
+    depth-rewritten)."""
     _isolate_user_config(tmp_path, monkeypatch)
 
     args_a = _worker_args(profile="all-codex")
@@ -2792,8 +2796,9 @@ def test_all_codex_byte_identical_across_independent_expansions(
     apply_profile_expansion(args_b, None)
 
     assert args_a.phase_model == args_b.phase_model
-    assert getattr(args_a, "tier_models", None) is None
-    assert getattr(args_b, "tier_models", None) is None
+    assert args_a.tier_models == args_b.tier_models
+    assert args_a.tier_models["execute"][1] == "codex:minimal"
+    assert args_a.tier_models["execute"][5] == "codex:high"
 
     # Verify every non-feedback phase resolves to codex
     resolved = _phase_models_to_map(args_a.phase_model)
@@ -2809,14 +2814,18 @@ def test_all_codex_no_tier_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """all-codex does not gain tier_models metadata — flat profiles stay flat."""
+    """all-codex now carries a within-Codex execute effort ladder
+    (single-vendor cost routing) — metadata exposes tier_models.execute."""
     _isolate_user_config(tmp_path, monkeypatch)
     from megaplan.profiles import load_profile_metadata
 
     all_meta = load_profile_metadata(home=tmp_path / "home",
                                       project_dir=tmp_path / "project")
     meta = all_meta.get("all-codex", {})
-    assert meta.get("tier_models") is None
+    assert meta.get("tier_models") is not None
+    assert "execute" in meta["tier_models"]
+    assert meta["tier_models"]["execute"][1] == "codex:minimal"
+    assert meta["tier_models"]["execute"][5] == "codex:high"
 
 
 def test_partnered_no_tier_metadata(

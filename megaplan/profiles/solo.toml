@@ -24,7 +24,7 @@
 #   * `--phase-model phase=spec` — always honored; the per-phase escape
 #     hatch overrides whatever this profile sets.
 #
-# See docs/megaplan-decision.md for the full rubric.
+# See docs/megaplan-setup.md for the full rubric.
 [profiles.solo]
 plan                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
 prep                  = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"

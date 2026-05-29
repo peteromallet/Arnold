@@ -26,7 +26,7 @@ deletion proof by themselves.
 
 ## Source Search Ledger
 
-Commands run from `/Users/peteromalley/Documents/reigh-workspace/megaplan-fix`:
+Commands run from a checkout of the megaplan repo:
 
 - `python -m megaplan config show`
 - `rg -n --glob '!megaplan/agent/**' "UNUSED|AMBIGUOUS" megaplan tests supabase docs README.md pyproject.toml`
