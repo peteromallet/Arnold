@@ -1068,6 +1068,7 @@ def test_auto_driver_recovers_blocked_gate_agent_preflight_via_valid_next(tmp_pa
 
 def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> None:
     outcomes = {
+        "finalized": 0,
         "failed": 1,
         "blocked": 5,
         "cancelled": 0,
@@ -1078,6 +1079,63 @@ def test_run_auto_exit_codes_for_lifecycle_outcomes(tmp_path: Path, capsys) -> N
         with patch.object(auto, "drive", return_value=outcome):
             assert auto.run_auto(tmp_path, _auto_args(f"demo-{status}")) == expected_rc
         capsys.readouterr()
+
+
+def test_drive_stop_at_finalized_returns_success_before_execute_dispatch(tmp_path: Path) -> None:
+    plan = "stop-at-finalized"
+    _make_plan_dir(tmp_path, plan)
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return _execute_status(plan_name, state="finalized")
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        captured_args.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            stop_at_finalized=True,
+            max_iterations=1,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "finalized"
+    assert outcome.final_state == "finalized"
+    assert captured_args == []
+
+
+def test_drive_default_flow_continues_past_finalized_into_execute(tmp_path: Path) -> None:
+    plan = "continue-past-finalized"
+    _make_plan_dir(tmp_path, plan)
+    statuses = [_execute_status(plan, state="finalized"), _done_status(plan)]
+    captured_args: list[list[str]] = []
+
+    def fake_status(plan_name: str, cwd=None, timeout=60):
+        return statuses.pop(0)
+
+    def fake_run(args, cwd=None, timeout=None, idle_timeout=None, progress_env=None, liveness_plan_dir=None):
+        captured_args.append(list(args))
+        return 0, "{}", ""
+
+    with patch.object(auto, "_status", side_effect=fake_status), \
+         patch.object(auto, "_run_megaplan", side_effect=fake_run):
+        outcome = drive(
+            plan,
+            cwd=tmp_path,
+            max_iterations=2,
+            poll_sleep=0,
+            writer=lambda _m: None,
+        )
+
+    assert outcome.status == "done"
+    assert captured_args == [auto._phase_command("execute") + ["--plan", plan]]
+
+
 def test_context_retry_success_retries_execute_with_fresh(tmp_path: Path) -> None:
     plan = "context-retry-success"
     _make_plan_dir(tmp_path, plan)

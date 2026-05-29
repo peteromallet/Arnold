@@ -7,10 +7,22 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from megaplan.types import CliError
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    committed: bool
+    pushed: bool
+    commit_sha: str | None = None
+    previous_ref: str | None = None
+    previous_sha: str | None = None
+    base_branch: str | None = None
+    audit_notes: list[str] = field(default_factory=list)
 
 
 def _compat():
@@ -451,6 +463,196 @@ def _reset_staged_paths(root: Path, paths: list[Path], *, writer) -> None:
             timeout=120,
         )
         writer(f"[chain] {' '.join(cmd)} -> rc={proc.returncode}\n")
+
+
+def _git_stdout(root: Path, cmd: list[str], *, error_code: str) -> str:
+    proc = _compat().subprocess.run(
+        cmd,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        raise CliError(
+            error_code,
+            f"{' '.join(cmd)} exited {proc.returncode}",
+            extra={"command": cmd, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr},
+        )
+    return proc.stdout.strip()
+
+
+def _current_git_ref(root: Path) -> tuple[str, str]:
+    previous_sha = _git_stdout(root, ["git", "rev-parse", "HEAD"], error_code="git_commit_artifacts_failed")
+    proc = _compat().subprocess.run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    previous_ref = proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else previous_sha
+    return previous_ref, previous_sha
+
+
+def _porcelain_paths(root: Path) -> set[str]:
+    proc = _compat().subprocess.run(
+        ["git", "status", "--porcelain", "-uall"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        raise CliError(
+            "git_commit_artifacts_failed",
+            f"git status --porcelain exited {proc.returncode}",
+            extra={"stdout": proc.stdout, "stderr": proc.stderr},
+        )
+    paths: set[str] = set()
+    for line in proc.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        raw_path = line[3:]
+        candidates = raw_path.split(" -> ", 1) if " -> " in raw_path else [raw_path]
+        paths.update(path.strip() for path in candidates if path.strip())
+    return paths
+
+
+def _artifact_relpath(root: Path, path: Path) -> str:
+    candidate = path if path.is_absolute() else root / path
+    try:
+        return candidate.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError) as exc:
+        raise CliError(
+            "invalid_plan_artifact",
+            f"plan artifact path is outside the repository: {path}",
+        ) from exc
+
+
+def commit_plan_artifacts_to_base(
+    root: Path,
+    base_branch: str,
+    plan_name: str,
+    artifact_paths: list[Path],
+    push_enabled: bool,
+    dry_run: bool = False,
+) -> CommitResult:
+    """Force-add explicit plan artifacts on ``base_branch`` and restore caller ref."""
+    writer = lambda _msg: None
+    previous_ref, previous_sha = _current_git_ref(root)
+    audit_notes: list[str] = []
+    explicit_paths = [_artifact_relpath(root, Path(path)) for path in artifact_paths]
+    explicit_set = set(explicit_paths)
+    required_state = f".megaplan/plans/{plan_name}/state.json"
+    if required_state not in explicit_set:
+        explicit_paths.insert(0, required_state)
+        explicit_set.add(required_state)
+    required_path = root / required_state
+    if not required_path.exists():
+        raise CliError(
+            "missing_plan_state",
+            f"required plan artifact is missing: {required_state}",
+        )
+
+    dirty_paths = _porcelain_paths(root)
+    unexpected_dirty = sorted(path for path in dirty_paths if path not in explicit_set)
+    if unexpected_dirty:
+        raise CliError(
+            "dirty_worktree",
+            "refusing to commit plan artifacts with unrelated dirty worktree paths: "
+            + ", ".join(unexpected_dirty[:10]),
+            extra={"dirty_paths": unexpected_dirty},
+        )
+
+    present_paths: list[str] = []
+    for rel in explicit_paths:
+        if (root / rel).exists():
+            present_paths.append(rel)
+        else:
+            audit_notes.append(f"optional artifact missing: {rel}")
+
+    if dry_run:
+        return CommitResult(
+            committed=False,
+            pushed=False,
+            previous_ref=previous_ref,
+            previous_sha=previous_sha,
+            base_branch=base_branch,
+            audit_notes=audit_notes,
+        )
+
+    try:
+        if previous_ref != base_branch:
+            _run_command(root, ["git", "checkout", base_branch], writer=writer, error_code="git_commit_artifacts_failed")
+        if present_paths:
+            _run_command(
+                root,
+                ["git", "add", "-f", "--", *present_paths],
+                writer=writer,
+                error_code="git_commit_artifacts_failed",
+            )
+        staged = _compat().subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if staged.returncode == 0:
+            audit_notes.append("no staged artifact changes")
+            return CommitResult(
+                committed=False,
+                pushed=False,
+                previous_ref=previous_ref,
+                previous_sha=previous_sha,
+                base_branch=base_branch,
+                audit_notes=audit_notes,
+            )
+        if staged.returncode != 1:
+            raise CliError(
+                "git_commit_artifacts_failed",
+                f"git diff --cached --quiet exited {staged.returncode}",
+                extra={"stdout": staged.stdout, "stderr": staged.stderr},
+            )
+        _run_command(
+            root,
+            ["git", "commit", "-m", f"megaplan: persist plan artifacts for {plan_name}"],
+            writer=writer,
+            error_code="git_commit_artifacts_failed",
+        )
+        commit_sha = _git_stdout(root, ["git", "rev-parse", "HEAD"], error_code="git_commit_artifacts_failed")
+        pushed = False
+        if push_enabled:
+            _run_command(
+                root,
+                ["git", "push", "origin", base_branch],
+                writer=writer,
+                error_code="git_push_failed",
+            )
+            pushed = True
+        return CommitResult(
+            committed=True,
+            pushed=pushed,
+            commit_sha=commit_sha,
+            previous_ref=previous_ref,
+            previous_sha=previous_sha,
+            base_branch=base_branch,
+            audit_notes=audit_notes,
+        )
+    finally:
+        current_sha = _branch_head(root)
+        if previous_ref != base_branch and current_sha != previous_sha:
+            _run_command(
+                root,
+                ["git", "checkout", previous_ref],
+                writer=writer,
+                error_code="git_restore_ref_failed",
+            )
 
 
 # ---------------------------------------------------------------------------

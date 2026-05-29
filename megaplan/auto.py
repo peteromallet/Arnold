@@ -45,6 +45,7 @@ from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
     CliError,
+    DriverOutcomeStatus,
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
@@ -146,7 +147,7 @@ PHASE_NAMES = frozenset(
 class DriverOutcome:
     """Terminal outcome reported when the loop exits."""
 
-    status: str  # "done" | "paused" | "stalled" | "escalated" | "failed" | "aborted" | "cancelled" | "cap" | "blocked" | "cost_cap_exceeded" | "context_retry_exhausted" | "worker_blocked" | "human_required"
+    status: DriverOutcomeStatus
     plan: str
     final_state: str
     iterations: int
@@ -1295,6 +1296,7 @@ def drive(
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
     phase_idle_timeout: float = DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
+    stop_at_finalized: bool = False,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     progress_env: dict[str, str] | None = None,
     writer=sys.stdout.write,
@@ -1435,7 +1437,7 @@ def drive(
         return code, out, err, result
 
     def _outcome(
-        status: str,
+        status: DriverOutcomeStatus,
         *,
         final_state: str,
         iterations: int,
@@ -1636,6 +1638,15 @@ def drive(
             )
 
         active_step = status.get("active_step")
+        if stop_at_finalized and state == STATE_FINALIZED and next_step == "execute":
+            log("state finalized and stop_at_finalized=True — stopping before execute dispatch")
+            return _outcome(
+                "finalized",
+                final_state=state,
+                iterations=iteration,
+                reason="plan reached finalized and stop_at_finalized=True",
+                last_phase=last_phase,
+            )
         orphan_actions = {
             "resume_or_recover",
             "rerun_same_step",
@@ -2855,10 +2866,10 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
     if args.outcome_file:
         _atomic_write_text(Path(args.outcome_file), outcome_json)
     sys.stdout.write(outcome_json + "\n")
-    # Exit codes: 0 done/aborted/cancelled/paused, 1 failed/unknown,
+    # Exit codes: 0 done/finalized/aborted/cancelled/paused, 1 failed/unknown,
     # 2 stalled, 3 escalated, 4 iteration cap, 5 blocked, 6 cost cap exceeded,
     # 7 context retry exhausted, 8 worker_blocked.
-    if outcome.status == "done":
+    if outcome.status in {"done", "finalized"}:
         return 0
     if outcome.status in {"aborted", "cancelled", "paused"}:
         return 0  # user-requested/non-running stops are not phase failures
