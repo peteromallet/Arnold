@@ -18,6 +18,8 @@ megaplan/cloud/_reference/
 cloud.yaml
 chain.yaml
 plan.md
+/plan_v*.md
+/.plan_v*.md
 planning-bot-spec.md
 idea-*.txt
 ideas/

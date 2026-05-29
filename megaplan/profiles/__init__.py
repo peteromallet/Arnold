@@ -63,7 +63,7 @@ _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 # Author-side phases that ``--depth`` rewrites. Critic phases (critique,
 # gate, review) and mechanical phases (prep, finalize, execute,
 # loop_execute) are intentionally excluded — see the asymmetry principle
-# in docs/megaplan-decision.md.
+# in docs/megaplan-setup.md.
 DEPTH_AUTHOR_PHASES = frozenset({
     "plan",
     "revise",
@@ -1193,6 +1193,11 @@ def profile_to_phase_models(profile: dict[str, str]) -> list[str]:
 # axis: effort defaults to codex's default and is set separately
 # (--depth / --phase-model), never folded into the tier.
 _CLAUDE_MODEL_TO_CODEX_SPEC: tuple[tuple[str, str], ...] = (
+    # Haiku has no Codex budget-tier equivalent, so it collapses to the same
+    # model as Sonnet (gpt-5.4) — Codex differentiates cheap work by effort,
+    # not model. This keeps `all-claude` (tier-1 = claude:claude-haiku-4-5)
+    # swappable under --vendor codex instead of refusing on the haiku pin.
+    ("haiku", "codex:gpt-5.4"),
     ("sonnet", "codex:gpt-5.4"),
     ("opus", "codex:gpt-5.5"),
 )

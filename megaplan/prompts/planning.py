@@ -307,6 +307,7 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
         - Use the `assumptions` field for defaults you are making so planning can proceed now.
         - Prefer cheap validation steps early.
         - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
         - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
         - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
         - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.

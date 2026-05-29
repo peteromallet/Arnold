@@ -11,12 +11,9 @@ from pathlib import Path
 import pytest
 
 
-_MEGAPLAN = Path(__file__).resolve().parent.parent / ".venv-decomp" / "bin" / "megaplan"
+# ── Subprocess CLI tests ───────────────────────────────────────────────
 
 
-# ── Existing subprocess tests (require decomp venv) ───────────────────
-
-@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_list_shows_builtin_pipelines() -> None:
     """``megaplan run --list`` shows registered pipelines.
 
@@ -24,18 +21,17 @@ def test_run_list_shows_builtin_pipelines() -> None:
     built-ins; only planning and discovered pipelines appear.
     """
     proc = subprocess.run(
-        [str(_MEGAPLAN), "run", "--list"],
+        [sys.executable, "-m", "megaplan", "run", "--list"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
     assert "planning" in proc.stdout
 
 
-@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_describe_returns_description() -> None:
     """``megaplan run <name> --describe`` for a registered pipeline."""
     proc = subprocess.run(
-        [str(_MEGAPLAN), "run", "planning", "--describe"],
+        [sys.executable, "-m", "megaplan", "run", "planning", "--describe"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0
@@ -71,33 +67,30 @@ def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
     assert (plan_dir / "doc_versions" / "doc_v2.md").exists()
 
 
-@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_unknown_pipeline_returns_error() -> None:
     proc = subprocess.run(
-        [str(_MEGAPLAN), "run", "does-not-exist",
+        [sys.executable, "-m", "megaplan", "run", "does-not-exist",
          "--plan-dir", "/tmp/discard"],
         capture_output=True, text=True,
     )
     assert proc.returncode != 0
-    assert "no pipeline named" in (proc.stdout + proc.stderr).lower()
+    assert "unknown pipeline" in (proc.stdout + proc.stderr).lower()
 
 
-@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_list_includes_epic_blitz() -> None:
     """``megaplan run --list`` includes epic-blitz."""
     proc = subprocess.run(
-        [str(_MEGAPLAN), "run", "--list"],
+        [sys.executable, "-m", "megaplan", "run", "--list"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
     assert "epic-blitz" in proc.stdout
 
 
-@pytest.mark.skipif(not _MEGAPLAN.exists(), reason="decomp venv not available")
 def test_run_describe_epic_blitz_prints_metadata() -> None:
     """``megaplan run epic-blitz --describe`` prints metadata + SKILL.md."""
     proc = subprocess.run(
-        [str(_MEGAPLAN), "run", "epic-blitz", "--describe"],
+        [sys.executable, "-m", "megaplan", "run", "epic-blitz", "--describe"],
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
@@ -526,9 +519,14 @@ def test_preflight_or_raise_exits_7_non_tty_cli(monkeypatch, capsys) -> None:
     assert "OPENAI_API_KEY" in captured.err
 
 
-def test_render_credential_failure_non_tty_structure() -> None:
+def test_render_credential_failure_non_tty_structure(monkeypatch) -> None:
     """Non-TTY credential message has env var hints, no interactive options."""
     from megaplan._pipeline.preflight import render_credential_failure
+
+    # No credentials at all → deterministic getting-started guidance.
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
+                "FIREWORKS_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
 
     missing = [
         {"slot": "critique", "spec": "codex", "agent": "codex",
@@ -544,7 +542,70 @@ def test_render_credential_failure_non_tty_structure() -> None:
     # Non-TTY: no interactive options
     assert "[1]" not in msg
     assert "[2]" not in msg
-    assert "Set the required environment variables" in msg
+    # With no creds, the getting-started guidance lists every supported key.
+    assert "No model credentials found" in msg
+    assert "ANTHROPIC_API_KEY" in msg
+    assert "DEEPSEEK_API_KEY" in msg
+
+
+def test_preflight_feedback_slot_is_soft(monkeypatch) -> None:
+    """The opt-in feedback slot must not gate the run. A Codex-only user can
+    run all-codex (which pins feedback=claude:low) without an Anthropic key."""
+    from megaplan._pipeline.preflight import preflight_check_profile
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    profile = {"plan": "codex", "execute": "codex", "feedback": "claude:low"}
+    missing = preflight_check_profile(profile, profile_name="all-codex")
+    # feedback's ANTHROPIC requirement is soft → nothing missing.
+    assert missing == []
+
+
+def test_render_credential_failure_recommends_available_vendor_profile(
+    monkeypatch,
+) -> None:
+    """When the chosen profile needs a key the user lacks but they DO have
+    Anthropic creds, the message points them at all-claude and at the DeepSeek
+    route for the cost-tiered profiles — and does NOT suggest the codex
+    profile (no OpenAI key present)."""
+    from megaplan._pipeline.preflight import render_credential_failure
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+
+    missing = [
+        {"slot": "plan", "spec": "hermes:fireworks:deepseek-v4-pro",
+         "agent": "hermes/fireworks", "env_var": "FIREWORKS_API_KEY"},
+    ]
+    msg = render_credential_failure(
+        missing, pipeline_name="code", profile_name="solo", is_tty=False,
+    )
+    assert "--profile all-claude" in msg
+    assert "DEEPSEEK_API_KEY" in msg
+    assert "all-codex" not in msg
+
+
+def test_render_credential_failure_no_self_recommendation(monkeypatch) -> None:
+    """Don't recommend the profile the user already tried: on all-claude with
+    no Anthropic key, the message must not loop back to --profile all-claude."""
+    from megaplan._pipeline.preflight import render_credential_failure
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FIREWORKS_API_KEY", raising=False)
+
+    missing = [
+        {"slot": "plan", "spec": "claude", "agent": "claude",
+         "env_var": "ANTHROPIC_API_KEY"},
+    ]
+    msg = render_credential_failure(
+        missing, profile_name="all-claude", is_tty=False,
+    )
+    assert "--profile all-claude" not in msg
 
 
 # ── Existing helper tests ─────────────────────────────────────────────

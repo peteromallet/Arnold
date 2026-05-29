@@ -70,9 +70,12 @@ def _canonical_tickets_skill() -> str:
 
 
 def _canonical_decision_skill() -> str:
+    # The megaplan-setup skill (formerly megaplan-decision). The on-disk file
+    # was renamed decision_skill.md → setup_skill.md; the internal helper name
+    # is kept to avoid churning observability call sites and their tests.
     return (
         resources.files("megaplan")
-        .joinpath("data", "decision_skill.md")
+        .joinpath("data", "setup_skill.md")
         .read_text(encoding="utf-8")
     )
 
@@ -132,7 +135,9 @@ def bundled_global_file(name: str) -> str:
     # regression happened (double frontmatter, drift between header and doc).
     if name == "tickets_skill.md":
         return _canonical_tickets_skill()
-    if name in {"decision_skill.md", "rubric_skill.md"}:
+    if name in {"setup_skill.md", "decision_skill.md", "rubric_skill.md"}:
+        # setup_skill.md is canonical; decision_skill.md / rubric_skill.md are
+        # retained as legacy aliases for back-compat.
         return _canonical_decision_skill()
     if name == "epic_skill.md":
         return _canonical_epic_skill()
@@ -162,8 +167,8 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-bakeoff", "data": "_codex_skills/megaplan-bakeoff", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-tickets/SKILL.md", "data": "tickets_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-tickets", "data": "_codex_skills/megaplan-tickets", "install": "symlink"},
-    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-decision/SKILL.md", "data": "decision_skill.md", "install": "symlink"},
-    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-decision", "data": "_codex_skills/megaplan-decision", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-setup/SKILL.md", "data": "setup_skill.md", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-setup", "data": "_codex_skills/megaplan-setup", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-epic/SKILL.md", "data": "epic_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-epic", "data": "_codex_skills/megaplan-epic", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/megaplan-observe/SKILL.md", "data": "observe_skill.md", "install": "symlink"},
@@ -194,7 +199,7 @@ def handle_regen_composed() -> dict[str, Any]:
         "_codex_skills/megaplan/SKILL.md": targets["codex_skill.md"],
         "_codex_skills/megaplan-bakeoff/SKILL.md": bundled_global_file("bakeoff_skill.md"),
         "_codex_skills/megaplan-tickets/SKILL.md": bundled_global_file("tickets_skill.md"),
-        "_codex_skills/megaplan-decision/SKILL.md": bundled_global_file("decision_skill.md"),
+        "_codex_skills/megaplan-setup/SKILL.md": bundled_global_file("setup_skill.md"),
         "_codex_skills/megaplan-epic/SKILL.md": bundled_global_file("epic_skill.md"),
         "_codex_skills/megaplan-observe/SKILL.md": bundled_global_file("observe_skill.md"),
         "_codex_skills/megaplan-cloud/SKILL.md": bundled_global_file("cloud_skill.md"),

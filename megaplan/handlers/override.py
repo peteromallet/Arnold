@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from megaplan.types import (
+    AgentSpec,
     CliError,
     PlanState,
     STATE_ABORTED,
@@ -710,31 +711,59 @@ def _override_set_model(root: Path, plan_dir: Path, state: PlanState, args: argp
     if agent is None:
         agent = DEFAULT_AGENT_ROUTING.get(phase, "")
 
-    # set-model only allowed for claude/codex
-    if agent not in _PREMIUM_VENDORS:
+    explicit_spec = parse_agent_spec(model_arg) if ":" in model_arg else None
+    if explicit_spec is not None and explicit_spec.agent in _PREMIUM_VENDORS:
+        target_agent = explicit_spec.agent
+        target_model = explicit_spec.model
+        target_effort = explicit_spec.effort
+        if target_model is None:
+            raise CliError(
+                "invalid_args",
+                f"'{model_arg}' does not name a model. "
+                f"Use --model {target_agent}:MODEL or --model MODEL --effort {target_effort or 'EFFORT'}.",
+            )
+        if effort is not None and target_effort is not None:
+            raise CliError(
+                "invalid_args",
+                "Effort was provided twice: once in --model and once via --effort.",
+            )
+        if effort is not None:
+            target_effort = effort
+    elif explicit_spec is not None:
         raise CliError(
             "invalid_args",
-            f"set-model is only supported for claude/codex phases. "
-            f"Phase '{phase}' resolves to agent '{agent}'.",
+            f"set-model only supports claude/codex specs; got '{explicit_spec.agent}'. "
+            "Use --phase-model on the phase command for hermes/shannon routing.",
         )
+    else:
+        # set-model only allowed for claude/codex
+        if agent not in _PREMIUM_VENDORS:
+            raise CliError(
+                "invalid_args",
+                f"set-model is only supported for claude/codex phases. "
+                f"Phase '{phase}' resolves to agent '{agent}'.",
+            )
+        target_agent = agent
+        target_model = model_arg
+        target_effort = effort
 
     # Reject reserved effort tokens as --model values
-    if model_arg in _PREMIUM_EFFORT_TOKENS:
+    if target_model in _PREMIUM_EFFORT_TOKENS:
         raise CliError(
             "invalid_args",
-            f"'{model_arg}' is a reserved effort token and cannot be used as a model name. "
+            f"'{target_model}' is a reserved effort token and cannot be used as a model name. "
             f"Use --effort to set effort level.",
         )
 
     # Validate effort if provided
-    if effort is not None and effort not in _PREMIUM_EFFORT_TOKENS:
+    if target_effort is not None and target_effort not in _PREMIUM_EFFORT_TOKENS:
         raise CliError(
             "invalid_args",
-            f"Unknown effort level '{effort}'. Valid: {', '.join(sorted(_PREMIUM_EFFORT_TOKENS))}",
+            f"Unknown effort level '{target_effort}'. Valid: {', '.join(sorted(_PREMIUM_EFFORT_TOKENS))}",
         )
 
     # Build the new spec string
-    new_spec = format_agent_spec(parse_agent_spec(f"{agent}:{model_arg}" + (f":{effort}" if effort else "")))
+    new_spec = format_agent_spec(AgentSpec(target_agent, model=target_model, effort=target_effort))
 
     # Find and update the phase_model entry
     phase_models = list(state["config"].get("phase_model") or [])

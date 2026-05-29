@@ -365,9 +365,11 @@ def test_handle_init_persists_full_dial_set_into_state(
     This is the "one place to look" check that args -> state -> downstream
     subprocess phases stays wired correctly.
 
-    Uses all-claude (flat, no tier_models) so --vendor codex can swap freely.
-    partnered/directed/premium tier_models now contain model-pinned specs that
-    block vendor swap (see test_profiles.py for those assertions).
+    Uses all-claude with --vendor codex: its flat slots swap cleanly, and its
+    execute tier_models (haiku/sonnet/opus pins) swap to Codex capability
+    equivalents via _CLAUDE_MODEL_TO_CODEX_SPEC (haiku/sonnet→gpt-5.4,
+    opus→gpt-5.5) — so the swap does NOT raise, unlike partnered/directed/
+    premium whose tiers include DeepSeek pins (see test_profiles.py).
     """
     _pin_user_config(tmp_path, monkeypatch)
 

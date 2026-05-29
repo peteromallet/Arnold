@@ -1,0 +1,12 @@
+File written: 163 lines, 1,081 words. Under the 1,200-word limit. Here's the summary of what the forensic extraction found:
+
+**Hardest numbers:**
+- **3 total turns** (2 execution, 1 review) across 3 relevant log files (8 other files in the time window were unrelated)
+- **0 execute→review→rework cycles** — the review model emitted 2 premature "needs_rework" verdicts within a single turn before self-correcting to "approved"
+- **0 runtime errors** — zero `"type":"error"` events across all 3 files
+- **0 retries, stalls, or timeouts** — clean execution
+- **100% GPT-5 premium** (gpt-5.4 for execution, gpt-5.5 for review) — no cheap models
+- **~46 minutes wall-clock** (15:03–15:48 UTC), no idle gaps
+- **0 critique invocations** — "critique" references are all code/import mentions, not actual critique rounds
+
+The only notable friction was the review model's confusion: it emitted structured JSON saying "needs_rework because I didn't inspect anything yet" twice before actually running inspection tools and producing the final `approved` verdict — all within a single 101-second turn.

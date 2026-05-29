@@ -1,6 +1,8 @@
 # Megaplan
 
-**Scope:** This skill covers tooling — how to invoke and drive megaplan. For the decisions that come *before* invocation (scoping, brief, profile, robustness, depth), consult the **megaplan-decision** skill. If anything here contradicts megaplan-decision on decision-making content, megaplan-decision wins.
+> **Before you invoke megaplan, run the `megaplan-setup` skill.** It's the front door for every run: it sizes the work (one plan vs. an epic), shapes the brief, and picks the profile (intelligence tier), robustness level, and thinking depth. Do not run `megaplan init` without it.
+
+**Scope:** This skill covers tooling — how to invoke and drive megaplan. For the decisions that come *before* invocation (scoping, brief, profile, robustness, depth), consult the **megaplan-setup** skill. If anything here contradicts megaplan-setup on decision-making content, megaplan-setup wins.
 
 Route every step through the `megaplan` CLI. Never call agents directly.
 Before the first CLI call, resolve a working launcher and reuse it for the whole run. Do not assume `megaplan` itself is on `PATH`; command presence alone is not enough. Prove the launcher works by successfully running a harmless CLI call with it first. In the instructions below, treat `<launcher>` as that verified command.
@@ -11,7 +13,7 @@ Launcher resolution order:
 4. If that fails, try a version-selected shim such as `PYENV_VERSION=3.11.11 megaplan config show`.
 5. Only use bare `megaplan ...` if that exact form already succeeded during this check.
 ## Triage
-Decision-making (scoping, profile, robustness, depth, brief structure) lives in the **megaplan-decision** skill — consult it before running `megaplan init`. **Always run megaplan, even for tiny work** — `bare` robustness is the floor, never skip the harness. The few seconds of overhead pay back in the captured brief, plan, and outcome record.
+Decision-making (scoping, profile, robustness, depth, brief structure) lives in the **megaplan-setup** skill — consult it before running `megaplan init`. **Always run megaplan, even for tiny work** — `bare` robustness is the floor, never skip the harness. The few seconds of overhead pay back in the captured brief, plan, and outcome record.
 ## Modes
 Megaplan has two output modes, picked with `--mode` at `init`:
 - **`--mode code`** (default): the run produces a code diff. Execute workers emit per-task file changes. Use for features, refactors, bug fixes, migrations — anything whose deliverable is source code.
@@ -28,7 +30,7 @@ A common pattern is two runs: first `--mode metaplan` to produce a rigorous desi
 Default to building on top of any existing uncommitted changes in the working tree, not stashing or resetting them. The plan author should treat the dirty tree as in-progress context the new work composes with. Only deviate when the existing changes directly contradict what the new plan needs to do — and then flag the conflict explicitly rather than silently overwriting.
 
 ## Start
-Run `<launcher> config show` before `init`. If `raw_config.execution.auto_approve` is explicitly present, do not ask the execution-mode question and honor that configured override, including configured `false`. If that raw key is absent, ask execution mode (auto-approve or review) before `init`. In the same config check, respect `execution.robustness` as a settable override when it is configured; otherwise pick robustness yourself per the **megaplan-decision** skill.
+Run `<launcher> config show` before `init`. If `raw_config.execution.auto_approve` is explicitly present, do not ask the execution-mode question and honor that configured override, including configured `false`. If that raw key is absent, ask execution mode (auto-approve or review) before `init`. In the same config check, respect `execution.robustness` as a settable override when it is configured; otherwise pick robustness yourself per the **megaplan-setup** skill.
 ```bash
 <launcher> init --project-dir "$PROJECT_DIR" [--auto-approve] [--robustness bare|light|full|thorough|extreme] [--mode code|metaplan] [--output docs/foo.md] [--from-doc docs/prior.md] "$IDEA"
 ```
@@ -144,7 +146,7 @@ When routing or behavior depends on config, check `megaplan config show` and res
 Settable execution keys: `execution.auto_approve`, `execution.robustness`.
 ## Profiles
 A profile is a named preset that maps each workflow phase to an agent/model spec. Pass `--profile <name>` to any command that accepts `--phase-model` (`init`, `loop-init`, `tiebreaker`, etc.) to apply the preset.
-See **megaplan-decision** for profile selection. Inspect available profiles with `megaplan config profiles list`.
+See **megaplan-setup** for profile selection. Inspect available profiles with `megaplan config profiles list`.
 Resolution order, later overrides earlier within the same name: built-in (`megaplan/profiles/*.toml`) → user (`~/.config/megaplan/profiles.toml`, or `$XDG_CONFIG_HOME/megaplan/profiles.toml`) → project (`<project_dir>/.megaplan/profiles.toml`).
 Inspect with `megaplan config profiles list` and `megaplan config profiles show <name>`.
 File format: TOML with a `[profiles.<name>]` table. Keys are phase names (`plan`, `prep`, `critique`, `revise`, `gate`, `finalize`, `execute`, `loop_plan`, `loop_execute`, `review`, `tiebreaker_researcher`, `tiebreaker_challenger`); values are agent specs like `"claude"`, `"codex"`, `"hermes:fireworks:accounts/fireworks/models/kimi-k2p6"`, `"hermes:glm-5.1"`. Example:
@@ -157,7 +159,7 @@ review   = "codex"
 ```
 `--phase-model` overrides on the CLI stack on top of any profile.
 ## Bakeoff
-See the **bakeoff** skill for methodology and the **megaplan-decision** skill for when bake-offs earn their cost. This section covers the CLI mechanics once you've decided to run one.
+See the **bakeoff** skill for methodology and the **megaplan-setup** skill for when bake-offs earn their cost. This section covers the CLI mechanics once you've decided to run one.
 
 `megaplan bakeoff run` runs the same idea through multiple profiles concurrently, each in its own git worktree, each driven autonomously by `megaplan auto`. Use it when the user wants to compare profiles head-to-head on the same task (e.g., "run this with kimi and the default profile side-by-side").
 Supports `--mode code` (default) and `--mode doc` / `--mode metaplan` (alias). For doc-mode bake-offs, `--output <relative/path>` is required and is threaded into each profile's `megaplan init`; merge brings the chosen profile's doc artifact back to main instead of applying a code patch. Joke mode is not yet supported.
@@ -187,7 +189,7 @@ For the full reference — `cloud.yaml` fields, the `extra_repos[]` + `chain_ses
 
 The command prints only a ULID to stdout on success. Tickets live as `.megaplan/tickets/{ulid}-{slug}.md` files and are auto-discovered by the planner for future epics. Link them to epics with `megaplan ticket link <ticket> <epic> --resolves` so they auto-address when the epic completes.
 ## Feedback
-See **megaplan-decision** for when to add the feedback phase (`--with-feedback`). This section covers the CLI mechanics once you've decided to use it.
+See **megaplan-setup** for when to add the feedback phase (`--with-feedback`). This section covers the CLI mechanics once you've decided to use it.
 
 `megaplan feedback --plan <name>` scaffolds a `feedback.md` file in the plan directory and opens it in `$EDITOR` (or `$VISUAL`). The file has one section per workflow stage — `prep`, `plan`, `critique`, `revise`, `gate`, `tiebreaker`, `finalize`, `execute`, `review` — plus an `Overall` section. Each section has a `rating:` (integer 0–10) and a free-form `comment:` field; leave any field blank to skip it.
 

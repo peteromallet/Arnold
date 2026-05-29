@@ -1,0 +1,15 @@
+1,187 words — under the 1,200 limit. The file is confirmed written at:
+
+**`/Users/peteromalley/Documents/megaplan/briefs/hardening-epic/analysis/m3a-fail-loud-policy-facts.md`**
+
+Key findings from the extraction:
+
+- **8 of 20** manifest files belong to this milestone; 12 are unrelated overlapping runs (m5a/m5b/m6s)
+- **0 review rounds** — no reviewer_verdict values were ever recorded
+- **0 critique invocations** — all mentions are task descriptions referencing `critique.py` file sites
+- **0 runtime retries** — but 5 stub sessions launched with zero function calls (possible harness stalls)
+- **1 traceback, 2 test failures** — both resolved by T8 (full suite: 2,970 passed, 0 failed)
+- **GPT-5 only, 3 turns** — no premium/cheap model split, no subagent models invoked
+- **No token/cost data** in these Codex session logs
+- **~50KB batch context re-sent 8 times**; unused imports flagged 3 times across sessions, never fixed
+- **60 min wall-clock**, ~37 min actual work; T5/T6/T7/T8 completed, T9 never executed

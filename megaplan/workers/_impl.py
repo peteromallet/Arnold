@@ -329,6 +329,7 @@ def run_command(
     activity_callback: Callable[[str, str], None] | None = None,
     idle_timeout: float | None = None,
     pre_first_byte_timeout: float | None = None,
+    liveness_probe: Callable[[], bool] | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
     try:
@@ -517,6 +518,47 @@ def run_command(
                                 idle_timeout is not None
                                 and time.monotonic() - last_output[0] > idle_timeout
                             ):
+                                # Buffered-mode rescue: some workers (notably the
+                                # shannon path, which drives Claude in a tmux pane
+                                # under ``--output-format=json``) emit NOTHING on
+                                # stdout/stderr for the entire turn — the CLI
+                                # buffers its whole result. For those, an idle bound
+                                # on stdout bytes alone degenerates into a hard
+                                # total-turn wall-clock cap and KILLS healthy,
+                                # actively-progressing turns (the original
+                                # ``worker_stall`` with empty ``raw_output`` at
+                                # exactly the idle bound). When a ``liveness_probe``
+                                # is supplied, consult a REAL liveness signal (tmux
+                                # pane content advancing, transcript .jsonl mtime
+                                # moving) before killing: if the worker is alive and
+                                # making progress, treat that as activity — reset the
+                                # idle clock and keep waiting. Only a worker that is
+                                # BOTH stdout-silent AND not progressing is killed,
+                                # which still catches a genuinely hung/dead turn. The
+                                # wall-clock ``timeout`` (worker_timeout_seconds)
+                                # remains the hard upper bound.
+                                if liveness_probe is not None:
+                                    try:
+                                        alive_and_progressing = bool(liveness_probe())
+                                    except Exception:
+                                        # A probe failure must never kill a worker
+                                        # outright; fall back to the conservative
+                                        # "treat as progress" stance so a live turn
+                                        # is never collateral. A truly dead turn is
+                                        # still bounded by the wall-clock timeout.
+                                        alive_and_progressing = True
+                                    if alive_and_progressing:
+                                        if activity_callback is not None:
+                                            try:
+                                                activity_callback(
+                                                    "liveness",
+                                                    "buffered worker progressing "
+                                                    "(probe); idle clock reset",
+                                                )
+                                            except Exception:
+                                                pass
+                                        last_output[0] = time.monotonic()
+                                        continue
                                 kill_group(process)
                                 returncode = process.poll() if process.poll() is not None else -1
                                 heartbeat_stop.set()

@@ -158,10 +158,11 @@ def test_setup_install_hooks_force_replaces_existing_hook(tmp_path: Path):
 def test_canonical_decision_skill_carries_its_own_frontmatter():
     """If the canonical doc loses its frontmatter, bundled_global_file would
     silently install a frontmatter-less skill, and Claude would stop finding
-    it. Guard against accidentally stripping it."""
-    canonical = _read_canonical("decision_skill.md")
+    it. Guard against accidentally stripping it. (The megaplan-setup skill,
+    formerly megaplan-decision; canonical file: setup_skill.md.)"""
+    canonical = _read_canonical("setup_skill.md")
     first_lines = canonical.splitlines()[:4]
-    assert first_lines[0] == "---", "canonical decision skill must start with YAML frontmatter"
-    assert any(line.startswith("name: megaplan-decision") for line in first_lines), (
-        "canonical decision skill frontmatter must declare `name: megaplan-decision`"
+    assert first_lines[0] == "---", "canonical setup skill must start with YAML frontmatter"
+    assert any(line.startswith("name: megaplan-setup") for line in first_lines), (
+        "canonical setup skill frontmatter must declare `name: megaplan-setup`"
     )

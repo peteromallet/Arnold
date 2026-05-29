@@ -10,7 +10,7 @@ checkout because `git subtree` must write under `.git/`.
 Run this from a checkout where `.git/` is writable:
 
 ```bash
-git subtree add --prefix=megaplan/agent /Users/peteromalley/Documents/hermes-agent main
+git subtree add --prefix=megaplan/agent /path/to/hermes-agent main
 git log --oneline -- megaplan/agent/
 ```
 

@@ -199,6 +199,48 @@ def test_set_model_round_trip_persists_phase_model(plan_fixture: PlanFixture) ->
     assert latest["reason"] == "test set-model round trip"
 
 
+def test_set_model_accepts_full_premium_agent_spec(plan_fixture: PlanFixture) -> None:
+    """set-model can switch premium vendors when --model is a full agent spec."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    response = megaplan.handle_override(
+        plan_fixture.root,
+        plan_fixture.make_args(
+            plan=plan_fixture.plan_name,
+            override_action="set-model",
+            phase="critique",
+            model="claude:sonnet",
+            reason="switch critic vendor",
+        ),
+    )
+
+    assert response["success"] is True
+    assert response["new_spec"] == "claude:sonnet"
+    state = load_state(plan_fixture.plan_dir)
+    assert "critique=claude:sonnet" in (state["config"].get("phase_model") or [])
+    assert "critique=codex:claude:sonnet" not in (state["config"].get("phase_model") or [])
+
+
+def test_set_model_rejects_non_premium_full_agent_spec(plan_fixture: PlanFixture) -> None:
+    """set-model is for claude/codex specs, not hermes or shannon model strings."""
+    megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))
+
+    with pytest.raises(megaplan.CliError) as excinfo:
+        megaplan.handle_override(
+            plan_fixture.root,
+            plan_fixture.make_args(
+                plan=plan_fixture.plan_name,
+                override_action="set-model",
+                phase="critique",
+                model="hermes:deepseek:deepseek-v4-pro",
+                reason="should use phase-model instead",
+            ),
+        )
+
+    assert excinfo.value.code == "invalid_args"
+    assert "claude/codex" in excinfo.value.message
+
+
 def test_set_model_rejects_shannon_phase(plan_fixture: PlanFixture) -> None:
     """set-model rejects phases inferred as shannon via phase_model override."""
     megaplan.handle_plan(plan_fixture.root, plan_fixture.make_args(plan=plan_fixture.plan_name))

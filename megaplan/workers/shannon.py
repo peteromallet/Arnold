@@ -17,6 +17,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -201,6 +202,32 @@ def _shannon_execute_timeout_seconds() -> int:
         return max(1, int(raw))
     except ValueError:
         return 7200
+
+
+def _shannon_max_output_tokens() -> int:
+    """Output-token budget for the Claude CLI that Shannon launches.
+
+    Shannon forwards ``--effort`` to ``claude`` but never sets an explicit
+    output-token ceiling, so the launched Claude Code inherits its built-in
+    default (~64k combined thinking+text for opus). On a heavy ``execute``
+    batch, opus can spend that entire budget on one reasoning/content block and
+    get cut off at ``max_tokens`` *before* it emits the required structured
+    result envelope (``task_updates`` / ``sense_check_acknowledgments``), so the
+    batch fails with no forward progress.
+
+    megaplan owns the phase budget, so raise the Claude output ceiling well
+    above that default via ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` (the env var Claude
+    Code reads). opus-4-x supports far larger output budgets; 128k leaves ample
+    headroom for a long reasoning prelude *and* the final JSON envelope.
+    Overridable via ``MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS``.
+    """
+    raw = os.getenv("MEGAPLAN_SHANNON_MAX_OUTPUT_TOKENS", "").strip()
+    if not raw:
+        return 128000
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 128000
 
 
 def _shannon_handshake_probability() -> float:
@@ -863,6 +890,286 @@ def _parse_shannon_output(raw: str) -> tuple[dict[str, Any], dict[str, Any]]:
     )
 
 
+def _envelope_session_id(raw: str) -> str | None:
+    """Best-effort extraction of the Shannon/Claude session id from raw output.
+
+    Used to resume the same session for an envelope-repair turn even when the
+    payload itself failed to parse/validate.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict):
+        sid = data.get("session_id")
+        return str(sid) if sid else None
+    if isinstance(data, list):
+        for msg in reversed(data):
+            if isinstance(msg, dict):
+                sid = msg.get("session_id") or (
+                    msg.get("message", {}).get("sessionId")
+                    if isinstance(msg.get("message"), dict)
+                    else None
+                )
+                if sid:
+                    return str(sid)
+    return None
+
+
+def _apply_file_fallback(step: str, payload: dict[str, Any], plan_dir: Path) -> dict[str, Any]:
+    """On-disk template fallback for steps that write their answer to a file.
+
+    Claude sometimes emits a chatty summary instead of literal JSON in its final
+    message; for ``critique``/``review`` the on-disk file is the source of
+    truth. But prefer a transcript payload that carries populated findings over
+    an unpopulated on-disk template, so work returned in the final message is
+    not silently discarded.
+    """
+    file_fallback = {
+        "critique": ("critique_output.json", "checks"),
+        "review": ("review_output.json", "checks"),
+    }
+    if step not in file_fallback:
+        return payload
+    fallback_name, sentinel_key = file_fallback[step]
+    fallback_path = plan_dir / fallback_name
+    if not fallback_path.exists():
+        return payload
+    try:
+        file_payload = read_json(fallback_path)
+    except Exception:
+        return payload
+    if not (isinstance(file_payload, dict) and sentinel_key in file_payload):
+        return payload
+
+    def _has_populated_findings(p: Any) -> bool:
+        if not isinstance(p, dict):
+            return False
+        checks = p.get(sentinel_key)
+        if not isinstance(checks, list) or not checks:
+            return False
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            findings = check.get("findings")
+            if isinstance(findings, list) and findings:
+                return True
+        return False
+
+    if _has_populated_findings(file_payload) or not _has_populated_findings(payload):
+        return file_payload
+    return payload
+
+
+_EXECUTE_ENVELOPE_REPAIR_PROMPT = (
+    "Your previous turn was cut off before you emitted the required structured "
+    "result. Do NOT redo any work — the edits and commands you already ran in "
+    "this session stand. Reply with ONLY one valid JSON object (no prose, no "
+    "markdown fences) summarizing what you just did, conforming to the megaplan "
+    "execute schema. It MUST include the keys: output, files_changed, "
+    "commands_run, deviations, task_updates, and sense_check_acknowledgments. "
+    "Keep prose fields concise so the whole object fits well within the output "
+    "budget."
+)
+
+
+def _claude_transcript_paths(session_id: str | None, work_dir: Path) -> list[Path]:
+    """Best-effort list of candidate Claude transcript .jsonl files for a turn.
+
+    Shannon drives a real Claude Code session and Claude appends to a
+    per-session transcript under ``~/.claude/projects/<slug>/<session>.jsonl``.
+    That file's mtime advances as the turn produces content blocks (even though
+    shannon emits nothing on stdout under ``--output-format=json``), so a moving
+    mtime is a reliable "the turn is still doing work" signal. The project slug
+    encoding is Claude-internal, so we glob defensively by session id and fall
+    back to a directory-wide scan keyed on the work_dir slug. Returns ``[]`` when
+    nothing is found (the probe then leans on the tmux-pane signal instead).
+    """
+    paths: list[Path] = []
+    try:
+        projects_root = Path.home() / ".claude" / "projects"
+    except Exception:
+        return paths
+    if not projects_root.is_dir():
+        return paths
+    try:
+        if session_id:
+            paths.extend(projects_root.glob(f"*/{session_id}.jsonl"))
+        if not paths:
+            # Fall back to the work_dir-derived project slug: Claude encodes the
+            # absolute project path with separators replaced by ``-``.
+            slug = str(work_dir.resolve()).replace("/", "-")
+            candidate_dir = projects_root / slug
+            if candidate_dir.is_dir():
+                paths.extend(candidate_dir.glob("*.jsonl"))
+    except Exception:
+        return paths
+    return paths
+
+
+def _make_shannon_liveness_probe(
+    tmux_session: TmuxSession,
+    session_id: str | None,
+    work_dir: Path,
+):
+    """Build a liveness probe for the buffered shannon worker.
+
+    The shannon worker runs Claude under ``--output-format=json``: the CLI
+    buffers its ENTIRE response and writes nothing to the host stdout/stderr
+    pipe until the turn completes. The ``run_command`` idle-output watchdog
+    therefore sees zero bytes for the whole turn and, on a long-but-healthy
+    turn, would kill it at the idle bound with a misleading ``worker_stall``.
+
+    This probe gives ``run_command`` a REAL liveness signal so it only kills a
+    worker that is genuinely stuck. It reports progress (``True``) when EITHER:
+
+    * the tmux pane content has changed since the last probe — Claude streams
+      tokens into its interactive pane even while stdout stays buffered (the
+      only token-by-token signal per the module-level comment in ``_impl``); or
+    * a candidate Claude transcript ``.jsonl`` mtime has advanced — the turn is
+      flushing completed content blocks to disk.
+
+    It reports ``False`` (no progress) only when the session is alive but BOTH
+    signals are static across the idle window — i.e. a genuinely hung turn — or
+    when the tmux session has vanished entirely. Every tmux/FS call degrades
+    gracefully; a probe that cannot read any signal returns ``True`` so the
+    conservative wall-clock ``timeout`` stays the sole bound rather than risking
+    a false kill.
+    """
+    # Captured-snapshot state across probe calls.
+    last_pane = [""]
+    last_mtime = [0.0]
+    primed = [False]
+
+    def _capture_pane() -> str | None:
+        try:
+            result = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-t", tmux_session.name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
+    def _max_transcript_mtime() -> float:
+        newest = 0.0
+        for path in _claude_transcript_paths(session_id, work_dir):
+            try:
+                m = path.stat().st_mtime
+            except OSError:
+                continue
+            if m > newest:
+                newest = m
+        return newest
+
+    def _probe() -> bool:
+        # If the tmux session is gone, the worker can no longer be progressing
+        # in a pane we can observe — defer to the stdout/wall-clock bounds (do
+        # NOT claim progress).
+        try:
+            session_alive = tmux_session.exists()
+        except Exception:
+            session_alive = True  # cannot tell — do not kill on this alone
+
+        pane = _capture_pane()
+        mtime = _max_transcript_mtime()
+
+        if not primed[0]:
+            # First probe establishes the baseline; treat as progress so the
+            # very first idle expiry never kills before we have a comparison.
+            last_pane[0] = pane or ""
+            last_mtime[0] = mtime
+            primed[0] = True
+            return True
+
+        progressing = False
+        if pane is not None and pane != last_pane[0]:
+            progressing = True
+        if mtime > last_mtime[0]:
+            progressing = True
+
+        # Refresh baselines for the next comparison.
+        if pane is not None:
+            last_pane[0] = pane
+        if mtime > last_mtime[0]:
+            last_mtime[0] = mtime
+
+        if progressing:
+            return True
+
+        # No movement on either signal. If we have NO observable signal at all
+        # (pane unreadable AND no transcript found) and the session still
+        # exists, stay conservative (return True) and let the wall-clock cap
+        # govern. Only declare "not progressing" when we genuinely observed a
+        # static-but-alive pane/transcript.
+        have_signal = pane is not None or mtime > 0.0
+        if not have_signal and session_alive:
+            return True
+        return False
+
+    return _probe
+
+
+def _repair_execute_envelope(
+    *,
+    base_command: list[str],
+    session_id: str,
+    launch_command,
+    work_dir: Path,
+    env: dict[str, str],
+    state: PlanState,
+    plan_dir: Path,
+    tmux_session: TmuxSession,
+) -> str | None:
+    """Resume the just-run execute session and ask only for the JSON envelope.
+
+    Returns the raw Shannon output of the repair turn, or ``None`` if the repair
+    could not even be launched. Best-effort: any failure returns ``None`` so the
+    caller falls back to raising the original parse/validation error.
+    """
+    # Rebuild the argv so the resume turn's ``-p`` prompt is the repair prompt,
+    # not the original "read the prompt file" launcher prompt.
+    repair_command: list[str] = []
+    index = 0
+    while index < len(base_command):
+        token = base_command[index]
+        if token == "-p" and index + 1 < len(base_command):
+            repair_command.extend(["-p", _EXECUTE_ENVELOPE_REPAIR_PROMPT])
+            index += 2
+            continue
+        repair_command.append(token)
+        index += 1
+    repair_command.extend(["--resume", session_id])
+    print(
+        "[megaplan] execute output was truncated/invalid; resuming session "
+        f"{session_id} to re-request only the structured envelope.",
+        file=sys.stderr,
+        flush=True,
+    )
+    try:
+        repair = run_command(
+            launch_command(repair_command),
+            cwd=work_dir,
+            stdin_text=None,
+            env=env,
+            timeout=_shannon_execute_timeout_seconds(),
+            activity_callback=_activity_callback_for_state(state, plan_dir),
+            idle_timeout=_worker_stream_idle_timeout_seconds(),
+            liveness_probe=_make_shannon_liveness_probe(
+                tmux_session, session_id, work_dir
+            ),
+            tmux_session=tmux_session,
+        )
+    except CliError:
+        return None
+    repaired_raw = repair.stdout or repair.stderr
+    return repaired_raw or None
+
+
 # ---------------------------------------------------------------------------
 # Public worker entry-point
 # ---------------------------------------------------------------------------
@@ -1030,6 +1337,10 @@ def run_shannon_step(
     # phases, so keep Shannon's internal watchdog above megaplan's worker
     # budget and let the parent process decide when to stop waiting.
     env.setdefault("SHANNON_TURN_TIMEOUT_MS", "7200000")
+    # Raise the Claude CLI output-token ceiling so opus-class models are not cut
+    # off at the inherited ~64k default mid-run, before emitting the structured
+    # result envelope. megaplan, not the model default, owns this budget.
+    env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(_shannon_max_output_tokens()))
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env)
 
     def _launch_command(shannon_command: list[str]) -> list[str]:
@@ -1083,6 +1394,9 @@ def run_shannon_step(
                 timeout=_shannon_readiness_timeout_seconds(),
                 activity_callback=_activity_callback_for_state(state, plan_dir),
                 idle_timeout=_worker_stream_idle_timeout_seconds(),
+                liveness_probe=_make_shannon_liveness_probe(
+                    tmux_session, session_id, work_dir
+                ),
                 tmux_session=tmux_session,
             )
         except CliError as error:
@@ -1115,6 +1429,9 @@ def run_shannon_step(
             timeout=_shannon_execute_timeout_seconds(),
             activity_callback=_activity_callback_for_state(state, plan_dir),
             idle_timeout=_worker_stream_idle_timeout_seconds(),
+            liveness_probe=_make_shannon_liveness_probe(
+                tmux_session, session_id, work_dir
+            ),
             tmux_session=tmux_session,
         )
     except CliError as error:
@@ -1141,6 +1458,7 @@ def run_shannon_step(
                             f"[megaplan] Cleared persisted shannon session "
                             f"{session_key}={session_id} after {error.code}; "
                             "next attempt will start a fresh session.",
+                            file=sys.stderr,
                             flush=True,
                         )
             except Exception:
@@ -1152,65 +1470,47 @@ def run_shannon_step(
     elapsed_ms = int((time.monotonic() - started) * 1000)
 
     # ── (f) parse Shannon output ────────────────────────────────────────
-    envelope, payload = _parse_shannon_output(raw)
+    # On a heavy ``execute`` batch the model can still exhaust its output
+    # budget on reasoning/content before emitting the structured envelope and
+    # get cut off at ``max_tokens`` (empty/invalid JSON or missing required
+    # keys). The work itself (edits, commands) has already happened in the
+    # session, so a single resume turn that asks for *only* the envelope is far
+    # cheaper than re-running the whole batch — and the surrounding execute loop
+    # deliberately does not retry execute. Attempt that repair in-place once.
+    def _parse_and_validate(raw_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        env_, pay_ = _parse_shannon_output(raw_text)
+        pay_ = _apply_file_fallback(step, pay_, plan_dir)
+        pay_ = _normalize_worker_payload(step, pay_)
+        validate_payload(step, pay_)
+        return env_, pay_
 
-    # ── (f.5) on-disk template fallback for steps that write their answer
-    #          to a file (critique/review). Claude sometimes emits a chatty
-    #          summary instead of literal JSON in its final message; in that
-    #          case the on-disk file is the source of truth.
-    _FILE_FALLBACK = {
-        "critique": ("critique_output.json", "checks"),
-        "review": ("review_output.json", "checks"),
-    }
-    if step in _FILE_FALLBACK:
-        fallback_name, sentinel_key = _FILE_FALLBACK[step]
-        fallback_path = plan_dir / fallback_name
-        if fallback_path.exists():
-            try:
-                file_payload = read_json(fallback_path)
-            except Exception:
-                file_payload = None
-            if isinstance(file_payload, dict) and sentinel_key in file_payload:
-                # Prefer the on-disk file: even when the transcript parsed,
-                # the file is what the agent intended as the canonical artifact.
-                # BUT: if the on-disk file is still the unpopulated template
-                # (every check has zero findings) and the parsed transcript
-                # payload carries populated findings, prefer the transcript.
-                # Otherwise an agent that returned its JSON in the final
-                # result message instead of editing the file would have its
-                # work silently discarded.
-                def _has_populated_findings(p: Any) -> bool:
-                    if not isinstance(p, dict):
-                        return False
-                    checks = p.get(sentinel_key)
-                    if not isinstance(checks, list) or not checks:
-                        return False
-                    for check in checks:
-                        if not isinstance(check, dict):
-                            continue
-                        findings = check.get("findings")
-                        if isinstance(findings, list) and findings:
-                            return True
-                    return False
-
-                file_has_findings = _has_populated_findings(file_payload)
-                parsed_has_findings = _has_populated_findings(payload)
-                if file_has_findings or not parsed_has_findings:
-                    payload = file_payload
-
-    # ── (g) normalize + validate ────────────────────────────────────────
-    payload = _normalize_worker_payload(step, payload)
     try:
-        validate_payload(step, payload)
+        envelope, payload = _parse_and_validate(raw)
     except CliError as error:
-        raise CliError(
-            error.code, error.message, extra={"raw_output": raw}
-        ) from error
+        repaired = None
+        if step == "execute" and error.code in {"parse_error", "schema_error"}:
+            repaired = _repair_execute_envelope(
+                base_command=base_command,
+                session_id=str((_envelope_session_id(raw)) or session_id),
+                launch_command=_launch_command,
+                work_dir=work_dir,
+                env=env,
+                state=state,
+                plan_dir=plan_dir,
+                tmux_session=tmux_session,
+            )
+        if repaired is None:
+            raise CliError(error.code, error.message, extra={"raw_output": raw}) from error
+        try:
+            envelope, payload = _parse_and_validate(repaired)
+        except CliError as repair_error:
+            raise CliError(
+                repair_error.code,
+                f"{repair_error.message} (after structured-envelope repair attempt)",
+                extra={"raw_output": repaired, "original_raw_output": raw},
+            ) from repair_error
+        raw = repaired
 
-    # ── (h) extract token usage ─────────────────────────────────────────
-    prompt_tokens, completion_tokens = _extract_claude_usage(envelope)
-
-    # ── (i) construct WorkerResult ──────────────────────────────────────
     return WorkerResult(
         payload=payload,
         raw_output=raw,
@@ -1218,7 +1518,8 @@ def run_shannon_step(
         cost_usd=float(envelope.get("total_cost_usd", 0.0) or 0.0),
         session_id=str(envelope.get("session_id") or session_id),
         rendered_prompt=prompt,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=prompt_tokens + completion_tokens,
+        prompt_tokens=_extract_claude_usage(envelope)[0],
+        completion_tokens=_extract_claude_usage(envelope)[1],
+        total_tokens=sum(_extract_claude_usage(envelope)),
     )
+

@@ -24,6 +24,8 @@ megaplan cloud init
 
 2. Edit `cloud.yaml` for repo, provider, mode, secrets, and optional toolchains.
 
+   See [docs/configuration.md](configuration.md) for where local config files, provider keys, cloud secrets, and database-mode environment variables are read from.
+
 3. Export the local secrets named under `secrets:`:
 
 ```bash
@@ -338,7 +340,15 @@ This redaction applies to:
 - Railway CLI install docs: https://docs.railway.app/develop/cli
 - Docker install docs: https://docs.docker.com/get-docker/
 - OpenSSH project/docs: https://www.openssh.com/
+- Config & environment map: [docs/configuration.md](configuration.md)
+
+## Related Runbooks And Design Notes
+
+- **Cloud chain smoke**: [docs/ops/cloud-chain-smoke.md](ops/cloud-chain-smoke.md) — end-to-end smoke tests for cloud chain operations.
+- **Recovery runbooks**: [docs/ops/recovery-runbooks.md](ops/recovery-runbooks.md) — operational procedures for recovering cloud deployments.
+- **Cloud prerequisite resolution**: Active milestone briefs live under [briefs/cloud-prerequisite-resolution/](../briefs/cloud-prerequisite-resolution/) — these are the source of truth for structured prerequisite/quality resolution metadata, auto recovery, chain policy/status, cloud supervision, and slot-first watchdog hardening.
+- **Slot-first watchdog**: The watchdog operates from the assigned slot/workspace first, verifies provider and session consistency, lists available human-verification actions, and only restarts or wakes chains when the status payload shows the chain is recoverable. Continuous branch and PR synchronization is required after stops and recoveries so status reflects what code reviewers and operators see.
 
 ## Migration From `reigh-megaplan-dev`
 
-Use the human-executed runbook at [docs/cloud-migration-from-reigh.md](cloud-migration-from-reigh.md). The important rule is: write `MIGRATED.md` first, then remove siblings while preserving that pointer file.
+The historical migration runbook is archived at [docs/archive/cloud-migration-from-reigh.md](archive/cloud-migration-from-reigh.md). The important rule is: write `MIGRATED.md` first, then remove siblings while preserving that pointer file.

@@ -1,9 +1,9 @@
 ---
-name: megaplan-decision
-description: Pick the right megaplan profile, thinking-strength tier, and robustness level for the work in front of you — for both Codex and Claude harnesses. Consult before invoking megaplan.
+name: megaplan-setup
+description: Set up a megaplan run before invoking it — size the work, write the brief, and pick the profile (intelligence tier), robustness level, and thinking depth. For both Codex and Claude harnesses. Consult before every `megaplan init`.
 ---
 
-# Megaplan Decision
+# Megaplan Setup
 
 Three dials decide how to run a sprint:
 
@@ -117,6 +117,17 @@ Adaptive critique is **off for the open-only profiles** (`solo`, `directed`): th
 **Claude and Codex are treated as mostly interchangeable at tiers 2-4 — by policy, not just by observation.** The marginal quality difference between them on a given task is small relative to picking the wrong tier or robustness; encoding per-task vendor preferences would add a dial that doesn't earn its keep. Users may prefer one or the other depending on which subscription has more credits available — pick a preferred vendor once (`--vendor`, or `[defaults].vendor` in config) and the preference flows through every tier-2-through-4 profile.
 
 **Tier 5 is the exception** — its whole rationale is using both vendors' different strengths together. `--vendor` is silently ignored there. The phase table above shows the claude variant for tiers 2-4; for the codex variant, swap `claude`↔`codex` throughout.
+
+### Single-vendor: only Claude, or only Codex
+
+The five-tier ladder above silently **assumes DeepSeek is available** — its whole economy is "cheap mechanical work on DeepSeek, premium reasoning on Claude/Codex." If you have **only** Anthropic credentials (no DeepSeek / Fireworks / Codex key), every tiered profile — including `solo`, the most common recommendation — fails preflight, because `solo` routes all reasoning *and* execute to DeepSeek. There is **no silent fallback to Claude**: the run exits with a credential error (exit 7) that now names the profile to use instead. `--vendor` on `solo` is a no-op and won't rescue a DeepSeek-less setup.
+
+For a single-vendor setup, reach for the dedicated end-to-end profiles:
+
+- **`all-claude`** — every reasoning phase on Opus; execute complexity-routed *within the Claude family* (Haiku for trivial tasks → Sonnet → Opus for the hardest). The Claude-only counterpart to the tier ladder: cheap work stays cheap without ever leaving Claude.
+- **`all-codex`** — same shape on GPT-5.5; execute routed by *reasoning effort* (`minimal`→`high`), since Codex has no budget-tier model to drop to. `vendor_locked`.
+
+These ignore the tier dial (there's no DeepSeek to trade against), so for single-vendor work you're really only choosing **robustness** and **depth** on top of the fixed vendor. The cost-tiered profiles remain the better deal once a DeepSeek key is added — the preflight error spells out how to get there.
 
 ---
 
@@ -251,6 +262,21 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 ### The escape hatch
 
 **`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it.
+
+For an in-flight plan, `megaplan override set-model --phase PHASE --model MODEL`
+updates that phase's persisted `phase_model` entry. If you are switching premium
+vendors, pass a full premium spec such as `--model claude:sonnet` or
+`--model codex:gpt-5.5`; passing only `--model sonnet` keeps the phase's
+currently inferred premium agent and changes only its model token.
+
+Important: `--phase-model critique=...` and `override set-model --phase critique`
+pin the critique **phase/orchestrator**. They do not by themselves pin the
+per-lens critics chosen by adaptive critique. In the normal adaptive path, a
+premium evaluator/director may run first and then dispatch the selected critique
+lenses to cheaper DeepSeek/Kimi-style workers; seeing `critique_evaluator` on a
+premium model followed by `critique` on Hermes/DeepSeek is expected. Only pin
+`execution.critic_model` when you intentionally want to override that adaptive
+critic-worker routing.
 
 ### The critique == review invariant
 
