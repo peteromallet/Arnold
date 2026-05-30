@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
@@ -264,6 +264,9 @@ class _PairedRoundStep:
     slot: str | None = None
     advocates: tuple[Step, ...] = ()
     sees_other: bool = True
+
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         if not self.advocates:

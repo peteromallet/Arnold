@@ -1,4 +1,19 @@
-"""Plan state management — load, save, history, sessions, failure recording."""
+"""Plan state management — load, save, history, sessions, failure recording.
+
+Reserved top-level key (M2 / T2b)
+---------------------------------
+
+``'_state_meta'`` is a reserved top-level key on ``PlanState`` owned by
+the :mod:`megaplan._pipeline` typed-port substrate. Its shape is::
+
+    {'versions': {<key>: <int>, ...}}
+
+Each entry in ``versions`` is the monotonically-increasing CAS version
+for the like-named top-level state key, used by
+:func:`megaplan._pipeline.types.apply_delta` to detect stale writes and
+raise :class:`megaplan._pipeline.types.StateDeltaConflict`. Callers
+outside the typed-port substrate MUST NOT mutate ``_state_meta`` directly.
+"""
 
 from __future__ import annotations
 

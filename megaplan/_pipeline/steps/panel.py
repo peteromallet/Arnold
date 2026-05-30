@@ -50,6 +50,9 @@ class PanelReviewerStep:
     _panel_reviewer_order: dict[str, list[str]] = field(default_factory=dict)
     _mode: str = ""
 
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
+
     def run(self, ctx: StepContext) -> StepResult:
         inputs = resolve_inputs(
             self._input_refs,

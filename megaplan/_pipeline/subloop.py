@@ -37,7 +37,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from megaplan._pipeline.types import (
-    GateRecommendation,
     Pipeline,
     StepContext,
     StepResult,
@@ -45,7 +44,7 @@ from megaplan._pipeline.types import (
 )
 
 
-_DEFAULT_PROMOTE: Callable[[dict[str, Any]], GateRecommendation] = lambda state: "proceed"
+_DEFAULT_PROMOTE: Callable[[dict[str, Any]], Any] = lambda state: "proceed"
 
 
 @dataclass(frozen=True)
@@ -53,8 +52,10 @@ class SubloopStep:
     """A Step that runs a nested Pipeline and promotes its final state.
 
     ``child_pipeline``: the inner pipeline to run.
-    ``promote``: callable that maps the child's final state dict to a
-    :class:`GateRecommendation` for the parent's PipelineVerdict.
+    ``promote``: callable that maps the child's final state dict to the
+    parent's PipelineVerdict recommendation value (typed as ``Any`` here;
+    planning consumers route through
+    :mod:`megaplan._pipeline.planning_bindings` for the typed literal).
     ``artifact_subdir``: subdir under ``ctx.plan_dir`` where the child
     pipeline's state.json + per-stage artifacts land. Defaults to the
     Step's name.
@@ -65,8 +66,11 @@ class SubloopStep:
     prompt_key: str | None = None
     slot: str | None = None
     child_pipeline: Pipeline | None = None
-    promote: Callable[[dict[str, Any]], GateRecommendation] = field(default=_DEFAULT_PROMOTE)
+    promote: Callable[[dict[str, Any]], Any] = field(default=_DEFAULT_PROMOTE)
     artifact_subdir: str | None = None
+
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         from megaplan._pipeline.executor import run_pipeline
@@ -84,7 +88,21 @@ class SubloopStep:
         result = run_pipeline(self.child_pipeline, child_ctx, artifact_root=child_root)
         child_state: dict[str, Any] = result.get("state", {})
 
-        recommendation = self.promote(child_state)
+        raw = self.promote(child_state)
+        from megaplan._pipeline.flags import typed_ports_on
+
+        if typed_ports_on():
+            from megaplan._pipeline.planning_bindings import planning_promote
+
+            # flag-ON: keep planning literals as-is, else route the child
+            # state through the canonical planning binding.
+            if raw in ("proceed", "iterate", "tiebreaker", "escalate"):
+                recommendation = raw
+            else:
+                recommendation = planning_promote(child_state)
+        else:
+            # flag-OFF preserves today's typed assignment byte-identically.
+            recommendation = raw
         verdict = PipelineVerdict(
             score=float(child_state.get("score", 1.0)),
             recommendation=recommendation,
