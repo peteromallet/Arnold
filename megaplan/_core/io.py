@@ -644,6 +644,8 @@ def load_finalize_snapshot(plan_dir: Path) -> dict[str, Any]:
 
 
 def render_final_md(finalize_data: dict[str, Any], *, phase: str = "finalize") -> str:
+    from megaplan.orchestration.plan_contracts import render_contract_markdown
+
     show_execution_gaps = phase in ("execute", "review")
     show_review_gaps = phase == "review"
     tasks = finalize_data.get("tasks", [])
@@ -684,6 +686,10 @@ def render_final_md(finalize_data: dict[str, Any], *, phase: str = "finalize") -
             lines.append("  Reviewer verdict: [PENDING]")
             gap_counts["Reviewer verdicts pending"] = gap_counts.get("Reviewer verdicts pending", 0) + 1
         lines.append("")
+
+    contract_markdown = render_contract_markdown(finalize_data)
+    if contract_markdown:
+        lines.extend([contract_markdown, ""])
 
     lines.extend(["## Watch Items", ""])
     watch_items = finalize_data.get("watch_items", [])

@@ -21,6 +21,7 @@ from megaplan._core import (
     require_state,
     sha256_file,
 )
+from megaplan.orchestration.plan_contracts import normalize_contract_payload
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker, shutil, subprocess
 
@@ -594,6 +595,12 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
 
 
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
+    contract_payload = normalize_contract_payload(
+        {"provides": payload.get("provides", []), "assumes": payload.get("assumes", [])},
+        root=Path(state["config"]["project_dir"]),
+    )
+    payload["provides"] = contract_payload["provides"]
+    payload["assumes"] = contract_payload["assumes"]
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
         payload["baseline_test_command"] = None
@@ -607,6 +614,7 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
     _reconcile_validation_after_mutation(payload)
+    atomic_write_json(plan_dir / "contract.json", contract_payload)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)
     atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(payload))
@@ -629,7 +637,7 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
             step="finalize",
             worker=worker, agent=agent, mode=mode, refreshed=refreshed,
             summary=f"Finalized plan with {len(worker.payload['tasks'])} tasks and {len(worker.payload['watch_items'])} watch items.",
-            artifacts=["final.md", "finalize.json", "user_actions.md"],
+            artifacts=["contract.json", "final.md", "finalize.json", "user_actions.md"],
             output_file="finalize.json",
             artifact_hash=artifact_hash,
             next_step="execute",
