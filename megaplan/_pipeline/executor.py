@@ -214,12 +214,21 @@ def run_pipeline(
     ctx: StepContext,
     *,
     artifact_root: Path,
+    policy: Any | None = None,
 ) -> dict[str, Any]:
     """Walk ``pipeline`` from its entry stage until a terminal sentinel.
 
     Returns ``{'state': <final state dict>, 'final_stage': <stage name>}``
     on normal termination. Raises on Step failure, missing declared
     output, or unmatched edge label.
+
+    When ``policy`` is None (production default), behavior is identical to the
+    pre-merge bare path. When a :class:`RuntimePolicy` is supplied (previously
+    only reachable via :func:`run_pipeline_with_policy`), per-iteration policy
+    guards engage: ``max_iterations`` cap, stall observation, cost-cap abort,
+    and escalate-policy fallback. ``find_override_edge`` dispatch runs
+    unconditionally for both paths — the policy path inherits the override
+    edge ladder from the bare path so verdict.override is honored consistently.
     """
 
     artifact_root = Path(artifact_root)
@@ -232,7 +241,11 @@ def run_pipeline(
 
     executor_owned_keys: set[str] = set()
     cursor = pipeline.entry
+    iterations = 0
     while True:
+        if policy is not None and iterations >= policy.max_iterations:
+            return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations"}
+        iterations += 1
         node = pipeline.stages[cursor]
 
         # Refresh ctx.state with the executor's working state so each
@@ -258,6 +271,13 @@ def run_pipeline(
         state.update(patch)
         executor_owned_keys.update(patch.keys())
         _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
+
+        if policy is not None:
+            policy.stall.observe(state)
+            if policy.stall.is_stalled():
+                return {"state": state, "final_stage": node.name, "halt_reason": "stalled"}
+            if policy.cost.should_abort(state):
+                return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap"}
 
         if result.next == "halt":
             if state.get("_pipeline_paused"):
@@ -286,6 +306,18 @@ def run_pipeline(
                 ),
                 None,
             )
+            # Escalate-policy resolution (policy path only).
+            if policy is not None and rec == "escalate" and edge is None:
+                resolution = policy.escalate.resolve(node.name)
+                if resolution == "force_proceed":
+                    edge = next(
+                        (
+                            e
+                            for e in node.edges
+                            if e.kind == "gate" and e.recommendation == "proceed"
+                        ),
+                        None,
+                    )
         if edge is None:
             edge = next(
                 (
@@ -312,96 +344,18 @@ def run_pipeline_with_policy(
     artifact_root: Path,
     policy: Any,
 ) -> dict[str, Any]:
-    """Walk ``pipeline`` under a :class:`RuntimePolicy`.
+    """Thin shim — delegates to :func:`run_pipeline` with ``policy=`` set.
 
-    Sprint 4 Chunk C: wraps :func:`run_pipeline` with stall detection,
-    cost capping, escalate-policy resolution, and context/blocked
-    retry hooks. The bare :func:`run_pipeline` stays unchanged for
-    hermetic demos.
-
-    The policy observes each stage's result via ``state_patch`` +
-    the state.json snapshot the executor writes between stages.
+    Preserves the historical TypeError-on-non-RuntimePolicy contract; behavior
+    is now provided by the merged superset in :func:`run_pipeline`.
     """
 
-    # Defer heavy imports — the policy module lives next door but we
-    # don't want a circular dependency in the standalone executor path.
     from megaplan._pipeline.runtime import RuntimePolicy as _Policy
 
     if not isinstance(policy, _Policy):
         raise TypeError(
             f"run_pipeline_with_policy requires a RuntimePolicy, got {type(policy)!r}"
         )
+    return run_pipeline(pipeline, ctx, artifact_root=artifact_root, policy=policy)
 
-    iterations = 0
-    artifact_root = Path(artifact_root)
-    artifact_root.mkdir(parents=True, exist_ok=True)
 
-    state: dict[str, Any] = dict(ctx.state) if isinstance(ctx.state, Mapping) else {}
-    executor_owned_keys: set[str] = set()
-    cursor = pipeline.entry
-    while True:
-        if iterations >= policy.max_iterations:
-            return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations"}
-        iterations += 1
-
-        node = pipeline.stages[cursor]
-        ctx = dataclasses.replace(ctx, state=state)
-        try:
-            if isinstance(node, ParallelStage):
-                result = _run_parallel_stage(node, ctx)
-            else:
-                assert isinstance(node, Stage)
-                result = node.step.run(ctx)
-        except BaseException as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                raise
-            _record_error(artifact_root, node.name, exc)
-            raise
-
-        _verify_outputs(node.name, result.outputs)
-        patch = dict(result.state_patch)
-        state.update(patch)
-        executor_owned_keys.update(patch.keys())
-        _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
-
-        # Policy hooks — observation is side-effecting.
-        policy.stall.observe(state)
-        if policy.stall.is_stalled():
-            return {"state": state, "final_stage": node.name, "halt_reason": "stalled"}
-        if policy.cost.should_abort(state):
-            return {"state": state, "final_stage": node.name, "halt_reason": "cost_cap"}
-
-        if result.next == "halt":
-            if state.get("_pipeline_paused"):
-                return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
-            return {"state": state, "final_stage": node.name}
-
-        edge = None
-        rec = None
-        if result.verdict is not None and result.verdict.recommendation is not None:
-            rec = result.verdict.recommendation
-            edge = next(
-                (e for e in node.edges if e.kind == "gate" and e.recommendation == rec),
-                None,
-            )
-            # Apply escalate policy when the gate emits "escalate".
-            if rec == "escalate" and edge is None:
-                resolution = policy.escalate.resolve(node.name)
-                if resolution == "force_proceed":
-                    edge = next(
-                        (e for e in node.edges if e.kind == "gate" and e.recommendation == "proceed"),
-                        None,
-                    )
-        if edge is None:
-            edge = next(
-                (e for e in node.edges if e.kind == "normal" and e.label == result.next),
-                None,
-            )
-        if edge is None:
-            raise LookupError(
-                f"Stage {node.name!r} produced next={result.next!r} "
-                f"recommendation={rec!r} but no matching edge was found"
-            )
-        if edge.target == "halt":
-            return {"state": state, "final_stage": node.name}
-        cursor = edge.target

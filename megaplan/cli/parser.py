@@ -1203,4 +1203,30 @@ def build_parser() -> argparse.ArgumentParser:
     record_tag_parser.add_argument("--tag", required=True, help="Tag name")
     record_tag_parser.add_argument("--note", default="", help="Optional tag note")
 
+    # W7 — pipelines command group skeleton
+    pipelines_parser = subparsers.add_parser(
+        "pipelines", help="Inspect and validate pipeline definitions"
+    )
+    pipelines_sub = pipelines_parser.add_subparsers(dest="pipelines_action", required=True)
+    pipelines_check_parser = pipelines_sub.add_parser(
+        "check", help="Resolve and print a pipeline name (verifies wiring)"
+    )
+    pipelines_check_parser.add_argument(
+        "pipeline_name",
+        nargs="?",
+        default=None,
+        help="Pipeline name to resolve (e.g. planning)",
+    )
+    pipelines_sub.add_parser(
+        "doctor",
+        help="Per-path discovery report (discovered / rejected+tb / skipped)",
+    )
+    pipelines_new_parser = pipelines_sub.add_parser(
+        "new", help="Scaffold a new pipeline package (module + SKILL.md stub)"
+    )
+    pipelines_new_parser.add_argument(
+        "pipeline_name",
+        help="Pipeline name to scaffold (e.g. my-pipeline)",
+    )
+
     return parser

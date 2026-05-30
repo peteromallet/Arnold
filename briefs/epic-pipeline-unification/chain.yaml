@@ -28,62 +28,62 @@ base_branch: main
 
 milestones:
   - label: m0-harness-floor
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m0-keepalive-floor.md
+    idea: briefs/epic-pipeline-unification/m0-keepalive-floor.md
     profile: premium         # IN-REPO harness only: report-only schema validator (W2) + dual-run rig (W3)
     robustness: thorough     # + behavioral-replay oracle harness + corpus (W4) + substrate-swap skeleton
     depth: high              # (W5) + strangler-gate entrypoint (W6). NOT the pinned venv (operator pre-step).
 
   - label: m1-foundation
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m1-foundation.md
+    idea: briefs/epic-pipeline-unification/m1-foundation.md
     profile: apex            # foundation + contract-checker + R1 shadow-WAL seed; everything rests on it
     robustness: thorough
     depth: high
 
   - label: m2-types-and-port
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m2-types-and-port.md
+    idea: briefs/epic-pipeline-unification/m2-types-and-port.md
     profile: apex            # the typed Port keystone + Contract Ledger; ZERO-GateRecommendation gate
     robustness: thorough
     depth: high
 
   - label: m2.5-autopy-spike
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m2.5-autopy-spike.md
+    idea: briefs/epic-pipeline-unification/m2.5-autopy-spike.md
     profile: premium         # characterization corpus (recovery/escalate/blocked) that de-risks the M3 flip
     robustness: thorough
     depth: high
 
   - label: m3-hinge
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m3-hinge.md
+    idea: briefs/epic-pipeline-unification/m3-hinge.md
     profile: apex            # THE HINGE: Activation + realized-graph + Conveyance + R1 authority-flip + Governor
     robustness: extreme
     depth: max
 
   - label: m4-services-spine
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m4-services-spine.md
+    idea: briefs/epic-pipeline-unification/m4-services-spine.md
     profile: apex            # dispatch/emit/evidence + Effect Ledger + RecoveryPolicy + one-Ledger + Evaluand scaffold
     robustness: thorough
     depth: high
 
   - label: m5a-node-library
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m5a-node-library.md
+    idea: briefs/epic-pipeline-unification/m5a-node-library.md
     profile: premium         # ∥ off the M4 base; + Behavioral Identity Manifest (R6)
     robustness: thorough
     depth: high
 
   - label: m5b-execute-realm
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m5b-execute-realm.md
+    idea: briefs/epic-pipeline-unification/m5b-execute-realm.md
     profile: premium         # ∥ off the M4 base
     robustness: thorough
     depth: high
 
   - label: m5-eval
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m5-eval.md
+    idea: briefs/epic-pipeline-unification/m5-eval.md
     profile: apex            # the Evaluand + one Ledger — the self-improvement spine; GATES m5-cal
     robustness: thorough
     depth: high
     depends_on: [m4-services-spine]  # completes M4's Evaluand scaffold (m5-eval brief depends_on M4)
 
   - label: m5-cal
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m5-cal.md
+    idea: briefs/epic-pipeline-unification/m5-cal.md
     profile: premium         # Calibration Ledger; routing = a query. DEPENDS ON m5-eval (non-negotiable)
     robustness: thorough
     depth: high
@@ -91,19 +91,19 @@ milestones:
                              # harness-asserted to be listed before m5-cal (validation-only, not concurrency).
 
   - label: m5c-control-plane
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m5c-control-plane.md
+    idea: briefs/epic-pipeline-unification/m5c-control-plane.md
     profile: apex            # run-outcome vocabulary; evict planning's STATE_* from the shared layer
     robustness: extreme
     depth: max
 
   - label: m6-strangler-swap
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m6-strangler-swap.md
+    idea: briefs/epic-pipeline-unification/m6-strangler-swap.md
     profile: apex            # THE ATOMIC SWAP, last load-bearing node: megaplan-as-module + arnold ns + trust + journal unify
     robustness: extreme
     depth: max
 
   - label: m5d-supervisor-tier
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m5d-supervisor-tier.md
+    idea: briefs/epic-pipeline-unification/m5d-supervisor-tier.md
     profile: premium         # after m6: cross-run orchestration; canary-epic acceptance
     robustness: thorough
     depth: high
@@ -111,7 +111,7 @@ milestones:
                              # M5c's control ops; lands AFTER m6 despite the M5-series name (m5d brief §11-13).
 
   - label: m7-sinks
-    idea: /Users/peteromalley/Documents/megaplan/briefs/epic-pipeline-unification/m7-sinks.md
+    idea: briefs/epic-pipeline-unification/m7-sinks.md
     profile: premium         # Capsule ∥ Warrant ∥ docs; projections off the Manifest + Ledgers (after m6)
     robustness: thorough
     depth: high

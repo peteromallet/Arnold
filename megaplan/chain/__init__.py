@@ -620,9 +620,11 @@ class ChainState:
     profile_bumps: dict[str, str] = field(default_factory=dict)
     robustness_bumps: dict[str, str] = field(default_factory=dict)
     depth_bumps: dict[str, str] = field(default_factory=dict)
+    schema_version: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "current_milestone_index": self.current_milestone_index,
             "current_plan_name": self.current_plan_name,
             "last_state": self.last_state,

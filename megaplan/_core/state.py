@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -465,11 +466,19 @@ def write_plan_state(
             mutation_changed = mutation(next_state)
             if mutation_changed is False:
                 should_write = False
+        next_state.setdefault("schema_version", 0)
         if validate_current_state:
             _validate_plan_state_for_persist(next_state, plan_dir=plan_dir)
         if should_write:
             atomic_write_json(state_path, next_state)
-        return next_state
+            snapshot = copy.deepcopy(next_state)
+        else:
+            snapshot = None
+    # Lock released — emit shadow-WAL only when an on-disk write actually happened.
+    if snapshot is not None:
+        from megaplan.observability.events import emit_state_wal
+        emit_state_wal(plan_dir, snapshot)
+    return next_state
 
 
 # ---------------------------------------------------------------------------

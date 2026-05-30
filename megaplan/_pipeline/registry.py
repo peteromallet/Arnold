@@ -38,15 +38,47 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import sys
+import traceback
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from megaplan._pipeline.types import Pipeline
 
 
 PipelineBuilder = Callable[[], Pipeline]
+
+
+@dataclass
+class Disposition:
+    """Per-path result from :func:`scan_python_pipelines`.
+
+    Fields
+    ------
+    path:
+        Absolute path to the module file that was examined.
+    origin:
+        ``"in_tree"`` when the package_prefix is ``"megaplan.pipelines"``;
+        ``"user"`` otherwise.
+    status:
+        One of ``"discovered"``, ``"rejected"``, or ``"skipped"``.
+    reason:
+        Human-readable explanation for the status.
+    traceback:
+        Full traceback string when the module raised during import; ``None``
+        otherwise.
+    cli_name:
+        The CLI-visible name derived from the module path.  ``None`` when
+        the path was skipped before a name could be derived.
+    """
+
+    path: Path
+    origin: str
+    status: str
+    reason: str
+    traceback: Optional[str] = None
+    cli_name: Optional[str] = None
 
 
 # Built-in pipeline names that discovery must never override.
@@ -357,6 +389,121 @@ def _module_metadata(module: Any) -> dict[str, Any]:
     return meta
 
 
+_SCAN_ROOTS: list[tuple[Path, str | None]] = [
+    (Path(__file__).resolve().parent.parent / "pipelines", "megaplan.pipelines"),
+]
+
+def _get_scan_roots() -> list[tuple[Path, str | None]]:
+    """Return scan roots including the user home dir (evaluated at call time)."""
+    return _SCAN_ROOTS + [(Path.home() / ".megaplan" / "pipelines", None)]
+
+
+def scan_python_pipelines() -> list[Disposition]:
+    """Walk all scan roots and return a :class:`Disposition` for EVERY path.
+
+    This function NEVER raises and ALWAYS completes the full scan.  Every
+    module file encountered — discovered, rejected, or skipped — is
+    represented in the returned list.
+
+    Origins:
+    * ``"in_tree"``  — the path came from the ``megaplan.pipelines`` scan
+      root (``package_prefix == "megaplan.pipelines"``).
+    * ``"user"``     — the path came from a user scan root (``package_prefix
+      is None``).
+
+    Statuses:
+    * ``"discovered"``  — the module loaded successfully and exposes a
+      callable ``build_pipeline``.
+    * ``"rejected"``    — the module could not be loaded OR does not expose a
+      callable ``build_pipeline``.
+    * ``"skipped"``     — the module was excluded before loading (builtin
+      name collision, duplicate in seen-set, etc.).
+    """
+    dispositions: list[Disposition] = []
+    seen: set[str] = set()
+
+    try:
+        roots = _get_scan_roots()
+    except Exception:
+        return dispositions
+
+    for pipelines_dir, package_prefix in roots:
+        origin = "in_tree" if package_prefix == "megaplan.pipelines" else "user"
+
+        try:
+            dir_entries = list(_scan_dir_for_pipeline_modules(
+                pipelines_dir, package_prefix=package_prefix,
+            ))
+        except Exception:
+            continue
+
+        for cli_name, module_file in dir_entries:
+            # --- builtin collision ---
+            if cli_name in _BUILTIN_NAMES:
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="skipped",
+                    reason=f"cli_name {cli_name!r} collides with a built-in; skipping",
+                    cli_name=cli_name,
+                ))
+                continue
+
+            # --- duplicate (earlier scan root wins) ---
+            if cli_name in seen:
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="skipped",
+                    reason=f"cli_name {cli_name!r} already discovered from an earlier scan root",
+                    cli_name=cli_name,
+                ))
+                continue
+
+            # --- attempt to load ---
+            tb_str: Optional[str] = None
+            module: Any = None
+            try:
+                module = _load_module_from_path(module_file, package_prefix=package_prefix)
+            except Exception:
+                tb_str = traceback.format_exc()
+
+            if module is None:
+                if tb_str is None:
+                    tb_str = "(module returned None — no callable build_pipeline or import failed silently)"
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="rejected",
+                    reason="module could not be imported",
+                    traceback=tb_str,
+                    cli_name=cli_name,
+                ))
+                continue
+
+            build = getattr(module, "build_pipeline", None)
+            if not callable(build):
+                dispositions.append(Disposition(
+                    path=module_file,
+                    origin=origin,
+                    status="rejected",
+                    reason=f"module loaded but build_pipeline is {type(build).__name__!r}, not callable",
+                    cli_name=cli_name,
+                ))
+                continue
+
+            seen.add(cli_name)
+            dispositions.append(Disposition(
+                path=module_file,
+                origin=origin,
+                status="discovered",
+                reason="ok",
+                cli_name=cli_name,
+            ))
+
+    return dispositions
+
+
 def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, Any], Path]]:
     """Walk the in-tree + user pipeline directories and yield discovered pipelines.
 
@@ -365,41 +512,65 @@ def discover_python_pipelines() -> list[tuple[str, PipelineBuilder, dict[str, An
     ``{'planning'}`` are skipped with a
     :class:`UserWarning`. Modules that do not expose a callable
     ``build_pipeline`` attribute are skipped silently.
+
+    Implementation delegates to :func:`scan_python_pipelines` for the full
+    scan, then raises an aggregate error if any **in-tree** module was
+    rejected (collect-then-raise, NOT fail-on-first).  Rejected **user**
+    modules emit a :class:`UserWarning` and do NOT raise.
+
+    The return shape is back-compat: list of
+    ``(cli_name, build_callable, metadata, source_path)`` quads.
     """
+    dispositions = scan_python_pipelines()
 
+    # Emit warnings for builtin collisions (preserve historical behaviour).
+    for d in dispositions:
+        if d.status == "skipped" and "collides with a built-in" in d.reason:
+            warnings.warn(
+                f"discovered pipeline module {d.path!s} would "
+                f"override built-in {d.cli_name!r}; skipping",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # Collect rejected in-tree modules for aggregate error.
+    rejected_in_tree = [d for d in dispositions if d.status == "rejected" and d.origin == "in_tree"]
+
+    # Warn (but do not raise) for rejected user modules.
+    for d in dispositions:
+        if d.status == "rejected" and d.origin == "user":
+            warnings.warn(
+                f"user pipeline {d.path!s} could not be loaded: {d.reason}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    # Aggregate raise for rejected in-tree modules (after full scan).
+    if rejected_in_tree:
+        lines = [f"  {d.path}: {d.reason}" for d in rejected_in_tree]
+        raise RuntimeError(
+            "In-tree pipeline discovery failed for the following modules "
+            "(aggregate, collect-then-raise):\n" + "\n".join(lines)
+        )
+
+    # Build back-compat quad list from discovered dispositions only.
     out: list[tuple[str, PipelineBuilder, dict[str, Any], Path]] = []
+    # Re-derive builders and metadata from discovered paths.
+    # We need the actual module objects — re-import the discovered ones.
+    # To avoid double-importing, we track the scan_roots mapping.
     seen: set[str] = set()
-
-    scan_roots: list[tuple[Path, str | None]] = [
-        (Path(__file__).resolve().parent.parent / "pipelines", "megaplan.pipelines"),
-        (Path.home() / ".megaplan" / "pipelines", None),
-    ]
-
-    for pipelines_dir, package_prefix in scan_roots:
+    for pipelines_dir, package_prefix in _get_scan_roots():
         for cli_name, module_file in _scan_dir_for_pipeline_modules(
             pipelines_dir, package_prefix=package_prefix,
         ):
-            if cli_name in _BUILTIN_NAMES:
-                warnings.warn(
-                    f"discovered pipeline module {module_file!s} would "
-                    f"override built-in {cli_name!r}; skipping",
-                    UserWarning,
-                    stacklevel=2,
-                )
+            if cli_name in _BUILTIN_NAMES or cli_name in seen:
                 continue
-            if cli_name in seen:
-                # Earlier scan root takes precedence (in-tree over user).
-                continue
-
-            module = _load_module_from_path(
-                module_file, package_prefix=package_prefix,
-            )
+            module = _load_module_from_path(module_file, package_prefix=package_prefix)
             if module is None:
                 continue
             build = getattr(module, "build_pipeline", None)
             if not callable(build):
                 continue
-
             seen.add(cli_name)
             metadata = _module_metadata(module)
             out.append((cli_name, build, metadata, module_file))

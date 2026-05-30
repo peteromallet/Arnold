@@ -91,6 +91,12 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
     phase_cost: dict[str, float] = defaultdict(float)
     phase_tokens: dict[str, int] = defaultdict(int)
 
+    # ── R7 monoculture / cache sensors (output-only) ──────────────────
+    phase_cache_read: dict[str, int] = defaultdict(int)
+    phase_cache_input: dict[str, int] = defaultdict(int)
+    distinct_models: set[str] = set()
+    cost_records_total = 0
+
     # ── single pass over events ────────────────────────────────────────
     for ev in events:
         kind = ev.get("kind")
@@ -121,6 +127,11 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
             if phase:
                 phase_cost[phase] += cost
 
+            # R7 monoculture sensor — count cost records and distinct models.
+            cost_records_total += 1
+            if model:
+                distinct_models.add(str(model))
+
         elif kind == EventKind.LLM_CALL_END:
             tokens_in = int(payload.get("tokens_in", 0) or 0)
             tokens_out = int(payload.get("tokens_out", 0) or 0)
@@ -132,6 +143,10 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
             # phase
             if phase:
                 phase_tokens[phase] += tokens
+                # Prefix-cache-hit-rate sensor (output-only): accumulate
+                # cache_read_tokens vs total input tokens per phase.
+                phase_cache_read[phase] += int(payload.get("cache_read_tokens", 0) or 0)
+                phase_cache_input[phase] += tokens_in
 
             if payload_model and isinstance(payload_model, str) and payload_model.strip():
                 # ── exact path: model is present and truthy ────────────
@@ -201,6 +216,16 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
         "exact_tokens": exact_tokens,
         "phase_cost": dict(phase_cost),
         "phase_tokens": dict(phase_tokens),
+        # R7 output-only sensors — recorded only, no consumer (M5-cal owns routing).
+        "phase_prefix_cache_hit_rate": {
+            p: (phase_cache_read[p] / phase_cache_input[p])
+            if phase_cache_input.get(p)
+            else 0.0
+            for p in set(phase_cache_input) | set(phase_cache_read)
+        },
+        "monoculture_index": (
+            (len(distinct_models) / cost_records_total) if cost_records_total else 0.0
+        ),
     }
 
 

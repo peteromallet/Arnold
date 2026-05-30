@@ -18,7 +18,7 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e '.[agent]'
       - name: Test
-        run: pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
+        run: MEGAPLAN_MOCK_WORKERS=1 pytest -m "not slow" -q
 
   docker-test:
     needs: test
