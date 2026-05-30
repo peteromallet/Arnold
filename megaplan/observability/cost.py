@@ -54,6 +54,7 @@ def _classify_vendor(model: str | None) -> str:
 
 def _load_state(plan_dir: Path) -> dict | None:
     """Load state.json from *plan_dir*, returning None if missing/unreadable."""
+    # cache-tolerant: cost rollup view.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
         return None

@@ -322,31 +322,36 @@ def workflow_includes_step(
 ) -> bool:
     if step == "step":
         return True
-    workflow = _workflow_for_robustness(
-        normalize_robustness(robustness),
-        with_prep=with_prep,
-        with_feedback=with_feedback,
+    from megaplan._core.topology import RunTopologyConfig, build_topology
+
+    graph = build_topology(
+        RunTopologyConfig(
+            robustness=normalize_robustness(robustness),
+            creative=False,
+            with_prep=with_prep,
+            with_feedback=with_feedback,
+        )
     )
-    return any(
-        transition.next_step == step
-        for transitions in workflow.values()
-        for transition in transitions
-    )
+    return any(edge.step == step for edge in graph.edges)
 
 
 def workflow_transition(state: PlanState, step: str) -> Transition | None:
     current = state.get("current_state")
     if not isinstance(current, str):
         return None
-    workflow = _workflow_for_robustness(
-        _workflow_robustness_from_state(state),
-        creative=is_creative_mode(state),
-        with_prep=_with_prep_from_state(state),
-        with_feedback=_with_feedback_from_state(state),
+    from megaplan._core.topology import RunTopologyConfig, build_topology
+
+    graph = build_topology(
+        RunTopologyConfig(
+            robustness=_workflow_robustness_from_state(state),
+            creative=is_creative_mode(state),
+            with_prep=_with_prep_from_state(state),
+            with_feedback=_with_feedback_from_state(state),
+        )
     )
-    for transition in workflow.get(current, []):
-        if transition.next_step == step and _transition_matches(state, transition.condition):
-            return transition
+    for edge in graph.successors(current):
+        if edge.step == step and _transition_matches(state, edge.condition):
+            return Transition(edge.step, edge.dst, edge.condition)
     return None
 
 
@@ -354,16 +359,20 @@ def workflow_next(state: PlanState) -> list[str]:
     current = state.get("current_state")
     if not isinstance(current, str):
         return []
-    workflow = _workflow_for_robustness(
-        _workflow_robustness_from_state(state),
-        creative=is_creative_mode(state),
-        with_prep=_with_prep_from_state(state),
-        with_feedback=_with_feedback_from_state(state),
+    from megaplan._core.topology import RunTopologyConfig, build_topology
+
+    graph = build_topology(
+        RunTopologyConfig(
+            robustness=_workflow_robustness_from_state(state),
+            creative=is_creative_mode(state),
+            with_prep=_with_prep_from_state(state),
+            with_feedback=_with_feedback_from_state(state),
+        )
     )
     next_steps = [
-        transition.next_step
-        for transition in workflow.get(current, [])
-        if _transition_matches(state, transition.condition)
+        edge.step
+        for edge in graph.successors(current)
+        if _transition_matches(state, edge.condition)
     ]
     if current in _STEP_CONTEXT_STATES:
         next_steps.append("step")
@@ -394,17 +403,8 @@ def _default_resume_runner(args: list[str], cwd: Path | None = None) -> tuple[in
     return proc.returncode, proc.stdout, proc.stderr
 
 
-_RESUME_ACTIVE_STATES: dict[str, str] = {
-    "prep": "initialized",
-    "plan": "initialized",
-    "critique": "planned",
-    "gate": "critiqued",
-    "revise": "critiqued",
-    "finalize": "gated",
-    "execute": "finalized",
-    "review": "executed",
-    "feedback": "reviewed",
-}
+# `_RESUME_ACTIVE_STATES` is now derived on demand from the realized graph
+# via `topology.predecessors(phase, policy='resume')` — see M3 Step 7.
 
 
 def resume_plan(
@@ -432,7 +432,8 @@ def resume_plan(
     args = _resume_phase_args(phase, cursor, plan)
     runner_fn = runner or _default_resume_runner
     previous_state = repo.load_state()
-    active_state = _RESUME_ACTIVE_STATES.get(phase)
+    from megaplan._core import topology as _topology
+    active_state = _topology.predecessors(phase, policy="resume")
     if active_state and previous_state.get("current_state") in {"failed", "blocked"}:
         state = dict(previous_state)
         state["current_state"] = active_state

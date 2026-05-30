@@ -200,6 +200,7 @@ def _parse_decision_skill_profiles() -> list[str]:
 
 def _load_state(plan_dir: Path) -> Optional[dict]:
     """Load state.json from plan_dir, returning None if missing/unreadable."""
+    # cache-tolerant: introspect probe.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
         return None

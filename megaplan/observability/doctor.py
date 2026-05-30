@@ -256,6 +256,7 @@ def _check_stale_lock(plan_dir: Path) -> tuple[str, str, str]:
 
 
 def _check_phase_timeout(plan_dir: Path) -> tuple[str, str, str]:
+    # cache-tolerant: doctor probe.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
         return _check_status("Phase timeout", True, severity="OK")
@@ -401,6 +402,7 @@ def _check_outstanding_flags(plan_dir: Path) -> tuple[str, str, str]:
     """Check for outstanding flags and enumerate recoverable_via."""
     from megaplan._core.workflow import workflow_next
 
+    # cache-tolerant: doctor probe.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
         return _check_status("Outstanding flags (no state)", True, severity="OK")

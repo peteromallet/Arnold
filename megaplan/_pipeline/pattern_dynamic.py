@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, cast
 
+from megaplan._pipeline.envelope import (
+    EMPTY_ENVELOPE,
+    RunEnvelope,
+    _envelope_ctx,
+    _fanout_active_ctx,
+)
 from megaplan._pipeline.pattern_types import JoinFn
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.flags import typed_ports_on
@@ -20,6 +26,29 @@ from megaplan._pipeline.types import (
     StepContext,
     StepResult,
 )
+
+def _governor_check_fanout(envelope, width: int) -> None:
+    """Consult the tree-scoped Governor before spawning ``width`` fan-out specs.
+
+    Raises :class:`megaplan.runtime.governor.BudgetExceeded` when a cap would
+    be crossed.  No-op when no Governor is attached.  ``RestorableBoundaryViolation``
+    raised by ``restorable_boundary.__enter__`` always precedes this check
+    because the boundary fires before any protected body runs.
+    """
+
+    from megaplan.runtime.governor import (
+        BudgetExceeded,
+        current_governor,
+    )
+
+    gov = current_governor()
+    if gov is None:
+        return
+    reason = gov.would_exceed(envelope, fanout_width=width)
+    if reason is not None:
+        raise BudgetExceeded(reason, f"fanout width={width}")
+    gov.note_fanout(width)
+
 
 #: Typed value-kind Port emitted by the fan-out join when typed-ports is on.
 LAST_FANOUT_RESULTS_PORT: Port = Port(
@@ -128,7 +157,15 @@ class _PanelFromArtifactStep(SubloopStep):
 
         specs = _read_specs_from_path(path)
         steps = [_specialize_step(self.base_template, spec) for spec in specs]
-        results = [step.run(ctx) for step in steps]
+        envelope = getattr(ctx, "envelope", None) or EMPTY_ENVELOPE
+        _governor_check_fanout(envelope, len(steps))
+        fanout_token = _fanout_active_ctx.set(True)
+        env_token = _envelope_ctx.set(envelope)
+        try:
+            results = [step.run(ctx) for step in steps]
+        finally:
+            _envelope_ctx.reset(env_token)
+            _fanout_active_ctx.reset(fanout_token)
         return self.join_fn(results, ctx)
 
 
@@ -152,7 +189,15 @@ class _DynamicFanoutStep(SubloopStep):
         gen_result = self.generator.run(ctx)
         specs = _extract_specs_from_result(gen_result)
         steps = [_specialize_step(self.base_prompt, spec) for spec in specs]
-        results = [step.run(ctx) for step in steps]
+        envelope = getattr(ctx, "envelope", None) or EMPTY_ENVELOPE
+        _governor_check_fanout(envelope, len(steps))
+        fanout_token = _fanout_active_ctx.set(True)
+        env_token = _envelope_ctx.set(envelope)
+        try:
+            results = [step.run(ctx) for step in steps]
+        finally:
+            _envelope_ctx.reset(env_token)
+            _fanout_active_ctx.reset(fanout_token)
         joined = self.join_fn(results, ctx)
         if typed_ports_on():
             # Emit the typed Port last_fanout_results carrying the per-spec

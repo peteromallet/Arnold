@@ -66,7 +66,11 @@ def test_iterate_until_stores_predicate_on_stage(tmp_path: Path):
         return ls.iteration >= 3
 
     pipe = _build_pipeline(step, condition=cond)
-    assert pipe.stages["loopstep"].loop_condition is cond
+    # T16: iterate_until now constructs a LoopNode under the hood; the
+    # Stage's loop_condition is the node's should_halt method (which
+    # composes cap + budget + predicate).  Identity of the raw cond is
+    # therefore not preserved — behavior is.
+    assert pipe.stages["loopstep"].loop_condition is not None
     result = run_pipeline(pipe, _ctx(tmp_path), artifact_root=tmp_path)
     assert result.get("halt_reason") == "loop_condition"
     assert step.calls == 3

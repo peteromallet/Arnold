@@ -19,7 +19,6 @@ from megaplan.types import (
     STATE_GATED,
     STATE_PLANNED,
     STATE_PREPPED,
-    STATE_REVIEWED,
     StepResponse,
     DEFAULT_AGENT_ROUTING,
     _PREMIUM_EFFORT_TOKENS,
@@ -44,6 +43,7 @@ from megaplan._core import (
     unresolved_significant_flags,
     workflow_next,
 )
+from megaplan._core import topology as _topology
 from megaplan.blocker_recovery import command_blocker_details, evaluate_blocker_recovery
 from megaplan.orchestration.evaluation import (
     build_gate_artifact,
@@ -396,19 +396,6 @@ def _override_replan(
     return response
 
 
-_BLOCKED_RECOVERY_STATES: dict[str, str] = {
-    "prep": "initialized",
-    "plan": "initialized",
-    "critique": STATE_PLANNED,
-    "gate": STATE_CRITIQUED,
-    "revise": STATE_CRITIQUED,
-    "finalize": STATE_GATED,
-    "execute": STATE_FINALIZED,
-    "review": STATE_EXECUTED,
-    "feedback": STATE_REVIEWED,
-}
-
-
 _EXTERNAL_ERROR_RETRY_STRATEGIES = {"wait_and_retry", "check_provider_and_retry"}
 
 
@@ -453,7 +440,7 @@ def _override_recover_blocked(
             "recover-blocked requires resume_cursor.phase",
             extra={"resume_cursor": resume_cursor},
         )
-    recovered_state = _BLOCKED_RECOVERY_STATES.get(phase)
+    recovered_state = _topology.predecessors(phase, policy="recovery")
     if recovered_state is None:
         raise CliError(
             "invalid_resume_cursor",

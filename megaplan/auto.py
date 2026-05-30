@@ -29,9 +29,16 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from megaplan.drivers import Substrate
 
 from megaplan._core import active_phase_name, find_plan_dir
+from megaplan._pipeline.envelope import (
+    _envelope_ctx,
+    write_envelope_in,
+)
 from megaplan._core.state import write_plan_state
 from megaplan.handlers.shared import _warn_best_effort_emit_failure, _warn_read_fallback
 from megaplan.runtime.process import kill_group, spawn
@@ -253,6 +260,144 @@ def _is_retryable_external_error(phase: str, external_error: object | None) -> b
     return False
 
 
+def _apply_envelope_handshake(
+    run_kwargs: dict[str, Any], plan_dir: Path | None
+) -> None:
+    """Symmetric subprocess handshake: write fresh ``.envelope-in.json`` per
+    spawn and add a per-process ``MEGAPLAN_ENVELOPE_IN`` env var.
+
+    The child consumes via :func:`consume_envelope_in` which pops the env var
+    so grandchildren do not inherit it — every nested spawn must call this
+    helper again to get its own fresh sidecar + env override.
+    """
+    envelope = _envelope_ctx.get()
+    if envelope is None or plan_dir is None:
+        return
+    overrides = write_envelope_in(Path(plan_dir), envelope)
+    existing = run_kwargs.get("progress_env") or {}
+    merged = dict(existing)
+    merged.update(overrides)
+    run_kwargs["progress_env"] = merged
+
+
+@dataclass
+class WatcherState:
+    """Explicit state for `_supervise_subprocess`, replacing nonlocal closures.
+
+    Captures the timing/byte-buffer state the watcher loop mutates so the
+    extracted helper does not need closure variables. Returned to the caller
+    so tests can assert on watcher behavior beyond the (exit, out, err) tuple.
+    """
+
+    stdout_parts: list[bytes] = field(default_factory=list)
+    stderr_parts: list[bytes] = field(default_factory=list)
+    last_activity: float = 0.0
+    last_hard_progress: float = 0.0
+    last_liveness_mtime: float | None = None
+    last_heartbeat: float = 0.0
+    liveness_changed_since_heartbeat: bool = False
+    started: float = 0.0
+    timed_out_reason: str | None = None
+    kill_monotonic: float | None = None
+
+
+def _supervise_subprocess(
+    proc: Any,
+    plan_dir: Path | None,
+    idle_cap: float | None,
+    wall_cap: float | None,
+    *,
+    args: list[str] | None = None,
+) -> tuple[int, str, str, WatcherState]:
+    """Extracted watcher loop (verbatim semantics of auto.py L310-392).
+
+    Drains ``proc.stdout``/``proc.stderr`` on background threads, monitors
+    plan-artifact mtime for liveness, emits heartbeats, and applies wall +
+    idle timeouts with ``kill_group`` reaping. Returns the final
+    ``(exit_code, stdout, stderr, WatcherState)``.
+    """
+
+    args = args if args is not None else []
+    state = WatcherState()
+    state.last_activity = time.monotonic()
+    state.last_hard_progress = state.last_activity
+    state.last_liveness_mtime = _plan_liveness_mtime(plan_dir)
+    heartbeat_interval = _phase_heartbeat_interval_seconds()
+    state.last_heartbeat = state.last_activity
+
+    def _reader(stream: Any, parts: list[bytes]) -> None:
+        if stream is None:
+            return
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            parts.append(chunk)
+            state.last_activity = time.monotonic()
+            state.last_hard_progress = state.last_activity
+
+    threads = [
+        threading.Thread(target=_reader, args=(proc.stdout, state.stdout_parts), daemon=True),
+        threading.Thread(target=_reader, args=(proc.stderr, state.stderr_parts), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    state.started = time.monotonic()
+    while proc.poll() is None:
+        now = time.monotonic()
+        current_liveness_mtime = _plan_liveness_mtime(plan_dir)
+        if (
+            current_liveness_mtime is not None
+            and (
+                state.last_liveness_mtime is None
+                or current_liveness_mtime > state.last_liveness_mtime
+            )
+        ):
+            state.last_liveness_mtime = current_liveness_mtime
+            state.last_activity = now
+            state.last_hard_progress = now
+            state.liveness_changed_since_heartbeat = True
+        if heartbeat_interval is not None and now - state.last_heartbeat >= heartbeat_interval:
+            logging.getLogger("megaplan").info(
+                "%s",
+                _format_phase_heartbeat(
+                    args,
+                    elapsed_s=now - state.started,
+                    plan_dir=plan_dir,
+                    progress_changed=state.liveness_changed_since_heartbeat,
+                ),
+            )
+            state.last_heartbeat = now
+            state.liveness_changed_since_heartbeat = False
+        timeout_base = state.last_hard_progress if idle_cap is not None else state.started
+        if wall_cap is not None and now - timeout_base >= wall_cap:
+            state.timed_out_reason = f"subprocess timed out after {wall_cap}s"
+            break
+        if idle_cap is not None and now - state.last_activity >= idle_cap:
+            state.timed_out_reason = (
+                f"subprocess idle timed out after {idle_cap}s without output"
+            )
+            break
+        time.sleep(0.2)
+
+    if state.timed_out_reason is not None:
+        state.kill_monotonic = time.monotonic()
+        kill_group(proc, label="megaplan auto idle/timeout")
+        for thread in threads:
+            thread.join(timeout=1)
+        stdout = b"".join(state.stdout_parts).decode("utf-8", errors="replace")
+        stderr = b"".join(state.stderr_parts).decode("utf-8", errors="replace")
+        marker = f"\n[megaplan auto] {state.timed_out_reason}"
+        return PHASE_TIMEOUT_EXIT_CODE, stdout, (stderr + marker).strip(), state
+
+    for thread in threads:
+        thread.join(timeout=1)
+    stdout = b"".join(state.stdout_parts).decode("utf-8", errors="replace")
+    stderr = b"".join(state.stderr_parts).decode("utf-8", errors="replace")
+    return int(proc.returncode or 0), stdout, stderr, state
+
+
 def _run_megaplan(
     args: list[str],
     *,
@@ -311,85 +456,14 @@ def _run_megaplan(
     except FileNotFoundError as error:
         return 127, "", str(error)
 
-    stdout_parts: list[bytes] = []
-    stderr_parts: list[bytes] = []
-    last_activity = time.monotonic()
-    last_hard_progress = last_activity
-    last_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
-    heartbeat_interval = _phase_heartbeat_interval_seconds()
-    last_heartbeat = last_activity
-    liveness_changed_since_heartbeat = False
-
-    def _reader(stream: Any, parts: list[bytes]) -> None:
-        nonlocal last_activity, last_hard_progress
-        if stream is None:
-            return
-        while True:
-            chunk = stream.read(4096)
-            if not chunk:
-                break
-            parts.append(chunk)
-            last_activity = time.monotonic()
-            last_hard_progress = last_activity
-
-    threads = [
-        threading.Thread(target=_reader, args=(proc.stdout, stdout_parts), daemon=True),
-        threading.Thread(target=_reader, args=(proc.stderr, stderr_parts), daemon=True),
-    ]
-    for thread in threads:
-        thread.start()
-
-    started = time.monotonic()
-    timed_out_reason: str | None = None
-    while proc.poll() is None:
-        now = time.monotonic()
-        current_liveness_mtime = _plan_liveness_mtime(liveness_plan_dir)
-        if (
-            current_liveness_mtime is not None
-            and (
-                last_liveness_mtime is None
-                or current_liveness_mtime > last_liveness_mtime
-            )
-        ):
-            last_liveness_mtime = current_liveness_mtime
-            last_activity = now
-            last_hard_progress = now
-            liveness_changed_since_heartbeat = True
-        if heartbeat_interval is not None and now - last_heartbeat >= heartbeat_interval:
-            logging.getLogger("megaplan").info(
-                "%s",
-                _format_phase_heartbeat(
-                    args,
-                    elapsed_s=now - started,
-                    plan_dir=liveness_plan_dir,
-                    progress_changed=liveness_changed_since_heartbeat,
-                ),
-            )
-            last_heartbeat = now
-            liveness_changed_since_heartbeat = False
-        timeout_base = last_hard_progress if idle_timeout is not None else started
-        if timeout is not None and now - timeout_base >= timeout:
-            timed_out_reason = f"subprocess timed out after {timeout}s"
-            break
-        if idle_timeout is not None and now - last_activity >= idle_timeout:
-            timed_out_reason = f"subprocess idle timed out after {idle_timeout}s without output"
-            break
-        time.sleep(0.2)
-
-    if timed_out_reason is not None:
-        kill_group(proc, label="megaplan auto idle/timeout")
-        for thread in threads:
-            thread.join(timeout=1)
-        stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
-        stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
-        marker = f"\n[megaplan auto] {timed_out_reason}"
-        return PHASE_TIMEOUT_EXIT_CODE, stdout, (stderr + marker).strip()
-
-    for thread in threads:
-        thread.join(timeout=1)
-    stdout = b"".join(stdout_parts).decode("utf-8", errors="replace")
-    stderr = b"".join(stderr_parts).decode("utf-8", errors="replace")
-    return int(proc.returncode or 0), stdout, stderr
+    exit_code, stdout, stderr, _state = _supervise_subprocess(
+        proc,
+        liveness_plan_dir,
+        idle_timeout,
+        timeout,
+        args=args,
+    )
+    return exit_code, stdout, stderr
 
 
 def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
@@ -397,6 +471,7 @@ def _plan_liveness_mtime(plan_dir: Path | None) -> float | None:
 
     if plan_dir is None:
         return None
+    # dormant-path: subprocess seam, retired at M6
     candidates = [plan_dir / "state.json"]
     try:
         candidates.extend(plan_dir.glob("execution_batch_*.json"))
@@ -439,6 +514,7 @@ def _format_phase_heartbeat(
         f"elapsed={int(elapsed_s)}s",
         f"progress_mtime_changed={'yes' if progress_changed else 'no'}",
     ]
+    # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json" if plan_dir is not None else None
     if state_path is not None:
         try:
@@ -501,7 +577,10 @@ def _has_valid_next(status: dict[str, Any], action: str) -> bool:
     return action in (status.get("valid_next") or [])
 
 
-def _phase_command(next_step: str) -> list[str]:
+def _phase_command(
+    next_step: str,
+    substrate: "Substrate" = "subprocess_isolated",
+) -> list[str]:
     """Translate a `next_step` from status into the CLI args that run it.
 
     Most phases are one-to-one: next_step == command. Execute adds the
@@ -511,6 +590,13 @@ def _phase_command(next_step: str) -> list[str]:
     ``["override", "add-note"]`` so argparse sees the sub-subcommand —
     otherwise the whole string is passed as a single positional and
     argparse rejects it with `invalid choice`.
+
+    The *substrate* parameter is a forward-looking shim (M3 Step 12):
+    ``"subprocess_isolated"`` (default) preserves the legacy CLI-args
+    contract; ``"in_process"`` is accepted but currently returns the
+    same args.  Callers in the unified-dispatch path should pass the
+    active substrate explicitly so the contract is unambiguous when the
+    in-process path gains its own translation.
     """
     if next_step == "execute":
         # --retry-blocked-tasks is safe to pass on every iteration. Within a
@@ -670,6 +756,7 @@ def _sum_history_cost_usd(plan_dir: Path | None) -> float:
         return 0.0
 
     try:
+        # dormant-path: subprocess seam, retired at M6
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             state_data = json.load(handle)
     except FileNotFoundError:
@@ -714,6 +801,7 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
+        # dormant-path: subprocess seam, retired at M6
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             data = json.load(handle)
     except FileNotFoundError:
@@ -891,6 +979,7 @@ def _record_lifecycle_failure(
         # the failure event for audit + resume_cursor, but preserve the plan's
         # actual current_state — the driver giving up doesn't terminate the plan.
         try:
+            # dormant-path: subprocess seam, retired at M6
             state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
             if isinstance(state_data, dict):
                 current_state = state_data.get("current_state") or STATE_BLOCKED
@@ -937,6 +1026,7 @@ def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] |
     if plan_dir is None:
         return None
     try:
+        # dormant-path: subprocess seam, retired at M6
         with (plan_dir / "state.json").open(encoding="utf-8") as handle:
             state_data = json.load(handle)
         if not isinstance(state_data, dict):
@@ -979,6 +1069,7 @@ def _shadow_completion_verdict(
 
         state: dict[str, Any] = {}
         try:
+            # dormant-path: subprocess seam, retired at M6
             raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 state = raw
@@ -1034,6 +1125,7 @@ def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
     """Restore a successfully executed plan after an external callback failure."""
     if plan_dir is None:
         return False
+    # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json"
     try:
         with state_path.open(encoding="utf-8") as handle:
@@ -1171,6 +1263,7 @@ def _clear_orphaned_active_step(plan_dir: Path | None, expected_step: str) -> bo
     """
     if plan_dir is None:
         return False
+    # dormant-path: subprocess seam, retired at M6
     state_path = plan_dir / "state.json"
     try:
         with state_path.open(encoding="utf-8") as handle:
@@ -1243,6 +1336,7 @@ def _plan_clarification(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
     try:
+        # dormant-path: subprocess seam, retired at M6
         state_data = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
@@ -1370,6 +1464,7 @@ def drive(
         }
         if progress_env:
             run_kwargs["progress_env"] = progress_env
+        _apply_envelope_handshake(run_kwargs, plan_dir)
         try:
             code, out, err = _run_megaplan(cmd, **run_kwargs)
         except TypeError as error:
@@ -1830,6 +1925,7 @@ def drive(
                     run_kwargs: dict[str, Any] = {"cwd": cwd, "timeout": status_timeout}
                     if progress_env:
                         run_kwargs["progress_env"] = progress_env
+                    _apply_envelope_handshake(run_kwargs, plan_dir)
                     code, out, err = _run_megaplan(
                         [
                             "override",
@@ -1896,6 +1992,7 @@ def drive(
                     run_kwargs = {"cwd": cwd, "timeout": status_timeout}
                     if progress_env:
                         run_kwargs["progress_env"] = progress_env
+                    _apply_envelope_handshake(run_kwargs, plan_dir)
                     _run_megaplan(
                         [
                             "override",

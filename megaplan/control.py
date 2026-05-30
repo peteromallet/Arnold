@@ -224,7 +224,8 @@ class ControlTargetResolver:
 
     def _read_plan_state(self, plan_dir: Path) -> dict[str, Any]:
         try:
-            state = read_json(plan_dir / "state.json")
+            from megaplan._core.io import read_plan_state_cached
+            state = read_plan_state_cached(plan_dir, mode="authority")
         except Exception as error:
             raise CliError("invalid_plan_state", f"Failed to read {plan_dir / 'state.json'}: {error}") from error
         if not isinstance(state, dict):
@@ -391,7 +392,8 @@ def run_sprint_control_handler(target: ControlTarget, message: ControlMessage, *
             raise CliError("run_sprint_init_failed", f"Plan initialization failed for {plan!r}", extra={"response": response})
         created = True
         plan_dir = _plan_dir(target.project_root, plan)
-        state = read_json(plan_dir / "state.json")
+        from megaplan._core.io import read_plan_state_cached
+        state = read_plan_state_cached(plan_dir, mode="authority")
         meta = state.get("meta") if isinstance(state.get("meta"), dict) else {}
         state["meta"] = {**meta, "epic_id": target.epic_id, "sprint_id": target.sprint_id}
         save_state(plan_dir, state)

@@ -172,7 +172,8 @@ class PlanRepository:
             path.unlink()
 
     def load_state(self) -> dict[str, Any]:
-        return read_json(self.plan_dir / "state.json")
+        from megaplan._core.io import read_plan_state_cached
+        return read_plan_state_cached(self.plan_dir, mode="authority")
 
     def save_state(self, state: dict[str, Any]) -> None:
         write_plan_state(self.plan_dir, mode="replace", state=state)

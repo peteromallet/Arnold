@@ -12,7 +12,7 @@ import tempfile
 import time
 from base64 import b64decode, b64encode
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from megaplan.schemas import SCHEMAS, strict_schema
 from megaplan.types import KNOWN_AGENTS
@@ -271,6 +271,84 @@ def atomic_write_json(path: Path, data: Any, *, _plan_dir: Path | None = None) -
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# R1 authority: cached state read shim
+# ---------------------------------------------------------------------------
+
+# Mode literal carried by the 8 authority readers and 11 cache-tolerant
+# readers under the R1 flip. The third mode value ``"forward_only"`` is
+# reserved for the dormant-path readers that never route through this shim.
+PlanStateReadMode = Literal["authority", "cache_tolerant", "forward_only"]
+
+
+def read_plan_state_cached(plan_dir: Path, *, mode: "PlanStateReadMode") -> Any:
+    """Read ``plan_dir/state.json`` under the R1 cache/authority discipline.
+
+    Modes
+    -----
+    ``"authority"``
+        When ``r1_authority_on()`` is true, rebuild the canonical state by
+        folding ``events.ndjson`` (the shadow-WAL), compare it against the
+        on-disk ``state.json`` cache, and on divergence rewrite the cache
+        with the WAL truth and emit a ``STATE_CACHE_DRIFT`` event. Returns
+        the WAL truth. When the master flag is OFF, behaves identically to
+        ``"cache_tolerant"`` (reads ``state.json`` directly with no fold).
+
+    ``"cache_tolerant"``
+        Always reads ``state.json`` directly. Used by reporters/observers
+        that tolerate a slightly stale view between writes.
+
+    ``"forward_only"``
+        Explicit no-op classification — also reads ``state.json`` directly.
+        Used by dormant-path callers retired at M6.
+    """
+    state_path = Path(plan_dir) / "state.json"
+
+    if mode == "authority":
+        # Lazy import to avoid module-load-time cycles
+        # (flags → _pipeline → _core.io).
+        from megaplan._pipeline.flags import r1_authority_on
+        if r1_authority_on():
+            from megaplan.observability.fold import rebuild_state_from_wal
+            wal_state = rebuild_state_from_wal(Path(plan_dir))
+            disk_state: Any = None
+            if state_path.exists():
+                try:
+                    disk_state = json.loads(state_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    disk_state = None
+            # Normalize both sides for a stable compare.
+            try:
+                disk_norm = json.loads(json.dumps(disk_state, sort_keys=True))
+                wal_norm = json.loads(json.dumps(wal_state, sort_keys=True))
+            except (TypeError, ValueError):
+                disk_norm = disk_state
+                wal_norm = wal_state
+            if disk_norm != wal_norm:
+                # Rewrite cache to match WAL truth, then announce the drift.
+                atomic_write_json(state_path, wal_state)
+                try:
+                    from megaplan.observability.events import emit, EventKind
+                    emit(
+                        EventKind.STATE_CACHE_DRIFT,
+                        plan_dir=Path(plan_dir),
+                        payload={
+                            "disk_keys": sorted(disk_norm.keys()) if isinstance(disk_norm, dict) else None,
+                            "wal_keys": sorted(wal_norm.keys()) if isinstance(wal_norm, dict) else None,
+                        },
+                    )
+                except Exception:
+                    pass
+            return wal_state
+        # Flag OFF: read disk directly.
+        return read_json(state_path)
+
+    if mode in ("cache_tolerant", "forward_only"):
+        return read_json(state_path)
+
+    raise ValueError(f"unknown PlanStateReadMode: {mode!r}")
 
 
 def journal_root(root: Path) -> Path:

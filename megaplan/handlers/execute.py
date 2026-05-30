@@ -197,7 +197,8 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
         if response.get("result") == "blocked":
             save_state_merge_meta(plan_dir, state)
             _record_execute_blocked(plan_dir, response)
-            state = read_json(plan_dir / "state.json")
+            from megaplan._core.io import read_plan_state_cached
+            state = read_plan_state_cached(plan_dir, mode="authority")
             response["state"] = STATE_BLOCKED
             response["next_step"] = None
             response.pop("next_step_runtime", None)
