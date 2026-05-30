@@ -15,6 +15,19 @@ from megaplan.workers import CommandResult, _build_mock_payload, run_codex_prep_
 from tests._workers_helpers import _mock_state, _write_codex_rollout
 
 
+def test_terminal_tool_result_truncation_exact_cap() -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "megaplan" / "agent"))
+    from tools.terminal_tool import _truncate_tool_result
+
+    assert _truncate_tool_result("a" * 49999) == "a" * 49999
+    truncated = _truncate_tool_result("a" * 50001)
+    assert len(truncated) == 50000
+    assert "[truncated " in truncated
+    assert " of 50001 chars]" in truncated
+
+
 def test_run_codex_step_passes_effort_flag(tmp_path: Path) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers import CommandResult, run_codex_step

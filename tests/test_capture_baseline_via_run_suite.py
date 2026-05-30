@@ -28,7 +28,7 @@ def _make_result(**overrides: object) -> SuiteRunResult:
     defaults: dict[str, object] = {
         "run_id": "abc123def456",
         "phase": "baseline",
-        "command": "pytest --tb=no -q --no-header -rN",
+        "command": "pytest --tb=no -q --no-header -rA",
         "duration": 1.5,
         "collected": 5,
         "collected_ids": [
@@ -61,7 +61,7 @@ def test_capture_baseline_mock_env_returns_stub(
     monkeypatch.setenv(_mod.MOCK_ENV_VAR, "1")
     result = _mod._capture_test_baseline(tmp_path, {})
     assert result["baseline_test_failures"] == []
-    assert result["baseline_test_command"] == "pytest --tb=no -q --no-header -rN"
+    assert result["baseline_test_command"] == "pytest --tb=no -q --no-header -rA"
 
 
 # ---------------------------------------------------------------------------

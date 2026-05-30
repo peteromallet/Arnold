@@ -14,7 +14,7 @@ def _make_result(**overrides: object) -> SuiteRunResult:
     defaults: dict[str, object] = {
         "run_id": "abc123def456",
         "phase": "baseline",
-        "command": "pytest --tb=no -q --no-header -rN",
+        "command": "pytest --tb=no -q --no-header -rA",
         "duration": 1.5,
         "collected": 5,
         "collected_ids": [],

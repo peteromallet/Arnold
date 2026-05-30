@@ -354,15 +354,29 @@ def test_auto_hook_writes_verdict_and_logs(tmp_path, monkeypatch):
     assert verdict is not None and verdict["mode"] == "shadow"
 
 
-def test_auto_hook_off_mode_writes_nothing(tmp_path):
+def test_auto_hook_off_mode_writes_verdict_without_blocking(tmp_path, monkeypatch):
     from megaplan import auto
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: SuiteRunResult(
+            run_id="r", phase="verification", command="pytest", duration=0.1,
+            collected=1, collected_ids=["t::x"], failures=["t::x"], passes=[],
+            status="failed", exit_code=1, raw_log_path=Path("/dev/null"),
+            code_hash="abc", collections_parse_ok=True,
+        ),
+    )
 
     plan_dir, _ = _make_done_plan_dir(tmp_path)
     state = json.loads((plan_dir / "state.json").read_text())
     state["config"]["completion_contract_mode"] = "off"
     _write(plan_dir / "state.json", state)
     auto._shadow_completion_verdict("plan-x", plan_dir, None, log=lambda m, **k: None)
-    assert not (plan_dir / COMPLETION_VERDICT_FILENAME).is_file()
+    verdict = read_completion_verdict(plan_dir)
+    assert verdict is not None
+    assert verdict["mode"] == "off"
+    assert verdict["would_block"] is False
 
 
 def test_auto_hook_is_fail_open(tmp_path, monkeypatch):

@@ -512,7 +512,7 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
     if os.getenv(MOCK_ENV_VAR) == "1":
         return {
             "baseline_test_failures": [],
-            "baseline_test_command": "pytest --tb=no -q --no-header -rN",
+            "baseline_test_command": "pytest --tb=no -q --no-header -rA",
         }
 
     # Configurable timeout -- read from config, validate as positive int, default 900s.
