@@ -214,6 +214,53 @@ def _stream_first_content_timeout_seconds() -> float:
     return max(value, 30.0)
 
 
+# Unified progress-stall watchdog (the durable backstop). The three watchdogs
+# above each cover a regime, but each keys on a *regime-specific* timer and the
+# loosest of them (post-content) allows up to 240s between real tokens — and the
+# blocking ``chunk_queue.get(timeout=...)`` resets on EVERY chunk, including
+# whitespace-only keepalive frames, so a provider that keeps the SSE socket warm
+# with ~1/s keepalives while emitting NO real generation can stall for the full
+# regime window before any abort fires.
+#
+# Root cause of the 53-minute DeepSeek-V4-Pro execute wedge (plan
+# m4-fresh-layout-engine-20260530-0006): the per-second ``llm_token_heartbeat``
+# masked the freeze (it fires on a wall-clock timer, not on token delta), so
+# anything keyed on event-log / state.json freshness saw "activity" every 1s and
+# never tripped — while real generation was frozen (``reasoning_emitted_so_far``
+# and ``last_reasoning_at`` pinned to a constant for 175+ beats).
+#
+# This watchdog keys ONLY on the strictly-increasing real-character counters
+# (``content_chars_emitted + reasoning_chars_emitted``) — NOT on chunk arrival,
+# keepalive frames, or heartbeat presence — and aborts the stream with a
+# retryable APITimeoutError when neither counter has advanced for the bound. It
+# is regime-agnostic (applies pre- AND post-first-content) and is the tightest of
+# the four bounds, so it dominates whenever a stream genuinely freezes mid-flight.
+# 120s default: comfortably above the largest healthy inter-token gap observed in
+# the wild (~2s direct, low tens of seconds on huge prompts) while bounding a true
+# freeze to ~2 minutes instead of 53+. Configurable via
+# HERMES_STREAM_PROGRESS_STALL_TIMEOUT; 30s floor.
+DEFAULT_STREAM_PROGRESS_STALL_TIMEOUT_SECONDS = 120.0
+
+
+def _stream_progress_stall_timeout_seconds() -> float:
+    """Real-token-delta inactivity bound (seconds) for streaming reads.
+
+    Keys strictly on advancement of the combined content+reasoning character
+    counter — never on chunk/keepalive/heartbeat arrival — so a frozen stream
+    that the provider keeps warm with keepalive frames is still aborted within
+    the bound. Configurable via HERMES_STREAM_PROGRESS_STALL_TIMEOUT. 30s floor.
+    """
+    try:
+        value = float(os.getenv(
+            "HERMES_STREAM_PROGRESS_STALL_TIMEOUT",
+            DEFAULT_STREAM_PROGRESS_STALL_TIMEOUT_SECONDS,
+        ))
+    except (TypeError, ValueError):
+        value = DEFAULT_STREAM_PROGRESS_STALL_TIMEOUT_SECONDS
+    # Floor: never allow a sub-30s value that would abort healthy slow streams.
+    return max(value, 30.0)
+
+
 # Sentinels for the streaming producer/consumer queue (see _call_chat_completions).
 # A daemon producer thread runs the blocking `for chunk in stream:` and pushes
 # chunks onto a bounded-wait queue; the consumer (main streaming thread) dequeues
@@ -4037,9 +4084,36 @@ class AIAgent:
             # to bound true zero-content wedges).
             post_content_stall_timeout = _post_content_stall_timeout_seconds()
             # Initialized before the loop so the zero-content-from-start case is
-            # covered; reset on every real content/reasoning delta below.
+            # covered; advanced ONLY when a real token COUNTER below increases.
             stream_started_at = time.monotonic()
             last_content_token_time = time.monotonic()
+
+            # Token-advancement counters. The content-stall watchdog keys on the
+            # ADVANCEMENT of these counters — NOT on mere chunk/keepalive arrival.
+            # Root cause of the partial-then-frozen DeepSeek wedge (ticket
+            # 01KSV6SF0XBW0JF9ZY6HDWX0X4): a stalled SSE stream kept emitting
+            # keepalive `data:` chunks (~1/s) whose reasoning/content delta was
+            # empty or whitespace-only. Those chunks are truthy enough to trip the
+            # old ``if reasoning_text:``/``if delta.content:`` resets of
+            # ``last_content_token_time`` (and to tick the per-second heartbeat
+            # thread) without ever advancing real generation, so the 180/240s
+            # content-stall timer was reset ~1/s and NEVER fired — the worker sat
+            # at 0% CPU for 30+ minutes. By gating the timer reset on a strictly
+            # increasing character count of emitted content/reasoning, keepalive
+            # frames, heartbeat ticks, and empty/whitespace deltas can no longer
+            # defeat the watchdog: nothing advancing for the timeout => abort.
+            content_chars_emitted = 0
+            reasoning_chars_emitted = 0
+
+            # Unified progress-stall watchdog (durable backstop). Keys ONLY on
+            # advancement of (content_chars_emitted + reasoning_chars_emitted) —
+            # never on chunk/keepalive/heartbeat arrival — and is the tightest of
+            # the stall bounds, so it dominates whenever the stream genuinely
+            # freezes mid-flight (the 53-minute DeepSeek wedge). Applies pre- AND
+            # post-first-content. ``last_real_progress_time`` advances only when a
+            # real (non-whitespace) delta grows one of the counters below.
+            progress_stall_timeout = _stream_progress_stall_timeout_seconds()
+            last_real_progress_time = time.monotonic()
 
             # Separate "first-content" watchdog: a reasoning model can stream
             # ``reasoning_content`` indefinitely without ever producing a
@@ -4112,14 +4186,21 @@ class AIAgent:
                     else content_stall_timeout
                 )
 
+                # Bound the blocking dequeue by the progress-stall window too, so
+                # a genuinely frozen stream (no chunk at all) can never block
+                # longer than the tightest bound before aborting — and so the
+                # per-iteration progress-stall check below actually gets a chance
+                # to run between keepalive frames on a slow-drip freeze.
+                get_timeout = min(effective_stall_timeout, progress_stall_timeout)
+
                 try:
-                    item = chunk_queue.get(timeout=effective_stall_timeout)
+                    item = chunk_queue.get(timeout=get_timeout)
                 except _queue.Empty:
                     # No real chunk (content OR reasoning) for the whole stall
                     # window — the producer is blocked inside __next__ on a
                     # keepalive-only stream. Abort with a retryable error.
                     _abort_stalled_stream(
-                        "stream_content_stall", effective_stall_timeout
+                        "stream_progress_stall", get_timeout
                     )
 
                 if item is _STREAM_QUEUE_SENTINEL:
@@ -4143,6 +4224,21 @@ class AIAgent:
                 ):
                     _abort_stalled_stream(
                         "stream_content_stall", effective_stall_timeout
+                    )
+
+                # Unified progress-stall watchdog (durable backstop). Keys ONLY on
+                # ``last_real_progress_time`` — advanced exclusively when a real
+                # (non-whitespace) content/reasoning delta grows a char counter
+                # below — so keepalive frames, whitespace deltas, and the ~1/s
+                # heartbeat tick cannot defeat it. Tightest of the bounds and
+                # regime-agnostic, so it dominates whenever the stream truly
+                # freezes mid-flight (root cause of the 53-minute DeepSeek wedge).
+                if (
+                    time.monotonic() - last_real_progress_time
+                    > progress_stall_timeout
+                ):
+                    _abort_stalled_stream(
+                        "stream_progress_stall", progress_stall_timeout
                     )
 
                 # First-content watchdog: catches the reasoning-only wedge that
@@ -4173,18 +4269,38 @@ class AIAgent:
                 if reasoning_text:
                     # Active reasoning counts as progress — a model in a long
                     # "thinking" phase before any content must NOT be aborted.
-                    last_content_token_time = time.monotonic()
+                    # BUT only ACTUAL character advancement resets the stall
+                    # watchdog: a keepalive chunk carrying a whitespace-only or
+                    # empty reasoning delta must not (it would reset the timer
+                    # ~1/s and wedge forever — the original bug). We track the
+                    # real reasoning character count and reset the timer only
+                    # when it grows.
                     reasoning_parts.append(reasoning_text)
+                    # Whitespace-only deltas do NOT count as generation progress
+                    # — DeepSeek keepalives have been observed carrying " "/"\n"
+                    # reasoning deltas ~1/s, which are truthy and would otherwise
+                    # reset the watchdog forever while no real reasoning advances.
+                    if reasoning_text.strip():
+                        reasoning_chars_emitted += len(reasoning_text)
+                        last_content_token_time = time.monotonic()
+                        last_real_progress_time = time.monotonic()
                     self._fire_reasoning_delta(reasoning_text)
 
                 # Accumulate text content — fire callback only when no tool calls
                 if delta and delta.content:
-                    last_content_token_time = time.monotonic()
                     # First real content delta retires the first-content
                     # watchdog. From here on the content_stall watchdog above
                     # handles mid-stream stalls.
                     first_content_seen = True
                     content_parts.append(delta.content)
+                    # Only real (non-whitespace) character advancement resets the
+                    # stall watchdog; an empty- or whitespace-only content delta
+                    # (some providers emit them as keepalive) must not keep the
+                    # timer alive.
+                    if delta.content.strip():
+                        content_chars_emitted += len(delta.content)
+                        last_content_token_time = time.monotonic()
+                        last_real_progress_time = time.monotonic()
                     if not tool_calls_acc:
                         _fire_first_delta()
                         self._fire_stream_delta(delta.content)
