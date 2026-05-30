@@ -410,7 +410,7 @@ MOCK_ENV_VAR = "MEGAPLAN_MOCK_WORKERS"
 
 DEFAULT_AGENT_ROUTING: dict[str, str] = {
     "plan": "claude",
-    "prep": "claude",
+    "prep": "hermes",
     "critique": "codex",
     "critique_evaluator": "claude",
     "revise": "claude",

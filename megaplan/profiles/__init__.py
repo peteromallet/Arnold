@@ -62,9 +62,10 @@ DIRECT_DEEPSEEK_V4_FLASH_SPEC = "hermes:deepseek:deepseek-v4-flash"
 PREP_MODEL_STAGES = ("triage", "fanout", "distill")
 CANONICAL_PREP_MODELS: dict[str, str] = {
     "triage": DIRECT_DEEPSEEK_V4_PRO_SPEC,
-    "fanout": DIRECT_DEEPSEEK_V4_FLASH_SPEC,
+    "fanout": DIRECT_DEEPSEEK_V4_PRO_SPEC,
     "distill": DIRECT_DEEPSEEK_V4_PRO_SPEC,
 }
+READ_ONLY_PREP_AGENTS = frozenset({"claude", "shannon", "codex", "hermes"})
 _PREMIUM_VENDORS = frozenset({"claude", "codex"})
 
 # Author-side phases that ``--depth`` rewrites. Critic phases (critique,
@@ -229,51 +230,46 @@ def _validate_prep_models(path: Any, profile_name: str, value: Any) -> dict[str,
         )
     validated: dict[str, str] = {}
     for stage, raw_spec in value.items():
-        if stage not in PREP_MODEL_STAGES:
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                f"prep_models.{stage}",
-                f"unknown prep stage '{stage}'. Valid stages: {', '.join(PREP_MODEL_STAGES)}",
-            )
-        if not isinstance(raw_spec, str) or not raw_spec.strip():
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                f"prep_models.{stage}",
-                f"expected a non-empty string agent spec, got {type(raw_spec).__name__}",
-            )
-        parsed = parse_agent_spec(raw_spec)
-        if parsed.agent not in KNOWN_AGENTS:
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                f"prep_models.{stage}",
-                f"unknown agent '{parsed.agent}' in spec {raw_spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}",
-            )
-        if parsed.agent in {"claude", "shannon"}:
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                f"prep_models.{stage}",
-                f"explicit {parsed.agent!r} prep models are not allowed until a read-only runner exists",
-            )
-        if stage == "fanout" and parsed.agent != "hermes":
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                f"prep_models.{stage}",
-                "prep fanout currently supports only the process-isolated read-only Hermes runner",
-            )
-        if stage in {"triage", "distill"} and parsed.agent not in {"codex", "hermes"}:
-            _raise_invalid_profile(
-                path,
-                profile_name,
-                f"prep_models.{stage}",
-                "prep triage/distill currently support only read-only Codex or Hermes runners",
-            )
-        validated[str(stage)] = raw_spec.strip()
+        validated[str(stage)] = validate_prep_stage_provider(
+            raw_spec,
+            stage=stage,
+            path=path,
+            profile_name=profile_name,
+        )
     return validated
+
+
+def validate_prep_stage_provider(
+    raw_spec: Any,
+    *,
+    stage: str,
+    path: Any | None = None,
+    profile_name: str | None = None,
+) -> str:
+    key = f"prep_models.{stage}"
+    has_profile_context = path is not None and profile_name is not None
+
+    def _fail(message: str) -> None:
+        if has_profile_context:
+            _raise_invalid_profile(path, str(profile_name), key, message)
+        raise CliError("invalid_profile", f"Invalid prep model {key}: {message}")
+
+    if stage not in PREP_MODEL_STAGES:
+        _fail(f"unknown prep stage '{stage}'. Valid stages: {', '.join(PREP_MODEL_STAGES)}")
+    if not isinstance(raw_spec, str) or not raw_spec.strip():
+        _fail(f"expected a non-empty string agent spec, got {type(raw_spec).__name__}")
+    spec = raw_spec.strip()
+    parsed = parse_agent_spec(spec)
+    if parsed.agent not in KNOWN_AGENTS:
+        _fail(
+            f"unknown agent '{parsed.agent}' in spec {spec!r}. Valid agents: {', '.join(KNOWN_AGENTS)}"
+        )
+    if parsed.agent not in READ_ONLY_PREP_AGENTS:
+        _fail(
+            "prep stages currently support only read-only providers: "
+            f"{', '.join(sorted(READ_ONLY_PREP_AGENTS))}"
+        )
+    return spec
 
 
 def _validate_profile_map(path: Any, profile_name: str, raw_profile: Any) -> dict[str, str]:
@@ -981,6 +977,16 @@ def resolve_prep_models(
     Legacy flat ``prep`` remains visible in the trace but no longer drives the
     research fan-out defaults.  This prevents a write-capable flat ``prep``
     route from being reused for evidence-gathering stages.
+
+    .. note::
+
+        The flat ``phase_models['prep']`` key may still appear in resolution
+        output (``resolved_stage_models`` in the trace), but real prep execution
+        uses ``config.prep_models`` through :func:`resolve_prep_stage_model`,
+        not the flat agent routing.  The ``flat_agent == 'codex'`` exception
+        below (preserving legacy variable-codex triage/distill routing) is
+        deferred for removal in a follow-up sprint once profile reliance is
+        confirmed — see SD2 in the plan.
     """
     explicit = dict(prep_models or {})
     resolved: dict[str, str] = {}
@@ -1209,6 +1215,11 @@ _CLAUDE_MODEL_TO_CODEX_SPEC: tuple[tuple[str, str], ...] = (
     ("opus", "codex:gpt-5.5"),
 )
 
+_CODEX_MODEL_TO_CLAUDE_SPEC: tuple[tuple[str, str], ...] = (
+    ("gpt-5.4", "claude:claude-sonnet-4-6"),
+    ("gpt-5.5", "claude:claude-opus-4-7"),
+)
+
 
 def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     """Swap claude:X <-> codex:X to match ``target_vendor``.
@@ -1236,11 +1247,15 @@ def _swap_premium_spec(spec: str, target_vendor: str) -> str:
     # ALSO carries an effort (e.g. "claude:sonnet-4.6:high") is ambiguous —
     # the capability map and the explicit effort can't both win — so it falls
     # through to the conflict below.
+    model_l = parsed.model.lower()
     if parsed.agent == "claude" and target_vendor == "codex" and parsed.effort is None:
-        model_l = parsed.model.lower()
         for needle, codex_spec in _CLAUDE_MODEL_TO_CODEX_SPEC:
             if needle in model_l:
                 return codex_spec
+    if parsed.agent == "codex" and target_vendor == "claude" and parsed.effort is None:
+        for needle, claude_spec in _CODEX_MODEL_TO_CLAUDE_SPEC:
+            if needle in model_l:
+                return claude_spec
     raise CliError(
         "vendor_swap_model_conflict",
         f"Vendor swap would overwrite explicit model pin '{parsed.model}' "
@@ -1253,14 +1268,15 @@ def apply_vendor_rewrite(
     vendor: str,
     *,
     tier_models: dict[str, dict[int, str]] | None = None,
+    prep_models: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Return a copy of ``profile`` with premium slots swapped to ``vendor``.
 
     Profiles with no claude/codex slots are a silent no-op. Caller is
     responsible for rejecting vendor-locked profiles before getting here.
 
-    When *tier_models* is provided, tier entries are also rewritten in-place
-    (mutated) using the same ``_swap_premium_spec`` logic.
+    When *tier_models* or *prep_models* are provided, those entries are also
+    rewritten in-place (mutated) using the same ``_swap_premium_spec`` logic.
     Raises ``vendor_swap_model_conflict`` when an explicit model pin
     would be overwritten, naming the offending phase and spec.
     """
@@ -1282,6 +1298,17 @@ def apply_vendor_rewrite(
                             f"Vendor swap conflict on phase '{phase}' tier {tier_int}: {e.message}",
                         ) from e
                     raise
+    if prep_models is not None:
+        for stage, spec in prep_models.items():
+            try:
+                prep_models[stage] = _swap_premium_spec(spec, vendor)
+            except CliError as e:
+                if e.code == "vendor_swap_model_conflict":
+                    raise CliError(
+                        "vendor_swap_model_conflict",
+                        f"Vendor swap conflict on prep stage '{stage}': {e.message}",
+                    ) from e
+                raise
     # feedback is preserved from the profile (skipped during vendor swap for
     # cross-run comparability) and defaults to "claude:low" when absent
     result: dict[str, str] = {}
@@ -1627,8 +1654,13 @@ def apply_profile_expansion(
                     "invalid_vendor",
                     f"--vendor must be one of {', '.join(VALID_VENDORS)}; got {vendor!r}",
                 )
-            if _profile_has_premium_slots(resolved):
-                resolved = apply_vendor_rewrite(resolved, vendor, tier_models=tier_models)
+            if _profile_has_premium_slots(resolved) or inherited_prep_models:
+                resolved = apply_vendor_rewrite(
+                    resolved,
+                    vendor,
+                    tier_models=tier_models,
+                    prep_models=inherited_prep_models,
+                )
             # Depth rewrite runs against the *post-vendor* state so
             # ``--vendor codex --depth high`` lands on ``codex:high`` for
             # author phases. Honored on locked profiles too (see below).
@@ -1662,10 +1694,13 @@ def apply_profile_expansion(
         )
 
         # Attach post-rewrite tier map to args for downstream dispatch.
-        # If CLI explicitly overrides the execute phase, strip
-        # tier_models.execute so tier routing is disabled (CLI wins).
-        if tier_models and "execute" in cli_steps:
-            tier_models.pop("execute", None)
+        # If CLI explicitly overrides a phase, strip its tier_models entry
+        # so tier routing is disabled (CLI wins).  Execute and critique are
+        # the two phases whose tier tables drive per-batch/per-lens routing.
+        if tier_models:
+            for phase in ("execute", "critique"):
+                if phase in cli_steps:
+                    tier_models.pop(phase, None)
         args.tier_models = tier_models
         args.prep_models = prep_models
         args.prep_model_resolver_trace = prep_trace
@@ -1771,6 +1806,7 @@ __all__ = [
     "resolve_prep_models",
     "resolve_profile",
     "resolve_pipeline_profile",
+    "validate_prep_stage_provider",
     "_load_pipeline_local_profiles",
     "_load_pipeline_local_metadata",
     "_resolve_with_inheritance",

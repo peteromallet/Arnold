@@ -117,7 +117,6 @@ WORKERS_ALL = [
     "_merge_partial_output",
     "_recover_codex_payload",
     "validate_payload",
-    "run_codex_prep_step",
     "run_step_with_worker",
     "resolve_agent_mode",
     "set_work_dir_override",

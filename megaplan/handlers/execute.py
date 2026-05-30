@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 from pathlib import Path
 from typing import Any
 
@@ -45,20 +44,14 @@ def _resolve_execute_tier_spec(
     base_args: argparse.Namespace,
     tier_spec: str,
 ) -> tuple[str, str, str | None]:
-    """Resolve a tier spec string to (agent, mode, model) without mutating *base_args*.
+    """Thin alias over ``_resolve_tier_spec`` with ``phase=\"execute\"``.
 
-    Copies *base_args*, sets ``phase_model=["execute=<tier_spec>"]`` on the
-    copy, and calls ``resolve_agent_mode``.  Does not prepend ahead of a
-    user CLI override — the override guard in ``apply_profile_expansion``
-    already strips ``tier_models.execute`` when ``--phase-model execute=…``
-    is present, so this helper is only called when tier routing is active.
+    Kept for backward compatibility; new callers should use
+    ``_resolve_tier_spec(args, spec, phase=\"execute\")`` directly.
     """
-    tier_args = copy.copy(base_args)
-    tier_args.phase_model = [f"execute={tier_spec}"]
-    agent, _mode, _refreshed, model = worker_module.resolve_agent_mode(
-        "execute", tier_args
-    )
-    return agent, _mode, model
+    from megaplan.execute.batch import _resolve_tier_spec
+
+    return _resolve_tier_spec(base_args, tier_spec, phase="execute")
 
 def _is_rework_reexecution(state: PlanState) -> bool:
     """Check if the last completed step was a review with needs_rework."""
