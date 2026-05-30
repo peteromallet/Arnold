@@ -1311,6 +1311,15 @@ def drive(
     events: list[dict[str, Any]] = []
     last_state: str | None = None
     stall_count = 0
+    # Productivity-aware stall detection. `state` legitimately stays unchanged
+    # (e.g. `finalized`/`execute`) for many iterations while a large execute
+    # phase is PRODUCTIVELY draining tasks, so a same-state-name counter alone
+    # false-kills a healthy, progressing run. We track the task-completion
+    # signature (tasks_done + tasks_skipped) — the same forward-progress signal
+    # already computed for escalate-up routing, reusing status["progress"] with
+    # no extra IO — and reset stall_count whenever it advances. A genuinely
+    # stuck run (state unchanged AND no task progress) still trips the threshold.
+    last_progress_sig: int | None = None
     last_phase: str | None = None
     context_retry_count = 0
     external_retry_count = 0
@@ -1743,8 +1752,39 @@ def drive(
                     last_phase=last_phase,
                 )
 
-        # Stall detection: same state for stall_threshold+ iterations.
-        if state == last_state:
+        # Stall detection: same state for stall_threshold+ iterations with no
+        # measurable progress. "Stalled" means "no PROGRESS", not "same state
+        # name" — a large execute phase keeps `state` pinned at finalized/
+        # execute for many iterations while it productively drains tasks, so
+        # gate the counter on the task-completion signature, not the name.
+        progress_now = status.get("progress") or {}
+        try:
+            progress_sig_now = int(progress_now.get("tasks_done", 0) or 0) + int(
+                progress_now.get("tasks_skipped", 0) or 0
+            )
+        except (TypeError, ValueError):
+            progress_sig_now = last_progress_sig
+        made_task_progress = (
+            progress_sig_now is not None
+            and last_progress_sig is not None
+            and progress_sig_now > last_progress_sig
+        )
+        if state == last_state and made_task_progress:
+            # Tasks completed since the last iteration: the run is making real
+            # forward progress even though `state` is unchanged. Reset the stall
+            # counter so a healthy, draining execute phase is never killed. The
+            # genuine backstops (stall_threshold on a truly stuck run,
+            # max_iterations, cost cap) are untouched.
+            if stall_count:
+                log(
+                    f"task progress advanced "
+                    f"({last_progress_sig}->{progress_sig_now}) at "
+                    f"state={state} — resetting stall counter",
+                    stall_count=stall_count,
+                    progress_sig=progress_sig_now,
+                )
+            stall_count = 0
+        elif state == last_state:
             stall_count += 1
             if stall_count >= stall_threshold:
                 # Distinguish an all-blocked outcome from a generic stall.
@@ -1821,6 +1861,13 @@ def drive(
                         context={"from_state": last_state, "to_state": state},
                     )
             last_state = state
+
+        # Remember this iteration's task-completion signature so the next
+        # iteration can tell whether real progress occurred. Updated on every
+        # path (stalled, progressing, or state-changed) so the comparison is
+        # always against the immediately preceding observation.
+        if progress_sig_now is not None:
+            last_progress_sig = progress_sig_now
 
         # Escalation: no phase to run but overrides are available.
         if not next_step:
