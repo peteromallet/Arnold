@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.step_helpers import (
     interpolate_inputs,
     next_version,
@@ -54,8 +55,15 @@ class PanelReviewerStep:
     consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
+        # Flag-ON (M2 / T11b): read consumes' PortRefs by name instead of
+        # the legacy `_input_refs` list. Flag-OFF preserves byte-identical
+        # behaviour.
+        if typed_ports_on():
+            refs = [c.port_name for c in self.consumes]
+        else:
+            refs = self._input_refs
         inputs = resolve_inputs(
-            self._input_refs,
+            refs,
             ctx,
             panel_reviewer_order=self._panel_reviewer_order,
         )

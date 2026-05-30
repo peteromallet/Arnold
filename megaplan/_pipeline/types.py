@@ -235,6 +235,7 @@ class Stage:
     edges: tuple[Edge, ...] = ()
     produces: tuple["Port", ...] = field(default_factory=tuple)
     consumes: tuple["PortRef", ...] = field(default_factory=tuple)
+    loop_condition: Callable[[Any], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -287,6 +288,7 @@ class Pipeline:
     stages: Mapping[str, "Stage | ParallelStage"]
     entry: str
     overlays: tuple[Overlay, ...] = ()
+    binding_map: dict | None = None
 
     @classmethod
     def builder(

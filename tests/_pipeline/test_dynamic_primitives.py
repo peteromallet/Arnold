@@ -26,6 +26,7 @@ from megaplan._pipeline.patterns import (
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
     GateRecommendation,
+    ReduceResult,
     Stage,
     StepContext,
     StepResult,
@@ -230,8 +231,11 @@ class TestPanelFromArtifact:
 
 class TestDynamicFanout:
     def test_consumes_generator_specs_and_fans_out_base_prompt(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # Untyped 'specs' state_patch channel is flag-OFF only; the typed
+        # Port path is covered by TestDynamicFanoutTypedPort below.
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "")
         generator = _GeneratorStep(
             specs=(
                 {"section_id": "intro", "section_title": "Introduction"},
@@ -273,13 +277,75 @@ class TestDynamicFanout:
             assert Path(result.outputs[sid]).exists()
 
 
+class TestDynamicFanoutTypedPort:
+    """T12: flag-ON generative Reduce[T] round-trip via the typed Port
+    ``last_fanout_results`` — generator emits the typed channel (no
+    untyped ``state_patch['specs']``), and the join's StepResult carries
+    the per-spec results out on the same Port.
+    """
+
+    def test_typed_port_roundtrip_no_untyped_specs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+        from megaplan._pipeline.pattern_dynamic import (
+            LAST_FANOUT_RESULTS_PORT,
+            _DynamicFanoutStep,
+        )
+
+        @dataclass(frozen=True)
+        class _TypedGen:
+            name: str = "gen"
+            kind: str = "produce"
+            prompt_key: str | None = None
+            slot: str | None = None
+            specs: tuple[Mapping[str, Any], ...] = ()
+
+            def run(self, ctx: StepContext) -> StepResult:
+                # Emit ONLY on the typed Port — no untyped 'specs' key.
+                return StepResult(
+                    state_patch={LAST_FANOUT_RESULTS_PORT.name: list(self.specs)},
+                    next="done",
+                )
+
+        gen = _TypedGen(
+            specs=(
+                {"section_id": "a", "section_title": "A"},
+                {"section_id": "b", "section_title": "B"},
+            ),
+        )
+
+        def _join(results: list[StepResult], ctx: StepContext) -> StepResult:
+            return StepResult(state_patch={}, next="critique")
+
+        primitive = dynamic_fanout(
+            generator=gen, base_prompt=_SectionStep(), join=_join, name="fo"
+        )
+        assert isinstance(primitive, _DynamicFanoutStep)
+        # Stage-level produces declares the typed Port.
+        assert LAST_FANOUT_RESULTS_PORT in primitive.produces
+
+        ctx = StepContext(
+            plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={}
+        )
+        result = primitive.run(ctx)
+        # Joined StepResult carries last_fanout_results on its state_patch
+        # via the typed Port; the untyped 'specs' channel is NOT touched.
+        assert LAST_FANOUT_RESULTS_PORT.name in result.state_patch
+        assert "specs" not in result.state_patch
+        carried = result.state_patch[LAST_FANOUT_RESULTS_PORT.name]
+        assert isinstance(carried, list) and len(carried) == 2
+
+
 # ── (c) weighted_vote ──────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("typed_ports", [False, True])
 class TestWeightedVote:
     def test_higher_weighted_verdict_wins_when_raw_counts_differ(
-        self, tmp_path: Path
+        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
         # Raw counts: 2 'iterate' vs 1 'proceed' — iterate would win by
         # majority_vote. But weights swing the result: proceed-weight=5,
         # iterate-weight=1 each (total iterate=2).
@@ -301,15 +367,34 @@ class TestWeightedVote:
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t")
         merged = join_fn(results, ctx)
         assert merged.verdict is not None
-        assert merged.verdict.recommendation == "proceed"
+        if typed_ports:
+            payload = merged.verdict.payload
+            assert isinstance(payload, dict)
+            reduce_result = payload["reduce_result"]
+            assert isinstance(reduce_result, ReduceResult)
+            assert reduce_result.value == "proceed"
+            assert merged.verdict.recommendation is None
+        else:
+            assert merged.verdict.recommendation == "proceed"
         assert merged.next == "proceed"
 
-    def test_empty_panel_resolves_to_tiebreaker(self, tmp_path: Path) -> None:
+    def test_empty_panel_resolves_to_tiebreaker(
+        self, tmp_path: Path, typed_ports: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1" if typed_ports else "")
         join_fn = weighted_vote({"alice": 1.0})
         ctx = StepContext(plan_dir=tmp_path, state={}, profile=None, mode="t")
         merged = join_fn([], ctx)
         assert merged.verdict is not None
-        assert merged.verdict.recommendation == "tiebreaker"
+        if typed_ports:
+            payload = merged.verdict.payload
+            assert isinstance(payload, dict)
+            reduce_result = payload["reduce_result"]
+            assert isinstance(reduce_result, ReduceResult)
+            assert reduce_result.value is None
+            assert merged.next == "tiebreaker"
+        else:
+            assert merged.verdict.recommendation == "tiebreaker"
 
 
 # ── (d) iterate_until_consensus ────────────────────────────────────────

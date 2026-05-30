@@ -242,3 +242,24 @@ class TestHumanGateConstruction:
         assert isinstance(hg_stage, Stage)
         stop_edge = next(e for e in hg_stage.edges if e.label == "stop")
         assert stop_edge.target == "done"
+
+
+def test_build_with_binding_flag_off_keeps_binding_map_none(monkeypatch):
+    """Flag-OFF: build_with_binding returns pipeline with binding_map None."""
+    monkeypatch.delenv("MEGAPLAN_TYPED_PORTS", raising=False)
+    from megaplan._core.workflow import build_with_binding
+    from megaplan._pipeline.types import Edge, Pipeline, Stage
+
+    class _S:
+        name = "s"; kind = "produce"; prompt_key = None; slot = None
+        produces = (); consumes = ()
+        def run(self, ctx):  # pragma: no cover
+            raise NotImplementedError
+
+    pipe = Pipeline(
+        stages={"s": Stage(name="s", step=_S(), edges=(Edge("done", "halt"),))},
+        entry="s",
+    )
+    out = build_with_binding(pipe)
+    assert out is pipe
+    assert out.binding_map is None

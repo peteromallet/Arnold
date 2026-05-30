@@ -120,6 +120,26 @@ the chain.yaml regenerates onto this triple.
   cache-collision-launders-taint is unrecoverable retrofit (SYNTHESIS UU#4). Partial enum conversion
   is worse than none: a half-converted `GateRecommendation` re-planning-izes every downstream driver.
   **Merge gate: grep=0 AND all consumers green together** — never a partial merge.
+- **M2 status (2026-05-30):** Strangler-flag flow landed via
+  `megaplan/_pipeline/flags.py::typed_ports_on()` reading `MEGAPLAN_TYPED_PORTS=1`.
+  Every typed-Port / ContractLedger / StateDelta / taint-in-hash / planning-binding
+  behavior change is gated through that single helper; flag-OFF preserves
+  byte-identical legacy behavior, flag-ON routes through the new substrate.
+  `GateRecommendation` is now resident in `types.py`, `validator.py`, and
+  `planning_bindings.py` only — ratcheted by `tests/test_gate_grep_ratchet.py`
+  (4 + 3 + 4 refs; no new files outside the allow-list).
+- **Parity-as-supporting-gate stance:** `tests/test_pipeline_parity.py`
+  and `tests/test_pipeline_planning_parity.py` run under both flag values
+  but are SUPPORTING — they are structurally blind to the typed-Port /
+  StateDelta / taint substrate swap. The authoritative M2 gates are the
+  direct unit tests on the binder (`test_contracts_bind.py`), taint-in-hash
+  (`test_taint_hash.py`), CAS (`test_state_delta_cas.py`), runtime port
+  binding (`test_runtime_binding.py`), planning-binding parity
+  (`test_pattern_joins_typed.py`), the tournament oracle
+  (`test_tournament_toy.py`), and the MUST receipt-format integration
+  test (`test_receipt_planning_parity.py`) which proves the planning-shape
+  receipt under flag-ON is byte-identical at `receipt.py:109` to today's
+  flag-OFF receipt.
 
 ### M2.5 — Auto.py characterization spike + resume-model decision  `[T1, parallel with M2]`
 - **Delivers:** `test_auto_drive.py` written against TODAY's subprocess `auto.py`, merged to main as

@@ -296,7 +296,17 @@ def plan_state_lock(plan_dir: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+#: Reserved top-level keys that are passed through ``write_plan_state`` without
+#: schema validation. ``_state_meta`` holds the CAS version map
+#: (``{"versions": {key: int}}``) maintained by ``apply_delta``.
+_PERSIST_RESERVED_KEYS: frozenset[str] = frozenset({"_state_meta"})
+
+
 def _validate_plan_state_for_persist(state: dict[str, Any], *, plan_dir: Path) -> None:
+    # Reserved keys (e.g. ``_state_meta``) round-trip transparently — they are
+    # not subject to schema-level validation.
+    for _reserved in _PERSIST_RESERVED_KEYS:
+        state.get(_reserved)  # touch only; allow-listed for persist
     current_state = state.get("current_state")
     if current_state is None:
         return
@@ -413,10 +423,34 @@ def write_plan_state(
                 if state is None:
                     raise TypeError("state is required for executor-key-merge mode")
                 if state_path.exists() and executor_owned_keys is not None:
-                    next_state = dict(existing)
-                    for owned_key in executor_owned_keys:
-                        if owned_key in state:
-                            next_state[owned_key] = state[owned_key]
+                    try:
+                        from megaplan._pipeline.flags import typed_ports_on
+                        from megaplan._pipeline.types import StateDelta, apply_delta
+                        _flag_on = typed_ports_on()
+                    except Exception:
+                        _flag_on = False
+                    if _flag_on:
+                        next_state = dict(existing)
+                        for owned_key in executor_owned_keys:
+                            if owned_key in state:
+                                _versions = (
+                                    next_state.get("_state_meta", {}).get("versions", {})
+                                )
+                                _current = int(_versions.get(owned_key, 0))
+                                next_state, _ = apply_delta(
+                                    next_state,
+                                    StateDelta(
+                                        op="replace",
+                                        key=owned_key,
+                                        value=state[owned_key],
+                                        version=_current,
+                                    ),
+                                )
+                    else:
+                        next_state = dict(existing)
+                        for owned_key in executor_owned_keys:
+                            if owned_key in state:
+                                next_state[owned_key] = state[owned_key]
                 elif state_path.exists():
                     next_state = {**dict(state), **existing}
                 else:

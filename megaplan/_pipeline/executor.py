@@ -242,6 +242,7 @@ def run_pipeline(
     executor_owned_keys: set[str] = set()
     cursor = pipeline.entry
     iterations = 0
+    loop_iters: dict[str, int] = {}
     while True:
         if policy is not None and iterations >= policy.max_iterations:
             return {"state": state, "final_stage": cursor, "halt_reason": "max_iterations"}
@@ -252,6 +253,59 @@ def run_pipeline(
         # iteration of a loop sees the latest state_patches. ctx is
         # frozen; build a new instance via dataclasses.replace.
         ctx = dataclasses.replace(ctx, state=state)
+
+        # Flag-ON (M2 / T11b): runtime port-binding. Resolve each Stage's
+        # consumes against Pipeline.binding_map and populate ctx.inputs
+        # with concrete upstream artifact paths. On miss raise
+        # PortBindError so the legacy v1.md fallback never silently fires.
+        from megaplan._pipeline.flags import typed_ports_on as _tpo
+        if _tpo() and getattr(pipeline, "binding_map", None) is not None:
+            from megaplan._pipeline.contracts import PortBindError
+
+            consumes = ()
+            if isinstance(node, Stage):
+                consumes = tuple(node.consumes) or tuple(
+                    getattr(node.step, "consumes", ()) or ()
+                )
+            elif isinstance(node, ParallelStage):
+                consumes = tuple(node.consumes)
+            if consumes:
+                new_inputs = dict(ctx.inputs)
+                for consume in consumes:
+                    cname = getattr(consume, "port_name", None) or getattr(
+                        consume, "name", ""
+                    )
+                    key = (node.name, cname)
+                    if key not in pipeline.binding_map:
+                        raise PortBindError(
+                            step_id=node.name,
+                            consume_name=cname,
+                            detail="not present in Pipeline.binding_map",
+                        )
+                    upstream_id, _upstream_port_name = pipeline.binding_map[key]
+                    upstream_dir = ctx.plan_dir / upstream_id
+                    path = None
+                    if upstream_dir.is_dir():
+                        candidates: list[tuple[int, Path]] = []
+                        for child in upstream_dir.iterdir():
+                            if child.is_file() and child.name.startswith("v"):
+                                stem = child.stem
+                                if stem[1:].isdigit():
+                                    candidates.append((int(stem[1:]), child))
+                        if candidates:
+                            candidates.sort(key=lambda x: x[0], reverse=True)
+                            path = candidates[0][1]
+                    if path is None:
+                        raise PortBindError(
+                            step_id=node.name,
+                            consume_name=cname,
+                            detail=(
+                                f"no upstream artifact under {upstream_dir} "
+                                f"for upstream stage {upstream_id!r}"
+                            ),
+                        )
+                    new_inputs[cname] = path
+                ctx = dataclasses.replace(ctx, inputs=new_inputs)
 
         try:
             if isinstance(node, ParallelStage):
@@ -268,8 +322,19 @@ def run_pipeline(
         _verify_outputs(node.name, result.outputs)
 
         patch = dict(result.state_patch)
-        state.update(patch)
-        executor_owned_keys.update(patch.keys())
+        if _tpo():
+            from megaplan._pipeline.types import StateDelta, apply_delta
+
+            for _k, _v in patch.items():
+                _versions = state.get("_state_meta", {}).get("versions", {})
+                _current = int(_versions.get(_k, 0))
+                state, _ = apply_delta(
+                    state, StateDelta(op="replace", key=_k, value=_v, version=_current)
+                )
+                executor_owned_keys.add(_k)
+        else:
+            state.update(patch)
+            executor_owned_keys.update(patch.keys())
         _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
 
         if policy is not None:
@@ -283,6 +348,22 @@ def run_pipeline(
             if state.get("_pipeline_paused"):
                 return {"state": state, "final_stage": node.name, "halt_reason": "awaiting_user"}
             return {"state": state, "final_stage": node.name}
+
+        # Stage.loop_condition (M2 / T9b): per-iteration evaluation of a
+        # caller-supplied predicate. True ⇒ exit the loop.
+        cond = getattr(node, "loop_condition", None)
+        if cond is not None:
+            from megaplan._pipeline.pattern_stops import LoopState
+
+            loop_iters[node.name] = loop_iters.get(node.name, 0) + 1
+            last_fanout = state.get("last_fanout_results")
+            ls = LoopState(
+                state=state,
+                last_fanout_results=last_fanout,
+                iteration=loop_iters[node.name],
+            )
+            if cond(ls):
+                return {"state": state, "final_stage": node.name, "halt_reason": "loop_condition"}
 
         # PipelineVerdict-first edge dispatch:
         #  - If verdict.override is set (Chunk D), match a kind="override" edge.
