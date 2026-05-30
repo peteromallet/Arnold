@@ -19,6 +19,10 @@ from typing import Any, Mapping
 
 from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
 from megaplan._pipeline.subloop import SubloopStep
+from megaplan._pipeline._forward_m2_m3 import (
+    RoutingKey,
+    _bridge_recommendation_to_routing_key,
+)  # TODO(M2/M3)
 from megaplan._pipeline.types import (
     Edge,
     Pipeline,
@@ -51,19 +55,23 @@ def _build_tiebreaker_child_pipeline() -> Pipeline:
     return Pipeline(stages=stages, entry="run")
 
 
-def _promote_from_child_state(state: dict[str, Any]) -> Any:
+def _promote_from_child_state(state: dict[str, Any]) -> RoutingKey:
     """Map the child pipeline's final state to a parent PipelineVerdict.
 
     The child writes to ``current_state``; after a successful
     tiebreaker run+decide the state transitions back to ``critiqued``
     (the tiebreaker decision flows through the standard gate loop).
+
+    Returns a :class:`RoutingKey` bridged from the legacy
+    recommendation literal via
+    :func:`_bridge_recommendation_to_routing_key`.  # TODO(M2/M3)
     """
     final = state.get("current_state", "")
     if final == "critiqued":
-        return "iterate"
+        return _bridge_recommendation_to_routing_key("iterate")
     if final == "aborted":
-        return "escalate"
-    return "proceed"
+        return _bridge_recommendation_to_routing_key("escalate")
+    return _bridge_recommendation_to_routing_key("proceed")
 
 
 @dataclass(frozen=True)
@@ -75,9 +83,6 @@ class TiebreakerStep:
     prompt_key: str | None = None
     slot: str | None = "tiebreaker_researcher"
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
-
-    produces: tuple = field(default_factory=tuple)
-    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         subloop = SubloopStep(

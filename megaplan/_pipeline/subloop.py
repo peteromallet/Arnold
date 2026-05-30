@@ -22,7 +22,7 @@ Relationships:
 State-flow contract: the child runs with a *copy* of ``ctx.state``
 (``state=dict(ctx.state)``). Child state mutations therefore do not
 propagate back to the parent state map directly — only the
-``promote`` callable's recommendation literal flows up via
+``promote`` callable's :class:`RoutingKey` flows up via
 :class:`PipelineVerdict`, plus the two ``subloop:<name>:recommendation`` /
 ``subloop:<name>:state`` keys emitted as ``state_patch`` on the
 parent. Downstream handlers that need to observe child results
@@ -34,8 +34,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
+from megaplan._pipeline._forward_m2_m3 import RoutingKey  # TODO(M2/M3)
 from megaplan._pipeline.types import (
     Pipeline,
     StepContext,
@@ -43,8 +44,10 @@ from megaplan._pipeline.types import (
     PipelineVerdict,
 )
 
+from megaplan._pipeline.pattern_types import PromoteFn
 
-_DEFAULT_PROMOTE: Callable[[dict[str, Any]], Any] = lambda state: "proceed"
+
+_DEFAULT_PROMOTE: PromoteFn = lambda state: RoutingKey(name="proceed", kind="advance")
 
 
 @dataclass(frozen=True)
@@ -52,10 +55,8 @@ class SubloopStep:
     """A Step that runs a nested Pipeline and promotes its final state.
 
     ``child_pipeline``: the inner pipeline to run.
-    ``promote``: callable that maps the child's final state dict to the
-    parent's PipelineVerdict recommendation value (typed as ``Any`` here;
-    planning consumers route through
-    :mod:`megaplan._pipeline.planning_bindings` for the typed literal).
+    ``promote``: callable that maps the child's final state dict to a
+    :class:`RoutingKey` for the parent's PipelineVerdict.
     ``artifact_subdir``: subdir under ``ctx.plan_dir`` where the child
     pipeline's state.json + per-stage artifacts land. Defaults to the
     Step's name.
@@ -66,11 +67,8 @@ class SubloopStep:
     prompt_key: str | None = None
     slot: str | None = None
     child_pipeline: Pipeline | None = None
-    promote: Callable[[dict[str, Any]], Any] = field(default=_DEFAULT_PROMOTE)
+    promote: PromoteFn = field(default=_DEFAULT_PROMOTE)
     artifact_subdir: str | None = None
-
-    produces: tuple = field(default_factory=tuple)
-    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         from megaplan._pipeline.executor import run_pipeline
@@ -88,24 +86,11 @@ class SubloopStep:
         result = run_pipeline(self.child_pipeline, child_ctx, artifact_root=child_root)
         child_state: dict[str, Any] = result.get("state", {})
 
-        raw = self.promote(child_state)
-        from megaplan._pipeline.flags import typed_ports_on
-
-        if typed_ports_on():
-            from megaplan._pipeline.planning_bindings import planning_promote
-
-            # flag-ON: keep planning literals as-is, else route the child
-            # state through the canonical planning binding.
-            if raw in ("proceed", "iterate", "tiebreaker", "escalate"):
-                recommendation = raw
-            else:
-                recommendation = planning_promote(child_state)
-        else:
-            # flag-OFF preserves today's typed assignment byte-identically.
-            recommendation = raw
+        recommendation = self.promote(child_state)
+        _name = getattr(recommendation, 'name', recommendation)
         verdict = PipelineVerdict(
             score=float(child_state.get("score", 1.0)),
-            recommendation=recommendation,
+            recommendation=_name,
             payload={
                 "subloop_final_stage": result.get("final_stage"),
                 "subloop_state": child_state,
@@ -115,9 +100,9 @@ class SubloopStep:
         return StepResult(
             outputs={},
             verdict=verdict,
-            next=recommendation,  # textual fallback if no kind="gate" edge matches
+            next=_name,  # textual fallback if no kind="gate" edge matches
             state_patch={
-                f"subloop:{self.name}:recommendation": recommendation,
+                f"subloop:{self.name}:recommendation": _name,
                 f"subloop:{self.name}:state": child_state,
             },
         )

@@ -135,11 +135,6 @@ class PipelineBuilder:
         inputs: Sequence[str] = (),
         prompt_key: str | None = None,
     ) -> "PipelineBuilder":
-        from megaplan._pipeline.types import Port, PortRef
-        _consumes_t = tuple(
-            PortRef(port_name=str(ref), content_type="text/markdown") for ref in inputs
-        )
-        _produces_t = (Port(name=stage_name, content_type="text/markdown"),)
         step = AgentStep(
             name=stage_name,
             kind="produce",
@@ -154,8 +149,6 @@ class PipelineBuilder:
             _prompt_registry=self._prompt_registry,
             _panel_reviewer_order={k: list(v) for k, v in self._panel_reviewer_order.items()},
             _mode="",
-            produces=_produces_t,
-            consumes=_consumes_t,
         )
         stage = Stage(name=stage_name, step=cast(Step, step), edges=())
         self._append_stage(stage, emit_label="done")
@@ -174,13 +167,6 @@ class PipelineBuilder:
         ids: list[str] = []
         for reviewer_id, prompt_ref in reviewers:
             ids.append(reviewer_id)
-            from megaplan._pipeline.types import Port, PortRef
-            _r_consumes_t = tuple(
-                PortRef(port_name=str(ref), content_type="text/markdown") for ref in inputs
-            )
-            _r_produces_t = (
-                Port(name=f"{stage_name}.{reviewer_id}", content_type="text/markdown"),
-            )
             rstep = PanelReviewerStep(
                 name=f"{stage_name}.{reviewer_id}",
                 kind="produce",
@@ -197,8 +183,6 @@ class PipelineBuilder:
                     k: list(v) for k, v in self._panel_reviewer_order.items()
                 },
                 _mode="",
-                produces=_r_produces_t,
-                consumes=_r_consumes_t,
             )
             reviewer_pairs.append((reviewer_id, cast(Step, rstep)))
 

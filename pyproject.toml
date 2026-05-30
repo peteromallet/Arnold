@@ -71,4 +71,5 @@ markers = [
     "crash_isolation: tests verifying crash isolation between subprocess drivers",
     "version_skew: tests verifying compatibility across version skew scenarios",
     "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
+    "substrate_swap: M4 oracle tests that must remain green under substrate substitution (lease/budget/journal swap)",
 ]
