@@ -1,3 +1,5 @@
+Superseded by `tests/characterization/auto_drive_corpus/` (M2.5). These four prototype fixtures remain for backwards reference only and are NOT the oracle.
+
 # Corpus notes — M0 harness floor
 
 ## Shape

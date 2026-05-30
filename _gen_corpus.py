@@ -1,4 +1,14 @@
-"""One-shot corpus generator — run once to populate tests/fixtures/corpus/.
+"""[DEPRECATED — M2.5] This script generates the old-style prototype fixtures
+under ``tests/fixtures/corpus/``.  It is superseded by the M2.5 characterization
+corpus in ``tests/characterization/auto_drive_corpus/``, regenerated via::
+
+    pytest tests/characterization/test_auto_drive.py --write-fixture -q
+
+The four prototype JSON files are retained for backwards reference only and are
+NOT the oracle.  This script's behavior is preserved verbatim — no logic
+changes.
+
+One-shot corpus generator — run once to populate tests/fixtures/corpus/.
 
 All traces are built by direct DriverOutcome construction (no driver
 state-machine replay, no Date.now/random) so the output is deterministic.
