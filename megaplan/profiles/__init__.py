@@ -1694,10 +1694,13 @@ def apply_profile_expansion(
         )
 
         # Attach post-rewrite tier map to args for downstream dispatch.
-        # If CLI explicitly overrides the execute phase, strip
-        # tier_models.execute so tier routing is disabled (CLI wins).
-        if tier_models and "execute" in cli_steps:
-            tier_models.pop("execute", None)
+        # If CLI explicitly overrides a phase, strip its tier_models entry
+        # so tier routing is disabled (CLI wins).  Execute and critique are
+        # the two phases whose tier tables drive per-batch/per-lens routing.
+        if tier_models:
+            for phase in ("execute", "critique"):
+                if phase in cli_steps:
+                    tier_models.pop(phase, None)
         args.tier_models = tier_models
         args.prep_models = prep_models
         args.prep_model_resolver_trace = prep_trace

@@ -249,7 +249,8 @@ def roster_dispatch_spec(model: str) -> str:
 
 class CritiqueSelection(TypedDict):
     check_id: str
-    critic_model: str
+    complexity: int
+    complexity_justification: str
     why: str
 
 
@@ -287,27 +288,20 @@ def validate_evaluator_verdict(
     """Validate a critique evaluator payload with hard-reject discipline.
 
     A *consistent* duplicate selection — the same ``check_id`` listed more
-    than once with an identical ``critic_model`` — is **deduped in place**
+    than once with an identical complexity assignment — is **deduped in place**
     (the first occurrence wins; later twins are dropped from ``payload``)
     and a human-readable warning is returned rather than triggering a full
-    hard-reject. Losing the entire premium adaptive selection over a cosmetic
-    duplicate is a bad failure mode: the model agreed with itself, so the
-    intent is unambiguous. A *conflicting* duplicate (same ``check_id``, a
-    different ``critic_model``) remains a hard reject because the model's
-    intent for that lens is genuinely ambiguous and silently picking one
-    assignment could under- or over-power the critique.
+    hard-reject. A *conflicting* duplicate remains a hard reject because the
+    evaluator's intent for that lens is genuinely ambiguous.
 
     Genuine integrity violations — unknown ids, coverage gaps, overlap,
-    rater<dispatchee, unjustified skips — remain hard rejects.
+    unjustified skips, invalid complexity assignments — remain hard rejects.
 
-    When *vendor* is ``"claude"`` or ``"codex"``, every selection's
-    ``critic_model`` is resolved to its canonical roster key and checked
-    against the vendor-filtered roster: a premium model owned by the
-    **other** vendor (e.g. a Claude model under ``--vendor codex``) is
-    rejected. DeepSeek tiers are vendor-independent and always pass.
-    Aliases that resolve to a valid same-vendor model (e.g. ``"claude"``
-    under ``--vendor claude``) are accepted.  When *vendor* is ``None``
-    (default) no vendor gate is applied.
+    ``vendor`` is retained as a deprecated no-op compatibility parameter while
+    live evaluator verdicts migrate from per-lens ``critic_model`` selections
+    to complexity-only routing. The roster constants remain available for
+    operator-pin paths elsewhere; this validator no longer performs live
+    per-lens roster/vendor/strength checks.
 
     Returns:
         A list of human-readable warning strings (empty when the verdict was
@@ -318,6 +312,7 @@ def validate_evaluator_verdict(
     """
 
     warnings: list[str] = []
+    _ = evaluator_model, vendor
 
     def _reject(message: str) -> None:
         raise ValueError(f"critique_evaluator verdict rejected: {message}")
@@ -340,7 +335,7 @@ def validate_evaluator_verdict(
     # ── selections validation ──────────────────────────────────────────
     # First occurrence of each check_id wins; consistent duplicates are
     # dropped (and reported), conflicting duplicates hard-reject.
-    selected_models: dict[str, str] = {}
+    selected_complexities: dict[str, tuple[int, str]] = {}
     deduped_selections: list[dict[str, Any]] = []
     # Bespoke "other" custom areas are ADDITIVE — they never enter
     # selected_ids and so never participate in the 9-lens coverage union.
@@ -358,51 +353,33 @@ def validate_evaluator_verdict(
                 f"Known ids: {sorted(all_check_ids)}"
             )
 
-        critic_model = sel.get("critic_model")
-        if not isinstance(critic_model, str) or not critic_model.strip():
-            _reject(f"selection {idx} ({cid}): missing non-empty `critic_model`.")
-
-        # critic must be in roster
-        try:
-            critic_rank = roster_rank(critic_model)
-        except ValueError as exc:
+        if "critic_model" in sel:
             _reject(
-                f"selection {idx} ({cid}): critic_model {critic_model!r} "
-                f"not in CRITIC_MODEL_ROSTER: {exc}"
+                f"selection {idx} ({cid}): live evaluator selections must not "
+                "include `critic_model`; route by `complexity` instead."
             )
-
-        # ── vendor gate (when active) ────────────────────────────────────
-        # Resolve the critic_model to its canonical roster key (handles
-        # aliases like "claude" → "claude-opus-4-7" and specs like
-        # "claude:claude-sonnet-4-6" → "claude-sonnet-4-6") then check
-        # whether the canonical model is a premium model owned by the OTHER
-        # vendor. DeepSeek tiers are vendor-independent and always pass.
-        if vendor in ("claude", "codex"):
-            canonical = _resolve_canonical(critic_model)
-            model_vendor = _PREMIUM_ROSTER_MODEL_VENDOR.get(canonical)
-            if model_vendor is not None and model_vendor != vendor:
-                _reject(
-                    f"selection {idx} ({cid}): critic_model "
-                    f"{critic_model!r} (resolved to {canonical!r}, owned "
-                    f"by {model_vendor!r}) is not available under "
-                    f"--vendor {vendor}. The evaluator must only assign "
-                    f"critics from the vendor-filtered roster."
-                )
-
-        # critic must be no stronger than evaluator (rank >= evaluator rank)
-        try:
-            evaluator_rank = roster_rank(evaluator_model)
-        except ValueError as exc:
-            _reject(f"evaluator_model {evaluator_model!r} not in roster: {exc}")
-
-        if critic_rank < evaluator_rank:
+        complexity = sel.get("complexity")
+        if (
+            not isinstance(complexity, int)
+            or isinstance(complexity, bool)
+            or not 1 <= complexity <= 5
+        ):
             _reject(
-                f"selection {idx} ({cid}): critic_model {critic_model!r} "
-                f"(rank {critic_rank}) is stronger than evaluator "
-                f"{evaluator_model!r} (rank {evaluator_rank}). "
-                f"Critic must be no stronger than evaluator "
-                f"(roster_rank(critic) >= roster_rank(evaluator))."
+                f"selection {idx} ({cid}): must include an integer `complexity` "
+                f"score in 1..5 (got {complexity!r})."
             )
+        justification = sel.get("complexity_justification")
+        if not isinstance(justification, str) or not justification.strip():
+            _reject(
+                f"selection {idx} ({cid}): missing non-empty "
+                "`complexity_justification`."
+            )
+        if cid in {"correctness", "prerequisite_ordering"} and complexity < 4:
+            _reject(
+                f"selection {idx} ({cid}): {cid!r} must use complexity >= 4 "
+                f"(got {complexity})."
+            )
+        normalized_justification = justification.strip()
 
         # ── bespoke "other" custom area ──────────────────────────────────
         # An "other" selection is NOT a catalog lens: it carries its own
@@ -441,15 +418,14 @@ def validate_evaluator_verdict(
                 )
             continue
 
-        if cid in selected_models:
-            prior_model = selected_models[cid]
-            if prior_model == critic_model:
+        if cid in selected_complexities:
+            prior_complexity = selected_complexities[cid]
+            if prior_complexity == (complexity, normalized_justification):
                 # Consistent duplicate: the model assigned the same lens to the
-                # same critic twice. Dedupe (keep the first) and warn — don't
-                # nuke the whole premium adaptive selection over a redundancy.
+                # same complexity twice. Dedupe (keep the first) and warn.
                 warnings.append(
                     f"selection {idx}: duplicate check_id {cid!r} with the same "
-                    f"critic_model {critic_model!r} — deduped (kept first "
+                    f"complexity {complexity!r} — deduped (kept first "
                     f"occurrence)."
                 )
                 continue
@@ -457,22 +433,23 @@ def validate_evaluator_verdict(
             # ambiguous; keep this a hard reject.
             _reject(
                 f"selection {idx}: conflicting duplicate check_id {cid!r} — "
-                f"already assigned to {prior_model!r}, now {critic_model!r}. "
-                f"A lens may appear at most once; resolve the conflicting "
-                f"critic assignment."
+                f"already assigned to {prior_complexity!r}, now "
+                f"{(complexity, normalized_justification)!r}. A lens may "
+                "appear at most once; resolve the conflicting complexity "
+                "assignment."
             )
-        selected_models[cid] = critic_model
+        selected_complexities[cid] = (complexity, normalized_justification)
         deduped_selections.append(sel)
 
         # why is not required per schema but we note it
 
-    selected_ids: set[str] = set(selected_models)
+    selected_ids: set[str] = set(selected_complexities)
     # Persist the deduped selection list so the caller sees each lens once.
     if len(deduped_selections) != len(selections):
         payload["selections"] = deduped_selections
 
     # ── skipped validation ──────────────────────────────────────────────
-    # A skip carries no critic_model, so any repeat of a skipped check_id is a
+    # A skip carries no complexity payload, so any repeat of a skipped check_id is a
     # consistent duplicate (same lens, same intent: skip it). Dedupe + warn
     # rather than hard-reject, mirroring the selections policy.
     skipped_ids: set[str] = set()

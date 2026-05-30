@@ -169,6 +169,283 @@ def test_critique_schema_flags_have_expected_structure() -> None:
     assert "evidence" in item_schema["properties"]
 
 
+def test_critique_evaluator_schema_accepts_legacy_catalog_and_other_shapes() -> None:
+    schema = SCHEMAS["critique_evaluator.json"]
+    validator = Draft7Validator(schema)
+
+    legacy_payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "critic_model": "claude-opus-4-7",
+                "why": "Stored artifact from the pre-complexity contract.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    catalog_payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "This lens needs deeper scrutiny.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    other_payload = {
+        "selections": [
+            {
+                "check_id": "other",
+                "area": "rollout safety",
+                "why": "Probe a risk the catalog does not name.",
+                "complexity": 3,
+                "complexity_justification": "Moderate bespoke reasoning is enough.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+
+    assert list(validator.iter_errors(legacy_payload)) == []
+    assert list(validator.iter_errors(catalog_payload)) == []
+    assert list(validator.iter_errors(other_payload)) == []
+
+
+def test_critique_evaluator_schema_rejects_hybrid_selection_shapes() -> None:
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "critic_model": "claude-opus-4-7",
+                "complexity": 4,
+                "complexity_justification": "Hybrid legacy/new payloads must fail.",
+                "why": "This mixes two contracts.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors
+
+
+# ── T5: stored-artifact schema tests (separate from live validation) ────
+
+
+def test_stored_artifact_schema_accepts_legacy_with_optional_area() -> None:
+    """Stored-artifact compatibility: old `{check_id, critic_model, why, area}` passes."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "critic_model": "claude-opus-4-7",
+                "why": "Stored pre-complexity selection.",
+                "area": "core logic",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    assert list(Draft7Validator(schema).iter_errors(payload)) == []
+
+
+def test_stored_artifact_schema_accepts_legacy_without_optional_area() -> None:
+    """Stored-artifact compatibility: old `{check_id, critic_model, why}` (no area) passes."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "prerequisite_ordering",
+                "critic_model": "claude-opus-4-7",
+                "why": "Stored pre-complexity selection without area.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    assert list(Draft7Validator(schema).iter_errors(payload)) == []
+
+
+def test_stored_artifact_schema_accepts_catalog_with_optional_area() -> None:
+    """Stored-artifact compatibility: catalog `{check_id, complexity, complexity_justification, area}` passes."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Needs deeper scrutiny.",
+                "area": "core validation logic",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    assert list(Draft7Validator(schema).iter_errors(payload)) == []
+
+
+def test_stored_artifact_schema_rejects_catalog_with_bool_complexity() -> None:
+    """Schema-level: bool complexity in catalog selections is rejected."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": True,
+                "complexity_justification": "Bool complexity is invalid.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors
+
+
+def test_stored_artifact_schema_rejects_catalog_with_missing_complexity_justification() -> None:
+    """Schema-level: catalog selection without `complexity_justification` fails."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors
+
+
+def test_stored_artifact_schema_rejects_other_without_area() -> None:
+    """Schema-level: `other` selection without `area` fails."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "other",
+                "why": "Custom concern.",
+                "complexity": 3,
+                "complexity_justification": "Moderate bespoke reasoning.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+    errors = list(Draft7Validator(schema).iter_errors(payload))
+    assert errors
+
+
+def test_stored_artifact_schema_preserves_optional_flag_verifications() -> None:
+    """Stored-artifact schema keeps `flag_verifications` optional and valid when present.
+
+    The field is NOT in `required` but must validate when supplied.
+    """
+    schema = SCHEMAS["critique_evaluator.json"]
+    payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "complexity": 4,
+                "complexity_justification": "Top priority lens.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+        "flag_verifications": [
+            {
+                "flag_id": "FLAG-001",
+                "lens": "correctness",
+                "outcome": "verified",
+                "rationale": "Diff addresses the flagged concern.",
+            }
+        ],
+    }
+    assert list(Draft7Validator(schema).iter_errors(payload)) == []
+
+
+def test_stored_artifact_schema_flag_verifications_not_required() -> None:
+    """Stored-artifact schema: `flag_verifications` is absent from top-level `required`."""
+    schema = SCHEMAS["critique_evaluator.json"]
+    assert "flag_verifications" not in schema["required"]
+
+
+def test_stored_artifact_schema_has_single_source_no_duplicate_definitions() -> None:
+    """Prove `critique_evaluator.json` has one builder — no duplicate definition drift.
+
+    The schema in SCHEMAS is built from `_build_critique_evaluator_schema()`,
+    imported once at the callsite. This test verifies the shape comes from that
+    single builder by asserting the ``oneOf`` branches match expected structures
+    exactly — legacy, catalog, and `other` — and that they carry the
+    ``x-preserve-explicit-required`` marker used by the builder.
+    """
+    from megaplan.schemas.runtime import _build_critique_evaluator_schema
+
+    schema = SCHEMAS["critique_evaluator.json"]
+
+    # Rebuild to compare — if the stored schema drifted from the builder,
+    # this would diverge.
+    rebuilt = _build_critique_evaluator_schema()
+    assert schema == rebuilt, (
+        "critique_evaluator.json schema has drifted from "
+        "_build_critique_evaluator_schema(). There must be only one source of truth."
+    )
+
+    # Also verify the oneOf branches have the expected x-preserve-explicit-required marker.
+    branches = schema["properties"]["selections"]["items"]["oneOf"]
+    assert len(branches) == 3, "Expected exactly 3 branch schemas: legacy, catalog, other"
+    for branch in branches:
+        assert branch.get("x-preserve-explicit-required") is True, (
+            "All selection branches must carry x-preserve-explicit-required from the builder"
+        )
+
+
+def test_stored_artifact_compatibility_separate_from_live_validate_evaluator_verdict() -> None:
+    """Stored-artifact schema accepts legacy `critic_model` shapes that live validation rejects.
+
+    This is the key separation: the runtime schema in SCHEMAS is for
+    *stored-artifact* compatibility (old `.megaplan/` artifacts must still load
+    without errors), while `validate_evaluator_verdict` in
+    `megaplan/audits/critique_evaluator.py` is for *live* evaluator output and
+    explicitly rejects per-lens ``critic_model`` selections.
+    """
+    from megaplan.audits.critique_evaluator import validate_evaluator_verdict
+
+    schema = SCHEMAS["critique_evaluator.json"]
+    legacy_payload = {
+        "selections": [
+            {
+                "check_id": "correctness",
+                "critic_model": "claude-opus-4-7",
+                "why": "Stored pre-complexity artifact.",
+            }
+        ],
+        "skipped": [],
+        "evaluator_model": "claude-opus-4-7",
+    }
+
+    # 1) Stored-artifact schema MUST accept the legacy shape.
+    assert list(Draft7Validator(schema).iter_errors(legacy_payload)) == [], (
+        "Stored-artifact schema must accept legacy `critic_model` selections."
+    )
+
+    # 2) Live validation MUST reject the same legacy shape.
+    try:
+        validate_evaluator_verdict(legacy_payload, evaluator_model="claude-opus-4-7")
+        assert False, "Live validate_evaluator_verdict should have rejected legacy critic_model"
+    except ValueError as exc:
+        assert "must not include `critic_model`" in str(exc), (
+            f"Unexpected rejection message: {exc}"
+        )
+
+
 def test_finalize_schema_tracks_structured_execution_fields() -> None:
     finalize = SCHEMAS["finalize.json"]
     assert "tasks" in finalize["properties"]
@@ -607,6 +884,33 @@ def test_strict_schema_new_tracking_objects_are_strict() -> None:
     }
     assert sense_check_schema["additionalProperties"] is False
     assert set(sense_check_schema["required"]) == {"id", "task_id", "question", "executor_note", "verdict"}
+
+
+def test_strict_critique_evaluator_schema_preserves_optional_flag_verifications_and_branch_local_shapes() -> None:
+    schema = strict_schema(SCHEMAS["critique_evaluator.json"])
+    assert set(schema["required"]) == {"selections", "skipped", "evaluator_model"}
+
+    branches = schema["properties"]["selections"]["items"]["oneOf"]
+    legacy_branch, catalog_branch, other_branch = branches
+
+    assert legacy_branch["additionalProperties"] is False
+    assert set(legacy_branch["required"]) == {"check_id", "critic_model", "why"}
+
+    assert catalog_branch["additionalProperties"] is False
+    assert set(catalog_branch["required"]) == {
+        "check_id",
+        "complexity",
+        "complexity_justification",
+    }
+
+    assert other_branch["additionalProperties"] is False
+    assert set(other_branch["required"]) == {
+        "check_id",
+        "area",
+        "why",
+        "complexity",
+        "complexity_justification",
+    }
 
 
 def test_plan_schema_requires_field_round_trip() -> None:

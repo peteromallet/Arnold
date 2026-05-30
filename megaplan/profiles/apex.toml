@@ -55,3 +55,10 @@ tiebreaker_challenger = "codex"
 3 = "claude:claude-sonnet-4-6"
 4 = "claude:claude-opus-4-7"
 5 = "codex"
+
+[profiles.apex.tier_models.critique]
+1 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+2 = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+3 = "claude:claude-sonnet-4-6"
+4 = "claude:claude-opus-4-7"
+5 = "codex"

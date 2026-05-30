@@ -1,8 +1,10 @@
-"""Critique evaluator prompt — selects which critic model and lenses to fire.
+"""Critique evaluator prompt — selects which lenses to fire and rates their difficulty.
 
 The evaluator reads the finished plan, the task graph, and the 9-lens
-catalog, then decides which lenses each available critic model should
-apply.  Every lens fires by default; a skip requires a concrete reason.
+catalog, then decides which lenses to fire / skip and rates each selected
+lens's complexity 1–5.  The profile maps complexity scores to models;
+the evaluator never names a vendor or model.  Every lens fires by default;
+a skip requires a concrete reason.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from megaplan._core import (
     read_json,
 )
 from megaplan.audits.robustness import CRITIQUE_CHECKS
-from megaplan.audits.critique_evaluator import CRITIC_MODEL_ROSTER, roster_for_vendor
+from megaplan.audits.critique_evaluator import MAX_OTHER_AREAS
 from megaplan.types import PlanState
 
 
@@ -67,9 +69,8 @@ def _render_differential_section(
     if reopened_entries:
         lines.append("### Addressed-Then-Reopened Flags — Escalate")
         lines.append("")
-        lines.append("These concerns were marked addressed but reopened. Assign a critic")
-        lines.append("at a **stronger** roster rank (lower rank number) for any lens that")
-        lines.append("touches these concerns.")
+        lines.append("These concerns were marked addressed but reopened. Rate the")
+        lines.append("complexity **higher** for any lens that touches these concerns.")
         lines.append("")
         for e in reopened_entries:
             concern = e.get("representative_concern", "")[:80]
@@ -84,7 +85,7 @@ def _render_differential_section(
         lines.append("### Recurring Flag Groups — Escalate")
         lines.append("")
         lines.append("These concerns have appeared across multiple iterations without being")
-        lines.append("addressed. Escalate critic rank for lenses touching these concerns.")
+        lines.append("addressed. Rate complexity higher for lenses touching these concerns.")
         lines.append("")
         for e in recurring_group_entries:
             concern = e.get("representative_concern", "")[:80]
@@ -131,7 +132,7 @@ def _render_differential_section(
         "",
         "1. **Escalate for recurring/reopened**: For any lens touching a concern",
         "   resembling an addressed-then-reopened or recurring flag group above,",
-        "   assign a critic at a **stronger** rank (lower rank number).",
+        "   rate the complexity **higher**.",
         "2. **Verify just-addressed flags**: Fire lenses that can confirm whether",
         "   flags from the prior critique were genuinely resolved in this revision.",
         "3. **Skip verified flags**: Lenses whose sole purpose is to re-examine an",
@@ -143,18 +144,6 @@ def _render_differential_section(
         "   scrutiny, independent of whether the loop will continue.",
         "",
     ]
-    return "\n".join(lines)
-
-
-def _format_roster(vendor: str | None = None) -> str:
-    """Render the critic model roster as a sorted markdown table."""
-    roster = roster_for_vendor(vendor) if vendor in ("claude", "codex") else CRITIC_MODEL_ROSTER
-    lines = [
-        "| Rank | Model | Cost hint |",
-        "|------|-------|-----------|",
-    ]
-    for entry in roster:
-        lines.append(f"| {entry.rank} | {entry.model} | {entry.cost_hint} |")
     return "\n".join(lines)
 
 
@@ -242,8 +231,9 @@ def _critique_evaluator_prompt(
     """Assemble the critique evaluator prompt.
 
     Renders the finished plan + task graph, the intent/issue-hints/notes
-    block, the 9-lens catalog, the ranked critic model roster, and the
-    fire-by-default / justify-to-skip contract.
+    block, the 9-lens catalog, a 1–5 complexity rubric with FLOOR rules,
+    and the fire-by-default / justify-to-skip contract.  The evaluator
+    never names models or vendors — the profile maps complexity to models.
 
     When prep_dossier_text / prep_metrics are supplied, a "Prep that preceded
     this plan" section is rendered so the evaluator selects lenses with the
@@ -262,8 +252,6 @@ def _critique_evaluator_prompt(
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
     intent_block = intent_and_notes_block(state)
 
-    vendor = state["config"].get("vendor")
-    roster_table = _format_roster(vendor if vendor in ("claude", "codex") else None)
     lens_catalog = _format_lens_catalog()
 
     # Collect all known check ids for the contract
@@ -351,8 +339,10 @@ def _critique_evaluator_prompt(
 
     return textwrap.dedent(
         f"""\
-        You are the Critique Evaluator. Your job is to decide which critic models
-        will apply which critique lenses for this plan.
+        You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
 
         Project directory:
         {project_dir}
@@ -367,31 +357,41 @@ def _critique_evaluator_prompt(
 
         {intent_block}
 
-        {prep_section}{differential_section}{verify_section}## Critic Model Roster (rank 1 = strongest)
-
-        Active vendor filter: {vendor if vendor in ("claude", "codex") else "none"}.
-        Only models shown in this table are dispatchable for this critique run.
-
-        {roster_table}
-
-        The **evaluator model** (you) must be ranked **no weaker than** any critic
-        model you assign.  You cannot dispatch a lens to a model ranked stronger
-        than yourself.
-
-        **Assign the cheapest capable critic.** Within that ceiling, route each
-        lens to the *cheapest model in the roster that can do that lens justice*
-        — by default the configured lowest-cost critic, then the configured
-        fallback critic, which handle routine, mechanical, and
-        well-scoped lenses perfectly well. Escalate to a stronger / premium
-        critic *only* for a lens that genuinely demands deeper judgment
-        (subtle architectural tradeoffs, cross-cutting correctness, ambiguous
-        intent, a recurring/reopened concern) — and when you do, say *why this
-        lens needs the stronger model* in its `why`. Premium critics are for
-        the genuinely hard lenses; do not assign them by reflex.
-
-        ## Critique Lens Catalog ({len(CRITIQUE_CHECKS)} lenses)
+        {prep_section}{differential_section}{verify_section}## Critique Lens Catalog ({len(CRITIQUE_CHECKS)} lenses)
 
         {lens_catalog}
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest** aspect, not its average.
+        When genuinely torn between two tiers, choose the HIGHER one and say
+        why in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** The lens spans several
+          modules or touches a shared interface/contract with architecture
+          implications; missing a defect would cascade. The question
+          demands judgement, not just lookup.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system. A subtle error would
+          pass tests but be wrong. Only assign tier 5 when the lens
+          genuinely requires system-level reasoning.
+
+        **FLOOR rules (hard minimum):**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
 
         ## Assignment Contract
 
@@ -403,15 +403,23 @@ def _critique_evaluator_prompt(
           `skipped` must cover all {len(all_check_ids)} lens ids with no overlap
           and no omission.
         - **At least one lens must be selected** — an all-skip verdict is rejected.
-        - **Every selected lens** maps to a `critic_model` that appears in the
-          roster above AND whose roster rank is >= your own (i.e., the critic is
-          no stronger than the evaluator). Choose the **cheapest** such model
-          that can do the lens justice (see "Assign the cheapest capable critic"
-          above) — escalate to a premium critic only for a lens that truly
-          needs it, and justify the escalation in `why`.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most {MAX_OTHER_AREAS}
+          `other` areas.
 
         Your output must be a JSON object with these keys:
-        - `selections`: list of {{check_id, critic_model, why}} objects
+        - `selections`: list of objects. For catalog lenses:
+          {{check_id, complexity (int 1–5), complexity_justification, why?}}
+          For `other` custom areas:
+          {{check_id: "other", area, why, complexity (int 1–5), complexity_justification}}
         - `skipped`: list of {{check_id, why}} objects
         - `evaluator_model`: your own model identifier string
         - `flag_verifications` (OPTIONAL — only when the Flag Resolution
