@@ -79,6 +79,7 @@ def minimal_prep_metrics() -> dict[str, Any]:
     return {
         "area_count": 0,
         "fanout_count": 0,
+        "forced_count": 0,
         "completed_count": 0,
         "partial_count": 0,
         "timed_out_count": 0,
@@ -101,6 +102,7 @@ def minimal_prep_metrics() -> dict[str, Any]:
             "existing_files": [],
             "missing_files": [],
             "shared_files": [],
+            "to_be_built_files": [],
         },
         "stage_metrics": {
             "triage": _stage_metrics(),
@@ -288,13 +290,118 @@ def _artifact_text(plan_dir: Path, filename: str, text: str) -> str:
     return _hash_file(plan_dir / filename)
 
 
-def _cap_research_areas(state: PlanState, areas: list[Any]) -> tuple[list[dict[str, Any]], int]:
+def _forced_upstream_areas(state: PlanState) -> list[dict[str, Any]]:
+    """Derive one forced prep research area per upstream dependency label.
+
+    Reads ``state.meta.chain_policy.contract_context`` and creates an area
+    for each ``dependency_label`` with a brief covering the upstream planned
+    interfaces so downstream prep research accounts for the contract surface.
+    """
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        return []
+    chain_policy = meta.get("chain_policy")
+    if not isinstance(chain_policy, dict):
+        return []
+    contract_context = chain_policy.get("contract_context")
+    if not isinstance(contract_context, dict):
+        return []
+    if contract_context.get("plan_only") is not True:
+        return []
+    dep_labels = contract_context.get("dependency_labels")
+    if not isinstance(dep_labels, list) or not dep_labels:
+        return []
+    upstream_contracts = contract_context.get("upstream_contracts")
+    if not isinstance(upstream_contracts, list):
+        upstream_contracts = []
+
+    # Build a label→paths index from upstream contracts
+    label_paths: dict[str, set[str]] = {}
+    for item in upstream_contracts:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("milestone_label") or item.get("label") or "").strip()
+        if not label:
+            continue
+        provides = item.get("provides", [])
+        if not isinstance(provides, list):
+            provides = []
+        paths = label_paths.setdefault(label, set())
+        for provide in provides:
+            if not isinstance(provide, dict):
+                continue
+            for interface in provide.get("interfaces", []) or []:
+                if isinstance(interface, dict):
+                    path = str(interface.get("path", "")).strip()
+                    if path:
+                        paths.add(path)
+
+    forced: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for label in dep_labels:
+        if not isinstance(label, str):
+            continue
+        label = label.strip()
+        if not label or label in seen_ids:
+            continue
+        seen_ids.add(label)
+        paths = sorted(label_paths.get(label, []))
+        suggested_files = paths[:10]  # keep the area focused
+        forced.append({
+            "id": f"upstream-{label}",
+            "area": f"Upstream contract: {label}",
+            "brief": (
+                f"Research planned upstream interfaces provided by milestone `{label}` "
+                f"so prep can account for contract-surface shape, path expectations, "
+                f"and signature constraints during downstream planning."
+            ),
+            "suggested_files": suggested_files,
+        })
+    return forced
+
+
+def _deduplicate_areas(
+    forced: list[dict[str, Any]],
+    triage_areas: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Insert forced areas before triage areas, keeping the first seen ID.
+
+    Returns a list where forced areas appear first (preserving insertion order)
+    and triage areas that share an ``id`` with a forced area are dropped.
+    """
+    seen: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for area in forced:
+        aid = str(area.get("id") or area.get("area") or "").strip()
+        if aid and aid not in seen:
+            seen.add(aid)
+            merged.append(area)
+    for area in triage_areas:
+        aid = str(area.get("id") or area.get("area") or "").strip()
+        if aid and aid not in seen:
+            seen.add(aid)
+            merged.append(area)
+    return merged
+
+
+def _cap_research_areas(
+    state: PlanState,
+    areas: list[Any],
+    *,
+    forced_count: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
     cap = prep_area_cap(state)
     normalized: list[dict[str, Any]] = []
     for index, area in enumerate(areas):
         if not isinstance(area, dict):
             raise CliError("parse_error", f"prep triage area at index {index} must be an object")
         normalized.append(dict(area))
+
+    # Always retain forced areas even when forced_count > cap.
+    if forced_count >= cap:
+        # All slots go to forced areas; triage areas are culled.
+        return normalized[:forced_count], cap
+
     return normalized[:cap], cap
 
 
@@ -302,6 +409,7 @@ def _prep_metrics(
     *,
     original_area_count: int,
     capped_area_count: int,
+    forced_count: int = 0,
     findings: list[dict[str, Any]],
     fanout: GenericScatterResult,
     triage_worker: WorkerResult,
@@ -334,6 +442,7 @@ def _prep_metrics(
     return {
         "area_count": original_area_count,
         "fanout_count": capped_area_count,
+        "forced_count": forced_count,
         "completed_count": sum(1 for item in findings if item.get("status") == "complete"),
         "partial_count": sum(1 for item in findings if item.get("status") == "partial"),
         "timed_out_count": sum(1 for item in findings if item.get("status") == "timed_out"),
@@ -368,6 +477,7 @@ def _prep_metrics(
             "existing_files": [],
             "missing_files": [],
             "shared_files": [],
+            "to_be_built_files": [],
         },
         "stage_metrics": {
             "triage": triage_stage,
@@ -446,7 +556,69 @@ def _gap_notes(
     missing_files = cross_reference.get("missing_files", [])
     if missing_files:
         notes.append("Referenced files missing during bounded cross-reference: " + ", ".join(missing_files))
+    to_be_built = cross_reference.get("to_be_built_files", [])
+    if to_be_built:
+        labels = sorted(set(
+            str(item["upstream_milestone"])
+            for item in to_be_built
+            if isinstance(item, dict) and item.get("upstream_milestone")
+        ))
+        paths = sorted(set(
+            str(item["path"])
+            for item in to_be_built
+            if isinstance(item, dict) and item.get("path")
+        ))
+        notes.append(
+            "Files expected from upstream milestone(s) "
+            + ", ".join(labels)
+            + " (not yet built locally): "
+            + ", ".join(paths)
+        )
     return notes
+
+
+def _collect_upstream_provided_paths(state: PlanState) -> dict[str, str]:
+    """Return a mapping of provided path → upstream milestone label.
+
+    Reads ``state.meta.chain_policy.contract_context.upstream_contracts``
+    and extracts interface paths keyed by their upstream milestone so
+    ``_cross_reference_prep_output`` can classify them as to-be-built files.
+    """
+    meta = state.get("meta")
+    if not isinstance(meta, dict):
+        return {}
+    chain_policy = meta.get("chain_policy")
+    if not isinstance(chain_policy, dict):
+        return {}
+    contract_context = chain_policy.get("contract_context")
+    if not isinstance(contract_context, dict):
+        return {}
+    if contract_context.get("plan_only") is not True:
+        return {}
+    upstream_contracts = contract_context.get("upstream_contracts")
+    if not isinstance(upstream_contracts, list):
+        return {}
+
+    path_map: dict[str, str] = {}
+    for item in upstream_contracts:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("milestone_label") or item.get("label") or "").strip()
+        if not label:
+            continue
+        provides = item.get("provides")
+        if not isinstance(provides, list):
+            provides = []
+        for provide in provides:
+            if not isinstance(provide, dict):
+                continue
+            for interface in provide.get("interfaces", []) or []:
+                if not isinstance(interface, dict):
+                    continue
+                path = str(interface.get("path", "")).strip()
+                if path and path not in path_map:
+                    path_map[path] = label
+    return path_map
 
 
 def _cross_reference_prep_output(
@@ -454,6 +626,7 @@ def _cross_reference_prep_output(
     root: Path,
     findings: list[dict[str, Any]],
     prep_payload: dict[str, Any],
+    upstream_provided_paths: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     finding_files = {
         str(path).strip()
@@ -467,11 +640,24 @@ def _cross_reference_prep_output(
         if isinstance(item, dict) and str(item.get("file_path") or "").strip()
     }
     checked_files = sorted(finding_files | prep_files)
+
+    # Classify upstream-provided paths as to-be-built before filesystem checks.
+    provided = upstream_provided_paths or {}
+    to_be_built_files: list[dict[str, Any]] = []
+    for path in checked_files:
+        label = provided.get(path)
+        if label:
+            to_be_built_files.append({"path": path, "upstream_milestone": label})
+
+    # Only report a file as missing when it is NOT an upstream-provided path
+    # (those are expected to not exist locally yet).
+    upstream_path_set = set(provided.keys())
     existing_files = sorted(
         path for path in checked_files if (root / path).exists()
     )
     missing_files = sorted(
-        path for path in checked_files if not (root / path).exists()
+        path for path in checked_files
+        if not (root / path).exists() and path not in upstream_path_set
     )
     return {
         "performed": bool(checked_files),
@@ -479,6 +665,7 @@ def _cross_reference_prep_output(
         "existing_files": existing_files,
         "missing_files": missing_files,
         "shared_files": sorted(finding_files & prep_files),
+        "to_be_built_files": to_be_built_files,
     }
 
 
@@ -490,9 +677,15 @@ def _assemble_prep_outputs(
     findings: list[dict[str, Any]],
     metrics: dict[str, Any],
     prep_payload: dict[str, Any],
+    upstream_provided_paths: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     overlaps = _research_overlap_groups(findings)
-    cross_reference = _cross_reference_prep_output(root=root, findings=findings, prep_payload=prep_payload)
+    cross_reference = _cross_reference_prep_output(
+        root=root,
+        findings=findings,
+        prep_payload=prep_payload,
+        upstream_provided_paths=upstream_provided_paths,
+    )
     contradiction_notes = _contradiction_notes(findings, overlaps)
     gap_notes = _gap_notes(findings, prep_payload, cross_reference)
     metrics["overlap_groups"] = overlaps
@@ -584,6 +777,14 @@ def _prep_dossier_text(
     else:
         lines.append("- (none)")
     cross_reference = metrics.get("cross_reference", {})
+    to_be_built = cross_reference.get("to_be_built_files", [])
+    to_be_built_lines: list[str] = []
+    if to_be_built:
+        for item in to_be_built:
+            if isinstance(item, dict):
+                to_be_built_lines.append(
+                    f"- {item.get('path', '?')} (from {item.get('upstream_milestone', '?')})"
+                )
     lines.extend(
         [
             "",
@@ -592,6 +793,13 @@ def _prep_dossier_text(
             f"- Performed: {'yes' if cross_reference.get('performed') else 'no'}",
             f"- Shared files: {', '.join(cross_reference.get('shared_files', [])) or '(none)'}",
             f"- Missing files: {', '.join(cross_reference.get('missing_files', [])) or '(none)'}",
+        ]
+    )
+    if to_be_built_lines:
+        lines.append(f"- Expected from upstream (not yet built):")
+        lines.extend(to_be_built_lines)
+    lines.extend(
+        [
             "",
             "## Metrics",
             "",
@@ -997,7 +1205,12 @@ def run_prep_orchestration(
     areas = triage.get("areas", [])
     if not isinstance(areas, list):
         raise CliError("parse_error", "prep triage output field 'areas' must be a list")
-    capped_areas, _area_cap = _cap_research_areas(state, areas)
+    forced_areas = _forced_upstream_areas(state)
+    upstream_provided_paths = _collect_upstream_provided_paths(state)
+    merged_areas = _deduplicate_areas(forced_areas, areas)
+    capped_areas, _area_cap = _cap_research_areas(
+        state, merged_areas, forced_count=len(forced_areas),
+    )
 
     if not capped_areas:
         payload = write_skip_prep_artifacts(plan_dir)
@@ -1039,6 +1252,7 @@ def run_prep_orchestration(
     metrics = _prep_metrics(
         original_area_count=len(areas),
         capped_area_count=len(capped_areas),
+        forced_count=len(forced_areas),
         findings=findings,
         fanout=fanout,
         triage_worker=triage_worker,
@@ -1051,6 +1265,7 @@ def run_prep_orchestration(
         findings=findings,
         metrics=metrics,
         prep_payload=compatible_payload,
+        upstream_provided_paths=upstream_provided_paths,
     )
     _artifact_json(plan_dir, "research.json", {"findings": findings})
     metrics_hash = _artifact_json(plan_dir, "prep_metrics.json", metrics)

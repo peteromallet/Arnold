@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any, Mapping
 
 from megaplan._core import (
     configured_robustness,
@@ -30,7 +31,18 @@ def _iteration_pressure_block(state: PlanState, plan_dir: Path) -> str:
     return render_pressure_table(entries)
 
 
-def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
+def _gate_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    contract_context: Mapping[str, Any] | None = None,
+) -> str:
+    from ._shared import _render_contracts_block, _resolve_contract_context
+
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="gate",
+    )
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
@@ -76,6 +88,7 @@ def _gate_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         f"""
         You are the gatekeeper for the megaplan workflow. Make the continuation decision directly.
 
+        {contracts_block}
         Project directory:
         {project_dir}
 

@@ -52,6 +52,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -616,6 +617,7 @@ class ChainState:
     # ``profile_bumps`` / ``robustness_bumps`` / ``depth_bumps`` persist the
     # escalated tier overrides applied for the next re-init.
     retry_counts: dict[str, int] = field(default_factory=dict)
+    reground_decisions: dict[str, Any] = field(default_factory=dict)
     ladder_stage: dict[str, str] = field(default_factory=dict)
     profile_bumps: dict[str, str] = field(default_factory=dict)
     robustness_bumps: dict[str, str] = field(default_factory=dict)
@@ -640,6 +642,7 @@ class ChainState:
             "extra_repo_sync": list(self.extra_repo_sync),
             "completion_contract_mode": self.completion_contract_mode,
             "retry_counts": dict(self.retry_counts),
+            "reground_decisions": dict(self.reground_decisions),
             "ladder_stage": dict(self.ladder_stage),
             "profile_bumps": dict(self.profile_bumps),
             "robustness_bumps": dict(self.robustness_bumps),
@@ -701,6 +704,11 @@ class ChainState:
                 if isinstance(key, str) and isinstance(val, str)
             }
 
+        def _str_any_map(value: Any) -> dict[str, Any]:
+            if not isinstance(value, dict):
+                return {}
+            return {key: val for key, val in value.items() if isinstance(key, str)}
+
         return cls(
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
@@ -719,6 +727,7 @@ class ChainState:
             extra_repo_sync=extra_repo_sync,
             completion_contract_mode=completion_contract_mode,
             retry_counts=_str_int_map(raw.get("retry_counts")),
+            reground_decisions=_str_any_map(raw.get("reground_decisions")),
             ladder_stage=_str_str_map(raw.get("ladder_stage")),
             profile_bumps=_str_str_map(raw.get("profile_bumps")),
             robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
@@ -797,6 +806,348 @@ def _upsert_completed_record(state: ChainState, record: dict[str, Any]) -> None:
 
 def _completed_record_for_label(state: ChainState, label: str) -> dict[str, Any] | None:
     return _completed_records_by_label(state).get(label)
+
+
+def _load_contract_for_completed_record(root: Path, record: dict[str, Any]) -> dict[str, Any] | None:
+    """Load the plan contract for a completed record.
+
+    Prefers the current ``contract.json`` in the plan directory. When that
+    file is missing, falls back to reading it from the git commit stored in
+    ``artifact_commit_sha`` via ``read_plan_artifact_from_commit``.  The
+    loaded payload is normalized through ``normalize_contract_payload``.
+
+    Returns ``None`` when the record has no usable plan name or the contract
+    cannot be found through either path.
+    """
+    from megaplan.chain.git_ops import read_plan_artifact_from_commit
+    from megaplan.orchestration.plan_contracts import normalize_contract_payload
+
+    plan_name = record.get("plan")
+    if not isinstance(plan_name, str) or not plan_name.strip():
+        return None
+
+    plan_dir = root / ".megaplan" / "plans" / plan_name
+    contract_path = plan_dir / "contract.json"
+
+    # Prefer the current artifact on disk.
+    if contract_path.exists():
+        try:
+            payload = json.loads(contract_path.read_text(encoding="utf-8"))
+            return normalize_contract_payload(payload)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Fall back to the commit artifact.
+    commit_sha = record.get("artifact_commit_sha")
+    if isinstance(commit_sha, str) and commit_sha.strip():
+        rel_path = f".megaplan/plans/{plan_name}/contract.json"
+        try:
+            content = read_plan_artifact_from_commit(root, commit_sha.strip(), rel_path)
+            if content is not None:
+                payload = json.loads(content)
+                return normalize_contract_payload(payload)
+        except (json.JSONDecodeError, CliError):
+            pass
+
+    return None
+
+
+def _contract_context_for_plan_only_milestone(
+    root: Path,
+    milestone: MilestoneSpec,
+    state: ChainState,
+) -> dict[str, Any]:
+    from megaplan.orchestration.plan_contracts import provided_paths_by_milestone
+
+    records = _completed_records_by_label(state)
+    upstream_contracts: list[dict[str, Any]] = []
+    dependency_labels: list[str] = []
+    for label in milestone.depends_on:
+        record = records.get(label)
+        if not isinstance(record, dict) or record.get("status") not in {"finalized", "done"}:
+            continue
+        contract = _load_contract_for_completed_record(root, record)
+        if contract is None:
+            continue
+        dependency_labels.append(label)
+        upstream_contracts.append(
+            {
+                "milestone_label": label,
+                "provides": list(contract.get("provides", [])),
+                "assumes": list(contract.get("assumes", [])),
+            }
+        )
+    return {
+        "plan_only": True,
+        "milestone_label": milestone.label,
+        "dependency_labels": dependency_labels,
+        "upstream_contracts": upstream_contracts,
+        "provided_paths": provided_paths_by_milestone(upstream_contracts),
+    }
+
+
+def _chain_review_path(spec_path: Path) -> Path:
+    return spec_path.resolve().parent / ".megaplan" / "plans" / ".chains" / f"{spec_path.stem}.review.md"
+
+
+def _markdown_cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+
+
+def _write_chain_review(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    partial_reason: str | None = None,
+) -> Path:
+    from megaplan.orchestration.plan_contracts import diff_assumes_against_provides
+
+    records = _completed_records_by_label(state)
+    loaded_contracts: dict[str, dict[str, Any]] = {}
+    for label, record in records.items():
+        if not isinstance(record, dict) or record.get("status") not in {"finalized", "done"}:
+            continue
+        contract = _load_contract_for_completed_record(root, record)
+        if contract is not None:
+            loaded_contracts[label] = contract
+
+    rows: list[dict[str, str]] = []
+    for milestone in spec.milestones:
+        downstream_contract = loaded_contracts.get(milestone.label)
+        if downstream_contract is None or not downstream_contract.get("assumes"):
+            continue
+        upstream_contracts = [
+            {
+                "milestone_label": label,
+                "provides": list(loaded_contracts[label].get("provides", [])),
+                "assumes": list(loaded_contracts[label].get("assumes", [])),
+            }
+            for label in milestone.depends_on
+            if label in loaded_contracts
+        ]
+        rows.extend(
+            diff_assumes_against_provides(
+                downstream_contract,
+                upstream_contracts,
+                downstream_label=milestone.label,
+            )
+        )
+
+    status_counts = {status: 0 for status in ("OK", "MISSING_UPSTREAM", "MISMATCH")}
+    for row in rows:
+        status = row.get("status")
+        if status in status_counts:
+            status_counts[status] += 1
+
+    lines = [
+        f"# Chain Review: {spec_path.stem}",
+        "",
+        f"- Status: {'partial' if partial_reason else 'complete'}",
+        f"- Partial reason: {partial_reason or ''}",
+        f"- Completed records considered: {len(records)}",
+        f"- Contracts loaded: {len(loaded_contracts)}",
+        f"- OK: {status_counts['OK']}",
+        f"- MISSING_UPSTREAM: {status_counts['MISSING_UPSTREAM']}",
+        f"- MISMATCH: {status_counts['MISMATCH']}",
+        "",
+        "| Downstream | Upstream | Symbol | Expected Path | Actual Path | Expected Signature | Actual Signature | Status | Note |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    if rows:
+        for row in rows:
+            lines.append(
+                "| "
+                + " | ".join(
+                    _markdown_cell(row.get(key, ""))
+                    for key in (
+                        "downstream_label",
+                        "upstream_label",
+                        "symbol",
+                        "expected_path",
+                        "actual_path",
+                        "expected_signature",
+                        "actual_signature",
+                        "status",
+                        "note",
+                    )
+                )
+                + " |"
+            )
+    else:
+        lines.append("|  |  |  |  |  |  |  | OK | No Provides-to-Assumes rows. |")
+
+    path = _chain_review_path(spec_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return path
+
+
+def _read_plan_state_payload(root: Path, plan_name: str) -> dict[str, Any] | None:
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+    state_path = plan_dir / "state.json"
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _plan_current_state_from_payload(root: Path, plan_name: str) -> str | None:
+    raw = _read_plan_state_payload(root, plan_name)
+    current = raw.get("current_state") if isinstance(raw, dict) else None
+    return current if isinstance(current, str) else None
+
+
+def _apply_reground_replan(
+    root: Path,
+    plan_name: str,
+    decision: dict[str, Any],
+) -> None:
+    from megaplan.handlers.override import apply_override_replan
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        plan_dir = root / ".megaplan" / "plans" / plan_name
+    raw_state = _read_plan_state_payload(root, plan_name)
+    if not isinstance(raw_state, dict):
+        raise CliError(
+            "missing_reground_plan_state",
+            f"cannot apply reground replan: plan {plan_name!r} has no readable state.json",
+        )
+    summary = _reground_diff_summary(decision)
+    apply_override_replan(
+        root,
+        plan_dir,
+        raw_state,
+        reason=f"Contract drift detected before execute. {summary}",
+        note=summary,
+    )
+
+
+def _reground_skip_decision(milestone: MilestoneSpec, reason: str) -> dict[str, Any]:
+    return {
+        "status": "skipped",
+        "milestone_label": milestone.label,
+        "reason": reason,
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def _record_execute_reground_decision(
+    root: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    downstream_record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    from megaplan.orchestration.plan_contracts import (
+        MATERIAL_CONTRACT_STATUSES,
+        contract_diff_fingerprint,
+        diff_assumes_against_provides,
+    )
+
+    if not milestone.depends_on:
+        decision = _reground_skip_decision(milestone, "no_dependencies")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+    if not isinstance(downstream_record, dict) or downstream_record.get("status") != "finalized":
+        decision = _reground_skip_decision(milestone, "downstream_not_finalized")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    plan_state = _read_plan_state_payload(root, plan_name)
+    meta = (plan_state or {}).get("meta")
+    chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+    contract_context = chain_policy.get("contract_context") if isinstance(chain_policy, dict) else None
+    if not isinstance(contract_context, dict) or contract_context.get("plan_only") is not True:
+        decision = _reground_skip_decision(milestone, "not_plan_only")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    downstream_contract = _load_contract_for_completed_record(root, downstream_record)
+    if downstream_contract is None:
+        decision = _reground_skip_decision(milestone, "downstream_contract_unavailable")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+    if not downstream_contract.get("assumes"):
+        decision = _reground_skip_decision(milestone, "downstream_assumes_empty")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    records = _completed_records_by_label(state)
+    upstream_contracts: list[dict[str, Any]] = []
+    unavailable: list[str] = []
+    for label in milestone.depends_on:
+        record = records.get(label)
+        contract = _load_contract_for_completed_record(root, record) if isinstance(record, dict) else None
+        if contract is None:
+            unavailable.append(label)
+            continue
+        upstream_contracts.append(
+            {
+                "milestone_label": label,
+                "provides": list(contract.get("provides", [])),
+                "assumes": list(contract.get("assumes", [])),
+            }
+        )
+    if unavailable:
+        decision = _reground_skip_decision(
+            milestone,
+            "upstream_contract_unavailable:" + ",".join(sorted(unavailable)),
+        )
+        state.reground_decisions[milestone.label] = decision
+        return decision
+    if not any(contract.get("provides") for contract in upstream_contracts):
+        decision = _reground_skip_decision(milestone, "upstream_provides_empty")
+        state.reground_decisions[milestone.label] = decision
+        return decision
+
+    diff_rows = diff_assumes_against_provides(
+        downstream_contract,
+        upstream_contracts,
+        downstream_label=milestone.label,
+    )
+    material_rows = [
+        row for row in diff_rows if row.get("status") in MATERIAL_CONTRACT_STATUSES
+    ]
+    decision = {
+        "status": "drift" if material_rows else "pass",
+        "milestone_label": milestone.label,
+        "dependency_labels": list(milestone.depends_on),
+        "checked_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "diff_row_count": len(diff_rows),
+        "material_diff_count": len(material_rows),
+        "material_fingerprint": contract_diff_fingerprint(material_rows),
+        "material_diffs": material_rows,
+    }
+    state.reground_decisions[milestone.label] = decision
+    return decision
+
+
+def _reground_diff_summary(decision: dict[str, Any]) -> str:
+    rows = decision.get("material_diffs")
+    if not isinstance(rows, list) or not rows:
+        return "No material contract drift rows."
+    parts: list[str] = []
+    for row in rows[:5]:
+        if not isinstance(row, dict):
+            continue
+        upstream = row.get("upstream_label") or "<unknown>"
+        symbol = row.get("symbol") or "<unknown>"
+        status = row.get("status") or "MISMATCH"
+        note = row.get("note") or ""
+        parts.append(f"{status} {upstream}:{symbol}" + (f" ({note})" if note else ""))
+    suffix = ""
+    if len(rows) > len(parts):
+        suffix = f"; +{len(rows) - len(parts)} more"
+    return "; ".join(parts) + suffix
 
 
 def _load_finalized_record_state(
@@ -959,6 +1310,7 @@ def _plan_artifact_paths_for_milestone(
         plan_dir / "final.md",
         plan_dir / "finalize.json",
         plan_dir / "state.json",
+        plan_dir / "contract.json",
     ]
     idea_path = Path(milestone.idea)
     if idea_path.exists():
@@ -1059,6 +1411,9 @@ def _write_chain_policy_into_plan_meta(
     spec: ChainSpec,
     spec_path: Path,
     milestone_label: str,
+    *,
+    plan_only: bool = False,
+    contract_context: dict[str, Any] | None = None,
 ) -> None:
     """Record effective chain policy in the plan's ``state.json`` metadata.
 
@@ -1109,7 +1464,13 @@ def _write_chain_policy_into_plan_meta(
         "review_policy": effective["review_policy"],
         "source": effective["source"],
         "milestone_label": milestone_label,
+        "plan_only": plan_only,
     }
+    if contract_context is not None:
+        chain_policy["dependency_labels"] = list(contract_context.get("dependency_labels", []))
+        chain_policy["upstream_contracts"] = list(contract_context.get("upstream_contracts", []))
+        chain_policy["provided_paths"] = dict(contract_context.get("provided_paths", {}))
+        chain_policy["contract_context"] = contract_context
 
     def _patch_chain_policy(current: dict[str, Any]) -> bool:
         meta = current.setdefault("meta", {})
@@ -1927,6 +2288,14 @@ def run_chain(
             save_chain_state(spec_path, state)
             decision = _handle_outcome(outcome, spec=spec, writer=writer)
             if decision == "stop":
+                if planning_pass:
+                    _write_chain_review(
+                        root,
+                        spec_path,
+                        spec,
+                        state,
+                        partial_reason=f"seed plan {outcome.status}",
+                    )
                 return _result("stopped", state, events, spec=spec, reason=f"seed plan {outcome.status}")
             if decision == "retry":
                 # Recursive retry kept simple: re-drive seed once.
@@ -1940,6 +2309,14 @@ def run_chain(
                 state.last_state = outcome.status
                 save_chain_state(spec_path, state)
                 if outcome.status != "done":
+                    if planning_pass:
+                        _write_chain_review(
+                            root,
+                            spec_path,
+                            spec,
+                            state,
+                            partial_reason="seed retry failed",
+                        )
                     return _result("stopped", state, events, spec=spec, reason="seed retry failed")
             # skip / advance both proceed to milestones
         _upsert_completed_record(
@@ -2122,10 +2499,21 @@ def run_chain(
                 phase_model=milestone.phase_model,
                 writer=writer,
             )
+            contract_context = (
+                _contract_context_for_plan_only_milestone(root, milestone, state)
+                if planning_pass
+                else None
+            )
             # Record effective chain policy in the newly initialized plan's
             # state.json metadata so downstream consumers can introspect it.
             _write_chain_policy_into_plan_meta(
-                root, plan_name, spec, spec_path, milestone.label
+                root,
+                plan_name,
+                spec,
+                spec_path,
+                milestone.label,
+                plan_only=planning_pass,
+                contract_context=contract_context,
             )
             state.current_milestone_index = idx
             state.current_plan_name = plan_name
@@ -2165,6 +2553,61 @@ def run_chain(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
 
+        if execution_pass:
+            previous_reground_decision = state.reground_decisions.get(milestone.label)
+            current_plan_state = _plan_current_state_from_payload(root, plan_name)
+            if current_plan_state != STATE_FINALIZED:
+                reground_decision = _reground_skip_decision(milestone, "plan_not_finalized")
+                if not (
+                    isinstance(previous_reground_decision, dict)
+                    and previous_reground_decision.get("status") == "replanned"
+                ):
+                    state.reground_decisions[milestone.label] = reground_decision
+                    save_chain_state(spec_path, state)
+            else:
+                reground_decision = _record_execute_reground_decision(
+                    root,
+                    state,
+                    milestone,
+                    plan_name,
+                    _completed_record_for_status(state, milestone),
+                )
+                if reground_decision.get("status") == "drift":
+                    fingerprint = reground_decision.get("material_fingerprint")
+                    if (
+                        isinstance(previous_reground_decision, dict)
+                        and previous_reground_decision.get("material_fingerprint") == fingerprint
+                        and previous_reground_decision.get("status") in {"drift", "replanned"}
+                    ):
+                        save_chain_state(spec_path, state)
+                        summary = _reground_diff_summary(reground_decision)
+                        log(f"reground {milestone.label}: repeated drift; stopping")
+                        return _result(
+                            "stopped",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=f"repeated contract drift for {milestone.label}: {summary}",
+                        )
+                    _apply_reground_replan(root, plan_name, reground_decision)
+                    replanned_decision = dict(reground_decision)
+                    replanned_decision["status"] = "replanned"
+                    replanned_decision["replan_reason"] = _reground_diff_summary(reground_decision)
+                    replanned_decision["replanned_at"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                    state.reground_decisions[milestone.label] = replanned_decision
+                    save_chain_state(spec_path, state)
+                    log(f"reground {milestone.label}: drift; replanning same milestone")
+                    continue
+                save_chain_state(spec_path, state)
+            log(
+                f"reground {milestone.label}: {reground_decision['status']}"
+                + (
+                    f" ({reground_decision['reason']})"
+                    if reground_decision.get("reason")
+                    else ""
+                )
+            )
+
         outcome = _drive_plan_with_blocked_execute_recovery(
             root,
             plan_name,
@@ -2184,6 +2627,14 @@ def run_chain(
                 root, spec_path, milestone, outcome, state, writer=writer
             )
             save_chain_state(spec_path, state)
+            if planning_pass:
+                _write_chain_review(
+                    root,
+                    spec_path,
+                    spec,
+                    state,
+                    partial_reason=f"milestone {milestone.label} ended {outcome.status}",
+                )
             return _result(
                 "stopped",
                 state,
@@ -2288,6 +2739,14 @@ def run_chain(
         save_chain_state(spec_path, state)
         if one:
             log(f"paused after milestone {milestone.label}")
+            if planning_pass:
+                _write_chain_review(
+                    root,
+                    spec_path,
+                    spec,
+                    state,
+                    partial_reason=f"completed one milestone: {milestone.label}",
+                )
             return _result(
                 "paused",
                 state,
@@ -2297,6 +2756,8 @@ def run_chain(
             )
 
     log("all milestones complete")
+    if planning_pass:
+        _write_chain_review(root, spec_path, spec, state)
     return _result("done", state, events, spec=spec)
 
 

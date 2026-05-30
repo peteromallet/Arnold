@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Mapping
 
 from megaplan.types import PlanState
 
 
-def _prep_doc_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
+def _prep_doc_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    contract_context: Mapping[str, Any] | None = None,
+) -> str:
+    del contract_context
     del root
     project_dir = Path(state["config"]["project_dir"])
     output_path = plan_dir / "prep.json"

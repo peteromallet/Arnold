@@ -294,6 +294,7 @@ def test_run_prep_orchestration_caps_fanout_writes_dossier_and_returns_worker(
         ],
         "missing_files": [],
         "shared_files": [],
+        "to_be_built_files": [],
     }
     assert metrics["stage_metrics"]["triage"]["total_tokens"] == 3
     assert metrics["stage_metrics"]["fanout"]["total_tokens"] == 7
@@ -642,3 +643,368 @@ def test_compatible_prep_payload_handles_absent_open_questions() -> None:
     result = prep_research._compatible_prep_payload(payload)
     assert "open_questions" not in result
     assert result["skip"] is False
+
+
+# ---------------------------------------------------------------------------
+# T5: forced upstream-summary prep research areas
+# ---------------------------------------------------------------------------
+
+
+def test_forced_upstream_areas_returns_empty_when_no_chain_policy() -> None:
+    """No forced areas when state lacks chain_policy."""
+    state: PlanState = {
+        "name": "t", "idea": "i", "current_state": "initialized",
+        "iteration": 0, "created_at": "2026-05-24T00:00:00Z",
+        "config": {"project_dir": "/tmp", "robustness": "full"},
+        "sessions": {}, "plan_versions": [], "history": [],
+        "meta": {"total_cost_usd": 0.0, "notes": []},
+        "last_gate": {},
+    }
+    assert prep_research._forced_upstream_areas(state) == []
+
+
+def test_forced_upstream_areas_returns_empty_when_not_plan_only() -> None:
+    """No forced areas when contract_context has plan_only=False."""
+    state: PlanState = {
+        "name": "t", "idea": "i", "current_state": "initialized",
+        "iteration": 0, "created_at": "2026-05-24T00:00:00Z",
+        "config": {"project_dir": "/tmp", "robustness": "full"},
+        "sessions": {}, "plan_versions": [], "history": [],
+        "meta": {
+            "total_cost_usd": 0.0, "notes": [],
+            "chain_policy": {
+                "contract_context": {
+                    "plan_only": False,
+                    "dependency_labels": ["m1"],
+                    "upstream_contracts": [
+                        {
+                            "milestone_label": "m1",
+                            "provides": [{
+                                "name": "P",
+                                "interfaces": [{"symbol": "P.run", "path": "megaplan/p.py", "signature": "P.run()"}],
+                            }],
+                        }
+                    ],
+                },
+            },
+        },
+        "last_gate": {},
+    }
+    assert prep_research._forced_upstream_areas(state) == []
+
+
+def test_forced_upstream_areas_derives_one_area_per_dependency_label() -> None:
+    """Each dependency_label becomes one forced area with upstream path context."""
+    state: PlanState = {
+        "name": "t", "idea": "i", "current_state": "initialized",
+        "iteration": 0, "created_at": "2026-05-24T00:00:00Z",
+        "config": {"project_dir": "/tmp", "robustness": "full"},
+        "sessions": {}, "plan_versions": [], "history": [],
+        "meta": {
+            "total_cost_usd": 0.0, "notes": [],
+            "chain_policy": {
+                "contract_context": {
+                    "plan_only": True,
+                    "dependency_labels": ["m1", "m2"],
+                    "upstream_contracts": [
+                        {
+                            "milestone_label": "m1",
+                            "provides": [{
+                                "name": "Planner surface",
+                                "interfaces": [
+                                    {"symbol": "Planner.run", "path": "megaplan/planner.py", "signature": "Planner.run()"},
+                                ],
+                            }],
+                        },
+                        {
+                            "milestone_label": "m2",
+                            "provides": [{
+                                "name": "Executor surface",
+                                "interfaces": [
+                                    {"symbol": "Executor.run", "path": "megaplan/executor.py", "signature": "Executor.run()"},
+                                ],
+                            }],
+                        },
+                    ],
+                },
+            },
+        },
+        "last_gate": {},
+    }
+    forced = prep_research._forced_upstream_areas(state)
+    assert len(forced) == 2
+    assert forced[0]["id"] == "upstream-m1"
+    assert "megaplan/planner.py" in forced[0]["suggested_files"]
+    assert forced[1]["id"] == "upstream-m2"
+    assert "megaplan/executor.py" in forced[1]["suggested_files"]
+    # Deduplication within forced areas
+    state["meta"]["chain_policy"]["contract_context"]["dependency_labels"] = ["m1", "m1", "m2"]
+    deduped = prep_research._forced_upstream_areas(state)
+    assert len(deduped) == 2
+    assert [a["id"] for a in deduped] == ["upstream-m1", "upstream-m2"]
+
+
+def test_deduplicate_areas_keeps_forced_first_and_drops_duplicate_ids() -> None:
+    """Forced areas appear first; triage areas with same id are dropped."""
+    forced = [{"id": "f1", "area": "forced-1"}, {"id": "f2", "area": "forced-2"}]
+    triage = [{"id": "t1", "area": "triage-1"}, {"id": "f1", "area": "triage-f1-dup"}, {"id": "t2", "area": "triage-2"}]
+    merged = prep_research._deduplicate_areas(forced, triage)
+    ids = [a.get("id") for a in merged]
+    assert ids == ["f1", "f2", "t1", "t2"]
+
+
+def test_cap_research_areas_retains_forced_when_forced_count_exceeds_cap(tmp_path: Path) -> None:
+    """When forced_count >= cap, all slots go to forced areas; triage is culled."""
+    state = _state(tmp_path)
+    state["config"]["robustness"] = "light"  # cap = 2
+    areas = [
+        {"id": "forced-a", "area": "FA"},
+        {"id": "forced-b", "area": "FB"},
+        {"id": "forced-c", "area": "FC"},  # 3 forced
+        {"id": "triage-a", "area": "TA"},
+    ]
+    capped, cap = prep_research._cap_research_areas(state, areas, forced_count=3)
+    assert cap == 2
+    assert len(capped) == 3  # all forced areas retained, triage dropped
+    assert [a["id"] for a in capped] == ["forced-a", "forced-b", "forced-c"]
+
+
+def test_cap_research_areas_normal_cap_when_forced_fewer_than_cap(tmp_path: Path) -> None:
+    """When forced_count < cap, normal slicing applies to merged areas."""
+    state = _state(tmp_path)
+    state["config"]["robustness"] = "full"  # cap = 4
+    areas = [
+        {"id": "forced-a", "area": "FA"},
+        {"id": "triage-a", "area": "TA"},
+        {"id": "triage-b", "area": "TB"},
+        {"id": "triage-c", "area": "TC"},
+        {"id": "triage-d", "area": "TD"},
+    ]
+    capped, cap = prep_research._cap_research_areas(state, areas, forced_count=1)
+    assert cap == 4
+    assert len(capped) == 4
+    assert capped[0]["id"] == "forced-a"
+
+
+def test_prep_metrics_includes_forced_count() -> None:
+    """_prep_metrics records forced_count in the returned dict."""
+    fanout = prep_research.GenericScatterResult(
+        ordered_results=[],
+        total_cost=0.0,
+        total_prompt_tokens=0,
+        total_completion_tokens=0,
+        total_tokens=0,
+        side_results=[],
+    )
+    triage = WorkerResult(
+        payload={}, raw_output="", duration_ms=0, cost_usd=0.0,
+        session_id="s", prompt_tokens=0, completion_tokens=0, total_tokens=0,
+    )
+    distill = WorkerResult(
+        payload={}, raw_output="", duration_ms=0, cost_usd=0.0,
+        session_id="s", prompt_tokens=0, completion_tokens=0, total_tokens=0,
+    )
+    metrics = prep_research._prep_metrics(
+        original_area_count=5,
+        capped_area_count=3,
+        forced_count=2,
+        findings=[],
+        fanout=fanout,
+        triage_worker=triage,
+        distill_worker=distill,
+    )
+    assert metrics["forced_count"] == 2
+    assert metrics["area_count"] == 5
+    assert metrics["fanout_count"] == 3
+
+
+def test_minimal_prep_metrics_has_forced_count() -> None:
+    """minimal_prep_metrics includes forced_count=0."""
+    metrics = prep_research.minimal_prep_metrics()
+    assert "forced_count" in metrics
+    assert metrics["forced_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# T6: upstream-provided path cross-reference classification
+# ---------------------------------------------------------------------------
+
+
+def test_collect_upstream_provided_paths_returns_path_map() -> None:
+    """_collect_upstream_provided_paths maps interface paths to milestone labels."""
+    state: PlanState = {
+        "name": "t", "idea": "i", "current_state": "initialized",
+        "iteration": 0, "created_at": "2026-05-24T00:00:00Z",
+        "config": {"project_dir": "/tmp", "robustness": "full"},
+        "sessions": {}, "plan_versions": [], "history": [],
+        "meta": {
+            "total_cost_usd": 0.0, "notes": [],
+            "chain_policy": {
+                "contract_context": {
+                    "plan_only": True,
+                    "dependency_labels": ["m1"],
+                    "upstream_contracts": [
+                        {
+                            "milestone_label": "m1",
+                            "provides": [{
+                                "name": "Planner surface",
+                                "interfaces": [
+                                    {"symbol": "Planner.run", "path": "megaplan/planner.py", "signature": "Planner.run()"},
+                                    {"symbol": "Planner.init", "path": "megaplan/init.py", "signature": "Planner.init()"},
+                                ],
+                            }],
+                        },
+                    ],
+                },
+            },
+        },
+        "last_gate": {},
+    }
+    paths = prep_research._collect_upstream_provided_paths(state)
+    assert paths == {"megaplan/planner.py": "m1", "megaplan/init.py": "m1"}
+
+
+def test_collect_upstream_provided_paths_returns_empty_without_policy() -> None:
+    """_collect_upstream_provided_paths returns empty dict when plan_only is not True."""
+    state: PlanState = {
+        "name": "t", "idea": "i", "current_state": "initialized",
+        "iteration": 0, "created_at": "2026-05-24T00:00:00Z",
+        "config": {"project_dir": "/tmp", "robustness": "full"},
+        "sessions": {}, "plan_versions": [], "history": [],
+        "meta": {"total_cost_usd": 0.0, "notes": []},
+        "last_gate": {},
+    }
+    assert prep_research._collect_upstream_provided_paths(state) == {}
+
+
+def test_cross_reference_classifies_upstream_paths_as_to_be_built(tmp_path: Path) -> None:
+    """Upstream-provided paths appear in to_be_built_files and are excluded from missing_files."""
+    # Create a file that exists locally
+    (tmp_path / "megaplan").mkdir(parents=True)
+    (tmp_path / "megaplan" / "existing.py").write_text("# exists")
+
+    findings = [
+        {
+            "area": "a", "brief": "b", "status": "complete",
+            "findings": ["f"], "files": ["megaplan/upstream.py", "megaplan/existing.py"],
+            "code_refs": [], "confidence": "high", "error": "",
+        }
+    ]
+    prep_payload: dict[str, Any] = {
+        "relevant_code": [{"file_path": "megaplan/missing.py"}],
+    }
+    upstream_paths = {"megaplan/upstream.py": "m1"}
+
+    cr = prep_research._cross_reference_prep_output(
+        root=tmp_path,
+        findings=findings,
+        prep_payload=prep_payload,
+        upstream_provided_paths=upstream_paths,
+    )
+    assert cr["performed"] is True
+    assert "megaplan/upstream.py" in cr["checked_files"]
+    # upstream.py should be to-be-built, NOT missing
+    assert "megaplan/upstream.py" not in cr["missing_files"]
+    to_be_built = {(item["path"], item["upstream_milestone"]) for item in cr["to_be_built_files"]}
+    assert ("megaplan/upstream.py", "m1") in to_be_built
+    # existing.py exists locally → in existing_files
+    assert "megaplan/existing.py" in cr["existing_files"]
+    # missing.py doesn't exist and isn't upstream → missing
+    assert "megaplan/missing.py" in cr["missing_files"]
+
+
+def test_cross_reference_only_uses_declared_dependency_contract_paths(tmp_path: Path) -> None:
+    """Sibling-only paths stay missing; only declared dependency paths become to-be-built."""
+    state: PlanState = {
+        "name": "t", "idea": "i", "current_state": "initialized",
+        "iteration": 0, "created_at": "2026-05-24T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "robustness": "full"},
+        "sessions": {}, "plan_versions": [], "history": [],
+        "meta": {
+            "total_cost_usd": 0.0, "notes": [],
+            "chain_policy": {
+                "contract_context": {
+                    "plan_only": True,
+                    "milestone_label": "M-b",
+                    "dependency_labels": ["M-a"],
+                    "upstream_contracts": [
+                        {
+                            "milestone_label": "M-a",
+                            "provides": [{
+                                "name": "Planner surface",
+                                "interfaces": [
+                                    {"symbol": "Planner.run", "path": "planner.py", "signature": "run()"},
+                                ],
+                            }],
+                        },
+                    ],
+                },
+            },
+        },
+        "last_gate": {},
+    }
+    findings = [
+        {
+            "area": "a", "brief": "b", "status": "complete",
+            "findings": ["f"], "files": ["planner.py", "builder.py"],
+            "code_refs": [], "confidence": "high", "error": "",
+        }
+    ]
+    upstream_paths = prep_research._collect_upstream_provided_paths(state)
+
+    cr = prep_research._cross_reference_prep_output(
+        root=tmp_path,
+        findings=findings,
+        prep_payload={},
+        upstream_provided_paths=upstream_paths,
+    )
+
+    assert {(item["path"], item["upstream_milestone"]) for item in cr["to_be_built_files"]} == {
+        ("planner.py", "M-a")
+    }
+    assert "planner.py" not in cr["missing_files"]
+    assert "builder.py" in cr["missing_files"]
+
+
+def test_cross_reference_without_upstream_paths_keeps_old_behavior(tmp_path: Path) -> None:
+    """Without upstream_provided_paths, to_be_built_files is empty and all missing paths stay missing."""
+    findings = [
+        {
+            "area": "a", "brief": "b", "status": "complete",
+            "findings": ["f"], "files": ["megaplan/nonexistent.py"],
+            "code_refs": [], "confidence": "high", "error": "",
+        }
+    ]
+    prep_payload: dict[str, Any] = {}
+
+    cr = prep_research._cross_reference_prep_output(
+        root=tmp_path,
+        findings=findings,
+        prep_payload=prep_payload,
+    )
+    assert cr["to_be_built_files"] == []
+    assert "megaplan/nonexistent.py" in cr["missing_files"]
+
+
+def test_gap_notes_mentions_to_be_built_files() -> None:
+    """_gap_notes includes a note for to_be_built_files."""
+    findings: list[dict[str, Any]] = []
+    prep_payload: dict[str, Any] = {"key_evidence": ["e"], "relevant_code": [], "test_expectations": []}
+    cross_reference = {
+        "performed": True,
+        "checked_files": [],
+        "existing_files": [],
+        "missing_files": [],
+        "shared_files": [],
+        "to_be_built_files": [
+            {"path": "megaplan/planner.py", "upstream_milestone": "m1"},
+            {"path": "megaplan/executor.py", "upstream_milestone": "m2"},
+        ],
+    }
+    notes = prep_research._gap_notes(findings, prep_payload, cross_reference)
+    to_be_built_note = [n for n in notes if "not yet built locally" in n]
+    assert len(to_be_built_note) == 1
+    assert "m1" in to_be_built_note[0]
+    assert "m2" in to_be_built_note[0]
+    assert "megaplan/planner.py" in to_be_built_note[0]
+    assert "megaplan/executor.py" in to_be_built_note[0]

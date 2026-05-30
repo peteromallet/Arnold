@@ -33,6 +33,7 @@ from megaplan.chain import (
     save_chain_state,
 )
 from megaplan.chain.git_ops import CommitResult
+from megaplan.handlers.finalize import _write_finalize_artifacts
 from megaplan.types import CliError, STATE_FINALIZED
 
 
@@ -745,14 +746,16 @@ def test_commit_plan_artifacts_force_adds_ignored_files_on_base_and_restores_bra
     plan_dir.mkdir(parents=True)
     state_path = plan_dir / "state.json"
     final_path = plan_dir / "final.md"
+    contract_path = plan_dir / "contract.json"
     state_path.write_text('{"current_state":"finalized"}\n', encoding="utf-8")
     final_path.write_text("final review\n", encoding="utf-8")
+    contract_path.write_text('{"provides":[],"assumes":[]}\n', encoding="utf-8")
 
     result = commit_plan_artifacts_to_base(
         tmp_path,
         "main",
         "plan-m1",
-        [state_path, final_path, plan_dir / "optional.json"],
+        [state_path, final_path, contract_path, plan_dir / "optional.json"],
         push_enabled=False,
     )
 
@@ -763,6 +766,7 @@ def test_commit_plan_artifacts_force_adds_ignored_files_on_base_and_restores_bra
     tracked_on_main = _git(tmp_path, "ls-tree", "-r", "--name-only", "main").stdout.splitlines()
     assert ".megaplan/plans/plan-m1/state.json" in tracked_on_main
     assert ".megaplan/plans/plan-m1/final.md" in tracked_on_main
+    assert ".megaplan/plans/plan-m1/contract.json" in tracked_on_main
 
 
 def test_commit_plan_artifacts_rejects_unrelated_dirty_worktree(tmp_path: Path) -> None:
@@ -1001,6 +1005,36 @@ def test_chain_state_to_dict_and_from_dict_roundtrip_with_sync() -> None:
     assert reloaded.last_pushed_commit == "abc123"
     assert reloaded.dirty_flag is False
     assert reloaded.sync_state == "clean"
+
+
+def test_chain_state_from_dict_defaults_reground_decisions_for_old_json() -> None:
+    state = ChainState.from_dict({"current_milestone_index": 1, "retry_counts": {"m1": 2}})
+
+    assert state.reground_decisions == {}
+    assert state.retry_counts == {"m1": 2}
+
+
+def test_chain_state_roundtrips_reground_decisions() -> None:
+    state = ChainState(
+        current_milestone_index=1,
+        current_plan_name="plan-m2",
+        reground_decisions={
+            "m2": {
+                "last_fingerprint": "abc123",
+                "consecutive_count": 2,
+                "decision": "stop",
+                "timestamp": "2026-05-30T10:00:00Z",
+                "summary": "signature changed",
+                "rows": [{"symbol": "Runtime.status", "status": "MISMATCH"}],
+            }
+        },
+    )
+
+    raw = state.to_dict()
+    assert raw["reground_decisions"] == state.reground_decisions
+
+    reloaded = ChainState.from_dict(raw)
+    assert reloaded.reground_decisions == state.reground_decisions
 
 
 def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2301,6 +2335,7 @@ def test_run_chain_plan_mode_records_finalized_only_after_artifact_durability(tm
         assert ".megaplan/plans/plan-m1/final.md" in relpaths
         assert ".megaplan/plans/plan-m1/finalize.json" in relpaths
         assert ".megaplan/plans/plan-m1/state.json" in relpaths
+        assert ".megaplan/plans/plan-m1/contract.json" in relpaths
         assert idea.relative_to(tmp_path).as_posix() in relpaths
         assert load_chain_state(spec_path).completed == []
         return CommitResult(
@@ -2407,8 +2442,8 @@ def test_run_chain_two_pass_modes_finalize_then_execute_milestones_in_order(tmp_
     ensure_pr.assert_not_called()
     commit_push.assert_not_called()
     assert planned_commits == [
-        ("setup/cloud", "plan-m1", ["final.md", "finalize.json", "m1.txt", "state.json"]),
-        ("setup/cloud", "plan-m2", ["final.md", "finalize.json", "m2.txt", "state.json"]),
+        ("setup/cloud", "plan-m1", ["contract.json", "final.md", "finalize.json", "m1.txt", "state.json"]),
+        ("setup/cloud", "plan-m2", ["contract.json", "final.md", "finalize.json", "m2.txt", "state.json"]),
     ]
     saved = load_chain_state(spec_path)
     assert [(entry["label"], entry["status"], entry["plan_branch"]) for entry in saved.completed] == [
@@ -3319,6 +3354,1014 @@ def test_load_runtime_policy_logs_corrupt_json(
     caplog.set_level("WARNING", logger="megaplan")
     assert chain_module.load_runtime_policy(spec_path) == {}
     assert any("M3A_WARN_CHAIN_POLICY_READ" in record.getMessage() for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# T9/T10/T12/T13: contract metadata, review, and execute reground decisions
+# ---------------------------------------------------------------------------
+
+
+def _write_contract(root: Path, plan: str, contract: dict[str, object]) -> None:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+
+
+def _contract_finalize_payload(
+    *,
+    provides: list[dict[str, object]],
+    assumes: list[dict[str, object]],
+    meta_commentary: str,
+) -> dict[str, object]:
+    return {
+        "tasks": [],
+        "watch_items": [],
+        "sense_checks": [],
+        "meta_commentary": meta_commentary,
+        "validation": {
+            "plan_steps_covered": [],
+            "orphan_tasks": [],
+            "completeness_notes": "ok",
+            "coverage_complete": True,
+        },
+        "provides": provides,
+        "assumes": assumes,
+    }
+
+
+def _write_finalized_contract_artifacts(
+    root: Path,
+    plan: str,
+    *,
+    payload: dict[str, object],
+) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state_path = plan_dir / "state.json"
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    else:
+        state = {"name": plan, "config": {}}
+    state["name"] = plan
+    state["current_state"] = STATE_FINALIZED
+    state["iteration"] = state.get("iteration", 1) or 1
+    config = state.setdefault("config", {})
+    if not isinstance(config, dict):
+        state["config"] = config = {}
+    config["project_dir"] = str(root)
+    config["mode"] = "doc"
+    state.setdefault("plan_versions", [{"version": 1, "file": "plan_v1.md"}])
+    (plan_dir / "plan_v1.md").write_text("# Plan\n", encoding="utf-8")
+    _write_finalize_artifacts(plan_dir, payload, state)
+    state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+    return plan_dir
+
+
+def _write_plan_only_finalized_state(root: Path, plan: str, *, plan_only: bool = True) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / plan
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": plan,
+        "current_state": STATE_FINALIZED,
+        "iteration": 1,
+        "plan_versions": [{"version": 1, "file": "plan_v1.md"}],
+        "config": {"project_dir": str(root)},
+        "meta": {
+            "chain_policy": {
+                "plan_only": plan_only,
+                "contract_context": {"plan_only": plan_only},
+            }
+        },
+    }
+    (plan_dir / "plan_v1.md").write_text("# Plan\n", encoding="utf-8")
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    return plan_dir
+
+
+def test_run_chain_plan_mode_injects_dependency_provides_metadata_and_preserves_prep_direction(
+    tmp_path: Path,
+) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {
+                    "label": "M-b",
+                    "idea": str(i2),
+                    "depends_on": ["M-a"],
+                    "prep_direction": "keep the user's prep direction",
+                },
+            ]
+        },
+    )
+    plan_names = iter(["plan-ma", "plan-mb"])
+    prep_directions: list[str | None] = []
+
+    def fake_init(root, idea_path, **kwargs):
+        del idea_path
+        plan = next(plan_names)
+        prep_directions.append(kwargs["prep_direction"])
+        _write_plan_state(root, plan, "initialized")
+        return plan
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del spec, on_phase_complete, writer
+        assert stop_at_finalized is True
+        state_path = root / ".megaplan" / "plans" / plan / "state.json"
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+        raw_state["current_state"] = STATE_FINALIZED
+        state_path.write_text(json.dumps(raw_state) + "\n", encoding="utf-8")
+        if plan == "plan-ma":
+            _write_contract(
+                root,
+                plan,
+                {
+                    "provides": [
+                        {
+                            "name": "Planner surface",
+                            "interfaces": [
+                                {
+                                    "symbol": "Planner.run",
+                                    "path": "megaplan/planner.py",
+                                    "signature": "Planner.run(config) -> None",
+                                }
+                            ],
+                        }
+                    ],
+                    "assumes": [],
+                },
+            )
+        else:
+            _write_contract(root, plan, {"provides": [], "assumes": []})
+        return _fake_outcome(plan, "finalized")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
+         patch(
+             "megaplan.chain.commit_plan_artifacts_to_base",
+             side_effect=lambda root, base, plan, paths, push, dry_run=False: CommitResult(
+                 committed=True, pushed=False, commit_sha=f"sha-{plan}", base_branch=base
+             ),
+         ):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="plan")
+
+    assert result["status"] == "done"
+    assert prep_directions == [None, "keep the user's prep direction"]
+    mb_state = json.loads((tmp_path / ".megaplan" / "plans" / "plan-mb" / "state.json").read_text(encoding="utf-8"))
+    policy = mb_state["meta"]["chain_policy"]
+    assert policy["plan_only"] is True
+    assert policy["dependency_labels"] == ["M-a"]
+    assert policy["provided_paths"] == {"M-a": ["megaplan/planner.py"]}
+    context = policy["contract_context"]
+    assert context["plan_only"] is True
+    assert context["milestone_label"] == "M-b"
+    assert context["upstream_contracts"][0]["milestone_label"] == "M-a"
+    assert context["upstream_contracts"][0]["provides"][0]["interfaces"][0]["symbol"] == "Planner.run"
+
+
+def test_run_chain_start_mode_leaves_dependency_contract_prompts_inert(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    plan_names = iter(["plan-ma", "plan-mb"])
+
+    def fake_init(root, idea_path, **_kwargs):
+        del idea_path
+        plan = next(plan_names)
+        _write_plan_state(root, plan, "initialized")
+        return plan
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del spec, stop_at_finalized, on_phase_complete, writer
+        state_path = root / ".megaplan" / "plans" / plan / "state.json"
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+        raw_state["current_state"] = "done"
+        state_path.write_text(json.dumps(raw_state) + "\n", encoding="utf-8")
+        _write_contract(
+            root,
+            plan,
+            {
+                "provides": [
+                    {
+                        "name": "Start-mode provide",
+                        "interfaces": [{"symbol": "S.run", "path": "s.py", "signature": "S.run()"}],
+                    }
+                ],
+                "assumes": [],
+            },
+        )
+        return _fake_outcome(plan, "done")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("megaplan.chain._drive_plan", side_effect=fake_drive):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
+
+    assert result["status"] == "done"
+    mb_state = json.loads((tmp_path / ".megaplan" / "plans" / "plan-mb" / "state.json").read_text(encoding="utf-8"))
+    policy = mb_state["meta"]["chain_policy"]
+    assert policy["plan_only"] is False
+    assert "contract_context" not in policy
+
+
+def test_run_chain_execute_reground_records_skip_when_contract_unavailable(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    _write_plan_only_finalized_state(tmp_path, "plan-mb")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=2,
+            completed=[
+                {"label": "M-a", "plan": "plan-ma", "status": "done"},
+                {"label": "M-b", "plan": "plan-mb", "status": "finalized"},
+            ],
+        ),
+    )
+
+    with patch("megaplan.chain._init_plan") as init_plan, \
+         patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-mb", "done")):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="execute")
+
+    assert result["status"] == "done"
+    init_plan.assert_not_called()
+    saved = load_chain_state(spec_path)
+    assert saved.reground_decisions["M-b"]["status"] == "skipped"
+    assert saved.reground_decisions["M-b"]["reason"] == "downstream_contract_unavailable"
+
+
+def test_run_chain_execute_reground_records_pass_before_driver(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    _write_plan_only_finalized_state(tmp_path, "plan-mb")
+    _write_contract(
+        tmp_path,
+        "plan-ma",
+        {
+            "provides": [
+                {
+                    "name": "Planner",
+                    "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run()"}],
+                }
+            ],
+            "assumes": [],
+        },
+    )
+    _write_contract(
+        tmp_path,
+        "plan-mb",
+        {
+            "provides": [],
+            "assumes": [
+                {
+                    "name": "Planner",
+                    "upstream_milestone": "M-a",
+                    "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run()"}],
+                }
+            ],
+        },
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=2,
+            completed=[
+                {"label": "M-a", "plan": "plan-ma", "status": "done"},
+                {"label": "M-b", "plan": "plan-mb", "status": "finalized"},
+            ],
+        ),
+    )
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del root, plan, spec, stop_at_finalized, on_phase_complete, writer
+        assert load_chain_state(spec_path).reground_decisions["M-b"]["status"] == "pass"
+        return _fake_outcome("plan-mb", "done")
+
+    with patch("megaplan.chain._drive_plan", side_effect=fake_drive):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="execute")
+
+    assert result["status"] == "done"
+    saved = load_chain_state(spec_path)
+    assert saved.reground_decisions["M-b"]["material_diff_count"] == 0
+    assert saved.reground_decisions["M-b"]["diff_row_count"] == 1
+
+
+def test_run_chain_execute_reground_records_drift_fingerprint(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    _write_plan_only_finalized_state(tmp_path, "plan-mb")
+    _write_contract(
+        tmp_path,
+        "plan-ma",
+        {
+            "provides": [
+                {
+                    "name": "Planner",
+                    "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run(new)"}],
+                }
+            ],
+            "assumes": [],
+        },
+    )
+    _write_contract(
+        tmp_path,
+        "plan-mb",
+        {
+            "provides": [],
+            "assumes": [
+                {
+                    "name": "Planner",
+                    "upstream_milestone": "M-a",
+                    "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run(old)"}],
+                }
+            ],
+        },
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=2,
+            completed=[
+                {"label": "M-a", "plan": "plan-ma", "status": "done"},
+                {"label": "M-b", "plan": "plan-mb", "status": "finalized"},
+            ],
+        ),
+    )
+
+    with patch("megaplan.chain._drive_plan", return_value=_fake_outcome("plan-mb", "done")):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="execute")
+
+    assert result["status"] == "done"
+    decision = load_chain_state(spec_path).reground_decisions["M-b"]
+    assert decision["status"] == "replanned"
+    assert decision["material_diff_count"] == 1
+    assert decision["material_diffs"][0]["status"] == "MISMATCH"
+    assert decision["material_fingerprint"] != "[]"
+
+
+def test_run_chain_plan_mode_writes_chain_review_with_contract_statuses(tmp_path: Path) -> None:
+    ideas = [_touch_idea(tmp_path, f"m-{label}.txt") for label in ("a", "b", "z", "c", "d")]
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(ideas[0])},
+                {"label": "M-b", "idea": str(ideas[1]), "depends_on": ["M-a"]},
+                {"label": "M-z", "idea": str(ideas[2])},
+                {"label": "M-c", "idea": str(ideas[3]), "depends_on": ["M-z"]},
+                {"label": "M-d", "idea": str(ideas[4]), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    plan_by_label = {
+        "M-a": "plan-ma",
+        "M-b": "plan-mb",
+        "M-z": "plan-mz",
+        "M-c": "plan-mc",
+        "M-d": "plan-md",
+    }
+    labels = iter(plan_by_label)
+
+    def fake_init(root, idea_path, **_kwargs):
+        del root, idea_path
+        label = next(labels)
+        plan = plan_by_label[label]
+        _write_plan_state(tmp_path, plan, "initialized")
+        return plan
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del spec, stop_at_finalized, on_phase_complete, writer
+        contracts = {
+            "plan-ma": {
+                "provides": [
+                    {
+                        "name": "A",
+                        "interfaces": [{"symbol": "A.run", "path": "a.py", "signature": "run(new)"}],
+                    }
+                ],
+                "assumes": [],
+            },
+            "plan-mb": {
+                "provides": [],
+                "assumes": [
+                    {
+                        "name": "A",
+                        "upstream_milestone": "M-a",
+                        "interfaces": [{"symbol": "A.run", "path": "a.py", "signature": "run(new)"}],
+                    }
+                ],
+            },
+            "plan-mz": {"provides": [], "assumes": []},
+            "plan-mc": {
+                "provides": [],
+                "assumes": [
+                    {
+                        "name": "Z",
+                        "upstream_milestone": "M-z",
+                        "interfaces": [{"symbol": "Z.run", "path": "z.py", "signature": "run()"}],
+                    }
+                ],
+            },
+            "plan-md": {
+                "provides": [],
+                "assumes": [
+                    {
+                        "name": "A",
+                        "upstream_milestone": "M-a",
+                        "interfaces": [{"symbol": "A.run", "path": "a.py", "signature": "run(old)"}],
+                    }
+                ],
+            },
+        }
+        _write_plan_state(root, plan, STATE_FINALIZED)
+        _write_contract(root, plan, contracts[plan])
+        return _fake_outcome(plan, "finalized")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
+         patch(
+             "megaplan.chain.commit_plan_artifacts_to_base",
+             side_effect=lambda root, base, plan, paths, push, dry_run=False: CommitResult(
+                 committed=True, pushed=False, commit_sha=f"sha-{plan}", base_branch=base
+             ),
+         ):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="plan")
+
+    assert result["status"] == "done"
+    review = chain_module._chain_review_path(spec_path).read_text(encoding="utf-8")
+    assert "- Status: complete" in review
+    assert "| M-b | M-a | A.run | a.py | a.py | run(new) | run(new) | OK |  |" in review
+    assert "| M-c | M-z | Z.run | z.py |  | run() |  | MISSING_UPSTREAM | symbol `Z.run` missing upstream |" in review
+    assert "| M-d | M-a | A.run | a.py | a.py | run(old) | run(new) | MISMATCH | signature changed |" in review
+
+
+def test_run_chain_three_milestone_contract_fixture_covers_artifacts_review_and_reground(
+    tmp_path: Path,
+) -> None:
+    ideas = [_touch_idea(tmp_path, f"m-{label}.txt") for label in ("a", "b", "c")]
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(ideas[0])},
+                {"label": "M-b", "idea": str(ideas[1]), "depends_on": ["M-a"]},
+                {"label": "M-c", "idea": str(ideas[2])},
+            ]
+        },
+    )
+    plan_by_label = {"M-a": "plan-ma", "M-b": "plan-mb", "M-c": "plan-mc"}
+    labels = iter(plan_by_label)
+    contract_payloads = {
+        "plan-ma": _contract_finalize_payload(
+            provides=[
+                {
+                    "name": "Planner surface",
+                    "interfaces": [
+                        {
+                            "symbol": "Planner.run",
+                            "path": "planner.py",
+                            "signature": "run()",
+                        }
+                    ],
+                }
+            ],
+            assumes=[],
+            meta_commentary="M-a publishes the planner surface.",
+        ),
+        "plan-mb": _contract_finalize_payload(
+            provides=[],
+            assumes=[
+                {
+                    "name": "Planner surface",
+                    "upstream_milestone": "M-a",
+                    "interfaces": [
+                        {
+                            "symbol": "Planner.run",
+                            "path": "planner.py",
+                            "signature": "run()",
+                        }
+                    ],
+                }
+            ],
+            meta_commentary="M-b consumes M-a's planner surface.",
+        ),
+        "plan-mc": _contract_finalize_payload(
+            provides=[],
+            assumes=[
+                {
+                    "name": "Sibling-only surface",
+                    "upstream_milestone": "M-b",
+                    "interfaces": [
+                        {
+                            "symbol": "Builder.run",
+                            "path": "builder.py",
+                            "signature": "run()",
+                        }
+                    ],
+                }
+            ],
+            meta_commentary="M-c references a sibling surface without a declared dependency.",
+        ),
+    }
+
+    def fake_init(root, idea_path, **_kwargs):
+        del root, idea_path
+        label = next(labels)
+        plan = plan_by_label[label]
+        _write_plan_state(tmp_path, plan, "initialized")
+        return plan
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del spec, stop_at_finalized, on_phase_complete, writer
+        _write_finalized_contract_artifacts(root, plan, payload=contract_payloads[plan])
+        return _fake_outcome(plan, "finalized")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
+         patch(
+             "megaplan.chain.commit_plan_artifacts_to_base",
+             side_effect=lambda root, base, plan, paths, push, dry_run=False: CommitResult(
+                 committed=True, pushed=False, commit_sha=f"sha-{plan}", base_branch=base
+             ),
+         ):
+        plan_result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="plan")
+
+    assert plan_result["status"] == "done"
+    plan_state_mb = json.loads(
+        (tmp_path / ".megaplan" / "plans" / "plan-mb" / "state.json").read_text(encoding="utf-8")
+    )
+    plan_state_mc = json.loads(
+        (tmp_path / ".megaplan" / "plans" / "plan-mc" / "state.json").read_text(encoding="utf-8")
+    )
+    mb_context = plan_state_mb["meta"]["chain_policy"]["contract_context"]
+    mc_context = plan_state_mc["meta"]["chain_policy"]["contract_context"]
+    assert mb_context["dependency_labels"] == ["M-a"]
+    assert mb_context["upstream_contracts"][0]["milestone_label"] == "M-a"
+    assert mc_context["dependency_labels"] == []
+    assert mc_context["upstream_contracts"] == []
+
+    for plan_name in ("plan-ma", "plan-mb", "plan-mc"):
+        plan_dir = tmp_path / ".megaplan" / "plans" / plan_name
+        assert (plan_dir / "contract.json").exists()
+
+    ma_final = (tmp_path / ".megaplan" / "plans" / "plan-ma" / "final.md").read_text(encoding="utf-8")
+    mb_final = (tmp_path / ".megaplan" / "plans" / "plan-mb" / "final.md").read_text(encoding="utf-8")
+    mc_final = (tmp_path / ".megaplan" / "plans" / "plan-mc" / "final.md").read_text(encoding="utf-8")
+    assert "## Provides" in ma_final
+    assert "## Assumes" not in ma_final
+    assert "## Assumes" in mb_final
+    assert "from `M-a`" in mb_final
+    assert "## Assumes" in mc_final
+    assert "from `M-b`" in mc_final
+
+    review = chain_module._chain_review_path(spec_path).read_text(encoding="utf-8")
+    assert "| M-b | M-a | Planner.run | planner.py | planner.py | run() | run() | OK |  |" in review
+    assert (
+        "| M-c | M-b | Builder.run | builder.py |  | run() |  | MISSING_UPSTREAM | "
+        "upstream contract `M-b` missing |"
+    ) in review
+
+    saved = load_chain_state(spec_path)
+    completed_by_label = {record["label"]: record for record in saved.completed}
+    assert completed_by_label["M-a"]["artifact_commit_sha"] == "sha-plan-ma"
+    assert completed_by_label["M-b"]["artifact_commit_sha"] == "sha-plan-mb"
+    assert completed_by_label["M-c"]["artifact_commit_sha"] == "sha-plan-mc"
+
+    _write_contract(
+        tmp_path,
+        "plan-ma",
+        {
+            "provides": [
+                {
+                    "name": "Planner surface",
+                    "interfaces": [
+                        {
+                            "symbol": "Planner.run",
+                            "path": "planner.py",
+                            "signature": "run(updated)",
+                        }
+                    ],
+                }
+            ],
+            "assumes": [],
+        },
+    )
+    saved.current_milestone_index = len(load_spec(spec_path).milestones)
+    save_chain_state(spec_path, saved)
+
+    def fake_execute_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del root, spec, stop_at_finalized, on_phase_complete, writer
+        current = load_chain_state(spec_path)
+        if plan == "plan-mb":
+            assert current.reground_decisions["M-b"]["status"] == "replanned"
+            assert current.reground_decisions["M-b"]["material_diffs"][0]["status"] == "MISMATCH"
+            return _fake_outcome(plan, "done")
+        if plan == "plan-mc":
+            assert current.reground_decisions["M-c"]["status"] == "skipped"
+            assert current.reground_decisions["M-c"]["reason"] == "no_dependencies"
+            return _fake_outcome(plan, "done")
+        return _fake_outcome(plan, "done")
+
+    with patch("megaplan.chain._drive_plan", side_effect=fake_execute_drive):
+        execute_result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="execute")
+
+    assert execute_result["status"] == "done"
+    execute_state = load_chain_state(spec_path)
+    assert execute_state.reground_decisions["M-b"]["status"] == "replanned"
+    assert execute_state.reground_decisions["M-b"]["material_diffs"][0]["status"] == "MISMATCH"
+    assert execute_state.reground_decisions["M-c"]["status"] == "skipped"
+    assert execute_state.reground_decisions["M-c"]["reason"] == "no_dependencies"
+
+
+def test_run_chain_plan_mode_writes_partial_chain_review_on_one_exit(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {"milestones": [{"label": "M-a", "idea": str(i1)}, {"label": "M-b", "idea": str(i2)}]},
+    )
+
+    def fake_init(root, idea_path, **_kwargs):
+        del idea_path
+        _write_plan_state(root, "plan-ma", "initialized")
+        return "plan-ma"
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del spec, stop_at_finalized, on_phase_complete, writer
+        _write_plan_state(root, plan, STATE_FINALIZED)
+        _write_contract(root, plan, {"provides": [], "assumes": []})
+        return _fake_outcome(plan, "finalized")
+
+    with patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None), \
+         patch("megaplan.chain._init_plan", side_effect=fake_init), \
+         patch("megaplan.chain._drive_plan", side_effect=fake_drive), \
+         patch(
+             "megaplan.chain.commit_plan_artifacts_to_base",
+             return_value=CommitResult(committed=True, pushed=False, commit_sha="sha", base_branch="main"),
+         ):
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="plan", one=True)
+
+    assert result["status"] == "paused"
+    review = chain_module._chain_review_path(spec_path).read_text(encoding="utf-8")
+    assert "- Status: partial" in review
+    assert "- Partial reason: completed one milestone: M-a" in review
+
+
+def test_write_chain_review_uses_latest_completed_record_for_duplicate_labels(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    _write_contract(
+        tmp_path,
+        "old-a",
+        {
+            "provides": [
+                {"name": "A", "interfaces": [{"symbol": "A.run", "path": "a.py", "signature": "old()"}]}
+            ],
+            "assumes": [],
+        },
+    )
+    _write_contract(
+        tmp_path,
+        "new-a",
+        {
+            "provides": [
+                {"name": "A", "interfaces": [{"symbol": "A.run", "path": "a.py", "signature": "new()"}]}
+            ],
+            "assumes": [],
+        },
+    )
+    _write_contract(
+        tmp_path,
+        "plan-b",
+        {
+            "provides": [],
+            "assumes": [
+                {
+                    "name": "A",
+                    "upstream_milestone": "M-a",
+                    "interfaces": [{"symbol": "A.run", "path": "a.py", "signature": "new()"}],
+                }
+            ],
+        },
+    )
+    state = ChainState(
+        completed=[
+            {"label": "M-a", "plan": "old-a", "status": "finalized"},
+            {"label": "M-a", "plan": "new-a", "status": "finalized"},
+            {"label": "M-b", "plan": "plan-b", "status": "finalized"},
+        ]
+    )
+
+    chain_module._write_chain_review(tmp_path, spec_path, load_spec(spec_path), state)
+    review = chain_module._chain_review_path(spec_path).read_text(encoding="utf-8")
+    assert "new()" in review
+    assert "old()" not in review
+
+
+def test_run_chain_execute_first_drift_replans_and_continues_same_plan(tmp_path: Path) -> None:
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    _write_plan_only_finalized_state(tmp_path, "plan-mb")
+    _write_contract(
+        tmp_path,
+        "plan-ma",
+        {
+            "provides": [
+                {"name": "Planner", "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run(new)"}]}
+            ],
+            "assumes": [],
+        },
+    )
+    _write_contract(
+        tmp_path,
+        "plan-mb",
+        {
+            "provides": [],
+            "assumes": [
+                {
+                    "name": "Planner",
+                    "upstream_milestone": "M-a",
+                    "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run(old)"}],
+                }
+            ],
+        },
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=2,
+            completed=[
+                {"label": "M-a", "plan": "plan-ma", "status": "done"},
+                {"label": "M-b", "plan": "plan-mb", "status": "finalized"},
+            ],
+        ),
+    )
+
+    def fake_drive(root, plan, spec, *, stop_at_finalized=False, on_phase_complete=None, writer):
+        del root, spec, stop_at_finalized, on_phase_complete, writer
+        saved = load_chain_state(spec_path)
+        assert plan == "plan-mb"
+        assert saved.current_milestone_index == 1
+        assert saved.current_plan_name == "plan-mb"
+        assert saved.reground_decisions["M-b"]["status"] == "replanned"
+        plan_state = json.loads((tmp_path / ".megaplan" / "plans" / "plan-mb" / "state.json").read_text(encoding="utf-8"))
+        assert plan_state["current_state"] == "planned"
+        assert any(item.get("action") == "replan" for item in plan_state["meta"]["overrides"])
+        return _fake_outcome("plan-mb", "done")
+
+    with patch("megaplan.chain._drive_plan", side_effect=fake_drive) as drive:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="execute")
+
+    assert result["status"] == "done"
+    assert drive.call_count == 1
+    saved = load_chain_state(spec_path)
+    assert saved.current_milestone_index == 2
+    assert saved.completed[-1]["label"] == "M-b"
+    assert saved.completed[-1]["status"] == "done"
+
+
+def test_run_chain_execute_repeated_identical_drift_stops_before_driver(tmp_path: Path) -> None:
+    from megaplan.orchestration.plan_contracts import (
+        contract_diff_fingerprint,
+        diff_assumes_against_provides,
+    )
+
+    i1 = _touch_idea(tmp_path, "m-a.txt")
+    i2 = _touch_idea(tmp_path, "m-b.txt")
+    spec_path = _write_spec(
+        tmp_path,
+        {
+            "milestones": [
+                {"label": "M-a", "idea": str(i1)},
+                {"label": "M-b", "idea": str(i2), "depends_on": ["M-a"]},
+            ]
+        },
+    )
+    upstream = {
+        "provides": [
+            {"name": "Planner", "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run(new)"}]}
+        ],
+        "assumes": [],
+    }
+    downstream = {
+        "provides": [],
+        "assumes": [
+            {
+                "name": "Planner",
+                "upstream_milestone": "M-a",
+                "interfaces": [{"symbol": "Planner.run", "path": "planner.py", "signature": "run(old)"}],
+            }
+        ],
+    }
+    _write_plan_only_finalized_state(tmp_path, "plan-mb")
+    _write_contract(tmp_path, "plan-ma", upstream)
+    _write_contract(tmp_path, "plan-mb", downstream)
+    rows = diff_assumes_against_provides(
+        downstream,
+        [{"milestone_label": "M-a", "provides": upstream["provides"], "assumes": []}],
+        downstream_label="M-b",
+    )
+    fingerprint = contract_diff_fingerprint(rows)
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=2,
+            completed=[
+                {"label": "M-a", "plan": "plan-ma", "status": "done"},
+                {"label": "M-b", "plan": "plan-mb", "status": "finalized"},
+            ],
+            reground_decisions={
+                "M-b": {
+                    "status": "replanned",
+                    "material_fingerprint": fingerprint,
+                    "material_diffs": rows,
+                }
+            },
+        ),
+    )
+
+    with patch("megaplan.chain._drive_plan") as drive:
+        result = run_chain(spec_path, tmp_path, writer=lambda _m: None, mode="execute")
+
+    assert result["status"] == "stopped"
+    assert "repeated contract drift for M-b" in result["reason"]
+    drive.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T8: git commit artifact loading and contract fallback
+# ---------------------------------------------------------------------------
+
+
+def test_read_plan_artifact_from_commit_returns_content() -> None:
+    """git show success returns file content as string."""
+    from megaplan.chain.git_ops import read_plan_artifact_from_commit
+
+    fake_proc = subprocess.CompletedProcess(
+        args=["git", "show", "abc123:.megaplan/plans/p/contract.json"],
+        returncode=0,
+        stdout='{"provides":[],"assumes":[]}\n',
+        stderr="",
+    )
+    with patch.object(chain_module.subprocess, "run", return_value=fake_proc):
+        result = read_plan_artifact_from_commit(Path("/fake"), "abc123", ".megaplan/plans/p/contract.json")
+    assert result == '{"provides":[],"assumes":[]}\n'
+
+
+def test_read_plan_artifact_from_commit_returns_none_for_missing_file() -> None:
+    """git show for missing file returns None."""
+    from megaplan.chain.git_ops import read_plan_artifact_from_commit
+
+    for stderr in (
+        "fatal: path '.megaplan/plans/p/contract.json' does not exist in 'abc123'",
+        "fatal: Path 'contract.json' exists on disk, but not in 'abc123'",
+        "fatal: bad revision 'abc123'",
+    ):
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "show", "abc123:.megaplan/plans/p/contract.json"],
+            returncode=128,
+            stdout="",
+            stderr=stderr,
+        )
+        with patch.object(chain_module.subprocess, "run", return_value=fake_proc):
+            result = read_plan_artifact_from_commit(Path("/fake"), "abc123", ".megaplan/plans/p/contract.json")
+        assert result is None, f"Should return None for stderr: {stderr!r}"
+
+
+def test_read_plan_artifact_from_commit_raises_on_git_failure() -> None:
+    """Real git failures (not missing-file) raise CliError."""
+    from megaplan.chain.git_ops import read_plan_artifact_from_commit
+
+    fake_proc = subprocess.CompletedProcess(
+        args=["git", "show", "abc123:.megaplan/plans/p/contract.json"],
+        returncode=1,
+        stdout="",
+        stderr="fatal: Not a git repository",
+    )
+    with patch.object(chain_module.subprocess, "run", return_value=fake_proc):
+        with pytest.raises(CliError) as exc_info:
+            read_plan_artifact_from_commit(Path("/fake"), "abc123", ".megaplan/plans/p/contract.json")
+        assert exc_info.value.code == "git_artifact_read_failed"
+
+
+def test_load_contract_for_completed_record_prefers_current_file(tmp_path: Path) -> None:
+    """When contract.json exists on disk, it is loaded and normalized."""
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-p"
+    plan_dir.mkdir(parents=True)
+    contract = {"provides": [{"name": "P", "interfaces": [{"symbol": "f", "path": "src/p.py", "signature": "f()"}]}], "assumes": []}
+    (plan_dir / "contract.json").write_text(json.dumps(contract), encoding="utf-8")
+
+    record = {"plan": "plan-p"}
+    result = chain_module._load_contract_for_completed_record(tmp_path, record)
+    assert result is not None
+    assert len(result["provides"]) == 1
+    assert result["provides"][0]["name"] == "P"
+
+
+def test_load_contract_for_completed_record_falls_back_to_commit(tmp_path: Path) -> None:
+    """When contract.json is missing on disk, falls back to git commit artifact."""
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-p"
+    plan_dir.mkdir(parents=True)
+    # No contract.json on disk
+    contract_content = json.dumps({"provides": [], "assumes": [{"name": "A", "upstream_milestone": "m1", "interfaces": []}]})
+
+    record = {"plan": "plan-p", "artifact_commit_sha": "abc123"}
+
+    fake_proc = subprocess.CompletedProcess(
+        args=["git", "show", "abc123:.megaplan/plans/plan-p/contract.json"],
+        returncode=0,
+        stdout=contract_content,
+        stderr="",
+    )
+    with patch.object(chain_module.subprocess, "run", return_value=fake_proc):
+        result = chain_module._load_contract_for_completed_record(tmp_path, record)
+    assert result is not None
+    assert len(result["assumes"]) == 1
+    assert result["assumes"][0]["name"] == "A"
+
+
+def test_load_contract_for_completed_record_returns_none_when_missing(tmp_path: Path) -> None:
+    """Returns None when no contract.json on disk and artifact commit is missing/missing-file."""
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-p"
+    plan_dir.mkdir(parents=True)
+    # No contract.json, no artifact_commit_sha
+    record = {"plan": "plan-p"}
+    result = chain_module._load_contract_for_completed_record(tmp_path, record)
+    assert result is None
+
+    # With artifact_commit_sha but file missing in commit
+    record_with_sha = {"plan": "plan-p", "artifact_commit_sha": "abc123"}
+    fake_proc = subprocess.CompletedProcess(
+        args=["git", "show", "abc123:.megaplan/plans/plan-p/contract.json"],
+        returncode=128,
+        stdout="",
+        stderr="fatal: path '.megaplan/plans/plan-p/contract.json' does not exist in 'abc123'",
+    )
+    with patch.object(chain_module.subprocess, "run", return_value=fake_proc):
+        result = chain_module._load_contract_for_completed_record(tmp_path, record_with_sha)
+    assert result is None
+
+    # Also returns None for record without plan name
+    assert chain_module._load_contract_for_completed_record(tmp_path, {}) is None
 
 
 def test_branch_head_logs_git_error(

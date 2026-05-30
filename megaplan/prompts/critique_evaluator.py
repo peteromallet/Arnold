@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from megaplan._core import (
     intent_and_notes_block,
@@ -238,6 +238,7 @@ def _critique_evaluator_prompt(
     plan_diff: str | None = None,
     prep_dossier_text: str | None = None,
     prep_metrics: dict | None = None,
+    contract_context: Mapping[str, Any] | None = None,
 ) -> str:
     """Assemble the critique evaluator prompt.
 
@@ -257,6 +258,12 @@ def _critique_evaluator_prompt(
     verify block is rendered that asks the evaluator to adjudicate each
     resolution claim against the plan diff.
     """
+    from ._shared import _render_contracts_block, _resolve_contract_context
+
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="critique_evaluator",
+    )
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
     latest_meta = read_json(latest_plan_meta_path(plan_dir, state))
@@ -354,6 +361,7 @@ def _critique_evaluator_prompt(
         You are the Critique Evaluator. Your job is to decide which critic models
         will apply which critique lenses for this plan.
 
+        {contracts_block}
         Project directory:
         {project_dir}
 
