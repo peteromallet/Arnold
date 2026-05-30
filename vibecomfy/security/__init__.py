@@ -1,14 +1,11 @@
-"""VibeComfy capability-fence security package.
+"""VibeComfy security package.
 
-Public surface:
-  Capability            — string literal type for the four capability tags
-  CAPABILITY_TAXONOMY   — frozen mapping of known class_type → frozenset[Capability]
-  capabilities_for      — lookup helper (returns quarantine default for unknowns)
-  is_side_effecting     — convenience predicate
-  unknown_class_policy  — returns the quarantine frozenset (frozenset{"code_exec"})
-
-No imports from analysis, runtime, porting, or registry are permitted here.
+Combines the static capability taxonomy with the S4 capability fence:
+provenance tags, untrusted-source scoping, confirmation gates, and graph-text
+taint helpers. This package must stay isolated from analysis, runtime, porting,
+and registry layers.
 """
+
 from vibecomfy.security.capabilities import (
     CAPABILITY_TAXONOMY,
     Capability,
@@ -16,11 +13,32 @@ from vibecomfy.security.capabilities import (
     is_side_effecting,
     unknown_class_policy,
 )
+from vibecomfy.security import provenance
+from vibecomfy.security.gate import (
+    CapabilityFenceError,
+    GateContext,
+    current_gate_context,
+    require_confirmation,
+    requesting_provenance,
+    set_gate_context,
+    untrusted_scope,
+)
+from vibecomfy.security.provenance import PROVENANCE_KEY, Provenance
 
 __all__ = [
-    "Capability",
     "CAPABILITY_TAXONOMY",
+    "Capability",
+    "CapabilityFenceError",
+    "GateContext",
+    "PROVENANCE_KEY",
+    "Provenance",
     "capabilities_for",
+    "current_gate_context",
     "is_side_effecting",
+    "provenance",
+    "require_confirmation",
+    "requesting_provenance",
+    "set_gate_context",
     "unknown_class_policy",
+    "untrusted_scope",
 ]

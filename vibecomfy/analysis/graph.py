@@ -1,3 +1,7 @@
+# S4 agent-context boundary: untrusted node text is wrapped under the marker
+# ``{"_taint": "untrusted_data", "value": ...}`` by ``agent_dump_values``; see
+# ``docs/security/agent_data_boundary.md``. The legacy ``values()`` shape is
+# preserved unchanged for non-agent consumers.
 from __future__ import annotations
 
 from copy import deepcopy
@@ -5,11 +9,19 @@ from typing import Any
 
 from vibecomfy._graph_utils import is_api_link
 from vibecomfy.schema import SchemaProvider, schema_for
+from vibecomfy.security import provenance as _provenance
 from vibecomfy.workflow import VibeNode, VibeOutput, VibeWorkflow
 
 
 MAX_PATH_DEPTH = 32
 SOURCE_NAME_PARTS = ("load", "loader", "input", "constant", "primitive", "emptylatent")
+
+TAINT_MARKER = "untrusted_data"
+TAINT_KEY = "_taint"
+SCHEMA_EXEMPT_KEYS: frozenset[str] = frozenset(
+    {"output_names", "output_types", "input_aliases", "schema_source"}
+)
+_UI_USER_CONTROLLED: tuple[str, ...] = ("mode", "flags", "color", "bgcolor")
 
 
 def analyze(workflow: VibeWorkflow) -> dict[str, Any]:
@@ -194,6 +206,72 @@ def _node_values(node: VibeNode) -> dict[str, Any]:
             require_int_slot=False,
         )
     }
+
+
+def agent_dump_values(workflow: VibeWorkflow, node_id: str | None = None) -> dict[str, Any]:
+    """Agent-facing dump that wraps untrusted text under ``_taint`` markers.
+
+    Same outer shape as :func:`values` but each per-node dict additionally
+    carries a ``_metadata`` sub-dict mirroring ``node.metadata`` (including
+    ``title`` and the user-controllable ``_ui`` sub-values). For nodes whose
+    provenance reads ``untrusted_source`` (fail-closed via
+    :func:`vibecomfy.security.provenance.read`), every string value outside the
+    schema-exempt set is wrapped as ``{"_taint": "untrusted_data", "value": ...}``
+    so the agent system prompt cannot mistake graph data for an instruction.
+    """
+    if node_id is not None:
+        node = workflow.nodes[str(node_id)]
+        return _agent_dump_node(node)
+    return {current: _agent_dump_node(node) for current, node in workflow.nodes.items()}
+
+
+def _agent_dump_node(node: VibeNode) -> dict[str, Any]:
+    untrusted = _provenance.read(node) == "untrusted_source"
+    out: dict[str, Any] = {}
+    merged = {**node.inputs, **node.widgets}
+    for key, value in merged.items():
+        if is_api_link(
+            value,
+            allow_tuple=False,
+            require_string_node_id=False,
+            require_numeric_node_id=True,
+            require_int_slot=False,
+        ):
+            continue
+        out[key] = _maybe_wrap(key, value, untrusted)
+    out["_metadata"] = _agent_dump_metadata(node.metadata, untrusted)
+    return out
+
+
+def _agent_dump_metadata(metadata: dict[str, Any], untrusted: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in metadata.items():
+        if key in SCHEMA_EXEMPT_KEYS:
+            out[key] = deepcopy(value)
+            continue
+        if key == "_ui" and isinstance(value, dict):
+            ui_out: dict[str, Any] = {}
+            for sub_key, sub_value in value.items():
+                if untrusted and sub_key in _UI_USER_CONTROLLED:
+                    ui_out[sub_key] = _wrap(sub_value)
+                else:
+                    ui_out[sub_key] = _maybe_wrap(sub_key, sub_value, untrusted)
+            out[key] = ui_out
+            continue
+        out[key] = _maybe_wrap(key, value, untrusted)
+    return out
+
+
+def _maybe_wrap(key: str, value: Any, untrusted: bool) -> Any:
+    if not untrusted or key in SCHEMA_EXEMPT_KEYS:
+        return deepcopy(value)
+    if isinstance(value, str):
+        return _wrap(value)
+    return deepcopy(value)
+
+
+def _wrap(value: Any) -> dict[str, Any]:
+    return {TAINT_KEY: TAINT_MARKER, "value": deepcopy(value)}
 
 
 def _node_signature(node: VibeNode) -> dict[str, Any]:

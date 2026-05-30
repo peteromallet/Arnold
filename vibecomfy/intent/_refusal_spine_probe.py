@@ -2,8 +2,8 @@
 
 Lifted from scripts/roundtrip_fidelity_spike.py T4 detector.
 
-``convert_ui_to_api`` is imported lazily so this module can be imported without
-the [comfy] extra (and without vendor/ComfyUI on sys.path).
+``convert_ui_to_api`` is imported lazily when available. Offline test runs use
+VibeComfy's pure-Python UI normalizer fallback instead.
 """
 
 from __future__ import annotations
@@ -46,10 +46,17 @@ def probe_refusal_spine(
 def _to_api(wf: Any) -> dict:
     """Convert *wf* to API format (no-op if already in API format)."""
     if isinstance(wf, dict) and isinstance(wf.get("nodes"), list):
-        # UI-format — use ComfyUI's own converter as the oracle
-        from comfy.component_model.workflow_convert import convert_ui_to_api  # lazy
+        try:
+            from comfy.component_model.workflow_convert import convert_ui_to_api  # lazy
+        except ImportError:
+            from vibecomfy.ingest.normalize import normalize_to_api
 
-        result = convert_ui_to_api(copy.deepcopy(wf))
-        return result[0] if isinstance(result, tuple) else result
+            return normalize_to_api(
+                copy.deepcopy(wf),
+                use_comfy_converter=False,
+            )
+        else:
+            result = convert_ui_to_api(copy.deepcopy(wf))
+            return result[0] if isinstance(result, tuple) else result
     # Already API-format
     return wf

@@ -14,6 +14,8 @@ from vibecomfy.metadata import (
 from vibecomfy.porting.uid import make_uid, mint_local_uid
 from vibecomfy.porting.widget_aliases import widget_names_for_class, widget_names_from_schema
 from vibecomfy.schema import OutputSpec, SchemaProvider, schema_for
+from vibecomfy.security.gate import untrusted_scope
+from vibecomfy.security.provenance import PROVENANCE_KEY
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 
@@ -83,11 +85,15 @@ def _normalize_ui_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider
     for node_id, node in nodes.items():
         inputs: dict[str, Any] = {}
         class_type = str(node.get("type", "Unknown"))
+        ui_widget_names: list[str] = []
         for input_item in node.get("inputs", []) or []:
             if not isinstance(input_item, dict):
                 continue
             name = input_item.get("name")
             link_id = input_item.get("link")
+            widget = input_item.get("widget")
+            if link_id is None and isinstance(name, str) and isinstance(widget, dict):
+                ui_widget_names.append(str(widget.get("name") or name))
             if link_id is not None and link_id in link_map:
                 if not name:
                     # Reroute / passthrough nodes may have empty-string input
@@ -103,7 +109,12 @@ def _normalize_ui_to_api(raw: dict[str, Any], *, schema_provider: SchemaProvider
         elif isinstance(widgets, list):
             widget_names = _schema_input_names(schema_provider, class_type)
             for idx, value in enumerate(widgets):
-                name = widget_names[idx] if idx < len(widget_names) else f"widget_{idx}"
+                if idx < len(widget_names):
+                    name = widget_names[idx]
+                elif idx < len(ui_widget_names):
+                    name = ui_widget_names[idx]
+                else:
+                    name = f"widget_{idx}"
                 if name in inputs:
                     continue
                 inputs[name] = value
@@ -202,6 +213,22 @@ def convert_to_vibe_format(
     workflow_id: str | None = None,
     schema_provider: SchemaProvider | None = None,
 ) -> VibeWorkflow:
+    with untrusted_scope():
+        return _convert_to_vibe_format_impl(
+            api_workflow,
+            source_path=source_path,
+            workflow_id=workflow_id,
+            schema_provider=schema_provider,
+        )
+
+
+def _convert_to_vibe_format_impl(
+    api_workflow: dict[str, Any],
+    *,
+    source_path: str | None = None,
+    workflow_id: str | None = None,
+    schema_provider: SchemaProvider | None = None,
+) -> VibeWorkflow:
     if detect_workflow_shape(api_workflow) != "api":
         api_workflow = normalize_to_api(api_workflow, schema_provider=schema_provider)
     source = WorkflowSource(
@@ -262,6 +289,10 @@ def convert_to_vibe_format(
         schema_source = _schema_source_provenance(schema_provider, class_type)
         if schema_source is not None:
             metadata.setdefault("schema_source", schema_source)
+        # S4 capability fence: ingest is the external-JSON boundary, so every
+        # ingested node is tagged untrusted_source. Unconditional set — never
+        # `setdefault` — so a hostile JSON cannot pre-declare itself trusted.
+        metadata[PROVENANCE_KEY] = "untrusted_source"
         workflow.nodes[str(node_id)] = VibeNode(
             id=str(node_id),
             class_type=class_type,

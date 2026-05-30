@@ -16,7 +16,11 @@ def add_block_node(
     widgets: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> VibeNode:
-    node = workflow.add_node(class_type, **(inputs or {}))
+    raw_inputs = dict(inputs or {})
+    # `_provenance` is a reserved keyword on add_node; pop it so it never
+    # leaks into node.inputs and forward it explicitly.
+    explicit_provenance = raw_inputs.pop("_provenance", None)
+    node = workflow.add_node(class_type, _provenance=explicit_provenance, **raw_inputs)
     widget_kwargs = dict(widgets or {})
     node.widgets.update(widget_kwargs)
     node.metadata.update(metadata or {})

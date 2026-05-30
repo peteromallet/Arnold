@@ -50,6 +50,13 @@ class VibeNode:
     metadata: dict[str, Any] = field(default_factory=dict)
     uid: str = ""
 
+    @property
+    def provenance(self) -> str:
+        """Read-through to the S4 provenance tag; fail-closed on missing/None."""
+        from vibecomfy.security import provenance as _prov
+
+        return _prov.read(self)
+
 
 @dataclass(slots=True)
 class VibeEdge:
@@ -163,6 +170,18 @@ class VibeWorkflow:
         if token is not None:
             reset_workflow(token)
             self._workflow_context_token = None
+
+    def confirm_node(self, node_id: str) -> "VibeWorkflow":
+        """Promote ``untrusted_source`` provenance on ``node_id`` → ``user_confirmed``.
+
+        Idempotent on already-trusted nodes. Raises ``KeyError`` if ``node_id``
+        is unknown so callers cannot silently confirm a non-existent node.
+        """
+        from vibecomfy.security import provenance as _prov
+
+        node = self.nodes[node_id]
+        _prov.confirm(node)
+        return self
 
     def set_prompt(self, value: str) -> "VibeWorkflow":
         return self.set_input("prompt", value)
@@ -377,29 +396,83 @@ class VibeWorkflow:
         local = seed if seed is not None else f"n{self._uid_counter}"
         return make_uid("", local)
 
-    def add_node(self, class_type: str, _id: str | None = None, *, uid: str | None = None, **inputs: Any) -> VibeNode:
+    def add_node(
+        self,
+        class_type: str,
+        _id: str | None = None,
+        *,
+        uid: str | None = None,
+        _provenance: "Provenance | None" = None,
+        **inputs: Any,
+    ) -> VibeNode:
         """Add a node to the workflow.
 
         ``uid`` is keyword-only and sets node.uid verbatim when provided.
         Extrinsic-seed minting via _mint_uid belongs in node()/raw_call callers,
         not here, so add_node stays uid-neutral by default.
+
+        ``_provenance`` is a reserved keyword-only parameter declared BEFORE
+        ``**inputs`` so callers cannot accidentally bind it from an inputs
+        dict. When ``None`` it falls back to the ``requesting_provenance``
+        ContextVar (default ``"agent_authored"``); ingest enters
+        ``untrusted_scope()`` to flip it. The resulting tag is written into
+        ``node.metadata[PROVENANCE_KEY]`` and is never copied into
+        ``node.inputs``. ``_provenance`` is a reserved kwarg name and must not
+        be used as a ComfyUI input field.
         """
+        from vibecomfy.security.capabilities import capabilities_for, is_side_effecting
+        from vibecomfy.security.gate import (
+            current_gate_context,
+            requesting_provenance,
+            require_confirmation,
+        )
+        from vibecomfy.security.provenance import PROVENANCE_KEY, tag as _tag_provenance
+
+        effective = _provenance if _provenance is not None else requesting_provenance.get()
+
+        # ── S4 capability fence ─────────────────────────────────────────────
+        # Edit-time confused-deputy gate. Only the IR write path is gated; the
+        # compile path at ``_compile_graphbuilder`` below (GraphBuilder.node
+        # from ``comfy_execution.graph_utils``) is INTENTIONALLY NOT gated —
+        # gating happens at edit-time, not at compile-time. By the time a
+        # workflow compiles, every node has already passed this gate (or was
+        # tagged trusted by its authoring path).
+        if is_side_effecting(class_type):
+            caps = capabilities_for(class_type)
+            risky = {
+                k: v
+                for k, v in inputs.items()
+                if not isinstance(v, Handle) and k != "_provenance"
+            }
+            require_confirmation(
+                operation="add_node",
+                class_type=class_type,
+                provenance=effective,
+                capabilities=caps,
+                details={"params": risky},
+                ctx=current_gate_context(),
+            )
+
         node_id = str(_id) if _id is not None else self._next_node_id()
         if node_id in self.nodes:
             raise ValueError(f"Node id {node_id!r} already exists in workflow {self.id!r}")
         node = VibeNode(id=node_id, class_type=class_type, inputs=dict(inputs))
         if uid is not None:
             node.uid = uid
+        _tag_provenance(node, effective)
+        # Defensive: ensure the reserved kwarg never leaked into inputs.
+        node.inputs.pop("_provenance", None)
         self.nodes[node_id] = node
         return node
 
     def node(self, class_type: str, **kwargs: Any) -> "_NodeBuilder":
         pass_raw = bool(kwargs.pop("pass_raw", False))
         explicit_id = kwargs.pop("_id", None)
+        explicit_provenance = kwargs.pop("_provenance", None)
         from vibecomfy.templates import coerce_node_kwargs
 
         kwargs = coerce_node_kwargs(self, class_type, kwargs, pass_raw=pass_raw)
-        node = self.add_node(class_type, _id=explicit_id)
+        node = self.add_node(class_type, _id=explicit_id, _provenance=explicit_provenance)
         # Mint extrinsic uid: seed from explicit id when provided, else creation order.
         seed = f"id:{explicit_id}" if explicit_id is not None else None
         node.uid = self._mint_uid(seed=seed)
