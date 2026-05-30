@@ -906,6 +906,36 @@ def test_chain_state_to_dict_and_from_dict_roundtrip_with_sync() -> None:
     assert reloaded.sync_state == "clean"
 
 
+# T4 (W3e): ChainState schema_version forward-compat
+# ---------------------------------------------------------------------------
+
+
+def test_chain_state_schema_version_default() -> None:
+    """schema_version defaults to 0 and is stamped in to_dict."""
+    state = ChainState()
+    assert state.schema_version == 0
+    raw = state.to_dict()
+    assert raw["schema_version"] == 0
+
+
+def test_chain_state_forward_key_and_missing_schema_version_round_trips() -> None:
+    """An unknown forward key plus absent schema_version round-trips without error."""
+    raw: dict = {
+        "current_milestone_index": 1,
+        "current_plan_name": "some-plan",
+        "last_state": "done",
+        "_future_unknown_key": "extra-value",
+        # schema_version intentionally absent
+    }
+    loaded = ChainState.from_dict(raw)
+    assert loaded.current_milestone_index == 1
+    assert loaded.schema_version == 0  # defaults to 0 when absent
+
+    serialized = loaded.to_dict()
+    assert serialized["schema_version"] == 0
+    assert "_future_unknown_key" not in serialized  # unknown keys are not forwarded
+
+
 def test_format_chain_status_pretty(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     spec_path = _setup_three_milestones(tmp_path, seed_plan="seed-plan-20260421")
     spec = load_spec(spec_path)

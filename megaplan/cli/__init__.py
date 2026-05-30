@@ -1011,6 +1011,138 @@ def _handle_record_tag(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
+    """W7 — pipelines command group: check + doctor subcommands."""
+    action = getattr(args, "pipelines_action", None)
+    if action == "check":
+        name = getattr(args, "pipeline_name", None)
+        if not name:
+            print("(no pipeline name provided)")
+            return 0
+        from megaplan._pipeline.registry import get_pipeline
+        from megaplan._pipeline.validator import validate
+
+        try:
+            pipeline = get_pipeline(name)
+        except Exception as exc:  # discovery / build failure
+            print(f"pipelines check: failed to load {name!r}: {exc}", file=sys.stderr)
+            return 1
+        diag = validate(pipeline)
+        if diag.ok:
+            print(name)
+            return 0
+        print(f"pipelines check: {name!r} has {len(diag.defects)} defect(s):", file=sys.stderr)
+        for defect in diag.defects:
+            print(f"  - {defect}", file=sys.stderr)
+        return 1
+    if action == "doctor":
+        from megaplan._pipeline.registry import scan_python_pipelines
+
+        dispositions = scan_python_pipelines()
+        for disp in dispositions:
+            line = f"{disp.status}\t{disp.origin}\t{disp.path}"
+            if disp.cli_name:
+                line += f"\t(name={disp.cli_name})"
+            if disp.reason:
+                line += f"\treason={disp.reason}"
+            print(line)
+            if disp.traceback:
+                for tb_line in disp.traceback.rstrip("\n").splitlines():
+                    print(f"    {tb_line}")
+        return 0
+    if action == "new":
+        from megaplan._pipeline.registry import _SCAN_ROOTS, _cli_name
+
+        name = getattr(args, "pipeline_name", None)
+        if not name:
+            print("pipelines new: missing pipeline name", file=sys.stderr)
+            return 1
+
+        # Derive the module stem (hyphens → underscores) and directory name.
+        module_stem = name.replace("-", "_")
+        cli_name = _cli_name(module_stem)  # normalise underscores→hyphens
+
+        # Locate the in-tree pipelines directory (first scan root).
+        pipelines_dir = None
+        for dir_path, pkg_prefix in _SCAN_ROOTS:
+            if pkg_prefix == "megaplan.pipelines":
+                pipelines_dir = dir_path
+                break
+        if pipelines_dir is None or not pipelines_dir.is_dir():
+            print("pipelines new: cannot locate in-tree pipelines directory", file=sys.stderr)
+            return 1
+
+        module_path = pipelines_dir / f"{module_stem}.py"
+        skill_dir = pipelines_dir / cli_name
+        skill_path = skill_dir / "SKILL.md"
+
+        if module_path.exists():
+            print(f"pipelines new: {module_path} already exists", file=sys.stderr)
+            return 1
+        if skill_path.exists():
+            print(f"pipelines new: {skill_path} already exists", file=sys.stderr)
+            return 1
+
+        # ── Scaffold the Python module ────────────────────────────
+        module_content = (
+            f'"""Python composition of the ``{cli_name}`` pipeline."""\n'
+            f"\n"
+            f"from __future__ import annotations\n"
+            f"\n"
+            f"from pathlib import Path\n"
+            f"\n"
+            f"from megaplan._pipeline.types import Pipeline\n"
+            f"\n"
+            f"\n"
+            f'_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"\n'
+            f"\n"
+            f'\n'
+            f'description: str = "TODO: add a description"\n'
+            f"\n"
+            f"\n"
+            f"def build_pipeline() -> Pipeline:\n"
+            f'    """Return the canonical ``{cli_name}`` :class:`Pipeline`."""\n'
+            f"    return (\n"
+            f"        Pipeline.builder(\n"
+            f'            "{cli_name}",\n'
+            f"            description=description,\n"
+            f"            pipeline_dir=_PIPELINE_DIR,\n"
+            f"        )\n"
+            f'        .agent("run", prompt="TODO: add your prompt file path")\n'
+            f"        .build()\n"
+            f"    )\n"
+            f"\n"
+            f"\n"
+            f"__all__ = [\n"
+            f'    "build_pipeline",\n'
+            f'    "description",\n'
+            f"]\n"
+        )
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        module_path.write_text(module_content, encoding="utf-8")
+
+        # ── Scaffold the SKILL.md stub ────────────────────────────
+        skill_content = (
+            f"---\n"
+            f"name: {cli_name}\n"
+            f"description: TODO: add a description\n"
+            f"---\n"
+            f"\n"
+            f"# {cli_name}\n"
+            f"\n"
+            f"TODO: add pipeline documentation\n"
+        )
+        skill_path.write_text(skill_content, encoding="utf-8")
+
+        print(f"Scaffolded pipeline {cli_name!r}:")
+        print(f"  module: {module_path}")
+        print(f"  skill:  {skill_path}")
+        return 0
+
+    print(f"pipelines: unknown action {action!r}", file=sys.stderr)
+    return 1
+
+
 COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "init": handle_init,
     "plan": handle_plan,
@@ -1047,6 +1179,7 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "trace": _handle_trace,
     "doctor": _handle_doctor,
     "record-tag": _handle_record_tag,
+    "pipelines": _handle_pipelines,
     "quality-gate": handle_quality_gate,
 }
 
@@ -1557,7 +1690,7 @@ def main(argv: list[str] | None = None) -> int:
         except CliError as error:
             return error_response(error, root=root)
 
-    if args.command in {"introspect", "trace", "doctor", "record-tag"}:
+    if args.command in {"introspect", "trace", "doctor", "record-tag", "pipelines"}:
         handler = COMMAND_HANDLERS.get(args.command)
         if handler is not None:
             return handler(root, args)

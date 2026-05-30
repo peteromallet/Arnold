@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import threading
@@ -29,7 +30,7 @@ from typing import Any, Dict, Generator, Iterator, Optional, Sequence, Set
 # ---------------------------------------------------------------------------
 
 class EventKind:
-    """String-literal constants for all 26 event kinds.
+    """String-literal constants for all 27 event kinds.
 
     Use these instead of bare strings so typos are caught at import time.
     """
@@ -40,6 +41,7 @@ class EventKind:
     PHASE_END: str = "phase_end"
     PHASE_RETRY: str = "phase_retry"
     STATE_TRANSITION: str = "state_transition"
+    STATE_WRITTEN: str = "state_written"
     LOCK_ACQUIRED: str = "lock_acquired"
     LOCK_RELEASED: str = "lock_released"
     PLAN_ABORTED: str = "plan_aborted"
@@ -85,6 +87,7 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.PHASE_END,
         EventKind.PHASE_RETRY,
         EventKind.STATE_TRANSITION,
+        EventKind.STATE_WRITTEN,
         EventKind.LOCK_ACQUIRED,
         EventKind.LOCK_RELEASED,
         EventKind.PLAN_ABORTED,
@@ -289,6 +292,62 @@ def emit(
     Returns the full event dict.
     """
     return _get_writer(plan_dir).emit(kind, phase=phase, payload=payload)
+
+
+def compute_model_identity(
+    model_name: str | None, reported_version: str | None = None
+) -> str:
+    """Return a deterministic sha256 hex digest identifying a model.
+
+    The digest is built from ``f"{model_name}\\x00{reported_version}".encode()``.
+    Uses ``hashlib.sha256`` (NOT Python's salted ``hash()``) so the value is
+    stable across processes and runs — required for R7 monoculture telemetry.
+    """
+    name = model_name or ""
+    version = reported_version or ""
+    return hashlib.sha256(f"{name}\x00{version}".encode("utf-8")).hexdigest()
+
+
+def emit_state_wal(
+    plan_dir: Path,
+    snapshot: Dict[str, Any],
+    *,
+    taint: str = "trusted",
+    schema_version: Optional[int] = None,
+    effect: Optional[Any] = None,
+) -> dict:
+    """Emit a STATE_WRITTEN shadow-WAL event carrying the full post-validation state.
+
+    The full snapshot is recorded under ``state``; ``effect_class`` is the coarse
+    literal ``"state_write"``; ``taint`` defaults to ``"trusted"``; ``schema_version``
+    is pulled from the snapshot when not explicitly provided.
+
+    ``effect`` is an optional :class:`megaplan.observability.effect_ledger.Effect`
+    instance (W11a typed Effect skeleton).  It is stored in the payload under the
+    key ``"effect"`` but is NEVER read for control flow in M1 — enforcement is M4.
+    """
+    if schema_version is None:
+        sv = snapshot.get("schema_version", 0) if isinstance(snapshot, dict) else 0
+        try:
+            schema_version = int(sv)
+        except (TypeError, ValueError):
+            schema_version = 0
+    payload: Dict[str, Any] = {
+        "state": snapshot,
+        "effect_class": "state_write",
+        "taint": taint,
+        "schema_version": schema_version,
+        "effect": None,
+    }
+    if effect is not None:
+        from megaplan.observability.effect_ledger import Effect
+        if isinstance(effect, Effect):
+            payload["effect"] = {
+                "replay_class": effect.replay_class.value,
+                "idempotency_key": effect.idempotency_key,
+                "compensation": effect.compensation,
+            }
+    return _get_writer(Path(plan_dir)).emit(EventKind.STATE_WRITTEN, payload=payload)
 
 
 # ---------------------------------------------------------------------------

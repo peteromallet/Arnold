@@ -80,7 +80,7 @@ def test_write_plan_state_patch_modes_preserve_existing_state(tmp_path: Path) ->
 def test_write_plan_state_patch_many_creates_state_file_on_first_run(tmp_path: Path) -> None:
     write_plan_state(tmp_path, mode="patch-many", patch={"meta": {"created": True}})
 
-    assert _read(tmp_path) == {"meta": {"created": True}}
+    assert _read(tmp_path) == {"meta": {"created": True}, "schema_version": 0}
 
 
 def test_write_plan_state_executor_key_merge_keeps_unowned_disk_keys(tmp_path: Path) -> None:

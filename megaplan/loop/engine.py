@@ -422,6 +422,8 @@ def save_loop_state(plan_dir: Path, state: LoopState) -> None:
             state["pause_reason"] = str(state.get("pause_reason") or persisted.get("pause_reason") or "Pause requested by user.")
     state["updated_at"] = now_utc()
     atomic_write_json(state_path, state)
+    from megaplan.observability.events import emit_state_wal
+    emit_state_wal(plan_dir, dict(state))
 
 
 def load_loop_state(project_dir: str | Path, name: str) -> LoopState:

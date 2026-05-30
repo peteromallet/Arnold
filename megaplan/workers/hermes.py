@@ -177,7 +177,7 @@ def _emit_llm_end(
 ) -> None:
     """Emit an llm_call_end event."""
     try:
-        from megaplan.observability.events import emit, EventKind
+        from megaplan.observability.events import emit, EventKind, compute_model_identity
 
         emit(
             EventKind.LLM_CALL_END,
@@ -188,6 +188,7 @@ def _emit_llm_end(
                 "tokens_out": tokens_out,
                 "request_id": request_id,
                 "model": model,
+                "model_identity": compute_model_identity(model, None),
             },
         )
     except Exception:
@@ -1175,7 +1176,9 @@ def run_hermes_step(
 
     # Emit cost_recorded
     try:
-        from megaplan.observability.events import emit, EventKind
+        from megaplan.observability.events import emit, EventKind, compute_model_identity
+        _cost_model = result.get("model") or resolved_model
+        _cost_version = result.get("version") if isinstance(result, dict) else None
         emit(
             EventKind.COST_RECORDED,
             plan_dir=plan_dir,
@@ -1184,7 +1187,8 @@ def run_hermes_step(
                 "request_id": _extract_request_id(result),
                 "cost_usd": float(cost_usd),
                 "provider": (resolved_model or "").split(":")[0] if resolved_model else None,
-                "model": result.get("model") or resolved_model,
+                "model": _cost_model,
+                "model_identity": compute_model_identity(_cost_model, _cost_version),
             },
         )
     except Exception:

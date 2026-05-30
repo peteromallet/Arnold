@@ -33,6 +33,8 @@ def test_demo_judges_artifact_set(tmp_path: Path) -> None:
         "judges/judge_brevity/verdict.json",
         "synthesis/synthesis.md",
         "state.json",
+        "events.ndjson",
+        ".events.seq",
     }
     found = {
         path.relative_to(artifact_root).as_posix()
