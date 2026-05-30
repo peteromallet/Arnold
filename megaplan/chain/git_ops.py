@@ -633,25 +633,59 @@ def commit_plan_artifacts_to_base(
             audit_notes=audit_notes,
         )
 
-    try:
-        if previous_ref != base_branch:
-            _run_command(root, ["git", "checkout", base_branch], writer=writer, error_code="git_commit_artifacts_failed")
-        if present_paths:
-            _run_command(
-                root,
-                ["git", "add", "-f", "--", *present_paths],
-                writer=writer,
-                error_code="git_commit_artifacts_failed",
-            )
-        staged = _compat().subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
+    # Commit the artifacts onto ``base_branch`` purely via git plumbing
+    # (write-tree / commit-tree / update-ref). We deliberately never run
+    # ``git checkout <base_branch>``: that fails with exit 128 when the base
+    # branch is already checked out in a *different* git worktree (git forbids
+    # the same branch in two worktrees), and it also needlessly churns the
+    # caller's working tree/HEAD. Plumbing leaves HEAD, the working tree, and
+    # the live index completely untouched while still landing a real commit on
+    # ``refs/heads/<base_branch>`` — and works identically whether or not the
+    # base branch is the currently checked-out branch.
+    base_ref = f"refs/heads/{base_branch}"
+    base_sha = _git_stdout(
+        root, ["git", "rev-parse", "--verify", base_ref], error_code="git_commit_artifacts_failed"
+    )
+    base_tree = _git_stdout(
+        root, ["git", "rev-parse", "--verify", f"{base_ref}^{{tree}}"], error_code="git_commit_artifacts_failed"
+    )
+
+    # Use a throwaway index seeded from the base tree so we never disturb the
+    # caller's live staging area or working tree.
+    git_dir = _git_stdout(
+        root, ["git", "rev-parse", "--git-dir"], error_code="git_commit_artifacts_failed"
+    )
+    git_dir_path = Path(git_dir)
+    if not git_dir_path.is_absolute():
+        git_dir_path = (root / git_dir_path).resolve()
+    tmp_index = git_dir_path / f"megaplan-artifact-index-{os.getpid()}"
+    index_env = dict(os.environ)
+    index_env["GIT_INDEX_FILE"] = str(tmp_index)
+
+    def _run_indexed(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        proc = _compat().subprocess.run(
+            cmd,
             cwd=str(root),
+            env=index_env,
             capture_output=True,
             text=True,
             check=False,
             timeout=120,
         )
-        if staged.returncode == 0:
+        if proc.returncode != 0:
+            raise CliError(
+                "git_commit_artifacts_failed",
+                f"{' '.join(cmd)} exited {proc.returncode}",
+                extra={"command": cmd, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr},
+            )
+        return proc
+
+    try:
+        _run_indexed(["git", "read-tree", base_tree])
+        if present_paths:
+            _run_indexed(["git", "add", "-f", "--", *present_paths])
+        new_tree = _run_indexed(["git", "write-tree"]).stdout.strip()
+        if new_tree == base_tree:
             audit_notes.append("no staged artifact changes")
             return CommitResult(
                 committed=False,
@@ -661,19 +695,34 @@ def commit_plan_artifacts_to_base(
                 base_branch=base_branch,
                 audit_notes=audit_notes,
             )
-        if staged.returncode != 1:
-            raise CliError(
-                "git_commit_artifacts_failed",
-                f"git diff --cached --quiet exited {staged.returncode}",
-                extra={"stdout": staged.stdout, "stderr": staged.stderr},
+        commit_sha = _run_indexed(
+            [
+                "git",
+                "commit-tree",
+                new_tree,
+                "-p",
+                base_sha,
+                "-m",
+                f"megaplan: persist plan artifacts for {plan_name}",
+            ]
+        ).stdout.strip()
+        # Atomically advance the base branch ref, asserting it still points at
+        # the sha we built on top of (guards against a concurrent advance).
+        _run_indexed(["git", "update-ref", base_ref, commit_sha, base_sha])
+        # When HEAD is on the base branch (the common case), advancing the ref
+        # alone leaves the *live* index pointing at the old tree, so the freshly
+        # committed artifacts would show up as a staged deletion in
+        # ``git status``. Refresh the live index for those paths so the working
+        # tree reads clean against the new commit. (When HEAD is on another
+        # branch — including a sibling worktree — the live index is unrelated to
+        # base and must not be touched.)
+        if previous_ref == base_branch and present_paths:
+            _run_command(
+                root,
+                ["git", "update-index", "--add", "--", *present_paths],
+                writer=writer,
+                error_code="git_commit_artifacts_failed",
             )
-        _run_command(
-            root,
-            ["git", "commit", "-m", f"megaplan: persist plan artifacts for {plan_name}"],
-            writer=writer,
-            error_code="git_commit_artifacts_failed",
-        )
-        commit_sha = _git_stdout(root, ["git", "rev-parse", "HEAD"], error_code="git_commit_artifacts_failed")
         pushed = False
         if push_enabled:
             _run_command(
@@ -693,14 +742,12 @@ def commit_plan_artifacts_to_base(
             audit_notes=audit_notes,
         )
     finally:
-        current_sha = _branch_head(root)
-        if previous_ref != base_branch and current_sha != previous_sha:
-            _run_command(
-                root,
-                ["git", "checkout", previous_ref],
-                writer=writer,
-                error_code="git_restore_ref_failed",
-            )
+        try:
+            tmp_index.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
