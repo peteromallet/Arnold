@@ -21,7 +21,6 @@ from megaplan._pipeline.stages.inprocess_step import InProcessHandlerStep
 from megaplan._pipeline.subloop import SubloopStep
 from megaplan._pipeline.types import (
     Edge,
-    GateRecommendation,
     Pipeline,
     Stage,
     StepContext,
@@ -52,7 +51,7 @@ def _build_tiebreaker_child_pipeline() -> Pipeline:
     return Pipeline(stages=stages, entry="run")
 
 
-def _promote_from_child_state(state: dict[str, Any]) -> GateRecommendation:
+def _promote_from_child_state(state: dict[str, Any]) -> Any:
     """Map the child pipeline's final state to a parent PipelineVerdict.
 
     The child writes to ``current_state``; after a successful
@@ -76,6 +75,9 @@ class TiebreakerStep:
     prompt_key: str | None = None
     slot: str | None = "tiebreaker_researcher"
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
+
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         subloop = SubloopStep(
