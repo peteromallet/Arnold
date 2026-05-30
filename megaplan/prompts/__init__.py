@@ -16,6 +16,7 @@ from ._shared import (
     _finalize_debt_block,
     _gate_debt_block,
     _grouped_debt_for_prompt,
+    _render_contracts_block,
     _planning_debt_block,
     _render_prep_block,
     _resolve_prompt_root,
@@ -243,11 +244,30 @@ def create_prompt(
             f"expected one of {sorted(_AGENT_REGISTRY)}",
         ) from exc
     builder = _resolve_builder(builders, step, state, label)
+    contract_context = prompt_kwargs.pop("contract_context", None)
     if step == "review":
         return _prepend_harness_guard(builder(state, plan_dir, **prompt_kwargs))
+    if step == "plan":
+        return _prepend_harness_guard(builder(state, plan_dir, contract_context=contract_context))
+    if step == "prep":
+        return _prepend_harness_guard(builder(state, plan_dir, root=root, contract_context=contract_context))
+    if step == "prep-triage":
+        return _prepend_harness_guard(builder(state, plan_dir, root=root, contract_context=contract_context))
+    if step == "prep-distill":
+        allowed = {}
+        for key in ("triage", "findings", "output_path", "dossier_path", "metrics_path"):
+            if key in prompt_kwargs:
+                allowed[key] = prompt_kwargs.pop(key)
+        return _prepend_harness_guard(
+            builder(state, plan_dir, root=root, contract_context=contract_context, **allowed)
+        )
+    if step in ("critique", "critique_evaluator"):
+        return _prepend_harness_guard(
+            builder(state, plan_dir, root=root, contract_context=contract_context, **prompt_kwargs)
+        )
+    if step == "gate":
+        return _prepend_harness_guard(builder(state, plan_dir, root=root, contract_context=contract_context))
     if step in _ROOT_BEARING_STEPS:
-        if step in ("critique", "critique_evaluator") and prompt_kwargs:
-            return _prepend_harness_guard(builder(state, plan_dir, root=root, **prompt_kwargs))
         return _prepend_harness_guard(builder(state, plan_dir, root=root))
     return _prepend_harness_guard(builder(state, plan_dir))
 
@@ -307,6 +327,7 @@ __all__ = [
     "_prep_prompt",
     "_prep_research_prompt",
     "_prep_triage_prompt",
+    "_render_contracts_block",
     "_review_doc_prompt",
     "_review_joke_prompt",
     "_write_critique_template",

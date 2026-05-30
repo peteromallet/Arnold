@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from typing import Any, Mapping
 
 from megaplan._core import (
     creative_form_id,
@@ -17,7 +18,7 @@ from megaplan._core import (
 from megaplan.forms import get_form
 from megaplan.types import PlanState
 
-from ._shared import _render_prep_block
+from ._shared import _render_contracts_block, _render_prep_block, _resolve_contract_context
 
 
 def _render_open_tickets(state: PlanState, plan_dir: Path) -> str:
@@ -186,9 +187,17 @@ def _prep_context_sections(state: PlanState, plan_dir: Path) -> tuple[Path, Path
     return project_dir, prep_path, direction_block, notes_block
 
 
-def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
+def _plan_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    contract_context: Mapping[str, Any] | None = None,
+) -> str:
     project_dir = Path(state["config"]["project_dir"])
     prep_block, prep_instruction = _render_prep_block(plan_dir)
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="plan",
+    )
     if prep_instruction:
         prep_instruction += (
             " Open questions in the brief are candidate concerns, not mandates —"
@@ -280,6 +289,8 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
 
         {intent_and_notes_block(state)}
 
+        {contracts_block}
+
         Project directory:
         {project_dir}
 
@@ -324,10 +335,19 @@ def _plan_prompt(state: PlanState, plan_dir: Path) -> str:
     ).strip()
 
 
-def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> str:
+def _prep_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    contract_context: Mapping[str, Any] | None = None,
+) -> str:
     del root
     project_dir, output_path, direction_block, notes_block = _prep_context_sections(
         state, plan_dir
+    )
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="prep",
     )
 
     return textwrap.dedent(
@@ -343,6 +363,8 @@ def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
         {direction_block}
 
         {notes_block}
+
+        {contracts_block}
 
         First, assess: does this task need codebase investigation?
 
@@ -387,11 +409,18 @@ def _prep_prompt(state: PlanState, plan_dir: Path, root: Path | None = None) -> 
 
 
 def _prep_triage_prompt(
-    state: PlanState, plan_dir: Path, root: Path | None = None
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    contract_context: Mapping[str, Any] | None = None,
 ) -> str:
     del root
     project_dir, _prep_path, direction_block, notes_block = _prep_context_sections(
         state, plan_dir
+    )
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="prep-triage",
     )
     output_path = plan_dir / "prep_triage.json"
     return textwrap.dedent(
@@ -407,6 +436,8 @@ def _prep_triage_prompt(
         {direction_block}
 
         {notes_block}
+
+        {contracts_block}
 
         Goals:
         - Decide whether prep can skip research entirely.
@@ -490,10 +521,15 @@ def _prep_distill_prompt(
     dossier_path: Path | None = None,
     metrics_path: Path | None = None,
     root: Path | None = None,
+    contract_context: Mapping[str, Any] | None = None,
 ) -> str:
     del root
     project_dir, prep_path, direction_block, notes_block = _prep_context_sections(
         state, plan_dir
+    )
+    contracts_block = _render_contracts_block(
+        _resolve_contract_context(state, contract_context),
+        audience="prep-distill",
     )
     target_path = output_path or prep_path
     dossier_target = dossier_path or (plan_dir / "prep_dossier.md")
@@ -513,6 +549,8 @@ def _prep_distill_prompt(
         {direction_block}
 
         {notes_block}
+
+        {contracts_block}
 
         Triage framing:
         {json_dump(triage).strip()}

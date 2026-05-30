@@ -248,6 +248,8 @@ class PlanRepository:
             return "raw_worker_output"
         if name == "finalize.json" or name == "finalize_snapshot.json":
             return "finalize_snapshot" if name == "finalize_snapshot.json" else "finalize"
+        if name == "contract.json":
+            return "contract"
         if name.startswith("critique"):
             return "critique"
         if name == "faults.json":

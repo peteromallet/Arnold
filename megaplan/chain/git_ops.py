@@ -522,6 +522,54 @@ def _porcelain_paths(root: Path) -> set[str]:
     return paths
 
 
+def read_plan_artifact_from_commit(root: Path, commit_sha: str, rel_path: str) -> str | None:
+    """Read a file's content from a git commit, returning None only for missing files.
+
+    Uses ``git show <commit_sha>:<rel_path>``. Returns the file content as a
+    string when the file exists in the commit. Returns ``None`` when git
+    reports the path does not exist in the given tree-ish (e.g. "does not
+    exist", "exists on disk, but not in", "bad revision"). Raises
+    ``CliError`` for real git failures (non-zero exit for other reasons).
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"{commit_sha}:{rel_path}"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        raise CliError(
+            "git_artifact_read_failed",
+            f"git show {commit_sha}:{rel_path} failed with {exc}",
+        ) from exc
+
+    if proc.returncode == 0:
+        return proc.stdout
+
+    # Distinguish "file missing from this commit" (None) from real git errors.
+    stderr_lower = (proc.stderr or "").lower()
+    if (
+        "does not exist" in stderr_lower
+        or "exists on disk" in stderr_lower
+        or "bad revision" in stderr_lower
+    ):
+        return None
+
+    raise CliError(
+        "git_artifact_read_failed",
+        f"git show {commit_sha}:{rel_path} exited {proc.returncode}",
+        extra={
+            "command": ["git", "show", f"{commit_sha}:{rel_path}"],
+            "returncode": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+        },
+    )
+
+
 def _artifact_relpath(root: Path, path: Path) -> str:
     candidate = path if path.is_absolute() else root / path
     try:
