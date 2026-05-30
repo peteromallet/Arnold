@@ -1314,7 +1314,23 @@ def _plan_artifact_paths_for_milestone(
     ]
     idea_path = Path(milestone.idea)
     if idea_path.exists():
-        artifacts.append(idea_path)
+        # The idea brief is an immutable artifact. If it lives outside the
+        # project repo (e.g. an absolute path to a brief authored elsewhere),
+        # git cannot add it. Copy it into the plan dir so the in-repo copy is
+        # what gets persisted. When the idea is already inside the repo we add
+        # it in place, preserving prior behavior.
+        resolved_idea = idea_path.resolve()
+        root_resolved = root.resolve()
+        if resolved_idea.is_relative_to(root_resolved):
+            artifacts.append(idea_path)
+        else:
+            idea_copy = plan_dir / "idea.md"
+            idea_copy.parent.mkdir(parents=True, exist_ok=True)
+            # Only copy when content differs to avoid redundant churn.
+            new_content = resolved_idea.read_bytes()
+            if not idea_copy.exists() or idea_copy.read_bytes() != new_content:
+                idea_copy.write_bytes(new_content)
+            artifacts.append(idea_copy)
     return artifacts
 
 
