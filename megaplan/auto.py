@@ -974,7 +974,6 @@ def _shadow_completion_verdict(
     try:
         from megaplan.orchestration.completion_contract import (
             CONTRACT_MODE_ENFORCE,
-            CONTRACT_MODE_OFF,
             CONTRACT_MODE_SHADOW,
             CONTRACT_MODE_WARN,
             CompletionSubject,
@@ -995,8 +994,6 @@ def _shadow_completion_verdict(
         config = state.get("config") if isinstance(state.get("config"), dict) else {}
         # Sticky-flag: read only from state['config'], never os.getenv.
         mode = normalize_contract_mode(config.get("completion_contract_mode"))
-        if mode == CONTRACT_MODE_OFF:
-            return "done"
 
         project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
         if isinstance(project_dir_str, str) and project_dir_str:
@@ -1709,6 +1706,18 @@ def drive(
                     # State patched to revise-routing; continue the driver loop.
                     continue
                 if enforce_result == "operator_required":
+                    gate_details = ""
+                    try:
+                        verdict_data = json.loads(
+                            (plan_dir / "completion_verdict.json").read_text(encoding="utf-8")
+                        )
+                        delta = (verdict_data.get("green_suite") or {}).get("delta") or {}
+                        gate_details = (
+                            f"; newly_failing={list(delta.get('newly_failing') or [])!r} "
+                            f"deleted_tests={list(delta.get('deleted_tests') or [])!r}"
+                        )
+                    except Exception:
+                        pass
                     log(
                         f"completion_contract_mode=enforce: plan {plan!r} halted — "
                         "revise retry cap exhausted; operator action required"
@@ -1729,7 +1738,7 @@ def drive(
                         iterations=iteration,
                         reason=(
                             f"completion_contract_mode=enforce: revise retry cap exhausted "
-                            f"for plan {plan!r} — operator action required"
+                            f"for plan {plan!r} — operator action required{gate_details}"
                         ),
                         last_phase=last_phase,
                     )

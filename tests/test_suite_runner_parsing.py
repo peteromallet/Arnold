@@ -103,6 +103,8 @@ class TestParametrizedNodeidParsing:
             "collected 4 items\n"
             "FAILED tests/test_params.py::test_foo[a-1] - AssertionError\n"
             "FAILED tests/test_params.py::test_foo[b-2] - ValueError\n"
+            "PASSED tests/test_params.py::test_ok_one\n"
+            "PASSED tests/test_params.py::test_ok_two\n"
             "2 failed, 2 passed\n"
         )
         parsed = _parse_pytest_output(stdout)
@@ -117,10 +119,10 @@ class TestParametrizedNodeidParsing:
             "collected 3 items\n"
             "PASSED tests/test_params.py::test_bar[x-y]\n"
             "PASSED tests/test_params.py::test_bar[z-w]\n"
+            "PASSED tests/test_params.py::test_bar[extra]\n"
             "3 passed\n"
         )
         parsed = _parse_pytest_output(stdout)
-        # Summary says 3 passed but only 2 lines captured → 1 placeholder filled
         assert len(parsed["passes"]) == 3
         assert "tests/test_params.py::test_bar[x-y]" in parsed["passes"]
         assert "tests/test_params.py::test_bar[z-w]" in parsed["passes"]
@@ -132,11 +134,12 @@ class TestParametrizedNodeidParsing:
             "FAILED tests/test_mix.py::test_param[0-True]\n"
             "PASSED tests/test_mix.py::test_plain\n"
             "PASSED tests/test_mix.py::test_param[1-False]\n"
+            "PASSED tests/test_mix.py::test_param[2-False]\n"
+            "PASSED tests/test_mix.py::test_param[3-False]\n"
             "1 failed, 4 passed\n"
         )
         parsed = _parse_pytest_output(stdout)
         assert parsed["failures"] == ["tests/test_mix.py::test_param[0-True]"]
-        # Two PASSED lines were captured, summary says 4 passed → 2 placeholders
         assert len(parsed["passes"]) == 4
         assert "tests/test_mix.py::test_plain" in parsed["passes"]
         assert "tests/test_mix.py::test_param[1-False]" in parsed["passes"]
@@ -147,24 +150,31 @@ class TestParametrizedNodeidParsing:
             "collected 3 items\n"
             "FAILED tests/test_a.py::test_x\n"
             "PASSED tests/test_a.py::test_y\n"
+            "PASSED tests/test_a.py::test_z\n"
             "1 failed, 2 passed\n"
         )
         parsed = _parse_pytest_output(stdout)
-        # Should contain the real failure + real pass + 1 placeholder
-        assert len(parsed["collected_ids"]) >= 2
+        assert len(parsed["collected_ids"]) == 3
         assert "tests/test_a.py::test_x" in parsed["collected_ids"]
         assert "tests/test_a.py::test_y" in parsed["collected_ids"]
 
     def test_collected_ids_empty_when_no_parsed_lines(self) -> None:
-        """collected_ids contains only summary placeholders when no FAILED/PASSED
-        lines exist — no real nodeids."""
+        """collected_ids stays empty when no stable nodeid lines are present."""
         stdout = "collected 5 items\n5 passed in 0.10s\n"
         parsed = _parse_pytest_output(stdout)
-        # Summary line triggers placeholder fills, so collected_ids will have
-        # 5 entries, but none of them should contain "::" (real nodeids).
-        assert len(parsed["collected_ids"]) == 5
-        assert not any("::" in nid for nid in parsed["collected_ids"])
-        assert parsed["parse_ok"] is True  # collected count was parsed
+        assert parsed["collected_ids"] == []
+        assert parsed["passes"] == []
+        assert parsed["parse_ok"] is False
+
+    def test_summary_count_mismatch_fails_loud(self) -> None:
+        stdout = (
+            "collected 2 items\n"
+            "PASSED tests/test_a.py::test_one\n"
+            "2 passed\n"
+        )
+        parsed = _parse_pytest_output(stdout)
+        assert parsed["parse_ok"] is False
+        assert "<test-" not in str(parsed)
 
     def test_nodeid_parsing_avoids_substring_approach(self) -> None:
         """Ensure the old endswith(' FAILED') substring approach is NOT used.
@@ -362,6 +372,20 @@ class TestCodeHashStability:
 
         assert h1 != h2
 
+    def test_non_git_code_hash_is_deterministic_and_content_based(self, tmp_path: Path) -> None:
+        project_dir = tmp_path / "plain"
+        project_dir.mkdir()
+        (project_dir / "pkg").mkdir()
+        (project_dir / "pkg" / "a.py").write_text("print('a')\n", encoding="utf-8")
+        (project_dir / "pkg" / "b.py").write_text("print('b')\n", encoding="utf-8")
+
+        h1 = _compute_code_hash(project_dir, paths=["pkg"])
+        h2 = _compute_code_hash(project_dir, paths=["pkg"])
+        assert h1 == h2
+
+        (project_dir / "pkg" / "a.py").write_text("print('changed')\n", encoding="utf-8")
+        assert _compute_code_hash(project_dir, paths=["pkg"]) != h1
+
 
 # ---------------------------------------------------------------------------
 # git ls-tree path used (mock git)
@@ -461,6 +485,36 @@ class TestRunCollectOnly:
         )
         ids = _run_collect_only(Path("/nonexistent"), "pytest")
         assert ids == []
+
+
+def test_run_suite_parses_real_pytest_summary_nodeids(tmp_path: Path) -> None:
+    project_dir = tmp_path / "project"
+    plan_dir = tmp_path / "plan"
+    project_dir.mkdir()
+    plan_dir.mkdir()
+    (project_dir / "test_real_output.py").write_text(
+        "def test_passes():\n"
+        "    assert True\n\n"
+        "def test_fails():\n"
+        "    assert False\n",
+        encoding="utf-8",
+    )
+
+    result = run_suite(
+        project_dir,
+        {"test_command": "pytest", "plan_dir": str(plan_dir)},
+        phase="real_output",
+        deadline_seconds=time.monotonic() + 60,
+    )
+
+    assert result.status == "failed"
+    assert "test_real_output.py::test_fails" in result.failures
+    assert "test_real_output.py::test_passes" in result.passes
+    assert all("::" in nodeid for nodeid in result.failures + result.passes)
+    assert "<test-" not in str(result.failures + result.passes + result.collected_ids)
+    raw = result.raw_log_path.read_text(encoding="utf-8")
+    assert "FAILED test_real_output.py::test_fails" in raw
+    assert "PASSED test_real_output.py::test_passes" in raw
 
 
 # ---------------------------------------------------------------------------

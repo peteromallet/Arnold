@@ -42,7 +42,7 @@ def _make_result(**overrides: object) -> SuiteRunResult:
     defaults: dict[str, object] = {
         "run_id": "fake-run-id",
         "phase": "verification",
-        "command": "pytest --tb=no -q --no-header -rN",
+        "command": "pytest --tb=no -q --no-header -rA",
         "duration": 0.1,
         "collected": 3,
         "collected_ids": [

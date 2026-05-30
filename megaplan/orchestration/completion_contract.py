@@ -187,7 +187,7 @@ class CompletionVerdict:
 
     @property
     def would_block(self) -> bool:
-        return not self.accepted
+        return self.mode in {CONTRACT_MODE_WARN, CONTRACT_MODE_ENFORCE} and not self.accepted
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -195,6 +195,7 @@ class CompletionVerdict:
             "subject": self.subject.to_dict(),
             "evidence": [e.to_dict() for e in self.evidence],
             "accepted": self.accepted,
+            "would_block": self.would_block,
             "failures": list(self.failures),
         }
         # Surface green_suite.delta at the top level for easy consumption
@@ -210,6 +211,8 @@ class CompletionVerdict:
 
     def one_line(self) -> str:
         verdict = "accepted" if self.accepted else "blocked-would-be"
+        if not self.would_block and not self.accepted:
+            verdict = "accepted-for-mode"
         fails = ",".join(self.failures) if self.failures else "none"
         return (
             f"completion verdict ({self.mode}): {verdict} "
@@ -711,7 +714,7 @@ class GreenSuiteProvider:
             base_cmd = "pytest"
 
         # Strip flags we always add ourselves so we can append cleanly.
-        for flag in ("--tb=no", "-q", "--no-header", "-rN"):
+        for flag in ("--tb=no", "-q", "--no-header", "-rN", "-rA"):
             base_cmd = base_cmd.replace(flag, "")
         base_cmd = base_cmd.strip()
 
@@ -735,7 +738,7 @@ class GreenSuiteProvider:
             nodeid_args = sorted(flips)
 
         retry_command = " ".join(
-            [base_cmd, "--tb=no", "-q", "--no-header", "-rN"]
+            [base_cmd, "--tb=no", "-q", "--no-header", "-rA"]
             + [shlex.quote(a) for a in nodeid_args]
         )
 

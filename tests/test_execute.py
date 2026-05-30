@@ -1085,7 +1085,7 @@ def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path
     fake_result = SRR(
         run_id="test1",
         phase="baseline",
-        command="pytest --tb=no -q --no-header -rN",
+        command="pytest --tb=no -q --no-header -rA",
         duration=1.0,
         collected=7,
         collected_ids=[
@@ -1113,7 +1113,7 @@ def test_capture_test_baseline_success(monkeypatch: pytest.MonkeyPatch, tmp_path
         "tests/test_a.py::test_one",
         "tests/test_b.py::test_two",
     ]
-    assert result["baseline_test_command"] == "pytest --tb=no -q --no-header -rN"
+    assert result["baseline_test_command"] == "pytest --tb=no -q --no-header -rA"
     assert "baseline_test_note" not in result
 
 
@@ -1127,7 +1127,7 @@ def test_capture_test_baseline_no_runner(monkeypatch: pytest.MonkeyPatch, tmp_pa
     fake_result = SRR(
         run_id="test2",
         phase="baseline",
-        command="pytest --tb=no -q --no-header -rN",
+        command="pytest --tb=no -q --no-header -rA",
         duration=0.1,
         collected=0,
         collected_ids=[],
@@ -1158,7 +1158,7 @@ def test_capture_test_baseline_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path
     fake_result = SRR(
         run_id="test3",
         phase="baseline",
-        command="pytest --tb=no -q --no-header -rN",
+        command="pytest --tb=no -q --no-header -rA",
         duration=900.0,
         collected=0,
         collected_ids=[],

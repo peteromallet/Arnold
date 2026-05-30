@@ -44,7 +44,7 @@ def _make_fake_result(**overrides: object) -> SuiteRunResult:
     defaults: dict[str, object] = {
         "run_id": "fake-run-id",
         "phase": "verification",
-        "command": "pytest --tb=no -q --no-header -rN",
+        "command": "pytest --tb=no -q --no-header -rA",
         "duration": 0.1,
         "collected": 2,
         "collected_ids": ["tests/test_a.py::test_x", "tests/test_b.py::test_y"],

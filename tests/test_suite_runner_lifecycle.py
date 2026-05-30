@@ -282,7 +282,7 @@ def test_parse_pytest_output_collected_count() -> None:
     stdout = "collected 42 items\n...\n3 passed"
     parsed = _parse_pytest_output(stdout)
     assert parsed["collected"] == 42
-    assert parsed["parse_ok"] is True
+    assert parsed["parse_ok"] is False
 
 
 def test_parse_pytest_output_failures_listed() -> None:
@@ -291,6 +291,9 @@ def test_parse_pytest_output_failures_listed() -> None:
         "collected 5 items\n"
         "FAILED tests/test_a.py::test_x - AssertionError\n"
         "FAILED tests/test_b.py::test_y - ValueError\n"
+        "PASSED tests/test_a.py::test_ok1\n"
+        "PASSED tests/test_a.py::test_ok2\n"
+        "PASSED tests/test_a.py::test_ok3\n"
         "2 failed, 3 passed\n"
     )
     parsed = _parse_pytest_output(stdout)
@@ -298,7 +301,11 @@ def test_parse_pytest_output_failures_listed() -> None:
         "tests/test_a.py::test_x",
         "tests/test_b.py::test_y",
     ]
-    assert len(parsed["passes"]) == 3
+    assert parsed["passes"] == [
+        "tests/test_a.py::test_ok1",
+        "tests/test_a.py::test_ok2",
+        "tests/test_a.py::test_ok3",
+    ]
 
 
 def test_parse_pytest_output_empty() -> None:
@@ -315,8 +322,9 @@ def test_parse_pytest_output_all_pass() -> None:
     stdout = "collected 10 items\n..........\n10 passed in 0.50s"
     parsed = _parse_pytest_output(stdout)
     assert parsed["collected"] == 10
-    assert len(parsed["passes"]) == 10
+    assert parsed["passes"] == []
     assert parsed["failures"] == []
+    assert parsed["parse_ok"] is False
 
 
 def test_parse_pytest_output_mixed() -> None:
@@ -324,12 +332,17 @@ def test_parse_pytest_output_mixed() -> None:
     stdout = (
         "collected 3 items\n"
         "FAILED tests/test_z.py::test_bad - AssertionError\n"
+        "PASSED tests/test_z.py::test_ok1\n"
+        "PASSED tests/test_z.py::test_ok2\n"
         "1 failed, 2 passed in 0.12s\n"
     )
     parsed = _parse_pytest_output(stdout)
     assert parsed["collected"] == 3
     assert parsed["failures"] == ["tests/test_z.py::test_bad"]
-    assert len(parsed["passes"]) == 2
+    assert parsed["passes"] == [
+        "tests/test_z.py::test_ok1",
+        "tests/test_z.py::test_ok2",
+    ]
 
 
 # ---------------------------------------------------------------------------
