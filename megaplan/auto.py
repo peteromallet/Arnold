@@ -50,6 +50,7 @@ from megaplan.types import (
     STATE_AWAITING_HUMAN_VERIFY,
     STATE_BLOCKED,
     STATE_CANCELLED,
+    STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FAILED,
@@ -954,25 +955,31 @@ def _shadow_completion_verdict(
     cwd: Path | None,
     *,
     log: Callable[..., None],
-) -> None:
+) -> str:
     """Compute + persist + log a completion verdict for a done plan.
 
-    SHADOW-MODE FAIL-OPEN. This NEVER alters control flow: it computes a
-    :class:`CompletionVerdict` from objective evidence, writes
-    ``completion_verdict.json``, and logs a one-line summary. Any exception is
-    caught and swallowed so a verdict bug can never break a run. The contract
-    mode is read from the plan's ``state.json`` config
-    (``completion_contract_mode``); modes "warn"/"enforce" are not yet
-    implemented and currently behave like shadow plus a logged WARNING. The
-    suite is NEVER run.
+    Returns one of:
+    - ``"done"`` — proceed normally (shadow/warn/off modes, or enforce with no block).
+    - ``"routed"`` — enforce blocked; state.json patched to revise-routing state; caller
+      must ``continue`` the driver loop.
+    - ``"operator_required"`` — enforce blocked; retry cap exhausted; caller must halt.
+
+    FAIL-OPEN. Any exception is caught so a verdict bug can never break a run.
+    Sticky-flag invariant: reads ``completion_contract_mode`` exclusively from
+    ``state['config']`` (snapshotted at init) — never from ``os.getenv``.
     """
     if plan_dir is None:
-        return
+        return "done"
+    _log = logging.getLogger("megaplan.auto")
     try:
         from megaplan.orchestration.completion_contract import (
+            CONTRACT_MODE_ENFORCE,
             CONTRACT_MODE_OFF,
+            CONTRACT_MODE_SHADOW,
+            CONTRACT_MODE_WARN,
             CompletionSubject,
             compute_verdict,
+            extract_green_suite_info,
             normalize_contract_mode,
         )
         from megaplan.orchestration.completion_io import write_completion_verdict
@@ -986,9 +993,10 @@ def _shadow_completion_verdict(
             state = {}
 
         config = state.get("config") if isinstance(state.get("config"), dict) else {}
+        # Sticky-flag: read only from state['config'], never os.getenv.
         mode = normalize_contract_mode(config.get("completion_contract_mode"))
         if mode == CONTRACT_MODE_OFF:
-            return
+            return "done"
 
         project_dir_str = config.get("project_dir") if isinstance(config, dict) else None
         if isinstance(project_dir_str, str) and project_dir_str:
@@ -1015,19 +1023,106 @@ def _shadow_completion_verdict(
             pass  # persistence failure must never break the run
 
         log(verdict.one_line())
-        # warn/enforce are not yet implemented: behave like shadow + a WARNING.
-        if mode in ("warn", "enforce") and verdict.would_block:
-            logging.getLogger("megaplan.auto").warning(
-                "completion_contract_mode=%r requested but blocking is NOT yet "
-                "implemented (shadow behaviour); verdict would block plan %r: %s",
-                mode,
-                plan,
-                ", ".join(verdict.failures),
+
+        if mode == CONTRACT_MODE_SHADOW:
+            return "done"
+
+        if mode == CONTRACT_MODE_WARN:
+            if verdict.would_block:
+                delta_dict, _ = extract_green_suite_info(verdict)
+                newly_failing = (delta_dict or {}).get("newly_failing", []) if delta_dict else list(verdict.failures)
+                _log.warning(
+                    "completion_contract_mode=warn: advisory — verdict would block plan %r; "
+                    "newly_failing=%r failures=%r",
+                    plan,
+                    newly_failing,
+                    list(verdict.failures),
+                )
+            return "done"
+
+        if mode == CONTRACT_MODE_ENFORCE:
+            delta_dict, result_status = extract_green_suite_info(verdict)
+
+            # Non-blocking: runner error / timeout / not_applicable — record warning, don't block.
+            if result_status in {"runner_error", "timeout", "not_applicable"}:
+                _log.warning(
+                    "completion_contract_mode=enforce: verification run status=%r for plan %r — "
+                    "not blocking (non-deterministic result); would_block=%r",
+                    result_status,
+                    plan,
+                    verdict.would_block,
+                )
+                return "done"
+
+            # Non-blocking: delta not computable — record warning, don't block.
+            if delta_dict is None or not delta_dict.get("computable", False):
+                _log.warning(
+                    "completion_contract_mode=enforce: delta not computable for plan %r — "
+                    "not blocking; would_block=%r",
+                    plan,
+                    verdict.would_block,
+                )
+                return "done"
+
+            newly_failing = delta_dict.get("newly_failing") or []
+            deleted_tests = delta_dict.get("deleted_tests") or []
+
+            if not newly_failing and not deleted_tests:
+                # No regressions: proceed.
+                return "done"
+
+            # Blocking: newly_failing or deleted_tests present.
+            max_retries = int(config.get("enforce_revise_max_retries", 2))
+            retry_count = int(state.get("enforce_revise_count", 0))
+
+            if retry_count >= max_retries:
+                _log.warning(
+                    "completion_contract_mode=enforce: plan %r blocked; revise retry cap %d "
+                    "exhausted — operator action required; newly_failing=%r deleted_tests=%r",
+                    plan,
+                    max_retries,
+                    list(newly_failing),
+                    list(deleted_tests),
+                )
+                try:
+                    write_plan_state(
+                        plan_dir,
+                        mode="patch-many",
+                        patch={"current_state": STATE_BLOCKED},
+                    )
+                except Exception:
+                    pass
+                return "operator_required"
+
+            log(
+                f"completion_contract_mode=enforce: blocking plan {plan!r} — "
+                f"routing to revise (retry {retry_count + 1}/{max_retries}); "
+                f"newly_failing={list(newly_failing)!r} deleted_tests={list(deleted_tests)!r}"
             )
+            try:
+                write_plan_state(
+                    plan_dir,
+                    mode="patch-many",
+                    patch={
+                        "current_state": STATE_CRITIQUED,
+                        "last_gate": {"recommendation": "ITERATE"},
+                        "enforce_revise_count": retry_count + 1,
+                    },
+                )
+            except Exception as exc:
+                _log.warning(
+                    "completion_contract_mode=enforce: failed to patch state for plan %r — "
+                    "failing open: %s",
+                    plan,
+                    exc,
+                )
+                return "done"
+            return "routed"
+
+        return "done"
     except Exception as exc:  # fail-open: a verdict bug must never break a run
-        logging.getLogger("megaplan.auto").debug(
-            "shadow completion verdict failed for plan %r: %s", plan, exc
-        )
+        _log.debug("shadow completion verdict failed for plan %r: %s", plan, exc)
+        return "done"
 
 
 def _recover_execute_callback_failure_state(plan_dir: Path | None) -> bool:
@@ -1604,12 +1699,40 @@ def drive(
                 STATE_CANCELLED: "cancelled",
             }.get(state, state)
             log(f"terminal state reached: {state}")
-            # Completion-verification contract (SHADOW-MODE, fail-open): on a
-            # done plan, compute + persist + log a verdict. NEVER blocks, NEVER
-            # alters the outcome, NEVER runs the suite. See
-            # megaplan/orchestration/completion_contract.py.
+            # Completion-verification contract: on a done plan, compute + persist
+            # + log a verdict. Shadow/warn: fail-open, never alters outcome.
+            # Enforce: may route back to revise (newly_failing/deleted_tests) or
+            # halt with operator_required (retry cap exhausted).
             if terminal_status == "done":
-                _shadow_completion_verdict(plan, plan_dir, cwd, log=log)
+                enforce_result = _shadow_completion_verdict(plan, plan_dir, cwd, log=log)
+                if enforce_result == "routed":
+                    # State patched to revise-routing; continue the driver loop.
+                    continue
+                if enforce_result == "operator_required":
+                    log(
+                        f"completion_contract_mode=enforce: plan {plan!r} halted — "
+                        "revise retry cap exhausted; operator action required"
+                    )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="enforce_block_cap_exhausted",
+                        message="enforce block: revise retry cap exhausted — operator action required",
+                        current_state=STATE_BLOCKED,
+                        phase="completion_contract",
+                        resume_cursor={"phase": "completion_contract", "retry_strategy": "human_approval"},
+                        suggested_action="Address newly-failing tests and resume manually.",
+                        metadata={"iteration": iteration},
+                    )
+                    return _outcome(
+                        "blocked",
+                        final_state=STATE_BLOCKED,
+                        iterations=iteration,
+                        reason=(
+                            f"completion_contract_mode=enforce: revise retry cap exhausted "
+                            f"for plan {plan!r} — operator action required"
+                        ),
+                        last_phase=last_phase,
+                    )
             # Emit plan_finished or plan_aborted
             if plan_dir is not None:
                 try:

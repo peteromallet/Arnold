@@ -612,6 +612,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "baseline_test_command": {"type": ["string", "null"]},
             "baseline_test_note": {"type": "string"},
+            "suite_runs_ndjson_path": {"type": ["string", "null"]},
         },
         "required": ["tasks", "watch_items", "sense_checks", "user_actions", "meta_commentary", "validation"],
     },

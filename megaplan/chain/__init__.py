@@ -620,6 +620,9 @@ class ChainState:
     profile_bumps: dict[str, str] = field(default_factory=dict)
     robustness_bumps: dict[str, str] = field(default_factory=dict)
     depth_bumps: dict[str, str] = field(default_factory=dict)
+    # Enforce-block retry counts keyed by milestone label; tracks how many
+    # times enforce mode has blocked a milestone and routed it back for retry.
+    enforce_revise_counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -644,6 +647,7 @@ class ChainState:
             "profile_bumps": dict(self.profile_bumps),
             "robustness_bumps": dict(self.robustness_bumps),
             "depth_bumps": dict(self.depth_bumps),
+            "enforce_revise_counts": dict(self.enforce_revise_counts),
         }
 
     @classmethod
@@ -723,6 +727,7 @@ class ChainState:
             profile_bumps=_str_str_map(raw.get("profile_bumps")),
             robustness_bumps=_str_str_map(raw.get("robustness_bumps")),
             depth_bumps=_str_str_map(raw.get("depth_bumps")),
+            enforce_revise_counts=_str_int_map(raw.get("enforce_revise_counts")),
         )
 
 
@@ -1186,33 +1191,44 @@ def _shadow_milestone_completion_verdict(
     contract_mode: str,
     *,
     log_fn: Callable[[str], None],
-) -> None:
+) -> bool:
     """Compute + persist + log a milestone-level completion verdict.
 
-    SHADOW-MODE FAIL-OPEN. Mirrors ``auto._shadow_completion_verdict`` at the
-    milestone boundary: it NEVER alters ``state.completed``, NEVER blocks the
-    chain, and NEVER runs the suite. Any exception is caught and swallowed.
+    Returns ``True`` when enforce mode blocks this milestone (caller must NOT
+    append to ``state.completed`` and must handle the retry/halt logic).
+    Returns ``False`` in all other cases (shadow/warn/off/fail-open).
+
+    FAIL-OPEN. Mirrors the exact mode-gated logic of
+    ``auto._shadow_completion_verdict``: off → no-op; shadow → measure+log;
+    warn → advisory WARNING; enforce → block on newly_failing/deleted_tests,
+    pass-through on runner_error/timeout/not_applicable/non-computable delta.
+    Reads ``completion_contract_mode`` from ``ChainState`` (already
+    snapshot-aligned at chain init from CLI > get_effective).
     """
     try:
         from megaplan.orchestration.completion_contract import (
+            CONTRACT_MODE_ENFORCE,
             CONTRACT_MODE_OFF,
+            CONTRACT_MODE_SHADOW,
+            CONTRACT_MODE_WARN,
             CompletionSubject,
             compute_verdict,
+            extract_green_suite_info,
             normalize_contract_mode,
         )
         from megaplan.orchestration.completion_io import write_completion_verdict
 
         mode = normalize_contract_mode(contract_mode)
         if mode == CONTRACT_MODE_OFF:
-            return
+            return False
         # Only compute a milestone verdict for an accepted/done milestone — a
         # stopped/blocked milestone already failed loudly through normal paths.
         if outcome_status != "done":
-            return
+            return False
 
         plan_dir = resolve_plan_dir(root, plan_name)
         if plan_dir is None:
-            return
+            return False
 
         state: dict[str, Any] = {}
         try:
@@ -1252,21 +1268,71 @@ def _shadow_milestone_completion_verdict(
             log_fn(verdict.one_line())
         except Exception:
             pass
-        if mode in ("warn", "enforce") and verdict.would_block:
+
+        if mode == CONTRACT_MODE_SHADOW:
+            return False
+
+        if mode == CONTRACT_MODE_WARN:
+            if verdict.would_block:
+                delta_dict, _ = extract_green_suite_info(verdict)
+                newly_failing = (delta_dict or {}).get("newly_failing", []) if delta_dict else list(verdict.failures)
+                log.warning(
+                    "completion_contract_mode=warn: advisory — verdict would block "
+                    "milestone %r; newly_failing=%r failures=%r",
+                    milestone_label,
+                    newly_failing,
+                    list(verdict.failures),
+                )
+            return False
+
+        if mode == CONTRACT_MODE_ENFORCE:
+            delta_dict, result_status = extract_green_suite_info(verdict)
+
+            # Non-blocking: runner errors — record warning, don't block.
+            if result_status in {"runner_error", "timeout", "not_applicable"}:
+                log.warning(
+                    "completion_contract_mode=enforce: milestone %r verification "
+                    "status=%r — not blocking (non-deterministic result); would_block=%r",
+                    milestone_label,
+                    result_status,
+                    verdict.would_block,
+                )
+                return False
+
+            # Non-blocking: delta not computable — record warning, don't block.
+            if delta_dict is None or not delta_dict.get("computable", False):
+                log.warning(
+                    "completion_contract_mode=enforce: milestone %r delta not "
+                    "computable — not blocking; would_block=%r",
+                    milestone_label,
+                    verdict.would_block,
+                )
+                return False
+
+            newly_failing = delta_dict.get("newly_failing") or []
+            deleted_tests = delta_dict.get("deleted_tests") or []
+
+            if not newly_failing and not deleted_tests:
+                return False
+
+            # Blocking: newly_failing or deleted_tests present.
             log.warning(
-                "completion_contract_mode=%r requested but blocking is NOT yet "
-                "implemented (shadow behaviour); verdict would block milestone "
-                "%r: %s",
-                mode,
+                "completion_contract_mode=enforce: blocking milestone %r; "
+                "newly_failing=%r deleted_tests=%r",
                 milestone_label,
-                ", ".join(verdict.failures),
+                list(newly_failing),
+                list(deleted_tests),
             )
+            return True
+
+        return False
     except Exception as exc:  # fail-open: never break a chain
         log.debug(
             "shadow milestone completion verdict failed for %r: %s",
             milestone_label,
             exc,
         )
+        return False
 
 
 def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
@@ -1685,6 +1751,15 @@ def run_chain(
     spec = load_spec(spec_path)
     validate_paths(spec, root)
     state = load_chain_state(spec_path)
+    # Snapshot completion_contract_mode at chain init from the same resolved
+    # source as plan-level (CLI flag > get_effective) so the two never diverge.
+    if state.current_milestone_index < 0 and not state.completed:
+        from megaplan._core.io import get_effective
+        from megaplan.orchestration.completion_contract import normalize_contract_mode
+
+        state.completion_contract_mode = normalize_contract_mode(
+            get_effective("execution", "completion_contract_mode")
+        )
     preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
 
@@ -1984,11 +2059,10 @@ def run_chain(
                     )
                 state.pr_state = _enable_auto_merge(root, state.pr_number, writer=writer)
                 save_chain_state(spec_path, state)
-        # Completion-verification contract (SHADOW-MODE, fail-open): compute +
-        # persist + log a milestone-level verdict. NEVER alters the append,
-        # NEVER blocks the chain, NEVER runs the suite. See
-        # megaplan/orchestration/completion_contract.py.
-        _shadow_milestone_completion_verdict(
+        # Completion-verification contract: compute + persist + log a milestone
+        # verdict. Shadow/warn: fail-open, never blocks. Enforce: may block the
+        # milestone and route it back for retry (newly_failing/deleted_tests).
+        enforce_blocked = _shadow_milestone_completion_verdict(
             root,
             plan_name,
             milestone.label,
@@ -1996,6 +2070,47 @@ def run_chain(
             state.completion_contract_mode,
             log_fn=log,
         )
+        if enforce_blocked:
+            # Read retry cap from the plan's state.json config (default 2).
+            max_retries = 2
+            try:
+                _plan_dir = resolve_plan_dir(root, plan_name)
+                if _plan_dir is not None:
+                    _st = json.loads((_plan_dir / "state.json").read_text(encoding="utf-8"))
+                    _cfg = _st.get("config", {}) if isinstance(_st, dict) else {}
+                    max_retries = int(_cfg.get("enforce_revise_max_retries", 2))
+            except Exception:
+                pass
+
+            milestone_retry_count = int(state.enforce_revise_counts.get(milestone.label, 0))
+            if milestone_retry_count >= max_retries:
+                log(
+                    f"completion_contract_mode=enforce: milestone {milestone.label!r} "
+                    f"blocked; retry cap {max_retries} exhausted — operator action required"
+                )
+                save_chain_state(spec_path, state)
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=(
+                        f"enforce block: milestone {milestone.label!r} revise retry cap "
+                        f"({max_retries}) exhausted — operator action required"
+                    ),
+                )
+
+            state.enforce_revise_counts[milestone.label] = milestone_retry_count + 1
+            log(
+                f"completion_contract_mode=enforce: milestone {milestone.label!r} blocked — "
+                f"retry {milestone_retry_count + 1}/{max_retries}"
+            )
+            state.current_plan_name = None  # force re-init on next loop
+            state.pr_number = None
+            state.pr_state = None
+            save_chain_state(spec_path, state)
+            continue
+
         # advance or skip
         state.completed.append(
             {
