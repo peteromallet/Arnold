@@ -1,3 +1,12 @@
+# STATUS (2026-05-31) — s3 + s4 COMPLETE; remaining s1/s2/s5 run under --vendor codex
+#
+#   s3-intent-oracle    DONE — branch frontier-s3-intent @ 9e91dc6, merging to main
+#   s4-capability-fence DONE — branch frontier-s4-capability @ 6d5e3e4, merging to main
+#                          (reconciled against main's existing vibecomfy/security/ module)
+#   s1-oracle-durability QUEUED — launchable now, independent of m4/m5
+#   s2-dynamic-widget-fence GATED — waits on scratchpad-emitter m4/m5 (emit_ui_json hot zone)
+#   s5-felt-fidelity-gate    GATED — waits on scratchpad-emitter m4/m5 (emit_ui_json hot zone)
+#
 # Epic: frontier-hardening — robustness BEYOND round-trip fidelity
 #
 # PROVENANCE: docs/roadmap_agentic_comfyui.md §14 ("Frontier risks — beyond fidelity"), a 5×2-agent
@@ -38,6 +47,7 @@ milestones:
     profile: directed         # tier 2 — premium plan sequences the strict-flip migration; DeepSeek executes the wiring.
     robustness: full          # behavior-changing across ingest call sites, but objective gates (CI + tests) backstop it.
     depth: low
+    # vendor: codex
 
   - label: s2-dynamic-widget-fence
     idea: .megaplan/ideas/frontier-hardening/s2-dynamic-widget-fence.md
@@ -45,6 +55,7 @@ milestones:
     profile: partnered        # tier 3 — novel: a dict/row-shaped widgets_values IR type + a widget-SHAPE refusal fence.
     robustness: full          # cross-cutting (ingest + emit + schema); coordinates with scratchpad-emitter m5's detector.
     depth: medium
+    # vendor: codex
 
   - label: s3-intent-oracle
     idea: .megaplan/ideas/frontier-hardening/s3-intent-oracle.md
@@ -53,6 +64,7 @@ milestones:
     robustness: thorough      # keystone correctness gate, no prior art; thorough buys the prep phase + deep critique.
     depth: high
     critic: cross             # second mind on the oracle design before anything depends on its verdicts
+    # DONE — frontier-s3-intent
 
   - label: s4-capability-fence
     idea: .megaplan/ideas/frontier-hardening/s4-capability-fence.md
@@ -61,6 +73,7 @@ milestones:
     robustness: thorough      # security-critical: a regression here = a confused-deputy exec/exfil incident.
     depth: high
     critic: cross
+    # DONE — frontier-s4-capability
 
   - label: s5-felt-fidelity-gate
     idea: .megaplan/ideas/frontier-hardening/s5-felt-fidelity-gate.md
@@ -68,6 +81,7 @@ milestones:
     profile: directed         # tier 2 — a felt-delta metric + latency budget gate; mostly wiring atop m5's Step-0 signal.
     robustness: full          # the preview/undo UX itself belongs to the write-enabled editor (future m8), NOT here.
     depth: low
+    # vendor: codex
 
 on_failure:
   abort: stop_chain

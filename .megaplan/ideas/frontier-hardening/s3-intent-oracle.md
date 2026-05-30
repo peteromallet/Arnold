@@ -56,3 +56,6 @@ judge does not exist in code, and the scratchpad-emitter chain ends at read-only
 ## Handoff artifact
 The `edit-correctness %` gate + the wrong-but-faithful corpus — a prerequisite the future write-enable
 milestone must pass before any edit reaches a user's canvas.
+
+## Status (2026-05-31)
+SHIPPED — branch frontier-s3-intent, merging to main.

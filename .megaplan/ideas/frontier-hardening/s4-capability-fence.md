@@ -60,3 +60,6 @@ widget strings, `properties`) survives ingest verbatim and is re-served to the a
 ## Handoff artifact
 The capability taxonomy + provenance model — the second prerequisite (with s3) that the future
 write-enable milestone must satisfy before any edit reaches a user's canvas.
+
+## Status (2026-05-31)
+SHIPPED — branch frontier-s4-capability, merging to main.
