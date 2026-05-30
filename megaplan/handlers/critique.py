@@ -39,11 +39,8 @@ from megaplan._core import (
     read_json,
     record_step_failure,
     require_state,
-    clear_active_step,
-    save_state_merge_meta,
     scope_creep_flags,
     sha256_file,
-    set_active_step,
     workflow_includes_step,
 )
 
@@ -207,27 +204,50 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     verdict = eval_worker.payload
                     selections = verdict.get("selections", [])
                     # The evaluator decides only WHICH lenses fire — not which
-                    # model runs them. The critic model comes from the profile's
-                    # `critique` slot (resolved into `model` below): solo/partnered
-                    # -> deepseek-v4-pro, premium -> claude, apex -> codex. The
-                    # only override is the operator pin (`execution.critic_model`,
-                    # applied further down). We deliberately do NOT read any
-                    # per-lens `critic_model` the evaluator may emit.
+                    # model runs them. Each selected lens carries a 1–5
+                    # `complexity` score (with a `complexity_justification`);
+                    # the handler resolves the critic model per-lens from
+                    # `tier_models.critique` further down (SD1). The only
+                    # override is the operator pin (`execution.critic_model`,
+                    # applied further down). The evaluator no longer emits
+                    # per-lens model names — it only scores complexity.
                     critic_model_override = None
+                    # Build a lookup from selection check_id → selection dict.
+                    _sel_by_id: dict[str, dict[str, Any]] = {}
+                    for sel in selections:
+                        cid = sel.get("check_id", "")
+                        if cid and cid not in _sel_by_id:
+                            _sel_by_id[cid] = sel
+
                     selected_ids = {sel["check_id"] for sel in selections}
-                    active_checks = [c for c in CRITIQUE_CHECKS if c["id"] in selected_ids]
+                    _selection_why: dict[str, str] = {}
+                    active_checks: list[dict[str, Any]] = []
+                    for c in CRITIQUE_CHECKS:
+                        if c["id"] not in selected_ids:
+                            continue
+                        sel = _sel_by_id.get(c["id"], {})
+                        # Attach complexity metadata to each active check so
+                        # downstream routing (parallel critique / worker dispatch)
+                        # can read per-check complexity without re-parsing the
+                        # evaluator verdict.
+                        check_dict = dict(c)
+                        check_dict["complexity"] = sel.get("complexity")
+                        check_dict["complexity_justification"] = sel.get(
+                            "complexity_justification", ""
+                        )
+                        active_checks.append(check_dict)
+                        # For catalog checks, the evaluator's complexity
+                        # justification IS the selection reason — it explains why
+                        # this lens was chosen at this complexity tier.
+                        _selection_why[c["id"]] = sel.get(
+                            "complexity_justification", ""
+                        )
+
                     # Synthesize a check spec for each bespoke "other" custom area
                     # so it runs like a lens: its `why` becomes the critic's
                     # question/probe. These are additive (the validator keeps them
                     # out of the 9-lens coverage union). Build a unique id per area
                     # so two "other" entries don't collide on the key.
-                    _selection_why = {}
-                    for c in active_checks:
-                        _selection_why[c["id"]] = next(
-                            (sel.get("why", "") for sel in selections
-                             if sel.get("check_id") == c["id"]),
-                            "",
-                        )
                     _used_ids = {c["id"] for c in active_checks}
                     for sel in selections:
                         if sel.get("check_id") != "other":
@@ -250,7 +270,18 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                                 "Custom critique area added by the evaluator for "
                                 f"this plan: {area}."
                             ),
+                            # Routing/targeting metadata: complexity +
+                            # justification let downstream dispatch select the
+                            # right tier model without re-parsing the verdict.
+                            "complexity": sel.get("complexity"),
+                            "complexity_justification": sel.get(
+                                "complexity_justification", ""
+                            ),
                         })
+                        # For `other` areas, the probe/question IS the `why`
+                        # (it becomes the critic's question), while
+                        # complexity_justification is kept on the check dict as
+                        # routing/targeting metadata.
                         _selection_why[oid] = sel.get("why", "")
                     # Per-iteration copy (_v{n}) preserves each pass's verdict
                     # (stage-1 lens selections/skips + stage-3 flag_verifications
@@ -307,12 +338,62 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
             resolved = _pkg.resolve_agent_mode("critique", args)
         # Operator pin: when execution.critic_model is set, the evaluator still
         # selects which lenses fire, but every farmed-out critic is forced to
-        # the pinned model instead of the profile's `critique` slot. "" leaves
-        # the profile slot in force.
+        # the pinned model instead of the complexity-based tier routing
+        # (tier_models.critique). "" leaves tier-based routing in force.
         if adaptive_path:
             _pin = pinned_critic_model(state)
             if _pin:
                 critic_model_override = _pin
+            else:
+                # No operator pin: resolve per-check AgentMode from
+                # tier_models.critique (complexity-based routing, SD1).
+                # Cache complexity → AgentMode to avoid redundant resolution
+                # when multiple checks share the same complexity tier.
+                _tier_models = getattr(args, "tier_models", None)
+                if isinstance(_tier_models, dict):
+                    _critique_tiers = _tier_models.get("critique")
+                    if isinstance(_critique_tiers, dict) and _critique_tiers:
+                        from megaplan.execute.batch import _resolve_tier_spec
+                        from megaplan.types import AgentMode as _TierAgentMode
+
+                        _complexity_cache: dict[int, _TierAgentMode] = {}
+                        for _check in active_checks:
+                            _cid = _check.get("id", "?")
+                            _cx = _check.get("complexity")
+                            if not isinstance(_cx, int) or _cx < 1 or _cx > 5:
+                                raise CliError(
+                                    "critique_complexity_invariant",
+                                    f"Check '{_cid}' has missing or invalid "
+                                    f"complexity ({_cx!r}); cannot resolve tier "
+                                    "routing. This is an invariant error in "
+                                    "the evaluator output.",
+                                )
+                            if _cx not in _complexity_cache:
+                                _spec = _critique_tiers.get(_cx)
+                                if not _spec:
+                                    raise CliError(
+                                        "critique_tier_missing",
+                                        f"No tier spec for complexity {_cx} "
+                                        f"in tier_models.critique; cannot "
+                                        f"route check '{_cid}'.",
+                                    )
+                                (
+                                    _t_agent,
+                                    _t_mode,
+                                    _t_model,
+                                ) = _resolve_tier_spec(
+                                    args, _spec, phase="critique"
+                                )
+                                _complexity_cache[_cx] = _TierAgentMode(
+                                    agent=_t_agent,
+                                    mode=_t_mode,
+                                    refreshed=False,
+                                    model=_t_model,
+                                    effort=None,
+                                    resolved_model=_t_model,
+                                )
+                            # Attach resolved AgentMode to check metadata (SD1)
+                            _check["_resolved_agent_mode"] = _complexity_cache[_cx]
         from megaplan.types import AgentMode as _AgentMode
 
         agent_type, mode, refreshed, model = _agent_mode_parts(resolved)
@@ -375,15 +456,10 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 ]
                 _parts.append("Per-flag resolution claims:\n" + "\n".join(_res_lines))
             _revise_ctx = "\n\n".join(_parts)
-        if len(active_checks) > 1 and agent_type == "hermes":
-            run_id = set_active_step(state, step="critique", agent="hermes", mode="persistent", model=model)
-            save_state_merge_meta(plan_dir, state)
+        if len(active_checks) > 1:
             try:
                 worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks, effort=_critique_effort)
-                agent, mode, refreshed = "hermes", "persistent", True
             except Exception as exc:
-                clear_active_step(state, run_id=run_id)
-                save_state_merge_meta(plan_dir, state)
                 log.warning(
                     "M3A_WARN_PARALLEL_CRITIQUE_FALLBACK parallel critique fallback",
                     exc_info=True,
@@ -400,7 +476,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                     prompt_kwargs=_seq_prompt_kwargs,
                 )
             else:
-                clear_active_step(state, run_id=run_id)
+                agent = agent_type
         else:
             worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",

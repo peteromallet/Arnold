@@ -2961,6 +2961,468 @@ def test_validate_named_profile_invariants_tier_models_none_does_not_crash() -> 
     _validate_named_profile_invariants("all-codex", {"plan": "codex:low"}, tier_models=None)
 
 
+# ---------------------------------------------------------------------------
+# T7: Critique-tier profile tests — all ten execute-tier profiles must
+#     load routable tier_models.critique keys 1-5; 1-3 match execute where
+#     present; vendor/depth/deepseek-provider rewrites apply to critique
+#     tiers the same way they apply to execute tiers.
+# ---------------------------------------------------------------------------
+
+# Profiles with tier_models.execute and tier_models.critique, used by the
+# parametrized tests below.  All ten profiles define the full 1-5 ladder
+# with no 3-tier aliasing needed.
+_TIERED_CRITIQUE_PROFILES = [
+    "variable",
+    "variable-claude",
+    "variable-codex",
+    "partnered",
+    "directed",
+    "solo",
+    "premium",
+    "apex",
+    "all-claude",
+    "all-codex",
+]
+
+
+@pytest.mark.parametrize("profile_name", _TIERED_CRITIQUE_PROFILES)
+def test_all_tiered_profiles_load_critique_tiers_1_through_5(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+) -> None:
+    """Every execute-tier profile exposes ``tier_models.critique`` with
+    integer keys 1-5, each resolving to a string spec."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, (
+        f"{profile_name} must have tier_models"
+    )
+    assert "critique" in tier_models, (
+        f"{profile_name} must expose tier_models.critique"
+    )
+
+    critique_tiers = tier_models["critique"]
+    for t in (1, 2, 3, 4, 5):
+        assert t in critique_tiers, (
+            f"{profile_name}.tier_models.critique missing key {t}"
+        )
+        assert isinstance(critique_tiers[t], str), (
+            f"{profile_name}.tier_models.critique[{t}] must be str, "
+            f"got {type(critique_tiers[t]).__name__}"
+        )
+        assert critique_tiers[t].strip(), (
+            f"{profile_name}.tier_models.critique[{t}] must be non-empty"
+        )
+
+
+@pytest.mark.parametrize("profile_name", _TIERED_CRITIQUE_PROFILES)
+def test_critique_tiers_1_through_3_match_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+) -> None:
+    """Tiers 1-3 of ``tier_models.critique`` are byte-identical to the
+    corresponding ``tier_models.execute`` entries in every built-in profile."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models["execute"]
+    critique_tiers = tier_models["critique"]
+
+    for t in (1, 2, 3):
+        assert critique_tiers[t] == execute_tiers[t], (
+            f"{profile_name}: critique tier {t} ({critique_tiers[t]!r}) "
+            f"!= execute tier {t} ({execute_tiers[t]!r})"
+        )
+
+
+@pytest.mark.parametrize("profile_name", _TIERED_CRITIQUE_PROFILES)
+def test_critique_tiers_4_and_5_match_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile_name: str,
+) -> None:
+    """Tiers 4-5 of ``tier_models.critique`` match the corresponding
+    ``tier_models.execute`` entries.  No profile in this sprint needs
+    3-tier aliasing because every built-in profile defines the full
+    1-5 ladder."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile=profile_name)
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+    execute_tiers = tier_models["execute"]
+    critique_tiers = tier_models["critique"]
+
+    for t in (4, 5):
+        assert critique_tiers[t] == execute_tiers[t], (
+            f"{profile_name}: critique tier {t} ({critique_tiers[t]!r}) "
+            f"!= execute tier {t} ({execute_tiers[t]!r})"
+        )
+
+
+def test_vendor_rewrite_applies_to_critique_tiers_same_as_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--vendor codex`` rewrites premium entries in *both*
+    ``tier_models.execute`` and ``tier_models.critique`` identically.
+
+    Uses ``partnered`` (unlocked, has both premium and DeepSeek tiers)."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="partnered", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+
+    # Vendor rewrite MUST produce identical premium tiers in both phases.
+    for phase in ("execute", "critique"):
+        tiers = tier_models[phase]
+        # DeepSeek tiers 1-3 unchanged.
+        assert "deepseek" in tiers[1], f"{phase} tier 1 must be DeepSeek"
+        assert "deepseek" in tiers[2], f"{phase} tier 2 must be DeepSeek"
+        assert "deepseek" in tiers[3], f"{phase} tier 3 must be DeepSeek"
+        # Premium tiers 4-5 flipped to codex.
+        assert tiers[4].startswith("codex"), (
+            f"{phase} tier 4 should be codex after vendor swap, got {tiers[4]!r}"
+        )
+        assert tiers[5].startswith("codex"), (
+            f"{phase} tier 5 should be codex after vendor swap, got {tiers[5]!r}"
+        )
+
+    # The critique and execute tier maps must be byte-identical post-rewrite.
+    assert tier_models["critique"] == tier_models["execute"], (
+        "critique and execute tier maps must be identical after "
+        "vendor rewrite"
+    )
+
+
+def test_deepseek_provider_rewrite_applies_to_critique_tiers_same_as_execute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--deepseek-provider direct`` rewrites the canonical Fireworks
+    DeepSeek V4 Pro spec in *both* ``tier_models.execute`` and
+    ``tier_models.critique`` identically."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="partnered", deepseek_provider="direct")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+
+    direct = "hermes:deepseek:deepseek-v4-pro"
+    fireworks = "hermes:fireworks:accounts/fireworks/models/deepseek-v4-pro"
+
+    for phase in ("execute", "critique"):
+        tiers = tier_models[phase]
+        # Tier 1 is flash, unaffected by the provider swap (it was never fireworks).
+        assert "flash" in tiers[1], f"{phase} tier 1 is flash, should be unchanged"
+        # Tiers 2-3 were hermes:fireworks:…deepseek-v4-pro and become direct.
+        assert tiers[2] == direct, (
+            f"{phase} tier 2 should be {direct!r} after provider swap, got {tiers[2]!r}"
+        )
+        assert tiers[3] == direct, (
+            f"{phase} tier 3 should be {direct!r} after provider swap, got {tiers[3]!r}"
+        )
+
+    # The maps must be byte-identical post-rewrite.
+    assert tier_models["critique"] == tier_models["execute"], (
+        "critique and execute tier maps must be identical after "
+        "deepseek-provider rewrite"
+    )
+
+
+def test_depth_rewrite_does_not_apply_to_critique_nor_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--depth high`` rewrites *author* phase tier entries (plan, revise,
+    loop_plan, tiebreakers) but leaves ``execute`` and ``critique`` tiers
+    untouched — neither phase is in ``DEPTH_AUTHOR_PHASES``."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    # Use variable which has premium tiers with effort suffixes that
+    # *would* be rewritten were they on an author phase.
+    args_no_depth = _worker_args(profile="variable")
+    apply_profile_expansion(args_no_depth, None)
+
+    args_depth = _worker_args(profile="variable", depth="high")
+    apply_profile_expansion(args_depth, None)
+
+    # Execute tier maps must be identical with and without --depth.
+    tm_base = getattr(args_no_depth, "tier_models", None)
+    tm_depth = getattr(args_depth, "tier_models", None)
+    assert tm_base is not None
+    assert tm_depth is not None
+
+    # Both phases must be byte-identical across depth/no-depth.
+    for phase in ("execute", "critique"):
+        assert tm_base[phase] == tm_depth[phase], (
+            f"--depth must not alter {phase} tier entries; "
+            f"base={tm_base[phase]!r} depth={tm_depth[phase]!r}"
+        )
+
+
+def test_vendor_rewrite_on_unlocked_profile_maps_claude_model_pins_both_phases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--vendor codex`` on ``directed`` maps the Claude Sonnet/Opus
+    model pins to their Codex equivalents (sonnet→gpt-5.4, opus→gpt-5.5)
+    identically in both ``execute`` and ``critique`` tiers."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    args = _worker_args(profile="directed", vendor="codex")
+    apply_profile_expansion(args, None)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None
+
+    for phase in ("execute", "critique"):
+        tiers = tier_models[phase]
+        assert tiers[4] == "codex:gpt-5.4", (
+            f"{phase} tier 4 (sonnet) should map to codex:gpt-5.4, got {tiers[4]!r}"
+        )
+        assert tiers[5] == "codex:gpt-5.5", (
+            f"{phase} tier 5 (opus) should map to codex:gpt-5.5, got {tiers[5]!r}"
+        )
+
+    # Byte-identical.
+    assert tier_models["critique"] == tier_models["execute"]
+
+
+# ---------------------------------------------------------------------------
+# T9: Phase-model suppression scoping — CLI overrides must suppress only
+#     the matching ``tier_models.<phase>`` table.
+# ---------------------------------------------------------------------------
+
+
+def test_phase_model_execute_override_suppresses_only_execute_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit ``--phase-model execute=…`` suppresses ``tier_models.execute``
+    while leaving ``tier_models.critique`` intact."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+        phase_model=["execute=codex:high"],
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "tier_models must be set after expansion"
+
+    # ``execute`` tier table must be suppressed.
+    assert "execute" not in tier_models, (
+        f"--phase-model execute=... must suppress tier_models.execute; "
+        f"got keys {list(tier_models)}"
+    )
+
+    # ``critique`` tier table must remain intact.
+    assert "critique" in tier_models, (
+        "--phase-model execute=... must NOT suppress tier_models.critique"
+    )
+    assert tier_models["critique"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:sonnet",
+        5: "claude:opus",
+    }, f"critique tiers modified unexpectedly: {tier_models['critique']!r}"
+
+
+def test_phase_model_critique_override_suppresses_only_critique_tiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit ``--phase-model critique=…`` suppresses ``tier_models.critique``
+    while leaving ``tier_models.execute`` intact."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+        phase_model=["critique=claude:sonnet"],
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "tier_models must be set after expansion"
+
+    # ``critique`` tier table must be suppressed.
+    assert "critique" not in tier_models, (
+        f"--phase-model critique=... must suppress tier_models.critique; "
+        f"got keys {list(tier_models)}"
+    )
+
+    # ``execute`` tier table must remain intact.
+    assert "execute" in tier_models, (
+        "--phase-model critique=... must NOT suppress tier_models.execute"
+    )
+    assert tier_models["execute"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:medium",
+        5: "claude:high",
+    }, f"execute tiers modified unexpectedly: {tier_models['execute']!r}"
+
+
+def test_phase_model_both_overrides_suppress_both_tier_tables(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When both ``--phase-model execute=…`` and ``--phase-model critique=…``
+    are explicit, both ``tier_models.execute`` and ``tier_models.critique``
+    are suppressed."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+        phase_model=["execute=codex:high", "critique=claude:sonnet"],
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    # Both phases have explicit CLI overrides → both tier tables suppressed.
+    # tier_models may be None or an empty dict depending on whether other
+    # phases' tier tables exist.
+    if tier_models:
+        assert "execute" not in tier_models, (
+            "--phase-model execute=... must suppress tier_models.execute"
+        )
+        assert "critique" not in tier_models, (
+            "--phase-model critique=... must suppress tier_models.critique"
+        )
+
+
+def test_no_cli_override_keeps_both_tier_tables_intact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without any explicit ``--phase-model`` overrides, both
+    ``tier_models.execute`` and ``tier_models.critique`` remain."""
+    _isolate_user_config(tmp_path, monkeypatch)
+
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    profiles_path = project_dir / ".megaplan" / "profiles.toml"
+    profiles_path.parent.mkdir(parents=True, exist_ok=True)
+    profiles_path.write_text("""\
+[profiles.dual-tier]
+plan = "claude:low"
+execute = "claude:medium"
+
+[profiles.dual-tier.tier_models.execute]
+1 = "hermes:deepseek-flash"
+4 = "claude:medium"
+5 = "claude:high"
+
+[profiles.dual-tier.tier_models.critique]
+1 = "hermes:deepseek-flash"
+4 = "claude:sonnet"
+5 = "claude:opus"
+""", encoding="utf-8")
+
+    args = _worker_args(
+        profile="dual-tier",
+    )
+    apply_profile_expansion(args, project_dir)
+
+    tier_models = getattr(args, "tier_models", None)
+    assert tier_models is not None, "tier_models must be set after expansion"
+
+    assert "execute" in tier_models, (
+        "execute tier table must be present without CLI override"
+    )
+    assert "critique" in tier_models, (
+        "critique tier table must be present without CLI override"
+    )
+
+    assert tier_models["execute"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:medium",
+        5: "claude:high",
+    }
+    assert tier_models["critique"] == {
+        1: "hermes:deepseek-flash",
+        4: "claude:sonnet",
+        5: "claude:opus",
+    }
+
+
 def test_validate_named_profile_invariants_empty_tier_models_does_not_crash() -> None:
     """Empty tier_models dict is harmless."""
     from megaplan.profiles import _validate_named_profile_invariants

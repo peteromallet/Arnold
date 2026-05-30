@@ -73,6 +73,108 @@ TOKEN_USAGE_SCHEMA: dict[str, Any] = {
 }
 
 
+def _build_critique_evaluator_schema() -> dict[str, Any]:
+    """Single source of truth for stored critique-evaluator artifacts.
+
+    This schema must remain compatible with:
+    - legacy stored selections routed by `critic_model`
+    - current catalog selections routed by `complexity`
+    - current additive `"other"` custom-area selections
+    """
+
+    legacy_selection_schema = {
+        "x-preserve-explicit-required": True,
+        "type": "object",
+        "properties": {
+            "check_id": {"type": "string"},
+            "critic_model": {"type": "string"},
+            "why": {"type": "string"},
+            "area": {"type": "string"},
+        },
+        "required": ["check_id", "critic_model", "why"],
+        "additionalProperties": False,
+    }
+    catalog_selection_schema = {
+        "x-preserve-explicit-required": True,
+        "type": "object",
+        "properties": {
+            "check_id": {"type": "string"},
+            "complexity": {"type": "integer"},
+            "complexity_justification": {"type": "string"},
+            "area": {"type": "string"},
+        },
+        "required": ["check_id", "complexity", "complexity_justification"],
+        "additionalProperties": False,
+    }
+    other_selection_schema = {
+        "x-preserve-explicit-required": True,
+        "type": "object",
+        "properties": {
+            "check_id": {"type": "string", "const": "other"},
+            "area": {"type": "string"},
+            "why": {"type": "string"},
+            "complexity": {"type": "integer"},
+            "complexity_justification": {"type": "string"},
+        },
+        "required": [
+            "check_id",
+            "area",
+            "why",
+            "complexity",
+            "complexity_justification",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "x-preserve-explicit-required": True,
+        "type": "object",
+        "properties": {
+            "selections": {
+                "type": "array",
+                "items": {
+                    "oneOf": [
+                        legacy_selection_schema,
+                        catalog_selection_schema,
+                        other_selection_schema,
+                    ]
+                },
+            },
+            "skipped": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "check_id": {"type": "string"},
+                        "why": {"type": "string"},
+                    },
+                    "required": ["check_id", "why"],
+                    "additionalProperties": False,
+                },
+            },
+            "evaluator_model": {"type": "string"},
+            "flag_verifications": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "flag_id": {"type": "string"},
+                        "lens": {"type": "string"},
+                        "outcome": {
+                            "type": "string",
+                            "enum": ["verified", "open", "accepted_tradeoff"],
+                        },
+                        "rationale": {"type": "string"},
+                    },
+                    "required": ["flag_id", "lens", "outcome", "rationale"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["selections", "skipped", "evaluator_model"],
+        "additionalProperties": False,
+    }
+
+
 SCHEMAS: dict[str, dict[str, Any]] = {
     "plan.json": {
         "type": "object",
@@ -449,57 +551,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["checks", "flags", "verified_flag_ids", "disputed_flag_ids"],
     },
-    "critique_evaluator.json": {
-        "type": "object",
-        "properties": {
-            "selections": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "check_id": {"type": "string"},
-                        "critic_model": {"type": "string"},
-                        "why": {"type": "string"},
-                        "area": {"type": "string"},
-                    },
-                    "required": ["check_id", "critic_model", "why", "area"],
-                    "additionalProperties": False,
-                },
-            },
-            "skipped": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "check_id": {"type": "string"},
-                        "why": {"type": "string"},
-                    },
-                    "required": ["check_id", "why"],
-                    "additionalProperties": False,
-                },
-            },
-            "evaluator_model": {"type": "string"},
-            "flag_verifications": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "flag_id": {"type": "string"},
-                        "lens": {"type": "string"},
-                        "outcome": {
-                            "type": "string",
-                            "enum": ["verified", "open", "accepted_tradeoff"],
-                        },
-                        "rationale": {"type": "string"},
-                    },
-                    "required": ["flag_id", "lens", "outcome", "rationale"],
-                    "additionalProperties": False,
-                },
-            },
-        },
-        "required": ["selections", "skipped", "evaluator_model", "flag_verifications"],
-        "additionalProperties": False,
-    },
+    "critique_evaluator.json": _build_critique_evaluator_schema(),
 "finalize.json": {
         "type": "object",
         "properties": {
@@ -1004,59 +1056,6 @@ def _build_execution_doc_schema() -> dict[str, Any]:
 
 
 SCHEMAS["execution_doc.json"] = _build_execution_doc_schema()
-
-
-# Adaptive critique evaluator ("lens picker") output schema. The evaluator
-# inspects the plan/flags/diff and emits a per-lens critic assignment; the
-# critique phase then runs the cheap critic against the chosen lenses. Without
-# this schema entry the step lookup in workers/_impl.py + workers/shannon.py
-# KeyError'd silently and the handler fell back to static lens selection.
-SCHEMAS["critique_evaluator.json"] = {
-    "type": "object",
-    "properties": {
-        "selections": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "check_id": {"type": "string"},
-                    "critic_model": {"type": "string"},
-                    "why": {"type": "string"},
-                },
-                "required": ["check_id", "critic_model", "why"],
-            },
-        },
-        "skipped": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "check_id": {"type": "string"},
-                    "why": {"type": "string"},
-                },
-                "required": ["check_id", "why"],
-            },
-        },
-        "evaluator_model": {"type": "string"},
-        "flag_verifications": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "flag_id": {"type": "string"},
-                    "lens": {"type": "string"},
-                    "outcome": {
-                        "type": "string",
-                        "enum": ["verified", "open", "accepted_tradeoff"],
-                    },
-                    "rationale": {"type": "string"},
-                },
-                "required": ["flag_id", "lens", "outcome", "rationale"],
-            },
-        },
-    },
-    "required": ["selections", "skipped", "evaluator_model"],
-}
 
 
 def get_execution_schema_key(mode: str, form: str | None = None) -> str:

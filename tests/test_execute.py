@@ -3558,6 +3558,95 @@ def test_one_batch_flat_profile_no_tier_routing(
 
 
 # ---------------------------------------------------------------------------
+# T9: Generalized tier resolver — synthetic critique phase test
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tier_spec_critique_phase_uses_correct_phase_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_resolve_tier_spec(phase=\"critique\")`` builds a synthetic
+    ``phase_model=[\"critique=<tier_spec>\"]`` override and calls
+    ``resolve_agent_mode(\"critique\", …)``, independent of any built-in TOML.
+    """
+    from megaplan.execute.batch import _resolve_tier_spec
+
+    resolve_calls: list[tuple[str, list[str]]] = []
+
+    def _capture_resolve(step: str, args: Namespace, **kwargs: object) -> tuple[str, str, bool, str]:
+        pm = list(getattr(args, "phase_model", []) or [])
+        resolve_calls.append((step, pm))
+        return ("test-agent", "persistent", False, "test-model")
+
+    monkeypatch.setattr(
+        megaplan.workers,
+        "resolve_agent_mode",
+        _capture_resolve,
+    )
+
+    base_args = Namespace(
+        agent=None,
+        phase_model=[],
+        profile="partnered",
+    )
+
+    agent, mode, model = _resolve_tier_spec(
+        base_args, "critique-synthetic-spec", phase="critique"
+    )
+
+    assert agent == "test-agent"
+    assert mode == "persistent"
+    assert model == "test-model"
+
+    assert len(resolve_calls) == 1
+    called_step, called_pm = resolve_calls[0]
+    assert called_step == "critique", (
+        f"Expected resolve_agent_mode phase='critique', got {called_step!r}"
+    )
+    assert called_pm == ["critique=critique-synthetic-spec"], (
+        f"Expected phase_model=['critique=critique-synthetic-spec'], got {called_pm!r}"
+    )
+
+    # The original args must NOT be mutated.
+    assert getattr(base_args, "phase_model", None) == []
+
+
+def test_resolve_tier_spec_critique_no_side_effect_on_execute_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_resolve_tier_spec`` with ``phase=\"execute\"`` (the default) must
+    still work after the critique path is exercised; the default phase is
+    unaffected."""
+    from megaplan.execute.batch import _resolve_tier_spec
+
+    resolve_calls: list[str] = []
+
+    def _capture_resolve(step: str, args: Namespace, **kwargs: object) -> tuple[str, str, bool, str]:
+        resolve_calls.append(step)
+        return ("execute-agent", "ephemeral", True, "execute-model")
+
+    monkeypatch.setattr(
+        megaplan.workers,
+        "resolve_agent_mode",
+        _capture_resolve,
+    )
+
+    base_args = Namespace(
+        agent=None,
+        phase_model=[],
+    )
+
+    agent, mode, model = _resolve_tier_spec(base_args, "tier-4-spec")
+
+    assert agent == "execute-agent"
+    assert mode == "ephemeral"
+    assert model == "execute-model"
+    assert resolve_calls == ["execute"], (
+        f"Default phase must be 'execute', got {resolve_calls!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # CLI override test — handler-level guard
 # ---------------------------------------------------------------------------
 

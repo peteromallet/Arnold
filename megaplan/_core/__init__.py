@@ -150,6 +150,13 @@ from .hermes_fanout import (
     with_429_openrouter_fallback,
 )
 
+# -- worker_fanout.py: generic worker-step fan-out ---------------------------
+from .worker_fanout import (
+    WorkerUnit,
+    scatter_worker_unit,
+    scatter_worker_units,
+)
+
 # -- workflow.py: state machine, transitions ---------------------------------
 from megaplan.types import ROBUSTNESS_LEVELS, STATE_EXECUTED, STATE_REVIEWED, STATE_DONE  # noqa: F401 — accessed by tests via megaplan._core
 
@@ -317,4 +324,8 @@ __all__ = [
     "scatter_gather",
     "scatter_gather_checks",
     "with_429_openrouter_fallback",
+    # worker_fanout
+    "WorkerUnit",
+    "scatter_worker_unit",
+    "scatter_worker_units",
 ]

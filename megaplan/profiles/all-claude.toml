@@ -51,3 +51,10 @@ distill = "claude:claude-sonnet-4-6"
 3 = "claude:claude-sonnet-4-6"
 4 = "claude:claude-opus-4-7"
 5 = "claude:claude-opus-4-7"
+
+[profiles.all-claude.tier_models.critique]
+1 = "claude:claude-haiku-4-5"
+2 = "claude:claude-sonnet-4-6"
+3 = "claude:claude-sonnet-4-6"
+4 = "claude:claude-opus-4-7"
+5 = "claude:claude-opus-4-7"
