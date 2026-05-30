@@ -1834,7 +1834,13 @@ def run_codex_step(
     prompt_kwargs: dict[str, Any] | None = None,
     effort: str | None = None,
     model: str | None = None,
+    read_only: bool = False,
 ) -> WorkerResult:
+    if read_only and step not in {"prep-triage", "prep-distill"}:
+        raise CliError(
+            "unsupported_step",
+            f"Codex read-only runner does not support '{step}'",
+        )
     if effort is not None and effort not in _VALID_CODEX_EFFORTS:
         raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
     fresh = fresh or step not in _CROSS_CALL_PERSISTENT_STEPS
@@ -1883,9 +1889,24 @@ def run_codex_step(
         root=root,
         **(prompt_kwargs or {}),
     )
-    timeout_seconds = _codex_timeout_for_step(step)
+    timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
-    if persistent and session.get("id") and not fresh:
+    if read_only:
+        command = [
+            "codex",
+            "exec",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "-c",
+            "sandbox_mode='read-only'",
+            "-o",
+            str(output_path),
+        ]
+        command.extend(_codex_model_flag(model))
+        if effort is not None:
+            command.extend(["-c", f"model_reasoning_effort={effort}"])
+        command.extend(["--output-schema", str(schema_file), "-"])
+    elif persistent and session.get("id") and not fresh:
         # codex exec resume does not support --output-schema; we rely on
         # validate_payload() after parsing the output file instead. It also
         # does not accept --add-dir; resumed sessions keep the workspace that
@@ -2027,6 +2048,7 @@ def run_codex_step(
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
                 model=model,
+                read_only=read_only,
             )
         # Recover from a poisoned session: the history carries an obsolete
         # "sandbox is broken" belief from a pre-trusted-container run. Only
@@ -2060,6 +2082,7 @@ def run_codex_step(
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
                 model=model,
+                read_only=read_only,
             )
         # Recover from a session that grew too large to remote-compact:
         # OpenAI 429s the compaction call, codex gives up and exits. Same
@@ -2090,6 +2113,7 @@ def run_codex_step(
                 prompt_kwargs=prompt_kwargs,
                 effort=effort,
                 model=model,
+                read_only=read_only,
             )
         if error.code == "worker_timeout":
             recovered_payload = _recover_codex_payload(
@@ -2168,6 +2192,7 @@ def run_codex_step(
             prompt_kwargs=prompt_kwargs,
             effort=effort,
             model=model,
+            read_only=read_only,
         )
     # Poisoned-session recovery on non-exception path: the worker exited 0 or
     # non-zero but produced output that still echoes an obsolete sandbox
@@ -2197,6 +2222,7 @@ def run_codex_step(
             prompt_kwargs=prompt_kwargs,
             effort=effort,
             model=model,
+            read_only=read_only,
         )
     # Oversized-session recovery on non-exception path. See the matching
     # branch in the CliError handler above for context.
@@ -2225,6 +2251,7 @@ def run_codex_step(
             prompt_kwargs=prompt_kwargs,
             effort=effort,
             model=model,
+            read_only=read_only,
         )
     if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
@@ -2295,92 +2322,6 @@ def run_codex_step(
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
     )
-
-
-def run_codex_prep_step(
-    step: str,
-    state: PlanState,
-    plan_dir: Path,
-    *,
-    root: Path,
-    prompt_override: str | None = None,
-    prompt_kwargs: dict[str, Any] | None = None,
-    effort: str | None = None,
-    model: str | None = None,
-) -> WorkerResult:
-    """Run prep triage/distill through Codex without granting write access.
-
-    This path is intentionally separate from ``run_codex_step``: prep research
-    is evidence gathering, so it must not inherit execute-oriented bypass
-    flags, ``--add-dir`` grants, or writable root configuration.
-    """
-    if step not in {"prep-triage", "prep-distill"}:
-        raise CliError("unsupported_step", f"Codex prep runner does not support '{step}'")
-    if effort is not None and effort not in _VALID_CODEX_EFFORTS:
-        raise CliError("invalid_args", f"Unsupported codex effort level: {effort}")
-    if os.getenv(MOCK_ENV_VAR) == "1":
-        _check_mock_safe()
-        return mock_worker_output(step, state, plan_dir, prompt_override=prompt_override, prompt_kwargs=prompt_kwargs)
-
-    out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
-    out_handle.close()
-    output_path = Path(out_handle.name)
-    schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
-    prompt = prompt_override if prompt_override is not None else create_codex_prompt(
-        step,
-        state,
-        plan_dir,
-        root=root,
-        **(prompt_kwargs or {}),
-    )
-    timeout_seconds = _codex_timeout_for_step("prep")
-    command = [
-        "codex",
-        "exec",
-        "--skip-git-repo-check",
-        "--ephemeral",
-        "-c",
-        "sandbox_mode='read-only'",
-        "-o",
-        str(output_path),
-    ]
-    command.extend(_codex_model_flag(model))
-    if effort is not None:
-        command.extend(["-c", f"model_reasoning_effort={effort}"])
-    command.extend(["--output-schema", str(schema_file), "-"])
-
-    result = run_command(
-        command,
-        cwd=Path(state["config"].get("project_dir", Path.cwd())),
-        stdin_text=prompt,
-        env=_codex_child_env(turn_id=f'prep_worker_{state["name"]}'),
-        timeout=timeout_seconds,
-        activity_callback=_activity_callback_for_state(state, plan_dir),
-    )
-    raw = result.stdout + result.stderr
-    if result.returncode != 0 and (not output_path.exists() or not output_path.read_text(encoding="utf-8").strip()):
-        error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
-        raise CliError(error_code, error_message, extra={"raw_output": raw})
-    payload = _recover_codex_payload(
-        step,
-        plan_dir=plan_dir,
-        output_path=output_path,
-        raw=raw,
-    )
-    if payload is None:
-        raise CliError("parse_error", f"Output file {output_path.name} was not valid JSON and no fallback found", extra={"raw_output": raw})
-    raw_session_id = extract_session_id(raw)
-    return WorkerResult(
-        payload=payload,
-        raw_output=raw,
-        duration_ms=result.duration_ms,
-        cost_usd=0.0,
-        session_id=raw_session_id,
-        rendered_prompt=prompt,
-        model_actual=model,
-    )
-
-
 def _is_agent_available(agent: str) -> bool:
     """Check if an agent is available (CLI binary or vendored for hermes)."""
     if agent == "hermes":
@@ -2618,6 +2559,7 @@ def run_step_with_worker(
     resolved: tuple[str, str, bool, str | None] | AgentMode | None = None,
     prompt_override: str | None = None,
     prompt_kwargs: dict[str, Any] | None = None,
+    read_only: bool = False,
 ) -> tuple[WorkerResult, str, str, bool]:
     am = resolved or resolve_agent_mode(step, args)
     agent = am.agent if isinstance(am, AgentMode) else am[0]
@@ -2672,6 +2614,7 @@ def run_step_with_worker(
                     prompt_kwargs=prompt_kwargs,
                     effort=effort,
                     model=resolved_model,
+                    read_only=read_only,
                 )
                 if agent == "claude":
                     shannon_kwargs["session_agent"] = "claude"
@@ -2729,6 +2672,7 @@ def run_step_with_worker(
                             prompt_kwargs=prompt_kwargs,
                             effort=effort,
                             model=resolved_model,
+                            read_only=read_only,
                         )
                         break
                     except CliError as error:

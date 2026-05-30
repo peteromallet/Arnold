@@ -39,7 +39,20 @@ tiebreaker_challenger = "claude"
 # Tiers are MODEL pins (not effort suffixes) — the whole point is to use a
 # cheaper *model* for cheap work. --vendor codex swaps these to their Codex
 # capability equivalents (haiku/sonnet → gpt-5.4, opus → gpt-5.5).
+# Prep models: keep research evidence-gathering inside Claude (read-only).
+[profiles.all-claude.prep_models]
+triage = "claude:claude-sonnet-4-6"
+fanout = "claude:claude-sonnet-4-6"
+distill = "claude:claude-sonnet-4-6"
+
 [profiles.all-claude.tier_models.execute]
+1 = "claude:claude-haiku-4-5"
+2 = "claude:claude-sonnet-4-6"
+3 = "claude:claude-sonnet-4-6"
+4 = "claude:claude-opus-4-7"
+5 = "claude:claude-opus-4-7"
+
+[profiles.all-claude.tier_models.critique]
 1 = "claude:claude-haiku-4-5"
 2 = "claude:claude-sonnet-4-6"
 3 = "claude:claude-sonnet-4-6"

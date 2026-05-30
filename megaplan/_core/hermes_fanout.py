@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+import multiprocessing as mp
+import queue
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, NamedTuple
 
 from .io import get_effective
@@ -27,6 +30,39 @@ class GenericScatterResult(NamedTuple):
     total_completion_tokens: int
     total_tokens: int
     side_results: list[Any]
+
+
+class _ProcessUnitFailure(RuntimeError):
+    pass
+
+
+class _ProcessUnitTimeout(TimeoutError):
+    pass
+
+
+def _run_process_unit_child(
+    run_unit_fn: Callable[[int, Any], tuple[int, Any, float, int, int, int]],
+    index: int,
+    unit: Any,
+    out_queue: Any,
+) -> None:
+    try:
+        out_queue.put(
+            {
+                "ok": True,
+                "index": index,
+                "result": run_unit_fn(index, unit),
+            }
+        )
+    except BaseException as exc:
+        out_queue.put(
+            {
+                "ok": False,
+                "index": index,
+                "exc_type": exc.__class__.__name__,
+                "error": str(exc) or exc.__class__.__name__,
+            }
+        )
 
 
 def _merge_unique(groups: list[list[str]]) -> list[str]:
@@ -275,6 +311,8 @@ def scatter_gather_processes(
     run_unit_fn: Callable[[int, Any], tuple[int, Any, float, int, int, int]],
     max_concurrent: int | None = None,
     on_unit_error: Callable[[int, Exception], tuple[Any, float, int, int, int]] | None = None,
+    timeout_seconds: float | None = None,
+    hard_kill_grace_seconds: float = 5.0,
 ) -> GenericScatterResult:
     """Process-isolated scatter/gather for research units.
 
@@ -282,39 +320,147 @@ def scatter_gather_processes(
     as ``scatter_gather`` and are returned in input order. When
     ``on_unit_error`` is supplied, failed children become ordered sentinels and
     sibling units continue.
+
+    When ``timeout_seconds`` is supplied, each unit gets its own deadline. A
+    child that exceeds the deadline is terminated, then killed if it is still
+    alive after ``hard_kill_grace_seconds``. This helper owns the child
+    processes directly so a timed-out unit can be cleaned up without cancelling
+    siblings or using a nested process pool.
     """
     if not units:
         return GenericScatterResult([], 0.0, 0, 0, 0, [])
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    if hard_kill_grace_seconds < 0:
+        raise ValueError("hard_kill_grace_seconds must be non-negative")
     effective_max = (
         max_concurrent
         if max_concurrent is not None
         else get_effective("orchestration", "max_critique_concurrency")
     )
     concurrency = min(effective_max, len(units))
+    if concurrency <= 0:
+        raise ValueError("max_concurrent must be positive")
     results: list[Any | None] = [None] * len(units)
     total_cost = 0.0
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_tokens = 0
-    with ProcessPoolExecutor(max_workers=concurrency) as executor:
-        future_to_idx = {
-            executor.submit(run_unit_fn, index, unit): index
-            for index, unit in enumerate(units)
+
+    ctx = mp.get_context("spawn")
+    pending = list(enumerate(units))
+    active: dict[int, dict[str, Any]] = {}
+
+    def _launch_next() -> None:
+        if not pending:
+            return
+        index, unit = pending.pop(0)
+        out_queue: Any = ctx.Queue()
+        proc = ctx.Process(
+            target=_run_process_unit_child,
+            args=(run_unit_fn, index, unit, out_queue),
+        )
+        proc.start()
+        active[index] = {
+            "process": proc,
+            "queue": out_queue,
+            "started_at": time.monotonic(),
+            "terminating_since": None,
         }
-        for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
-            try:
-                index, payload, cost_usd, pt, ct, tt = future.result()
-            except Exception as exc:
-                if on_unit_error is None:
-                    raise
-                payload, cost_usd, pt, ct, tt = on_unit_error(idx, exc)
-                index = idx
-            results[index] = payload
-            total_cost += cost_usd
-            total_prompt_tokens += pt
-            total_completion_tokens += ct
-            total_tokens += tt
+
+    def _record(idx: int, payload: Any, cost_usd: float, pt: int, ct: int, tt: int) -> None:
+        nonlocal total_cost, total_prompt_tokens, total_completion_tokens, total_tokens
+        results[idx] = payload
+        total_cost += cost_usd
+        total_prompt_tokens += pt
+        total_completion_tokens += ct
+        total_tokens += tt
+
+    def _sentinel(idx: int, exc: Exception) -> None:
+        if on_unit_error is None:
+            raise exc
+        payload, cost_usd, pt, ct, tt = on_unit_error(idx, exc)
+        _record(idx, payload, cost_usd, pt, ct, tt)
+
+    def _cleanup_active() -> None:
+        for item in active.values():
+            proc = item["process"]
+            if proc.is_alive():
+                proc.terminate()
+        for item in active.values():
+            proc = item["process"]
+            proc.join(hard_kill_grace_seconds)
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
+
+    for _ in range(concurrency):
+        _launch_next()
+
+    try:
+        while active:
+            now = time.monotonic()
+            completed: list[int] = []
+            for idx, item in list(active.items()):
+                proc = item["process"]
+                out_queue = item["queue"]
+                try:
+                    message = out_queue.get_nowait()
+                except queue.Empty:
+                    message = None
+
+                if message is not None:
+                    proc.join()
+                    if message.get("ok"):
+                        index, payload, cost_usd, pt, ct, tt = message["result"]
+                        _record(index, payload, cost_usd, pt, ct, tt)
+                    else:
+                        exc = _ProcessUnitFailure(str(message.get("error", "")))
+                        _sentinel(idx, exc)
+                    completed.append(idx)
+                    continue
+
+                if (
+                    timeout_seconds is not None
+                    and item["terminating_since"] is None
+                    and now - item["started_at"] >= timeout_seconds
+                ):
+                    item["terminating_since"] = now
+                    if proc.is_alive():
+                        proc.terminate()
+
+                terminating_since = item["terminating_since"]
+                if terminating_since is not None:
+                    if proc.is_alive() and now - terminating_since >= hard_kill_grace_seconds:
+                        proc.kill()
+                    proc.join(0)
+                    if not proc.is_alive():
+                        _sentinel(
+                            idx,
+                            _ProcessUnitTimeout(
+                                f"process unit {idx} timed out after {timeout_seconds:.3f}s"
+                            ),
+                        )
+                        completed.append(idx)
+                    continue
+
+                if not proc.is_alive():
+                    proc.join()
+                    _sentinel(
+                        idx,
+                        _ProcessUnitFailure(f"process unit {idx} exited without a result"),
+                    )
+                    completed.append(idx)
+
+            for idx in completed:
+                active.pop(idx, None)
+                _launch_next()
+            if active:
+                time.sleep(0.01)
+    except Exception:
+        _cleanup_active()
+        raise
+
     ordered_results: list[Any] = []
     for item in results:
         if item is None:

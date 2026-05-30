@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import multiprocessing as mp
 import queue
@@ -16,14 +17,22 @@ from typing import Any
 from megaplan._core import atomic_write_json, atomic_write_text
 from megaplan._core.hermes_fanout import (
     GenericScatterResult,
-    scatter_gather,
+    scatter_gather_processes,
     with_429_openrouter_fallback,
 )
-from megaplan.profiles import CANONICAL_PREP_MODELS
+from megaplan.profiles import CANONICAL_PREP_MODELS, validate_prep_stage_provider
 from megaplan.prompts import _prep_distill_prompt, _prep_research_prompt, _prep_triage_prompt
 from megaplan.schemas import SCHEMAS, strict_schema
-from megaplan.types import AgentMode, CliError, PlanState, normalize_robustness, parse_agent_spec
-from megaplan.workers import WorkerResult, run_codex_prep_step
+from megaplan.types import (
+    AgentMode,
+    AgentSpec,
+    CliError,
+    PlanState,
+    format_agent_spec,
+    normalize_robustness,
+    parse_agent_spec,
+)
+from megaplan.workers import WorkerResult, run_step_with_worker, update_session_state
 
 _PREP_RESEARCH_FINDING_SCHEMA = strict_schema(SCHEMAS["research.json"]["properties"]["findings"]["items"])
 _PREP_RESEARCH_STATUSES = {"complete", "partial", "timed_out", "error", "not_needed"}
@@ -208,28 +217,8 @@ def _research_unit_payload(
     }
 
 
-def _reject_write_capable_prep_provider(spec: str, *, stage: str) -> AgentMode:
+def _prep_stage_agent_mode(spec: str) -> AgentMode:
     parsed = parse_agent_spec(spec)
-    if parsed.agent in {"claude", "shannon"}:
-        raise CliError(
-            "invalid_prep_model",
-            f"Explicit {parsed.agent!r} prep model for {stage} is not allowed until a read-only runner exists.",
-        )
-    if parsed.agent == "codex" and stage == "fanout":
-        raise CliError(
-            "invalid_prep_model",
-            "Codex prep fanout is not allowed; research fanout must use the read-only Hermes runner.",
-        )
-    if parsed.agent not in {"codex", "hermes"} and stage in {"triage", "distill"}:
-        raise CliError(
-            "invalid_prep_model",
-            f"Prep {stage} currently supports only read-only Codex or Hermes runners.",
-        )
-    if parsed.agent != "hermes" and stage == "fanout":
-        raise CliError(
-            "invalid_prep_model",
-            "Prep fanout currently supports only the process-isolated read-only Hermes runner.",
-        )
     return AgentMode(
         agent=parsed.agent,
         mode="ephemeral",
@@ -240,17 +229,90 @@ def _reject_write_capable_prep_provider(spec: str, *, stage: str) -> AgentMode:
     )
 
 
+def _prep_stage_agent_spec(resolved: AgentMode) -> str:
+    return format_agent_spec(
+        AgentSpec(
+            resolved.agent,
+            model=resolved.model,
+            effort=resolved.effort,
+        )
+    )
+
+
+def scatter_over_worker_step(
+    index: int,
+    unit: dict[str, Any],
+    *,
+    isolation: str = "thread",
+) -> tuple[int, dict[str, Any], float, int, int, int]:
+    if isolation not in {"thread", "process"}:
+        raise ValueError(f"unsupported isolation: {isolation}")
+    area = dict(unit["area"])
+    state = dict(unit["state"])
+    plan_dir = Path(unit["plan_dir"])
+    root = Path(unit["root"])
+    resolved = _prep_stage_agent_mode(str(unit["resolved_model_spec"]))
+    output_path = plan_dir / ".hermes_state" / f"prep_research_{index}.json"
+    prompt = _prep_research_prompt(
+        state,
+        plan_dir,
+        area=area,
+        output_path=output_path,
+        root=root,
+    )
+    worker, _agent, _mode, _refreshed = run_step_with_worker(
+        "prep-research",
+        state,
+        plan_dir,
+        _prep_worker_args(),
+        root=root,
+        resolved=resolved,
+        prompt_override=prompt,
+        read_only=True,
+    )
+    if not isinstance(worker.payload, dict):
+        raise CliError("worker_parse_error", "Prep research unit returned invalid payload")
+    finding = _normalize_research_finding(area, worker.payload)
+    return (
+        index,
+        _research_unit_payload(finding, elapsed_time_ms=worker.duration_ms),
+        worker.cost_usd,
+        worker.prompt_tokens,
+        worker.completion_tokens,
+        worker.total_tokens,
+    )
+
+
+def scatter_over_worker_step_process(index: int, unit: dict[str, Any]) -> tuple[int, dict[str, Any], float, int, int, int]:
+    return scatter_over_worker_step(index, unit, isolation="process")
+
+
 def resolve_prep_stage_model(state: PlanState, stage: str) -> AgentMode:
     raw_models = state.get("config", {}).get("prep_models", {})
     if isinstance(raw_models, dict) and stage in raw_models:
         raw_spec = raw_models[stage]
-        if not isinstance(raw_spec, str) or not raw_spec.strip():
-            raise CliError("invalid_prep_model", f"prep_models.{stage} must be a non-empty string")
-        return _reject_write_capable_prep_provider(raw_spec, stage=stage)
+    else:
+        try:
+            raw_spec = CANONICAL_PREP_MODELS[stage]
+        except KeyError as exc:
+            raise CliError("invalid_prep_model", f"Unknown prep stage: {stage}") from exc
+
     try:
-        return _reject_write_capable_prep_provider(CANONICAL_PREP_MODELS[stage], stage=stage)
-    except KeyError as exc:
-        raise CliError("invalid_prep_model", f"Unknown prep stage: {stage}") from exc
+        spec = validate_prep_stage_provider(raw_spec, stage=stage)
+    except CliError as exc:
+        if exc.code != "invalid_profile":
+            raise
+        raise CliError("invalid_prep_model", exc.message) from exc
+
+    parsed = parse_agent_spec(spec)
+    return AgentMode(
+        agent=parsed.agent,
+        mode="ephemeral",
+        refreshed=True,
+        model=parsed.model,
+        effort=parsed.effort,
+        resolved_model=parsed.model,
+    )
 
 
 def _compatible_prep_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -382,6 +444,51 @@ def _deduplicate_areas(
             seen.add(aid)
             merged.append(area)
     return merged
+
+
+def _prep_worker_args() -> argparse.Namespace:
+    return argparse.Namespace(
+        agent=None,
+        hermes=None,
+        phase_model=[],
+        ephemeral=True,
+        fresh=False,
+        persist=False,
+    )
+
+
+def _run_prep_worker_step(
+    step: str,
+    state: PlanState,
+    plan_dir: Path,
+    *,
+    root: Path,
+    resolved: AgentMode,
+    prompt: str,
+) -> WorkerResult:
+    worker, agent, mode, refreshed = run_step_with_worker(
+        step,
+        state,
+        plan_dir,
+        _prep_worker_args(),
+        root=root,
+        resolved=resolved,
+        prompt_override=prompt,
+        read_only=True,
+    )
+    session_update = update_session_state(
+        step,
+        agent,
+        worker.session_id,
+        mode=mode,
+        refreshed=refreshed,
+        model=resolved.resolved_model,
+        existing_sessions=state.get("sessions"),
+    )
+    if session_update is not None and isinstance(state.get("sessions"), dict):
+        key, entry = session_update
+        state["sessions"][key] = entry
+    return worker
 
 
 def _cap_research_areas(
@@ -818,27 +925,13 @@ def _prep_dossier_text(
 def run_prep_triage(state: PlanState, plan_dir: Path, *, root: Path) -> WorkerResult:
     model = resolve_prep_stage_model(state, "triage")
     prompt = _prep_triage_prompt(state, plan_dir, root=root)
-    if model.agent == "hermes":
-        from megaplan.workers.hermes import run_hermes_step
-
-        return run_hermes_step(
-            "prep-triage",
-            state,
-            plan_dir,
-            root=root,
-            fresh=True,
-            model=model.model,
-            effort=model.effort,
-            prompt_override=prompt,
-        )
-    return run_codex_prep_step(
+    return _run_prep_worker_step(
         "prep-triage",
         state,
         plan_dir,
         root=root,
-        prompt_override=prompt,
-        effort=model.effort,
-        model=model.model,
+        resolved=model,
+        prompt=prompt,
     )
 
 
@@ -1072,41 +1165,30 @@ def run_research_fanout(
     max_concurrent: int | None = None,
 ) -> GenericScatterResult:
     model = resolve_prep_stage_model(state, "fanout")
-    resolved_model = model.model or model.resolved_model or "deepseek:deepseek-v4-flash"
+    resolved_model_spec = _prep_stage_agent_spec(model)
+    units = [
+        {
+            "area": area,
+            "state": state,
+            "plan_dir": str(plan_dir),
+            "root": str(root),
+            "resolved_model_spec": resolved_model_spec,
+        }
+        for area in areas
+    ]
 
-    def _unpack_unit_result(
-        result: Any,
-    ) -> tuple[int, dict[str, Any], float, int, int, int]:
-        index, payload, cost_usd, pt, ct, tt = result
-        if not isinstance(payload, dict) or not isinstance(payload.get("finding"), dict):
-            raise CliError("worker_parse_error", "Prep research unit returned invalid payload")
-        return index, payload, cost_usd, pt, ct, tt
-
-    def _submit(executor: Any) -> list[Any]:
-        futures = []
-        for index, area in enumerate(areas):
-            future = executor.submit(
-                run_hermes_research_unit_process,
-                index=index,
-                area=area,
-                state=state,
-                plan_dir=plan_dir,
-                root=root,
-                model=resolved_model,
-                timeout_seconds=timeout_seconds,
-            )
-            future._megaplan_unit_index = index
-            futures.append(future)
-        return futures
-
-    raw = scatter_gather(
-        num_units=len(areas),
-        submit_unit_fn=_submit,
+    raw = scatter_gather_processes(
+        units=units,
+        run_unit_fn=scatter_over_worker_step_process,
         max_concurrent=max_concurrent,
-        unpack_unit_result=_unpack_unit_result,
+        timeout_seconds=timeout_seconds,
         on_unit_error=lambda index, exc: (
             _research_unit_payload(
-                research_sentinel(areas[index], "error", str(exc) or exc.__class__.__name__),
+                research_sentinel(
+                    areas[index],
+                    "timed_out" if isinstance(exc, TimeoutError) else "error",
+                    "research timeout" if isinstance(exc, TimeoutError) else str(exc) or exc.__class__.__name__,
+                ),
                 elapsed_time_ms=0,
             ),
             0.0,
@@ -1152,29 +1234,14 @@ def distill_prep(
         findings=findings,
         root=root,
     )
-    if model.agent == "hermes":
-        from megaplan.workers.hermes import run_hermes_step
-
-        result = run_hermes_step(
-            "prep-distill",
-            state,
-            plan_dir,
-            root=root,
-            fresh=True,
-            model=model.model,
-            effort=model.effort,
-            prompt_override=prompt,
-        )
-    else:
-        result = run_codex_prep_step(
-            "prep-distill",
-            state,
-            plan_dir,
-            root=root,
-            prompt_override=prompt,
-            effort=model.effort,
-            model=model.model,
-        )
+    result = _run_prep_worker_step(
+        "prep-distill",
+        state,
+        plan_dir,
+        root=root,
+        resolved=model,
+        prompt=prompt,
+    )
     result.payload = _compatible_prep_payload(result.payload)
     return result
 

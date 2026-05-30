@@ -14,6 +14,22 @@ from megaplan.workers import WorkerResult, resolve_agent_mode, session_key_for
 from tests._workers_helpers import FakeShutil, _mock_state
 
 
+@pytest.fixture(autouse=True)
+def _assume_shannon_patched(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tests assume the megaplan Shannon patches are present (the normal runtime
+    # state). This keeps the suite hermetic regardless of whether the dev/CI
+    # machine's installed shannon is actually patched; the safe-degradation paths
+    # (patch absent) are covered by their own explicit tests that override this.
+    monkeypatch.setattr(
+        "megaplan.workers.shannon._shannon_supports_slash_completion",
+        lambda: True, raising=False,
+    )
+    monkeypatch.setattr(
+        "megaplan.workers.shannon._shannon_supports_paste_first_turn",
+        lambda: True, raising=False,
+    )
+
+
 def test_is_shannon_available_all_deps_present() -> None:
     from megaplan._core.io import is_shannon_available
     fake = FakeShutil("shannon", "tmux", "claude")
@@ -152,6 +168,7 @@ def test_run_step_with_worker_shannon_calls_run_shannon_step(tmp_path: Path) -> 
         )
     run_shannon.assert_called_once()
     assert run_shannon.call_args.args[0] == "plan"
+    assert run_shannon.call_args.kwargs["read_only"] is False
 
 def test_run_step_with_worker_shannon_returns_agent_shannon(tmp_path: Path) -> None:
     from megaplan.workers import run_step_with_worker
@@ -222,6 +239,37 @@ def test_run_step_with_worker_claude_calls_run_shannon_step(tmp_path: Path) -> N
     assert mode == "persistent"
     assert refreshed is True
     assert result.payload == payload
+    assert run_shannon.call_args.kwargs["read_only"] is False
+
+def test_run_step_with_worker_threads_read_only_to_shannon_backed_agents(tmp_path: Path) -> None:
+    from megaplan.workers import run_step_with_worker
+
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    fake_worker = WorkerResult(
+        payload=payload,
+        raw_output="{}",
+        duration_ms=1,
+        cost_usd=0.0,
+        session_id="shannon-backed-claude",
+        rendered_prompt="p",
+    )
+    with patch("megaplan.workers.shannon.run_shannon_step", return_value=fake_worker) as run_shannon:
+        run_step_with_worker(
+            "prep-triage",
+            state,
+            plan_dir,
+            Namespace(agent="claude", ephemeral=False, fresh=False, persist=False, confirm_self_review=False, hermes=None, phase_model=[]),
+            root=tmp_path,
+            resolved=("claude", "persistent", False, None),
+            read_only=True,
+        )
+    assert run_shannon.call_args.kwargs["read_only"] is True
 
 def test_session_key_for_shannon_steps() -> None:
     """Generic {agent}_{step} fallback covers all Shannon steps."""
@@ -553,12 +601,17 @@ def test_parse_shannon_stream_json_pretty_array_not_misread() -> None:
     assert parsed == payload
 
 def test_run_shannon_step_timeout_raises_worker_timeout_with_session_id(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from megaplan._core import ensure_runtime_layout
     from megaplan.workers.shannon import run_shannon_step
 
     ensure_runtime_layout(tmp_path)
+    # This test asserts the legacy "non-execute always starts fresh" contract:
+    # a stored plan session is discarded for a new uuid, so a timeout reports the
+    # fresh id rather than the stale one. Pin the session roulette off so the
+    # deterministic legacy path is exercised (the roulette is covered separately).
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
     plan_dir, state = _mock_state(tmp_path)
     state["sessions"][session_key_for("plan", "shannon")] = {
         "id": "shannon-session-abc",
@@ -648,7 +701,7 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     prompt_file = plan_dir / "execute_shannon_prompt.txt"
     prompt_text = prompt_file.read_text(encoding="utf-8")
     assert "return json" in prompt_text
-    assert "SHANNON STRUCTURED OUTPUT CONTRACT" in prompt_text
+    assert "Output format:" in prompt_text
     assert result.payload == payload
     assert result.session_id == "real-shannon-session"
     assert result.cost_usd == 0.02
@@ -1000,6 +1053,215 @@ def test_run_shannon_step_uses_bypass_permissions_for_non_execute_phases(
     assert "--dangerously-skip-permissions" in command
     assert "--allow-dangerously-skip-permissions" in command
 
+def test_run_shannon_step_read_only_uses_tool_restrictions_without_bypass_flags(
+    tmp_path: Path,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"triage_framing": "No fanout needed.", "areas": []}
+    raw = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "read-only-shannon-session",
+            "total_cost_usd": 0.02,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+    ])
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=raw,
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "prep-triage",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+            read_only=True,
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--allowedTools" in command
+    allowed_idx = command.index("--allowedTools")
+    assert command[allowed_idx + 1 : allowed_idx + 6] == [
+        "Read",
+        "Grep",
+        "Glob",
+        "WebFetch",
+        "WebSearch",
+    ]
+    assert "--disallowedTools" in command
+    disallowed_idx = command.index("--disallowedTools")
+    assert command[disallowed_idx + 1 : disallowed_idx + 8] == [
+        "Bash",
+        "Edit",
+        "MultiEdit",
+        "NotebookEdit",
+        "TodoWrite",
+        "Task",
+        "Write",
+    ]
+    assert "--permission-mode" not in command
+    assert "bypassPermissions" not in command
+    assert "--dangerously-skip-permissions" not in command
+    assert "--allow-dangerously-skip-permissions" not in command
+    assert result.payload == payload
+
+def test_run_shannon_step_read_only_root_cloud_keeps_tool_restrictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CHMOD_WORKSPACE", "0")
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 0)
+    monkeypatch.setattr("megaplan.workers.shannon.shutil.which", lambda name: "/bin/su" if name == "su" else None)
+    payload = {"triage_framing": "No fanout needed.", "areas": []}
+    fake_result = CommandResult(
+        command=[],
+        cwd=tmp_path,
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "type": "result",
+                "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "real-shannon-session",
+                "total_cost_usd": 0.02,
+                "usage": {"input_tokens": 11, "output_tokens": 7},
+            }
+        ]),
+        stderr="",
+        duration_ms=123,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        run_shannon_step(
+            "prep-triage",
+            state,
+            plan_dir,
+            root=tmp_path,
+            fresh=True,
+            prompt_override="return json",
+            read_only=True,
+        )
+
+    command = run_command.call_args.args[0]
+    assert command[:6] == ["/bin/su", "-m", "-s", "/bin/bash", "nobody", "-c"]
+    shell_cmd = command[6]
+    assert "--allowedTools Read Grep Glob WebFetch WebSearch" in shell_cmd
+    assert "--disallowedTools Bash Edit MultiEdit NotebookEdit TodoWrite Task Write" in shell_cmd
+    assert "--dangerously-skip-permissions" not in shell_cmd
+    assert "--allow-dangerously-skip-permissions" not in shell_cmd
+    assert "bypassPermissions" not in shell_cmd
+
+def test_run_shannon_step_read_only_claude_agent_uses_tool_restrictions(
+    tmp_path: Path,
+) -> None:
+    """Claude agent path (session_agent='claude') with read_only=True must
+    construct the same read-only tool flag set as the Shannon agent path."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {"triage_framing": "No fanout.", "areas": []}
+    raw = json.dumps([{
+        "type": "result", "subtype": "success",
+        "result": json.dumps(payload),
+        "session_id": "claude-ro-session",
+        "total_cost_usd": 0.01,
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }])
+    fake_result = CommandResult(
+        command=[], cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "prep-triage", state, plan_dir,
+            root=tmp_path, fresh=True, prompt_override="return json",
+            read_only=True, session_agent="claude",
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--allowedTools" in command
+    allowed_idx = command.index("--allowedTools")
+    assert command[allowed_idx + 1 : allowed_idx + 6] == [
+        "Read", "Grep", "Glob", "WebFetch", "WebSearch",
+    ]
+    assert "--disallowedTools" in command
+    disallowed_idx = command.index("--disallowedTools")
+    assert command[disallowed_idx + 1 : disallowed_idx + 8] == [
+        "Bash", "Edit", "MultiEdit", "NotebookEdit", "TodoWrite", "Task", "Write",
+    ]
+    assert "--permission-mode" not in command
+    assert "bypassPermissions" not in command
+    assert "--dangerously-skip-permissions" not in command
+    assert "--allow-dangerously-skip-permissions" not in command
+    assert result.payload == payload
+
+def test_run_shannon_step_non_read_only_claude_agent_uses_bypass(
+    tmp_path: Path,
+) -> None:
+    """Claude agent path (session_agent='claude') with read_only=False (default)
+    must preserve the bypass-permissions authoring launch path unchanged."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# Plan", "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": [],
+    }
+    raw = json.dumps([{
+        "type": "result", "subtype": "success",
+        "result": json.dumps(payload),
+        "session_id": "claude-bypass-session",
+        "total_cost_usd": 0.01,
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }])
+    fake_result = CommandResult(
+        command=[], cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1,
+    )
+
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as run_command:
+        result = run_shannon_step(
+            "plan", state, plan_dir,
+            root=tmp_path, fresh=True, prompt_override="return json",
+            session_agent="claude",
+        )
+
+    command = run_command.call_args.args[0]
+    assert "--permission-mode" in command
+    assert "bypassPermissions" in command
+    assert "--dangerously-skip-permissions" in command
+    assert "--allow-dangerously-skip-permissions" in command
+    assert "--allowedTools" not in command
+    assert "--disallowedTools" not in command
+    assert result.payload == payload
+
 def test_shannon_worker_patches_known_timeout_and_tool_use_defects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1283,19 +1545,29 @@ def test_liveness_probe_reports_progress_on_pane_change() -> None:
             assert probe() is True  # pane changed frame-1 -> frame-2
 
 
-def test_liveness_probe_reports_no_progress_on_static_pane() -> None:
-    """Probe returns False when the pane is observably static and no transcript
-    is advancing — a genuinely hung turn that the watchdog must be allowed to
-    kill."""
+def test_liveness_probe_reports_no_progress_on_static_pane(tmp_path) -> None:
+    """Probe returns False when a transcript exists but its mtime is static and
+    the pane is unchanging — a genuinely hung turn the watchdog must kill.
+
+    Per the probe's contract, transcript mtime is the ONLY trusted progress
+    signal (pane churn is deliberately ignored — a wedged Claude repaints its
+    pane forever). So "no progress" requires an observed-but-static transcript;
+    with no transcript at all the probe stays conservative (returns True) and
+    lets the wall-clock cap govern. This test pins the static-transcript case."""
     from megaplan.runtime.process import TmuxSession
     from megaplan.workers.shannon import _make_shannon_liveness_probe
 
+    transcript = tmp_path / "sid.jsonl"
+    transcript.write_text("{}\n")
     panes = ["frozen", "frozen", "frozen"]
     with patch("megaplan.workers.shannon.subprocess.run", _fake_tmux_capture(panes)):
-        with patch("megaplan.workers.shannon._claude_transcript_paths", return_value=[]):
-            probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", Path.cwd())
-            assert probe() is True   # priming call always reports progress
-            assert probe() is False  # pane unchanged, no transcript movement
+        with patch(
+            "megaplan.workers.shannon._claude_transcript_paths",
+            return_value=[transcript],
+        ):
+            probe = _make_shannon_liveness_probe(TmuxSession("sess"), "sid", tmp_path)
+            assert probe() is True   # priming call records the baseline mtime
+            assert probe() is False  # transcript mtime static, pane unchanged -> hung
             assert probe() is False
 
 
@@ -1322,3 +1594,626 @@ def test_liveness_probe_reports_progress_on_transcript_mtime(tmp_path) -> None:
             base = transcript.stat().st_mtime
             _os.utime(transcript, (base + 100, base + 100))
             assert probe() is True  # mtime advanced -> progress
+
+
+# ---------------------------------------------------------------------------
+# Session-continuity roulette (resume / compact / clear / new)
+# ---------------------------------------------------------------------------
+
+
+def _execute_result_json() -> str:
+    payload = {
+        "output": "done",
+        "files_changed": [],
+        "commands_run": [],
+        "deviations": [],
+        "task_updates": [],
+        "sense_check_acknowledgments": [],
+    }
+    return json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 5, "output_tokens": 3},
+        }
+    ])
+
+
+def _seed_shannon_session(state: dict, step: str, sid: str) -> None:
+    state["sessions"][session_key_for(step, "shannon")] = {
+        "id": sid,
+        "mode": "persistent",
+        "created_at": "2026-03-20T00:00:00Z",
+        "last_used_at": "2026-03-20T00:00:00Z",
+        "refreshed": False,
+    }
+
+
+def test_session_strategy_never_plain_resumes_reused_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Policy: a reusable session is never plain-resumed (full context clouds the
+    # turn) — it is always shed via an injected /compact or /clear op turn before
+    # the work turn. So a reused execute session always produces TWO calls (op +
+    # work), never a single bare resume.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout="shed", stderr="", duration_ms=5,
+            )
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=_execute_result_json(), stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+    assert len(calls) == 2  # op turn + work turn — never a single plain resume
+    assert calls[0][calls[0].index("-p") + 1] in ("/compact", "/clear")
+    assert "--resume" in calls[1]
+
+
+def test_session_strategy_compact_injects_slash_compact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout="compacted", stderr="", duration_ms=5,
+            )
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=_execute_result_json(), stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+    # Turn 1 is the injected /compact against the resumed session; turn 2 is the
+    # real work turn resuming the same id with the launcher prompt.
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("-p") + 1] == "/compact"
+    assert calls[0][calls[0].index("--resume") + 1] == "sess-keep"
+    assert calls[1][calls[1].index("--resume") + 1] == "sess-keep"
+    assert "Read the full megaplan phase prompt from this file" in calls[1][2]
+
+
+def test_session_strategy_clear_injects_slash_clear(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout="cleared", stderr="", duration_ms=5,
+            )
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=_execute_result_json(), stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("-p") + 1] == "/clear"
+    assert calls[1][calls[1].index("--resume") + 1] == "sess-keep"
+
+
+def test_session_strategy_context_op_failure_falls_back_to_fresh_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Policy is "never carry stale context". When the /compact (or /clear) op
+    # turn fails, we must NOT plain-resume the un-shed original session — we shed
+    # it the safe way with a fresh `new` session (--session-id), not --resume.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            # /compact op turn stalls -> best-effort failure.
+            raise CliError("worker_timeout", "compact stalled", extra={})
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=_execute_result_json(), stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        result = run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+    assert len(calls) == 2  # failed op did not abort the phase
+    # Work turn uses a FRESH session, not a plain resume of the un-shed original.
+    assert "--session-id" in calls[1]
+    assert "--resume" not in calls[1]
+    assert calls[1][calls[1].index("--session-id") + 1] != "sess-keep"
+    assert result.session_id == "real-shannon-session"
+
+
+def test_session_strategy_non_execute_also_sheds_prior_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Non-execute phases with a stored session are also shed, never plain-resumed:
+    # they inject /clear (or /compact) before the work turn rather than carrying
+    # the prior planner/critic conversation forward.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "plan", "plan-keep")
+    payload = {
+        "plan": "# Plan\nDo it.",
+        "questions": [],
+        "success_criteria": [{"criterion": "criterion", "priority": "must"}],
+        "assumptions": [],
+    }
+    work_stdout = json.dumps([
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps(payload),
+            "session_id": "real-shannon-session",
+            "total_cost_usd": 0.0,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    ])
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout="cleared", stderr="", duration_ms=5,
+            )
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=work_stdout, stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "plan", state, plan_dir, root=tmp_path, fresh=True,
+            prompt_override="return json",
+        )
+    assert len(calls) == 2  # /clear op + work turn — not a single plain resume
+    assert calls[0][calls[0].index("-p") + 1] == "/clear"
+    assert calls[1][calls[1].index("--resume") + 1] == "plan-keep"
+
+
+def test_session_strategy_read_only_context_op_uses_tool_restrictions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When read_only=True and a context op (compact/clear) fires, the op
+    command must carry --allowedTools/--disallowedTools, not bypass-permissions
+    flags.  The op command is derived from base_command, which is constructed
+    with the read_only contract."""
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout='{"type":"result","subtype":"success","session_id":"sess-keep"}',
+                stderr="", duration_ms=5,
+            )
+        payload = {
+            "output": "done", "files_changed": [], "commands_run": [],
+            "deviations": [], "task_updates": [], "sense_check_acknowledgments": [],
+        }
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=json.dumps([{
+                "type": "result", "subtype": "success",
+                "result": json.dumps(payload),
+                "session_id": "sess-keep",
+                "total_cost_usd": 0.01,
+                "usage": {"input_tokens": 5, "output_tokens": 3},
+            }]),
+            stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch", read_only=True,
+        )
+
+    assert len(calls) == 2  # context op + work turn
+    # Context op command must carry read-only tool flags, not bypass flags.
+    op_cmd = calls[0]
+    assert "--allowedTools" in op_cmd
+    assert "--disallowedTools" in op_cmd
+    assert "--permission-mode" not in op_cmd
+    assert "bypassPermissions" not in op_cmd
+    assert "--dangerously-skip-permissions" not in op_cmd
+    assert "--allow-dangerously-skip-permissions" not in op_cmd
+    assert op_cmd[op_cmd.index("-p") + 1] == "/clear"
+
+    # Work turn command must also carry read-only tool flags, not bypass flags.
+    work_cmd = calls[1]
+    assert "--allowedTools" in work_cmd
+    assert "--disallowedTools" in work_cmd
+    assert "--permission-mode" not in work_cmd
+    assert "bypassPermissions" not in work_cmd
+    assert "--dangerously-skip-permissions" not in work_cmd
+    assert "--allow-dangerously-skip-permissions" not in work_cmd
+
+def test_session_roulette_disabled_restores_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
+    # Even with compaction cranked up, disabling the strategy pins execute to a
+    # plain resume of the stored session (legacy behavior).
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    fake_result = CommandResult(
+        command=[], cwd=tmp_path, returncode=0,
+        stdout=_execute_result_json(), stderr="", duration_ms=12,
+    )
+    with patch("megaplan.workers.shannon.run_command", return_value=fake_result) as rc:
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+    assert rc.call_count == 1
+    command = rc.call_args.args[0]
+    assert command[command.index("--resume") + 1] == "sess-keep"
+
+
+def test_stream_session_id_reads_ndjson_rotation() -> None:
+    from megaplan.workers.shannon import _stream_session_id
+
+    raw = (
+        '{"type":"system","subtype":"init","session_id":"old"}\n'
+        '{"type":"result","subtype":"success","session_id":"new-xyz"}'
+    )
+    assert _stream_session_id(raw) == "new-xyz"
+    assert _stream_session_id("not json at all") is None
+    assert _stream_session_id('{"type":"assistant","message":{"sessionId":"abc"}}') == "abc"
+
+
+def test_session_strategy_clear_resumes_rotated_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # /clear rotates the session id; the work turn must resume the NEW id that
+    # the op turn landed on (reported in shannon's stream-json output), not the
+    # cleared id.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "old-sess")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout='{"type":"result","subtype":"success","session_id":"rotated-sess"}',
+                stderr="", duration_ms=5,
+            )
+        return CommandResult(
+            command=command, cwd=tmp_path, returncode=0,
+            stdout=_execute_result_json(), stderr="", duration_ms=12,
+        )
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "execute", state, plan_dir, root=tmp_path, fresh=False,
+            prompt_override="batch",
+        )
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("-p") + 1] == "/clear"
+    assert calls[0][calls[0].index("--resume") + 1] == "old-sess"      # op clears the old id
+    assert calls[1][calls[1].index("--resume") + 1] == "rotated-sess"  # work turn resumes the new id
+
+
+def test_shannon_patcher_inserts_slash_detection_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression guard: the auto-patch must splice the slash-command completion
+    # detection into the installed shannon index.ts (and stay single-insertion
+    # across repeat runs). Catches a shannon upgrade that moves the anchors.
+    from megaplan.workers.shannon import (
+        _ensure_shannon_parent_timeout_control,
+        _shannon_package_entrypoint,
+    )
+
+    entrypoint = _shannon_package_entrypoint()
+    if entrypoint is None or not entrypoint.exists():
+        pytest.skip("shannon package not installed")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_AUTO_PATCH", "1")
+    _ensure_shannon_parent_timeout_control()
+    _ensure_shannon_parent_timeout_control()  # idempotent
+    src = entrypoint.read_text(encoding="utf-8")
+    assert src.count("function megaplanSlashCompletionRow(") == 1
+    assert src.count("const megaplanSlashReply = megaplanSlashCompletionRow(prompt, rows);") == 1
+    assert "megaplanSlashPromptMatches(prompt, row.message?.content)" in src
+    assert "compact_boundary" in src and "isCompactSummary === true" in src
+
+
+def test_paste_first_turn_delivers_prompt_via_stdin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With paste-first-turn on, the main turn carries the REAL prompt over stdin
+    # (a stream-json user message), uses --input-format=stream-json, drops the
+    # argv -p launcher entirely, and sets the env flag that activates the Shannon
+    # patch. No "read this file" pointer reaches Claude.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")  # legacy -> fresh, no op turn
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 1000, raising=False)
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# P",
+        "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must"}],
+        "assumptions": [],
+    }
+    raw = json.dumps([
+        {
+            "type": "result", "subtype": "success", "result": json.dumps(payload),
+            "session_id": "s", "total_cost_usd": 0.0, "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+    ])
+    captured: dict = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["stdin"] = kwargs.get("stdin_text")
+        captured["env"] = kwargs.get("env")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "plan", state, plan_dir, root=tmp_path, fresh=True,
+            prompt_override="DO THE REAL TASK",
+        )
+    command = captured["command"]
+    assert "-p" not in command
+    assert "--input-format=stream-json" in command
+    assert not any("Read the full megaplan phase prompt" in str(t) for t in command)
+    msg = json.loads(captured["stdin"])
+    assert msg["type"] == "user"
+    assert "DO THE REAL TASK" in msg["message"]["content"]
+    assert captured["env"]["MEGAPLAN_SHANNON_PASTE_FIRST_TURN"] == "1"
+
+
+def test_paste_first_turn_off_keeps_argv_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default (flag off): unchanged -p launcher in argv, no stdin, no env flag.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.delenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", raising=False)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# P", "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": [],
+    }
+    raw = json.dumps([
+        {"type": "result", "subtype": "success", "result": json.dumps(payload),
+         "session_id": "s", "total_cost_usd": 0.0, "usage": {"input_tokens": 1, "output_tokens": 1}}
+    ])
+    captured: dict = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["stdin"] = kwargs.get("stdin_text")
+        captured["env"] = kwargs.get("env")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "plan", state, plan_dir, root=tmp_path, fresh=True,
+            prompt_override="DO THE REAL TASK",
+        )
+    command = captured["command"]
+    assert "-p" in command
+    assert "--input-format=stream-json" not in command
+    assert captured["stdin"] is None
+    assert "MEGAPLAN_SHANNON_PASTE_FIRST_TURN" not in (captured["env"] or {})
+
+
+def test_session_strategy_falls_back_to_new_without_slash_patch() -> None:
+    # When the installed shannon lacks the slash-completion patch, the reuse path
+    # must NOT inject /clear or /compact (which would burn the op timeout) — it
+    # sheds context via a fresh "new" session instead. Same policy, safe mechanism.
+    from megaplan.workers.shannon import _select_session_strategy
+
+    for _ in range(50):
+        assert _select_session_strategy(
+            "execute", has_session=True, explicit_fresh=False, slash_supported=False
+        ) == "new"
+        assert _select_session_strategy(
+            "critique", has_session=True, explicit_fresh=False, slash_supported=False
+        ) == "new"
+    # With support present, it sheds via clear/compact (never plain resume).
+    seen = {
+        _select_session_strategy(
+            "execute", has_session=True, explicit_fresh=False, slash_supported=True
+        )
+        for _ in range(200)
+    }
+    assert seen <= {"clear", "compact"}
+
+
+def test_paste_first_turn_disabled_when_patch_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Flag on but the Shannon paste patch is NOT present (e.g. another user's
+    # unpatched/read-only shannon): must fall back to the argv -p launcher, never
+    # feed a stdin/no--p prompt to an unpatched shannon (which would hit ARG_MAX).
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_PASTE_FIRST_TURN", "1")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_READINESS_PROBE", "0")
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_ROULETTE", "0")
+    monkeypatch.setattr("megaplan.workers.shannon.os.geteuid", lambda: 1000, raising=False)
+    # Override the autouse fixture: this machine's shannon lacks the paste patch.
+    monkeypatch.setattr(
+        "megaplan.workers.shannon._shannon_supports_paste_first_turn", lambda: False
+    )
+    plan_dir, state = _mock_state(tmp_path)
+    payload = {
+        "plan": "# P", "questions": [],
+        "success_criteria": [{"criterion": "c", "priority": "must"}], "assumptions": [],
+    }
+    raw = json.dumps([
+        {"type": "result", "subtype": "success", "result": json.dumps(payload),
+         "session_id": "s", "total_cost_usd": 0.0, "usage": {"input_tokens": 1, "output_tokens": 1}}
+    ])
+    captured: dict = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        captured["command"] = command
+        captured["stdin"] = kwargs.get("stdin_text")
+        captured["env"] = kwargs.get("env")
+        return CommandResult(command=command, cwd=tmp_path, returncode=0, stdout=raw, stderr="", duration_ms=1)
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        run_shannon_step(
+            "plan", state, plan_dir, root=tmp_path, fresh=True,
+            prompt_override="DO THE REAL TASK",
+        )
+    command = captured["command"]
+    assert "-p" in command  # argv launcher, not stdin
+    assert "--input-format=stream-json" not in command
+    assert captured["stdin"] is None
+    # (env may still carry the operator-set flag — inherited via os.environ — but
+    # the command shape above proves shannon.py did NOT switch to stdin delivery.)
+
+
+def test_session_strategy_stall_after_clear_rotation_clears_persisted_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # C1 regression: after /clear rotates the session id, a stall must still drop
+    # the PERSISTED (pre-clear) id from state — else the next executor cycle
+    # resumes a dead/cleared session and races the orphan.
+    from megaplan._core import ensure_runtime_layout
+    from megaplan.workers.shannon import run_shannon_step
+    from megaplan.workers import CommandResult
+
+    ensure_runtime_layout(tmp_path)
+    monkeypatch.setenv("MEGAPLAN_SHANNON_SESSION_COMPACT_PROBABILITY", "0")  # -> clear
+    monkeypatch.setenv("MEGAPLAN_SHANNON_CONTEXT_OP_DELAY_MAX_SECONDS", "0")
+    plan_dir, state = _mock_state(tmp_path)
+    _seed_shannon_session(state, "execute", "sess-keep")
+    key = session_key_for("execute", "shannon")
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **kwargs: object) -> CommandResult:
+        calls.append(command)
+        if len(calls) == 1:
+            return CommandResult(
+                command=command, cwd=tmp_path, returncode=0,
+                stdout='{"type":"result","subtype":"success","session_id":"rot-1"}',
+                stderr="", duration_ms=5,
+            )
+        raise CliError("worker_stall", "stalled", extra={})
+
+    with patch("megaplan.workers.shannon.run_command", side_effect=fake_run_command):
+        with pytest.raises(CliError):
+            run_shannon_step(
+                "execute", state, plan_dir, root=tmp_path, fresh=False,
+                prompt_override="batch",
+            )
+    assert calls[1][calls[1].index("--resume") + 1] == "rot-1"   # work turn resumed rotated id
+    assert key not in state["sessions"]                          # persisted pre-clear id dropped
