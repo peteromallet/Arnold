@@ -845,6 +845,14 @@ def get_effective(section: str, key: str) -> Any:
     default_key = f"{section}.{key}"
     if default_key not in DEFAULTS:
         raise KeyError(default_key)
+    # M4 T13: flag-gated delegation to N-layer ConfigResolver. Flag-OFF path
+    # below is byte-identical to the pre-T13 behaviour for the 30+ callers.
+    from megaplan._pipeline.flags import unified_config_on
+
+    if unified_config_on():
+        from megaplan._core.config_resolver import ConfigResolver
+
+        return ConfigResolver().effective(section, key)
     config = load_config()
     section_config = config.get(section)
     if isinstance(section_config, dict) and key in section_config:
@@ -860,6 +868,13 @@ def setting_is_explicit(section: str, key: str, *, home: Path | None = None) -> 
     ``adaptive_critique``) can win over the global default *only* when the
     user has not pinned the value themselves.
     """
+    # M4 T13: flag-gated delegation. Flag-OFF retains existing behaviour.
+    from megaplan._pipeline.flags import unified_config_on
+
+    if unified_config_on():
+        from megaplan._core.config_resolver import ConfigResolver
+
+        return ConfigResolver().explicit_at(section, key) is not None
     config = load_config(home)
     section_config = config.get(section)
     return isinstance(section_config, dict) and key in section_config

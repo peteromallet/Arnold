@@ -34,7 +34,63 @@ _FLAG_OFF_TARGETS = (
     REPO_ROOT / "tests" / "test_supervise_subprocess_regression.py",
     REPO_ROOT / "tests" / "test_legacy_subprocess_snapshot.py",
     REPO_ROOT / "tests" / "test_unified_dispatch_flag.py",
+    # M4 — Steps 1-14 additions
+    REPO_ROOT / "tests" / "test_run_envelope.py",
+    REPO_ROOT / "tests" / "test_governor_installed_in_executor.py",
+    REPO_ROOT / "tests" / "oracles" / "test_capacity_lease_two_tenant_oracle.py",
+    REPO_ROOT / "tests" / "test_dispatcher_protocol.py",
+    REPO_ROOT / "tests" / "test_dispatch_subprocess_backend.py",
+    REPO_ROOT / "tests" / "test_dispatch_async_backend.py",
+    REPO_ROOT / "tests" / "test_event_sink_envelope.py",
+    REPO_ROOT / "tests" / "oracles" / "test_journal_join_key_oracle.py",
+    REPO_ROOT / "tests" / "test_oracle_backend.py",
+    REPO_ROOT / "tests" / "test_oracle_bisect_consumer.py",
+    REPO_ROOT / "tests" / "test_config_resolver_characterization.py",
+    REPO_ROOT / "tests" / "oracles" / "test_effect_ledger_replay_oracle.py",
+    REPO_ROOT / "tests" / "test_recovery_policy.py",
+    REPO_ROOT / "tests" / "characterization" / "test_context_retry_byte_stability.py",
+    REPO_ROOT / "tests" / "characterization" / "test_external_retry_byte_stability.py",
+    REPO_ROOT / "tests" / "characterization" / "test_blocked_retry_byte_stability.py",
+    REPO_ROOT / "tests" / "test_budget_authority_cost_tracker.py",
+    REPO_ROOT / "tests" / "test_budget_authority_loop_time.py",
+    REPO_ROOT / "tests" / "oracles" / "test_budget_authority_oracle.py",
+    REPO_ROOT / "tests" / "test_evaluand_record.py",
+    REPO_ROOT / "tests" / "oracles" / "test_evaluand_transaction_boundary_oracle.py",
+    REPO_ROOT / "tests" / "test_trace_non_plan_composition.py",
+    REPO_ROOT / "tests" / "test_doctor_non_plan_composition.py",
+    REPO_ROOT / "tests" / "test_cost_r5_read_no_classify_vendor.py",
+    REPO_ROOT / "tests" / "test_cost_non_plan_composition.py",
 )
+
+# ---------------------------------------------------------------------------
+# Partial-Completion Policy — deferred targets
+# ---------------------------------------------------------------------------
+# Any path string (relative to REPO_ROOT, forward-slash separated) listed here
+# is skipped by both run_flag_off() and run_flag_on().  The runners still exit
+# 0 provided every NON-deferred target passes, and they log a
+# "# deferred: <path>" summary line for each skipped target.
+#
+# Example:
+#   _DEFERRED_TARGETS = {"tests/oracles/test_some_oracle.py"}
+_DEFERRED_TARGETS: set[str] = set()
+
+
+def _filter_targets(
+    targets: tuple,
+) -> tuple[list, list]:
+    """Split targets into (active, deferred) respecting _DEFERRED_TARGETS.
+
+    A target is deferred when its REPO_ROOT-relative path (forward-slash) is
+    present in _DEFERRED_TARGETS.  Returns (active_paths, deferred_paths).
+    """
+    active, deferred = [], []
+    for p in targets:
+        rel = str(p.relative_to(REPO_ROOT)).replace("\\", "/")
+        if rel in _DEFERRED_TARGETS:
+            deferred.append(p)
+        else:
+            active.append(p)
+    return active, deferred
 
 
 def run_flag_off(
@@ -46,12 +102,20 @@ def run_flag_off(
     master flag reads OFF (the ``== "1"`` convention makes absent → False).
     The subprocess engine is the pinned runtime; only schema-report targets
     are exercised (no in-process driver paths).
+
+    Targets listed in _DEFERRED_TARGETS are skipped; a ``# deferred: <path>``
+    summary line is printed for each.  Exits 0 iff every non-deferred target
+    passes.
     """
+    active, deferred = _filter_targets(_FLAG_OFF_TARGETS)
+    for p in deferred:
+        rel = str(p.relative_to(REPO_ROOT)).replace("\\", "/")
+        print(f"# deferred: {rel}", flush=True)
     env = os.environ.copy()
     env.pop("MEGAPLAN_UNIFIED_DISPATCH", None)
     cmd = [
         sys.executable, "-m", "pytest", "-q", "--tb=short",
-        *(str(p) for p in _FLAG_OFF_TARGETS),
+        *(str(p) for p in active),
     ]
     if extra_args:
         cmd.extend(extra_args)
@@ -86,6 +150,32 @@ _FLAG_ON_TARGETS = (
     REPO_ROOT / "tests" / "test_workflow_topology_parity_gate.py",
     REPO_ROOT / "tests" / "test_r1_authority_flip.py",
     REPO_ROOT / "tests" / "test_state_reader_audit.py",
+    # M4 — Steps 1-14 additions
+    REPO_ROOT / "tests" / "test_governor_installed_in_executor.py",
+    REPO_ROOT / "tests" / "test_dispatcher_protocol.py",
+    REPO_ROOT / "tests" / "test_dispatch_subprocess_backend.py",
+    REPO_ROOT / "tests" / "test_dispatch_async_backend.py",
+    REPO_ROOT / "tests" / "test_event_sink_envelope.py",
+    REPO_ROOT / "tests" / "test_oracle_backend.py",
+    REPO_ROOT / "tests" / "test_oracle_bisect_consumer.py",
+    REPO_ROOT / "tests" / "test_config_resolver_characterization.py",
+    REPO_ROOT / "tests" / "test_recovery_policy.py",
+    REPO_ROOT / "tests" / "characterization" / "test_context_retry_byte_stability.py",
+    REPO_ROOT / "tests" / "characterization" / "test_external_retry_byte_stability.py",
+    REPO_ROOT / "tests" / "characterization" / "test_blocked_retry_byte_stability.py",
+    REPO_ROOT / "tests" / "test_budget_authority_cost_tracker.py",
+    REPO_ROOT / "tests" / "test_budget_authority_loop_time.py",
+    REPO_ROOT / "tests" / "test_evaluand_record.py",
+    REPO_ROOT / "tests" / "test_trace_non_plan_composition.py",
+    REPO_ROOT / "tests" / "test_doctor_non_plan_composition.py",
+    REPO_ROOT / "tests" / "test_cost_r5_read_no_classify_vendor.py",
+    REPO_ROOT / "tests" / "test_cost_non_plan_composition.py",
+    # M4 substrate-swap oracles (Steps 3b, 7b, 10b, 12c, 13b)
+    REPO_ROOT / "tests" / "oracles" / "test_capacity_lease_two_tenant_oracle.py",   # 3b
+    REPO_ROOT / "tests" / "oracles" / "test_journal_join_key_oracle.py",             # 7b
+    REPO_ROOT / "tests" / "oracles" / "test_effect_ledger_replay_oracle.py",         # 10b
+    REPO_ROOT / "tests" / "oracles" / "test_budget_authority_oracle.py",             # 12c
+    REPO_ROOT / "tests" / "oracles" / "test_evaluand_transaction_boundary_oracle.py", # 13b
 )
 
 
@@ -97,12 +187,20 @@ def run_flag_on(
     Environment: MEGAPLAN_UNIFIED_DISPATCH=1 so every flag-gated code path
     exercises the new in-process driver with throwaway plans.  The subprocess
     engine is **not** exercised on this axis.
+
+    Targets listed in _DEFERRED_TARGETS are skipped; a ``# deferred: <path>``
+    summary line is printed for each.  Exits 0 iff every non-deferred target
+    passes.
     """
+    active, deferred = _filter_targets(_FLAG_ON_TARGETS)
+    for p in deferred:
+        rel = str(p.relative_to(REPO_ROOT)).replace("\\", "/")
+        print(f"# deferred: {rel}", flush=True)
     env = os.environ.copy()
     env["MEGAPLAN_UNIFIED_DISPATCH"] = "1"
     cmd = [
         sys.executable, "-m", "pytest", "-q", "--tb=short",
-        *(str(p) for p in _FLAG_ON_TARGETS),
+        *(str(p) for p in active),
     ]
     if extra_args:
         cmd.extend(extra_args)

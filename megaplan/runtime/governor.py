@@ -73,6 +73,17 @@ class Governor:
 
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
+    # M4 T3 — per-lease accumulator for fold_shard_spend.
+    # Maps lease_id -> highest fencing_token observed; tracks the total
+    # capacity_grant folded across all (lease_id, fencing_token) pairs we
+    # have not yet de-duplicated.  When a write arrives with a fencing_token
+    # strictly less than the highest seen for its lease, the accumulator is
+    # poisoned: the very next fold_shard_spend write raises BudgetExceeded.
+    _shard_max_token: dict = field(default_factory=dict, repr=False)
+    _shard_seen: dict = field(default_factory=dict, repr=False)
+    _shard_grants: float = field(default=0.0, repr=False)
+    _shard_poisoned: bool = field(default=False, repr=False)
+
     # ------------------------------------------------------------------
     # Predicate
     # ------------------------------------------------------------------
@@ -82,6 +93,8 @@ class Governor:
     ) -> Optional[ExceedReason]:
         cost = float(getattr(envelope, "cost", 0.0) or 0.0)
         lineage_len = len(getattr(envelope, "lineage", ()) or ())
+        # M4 T2: defensively read capacity_grant; legacy envelopes may lack it.
+        _ = float(getattr(envelope, "capacity_grant", 0.0) or 0.0)
         with self._lock:
             if self.recursion_depth_cap and (
                 max(self.current_depth, lineage_len) + 1 > self.recursion_depth_cap
@@ -107,6 +120,8 @@ class Governor:
 
         cost = float(getattr(envelope, "cost", 0.0) or 0.0)
         lineage_len = len(getattr(envelope, "lineage", ()) or ())
+        # M4 T2: defensively read capacity_grant; legacy envelopes may lack it.
+        _ = float(getattr(envelope, "capacity_grant", 0.0) or 0.0)
         with self._lock:
             new_dollars = self.spent_dollars + cost
             if new_dollars > self.dollar_cap:
@@ -129,6 +144,50 @@ class Governor:
             self.spent_dollars = new_dollars
             self.active_concurrency = new_concurrency
             self.current_depth = depth
+
+    # ------------------------------------------------------------------
+    # M4 T3 — Capacity-lease shard fold
+    # ------------------------------------------------------------------
+
+    def fold_shard_spend(self, envelope: RunEnvelope) -> None:
+        """Fold a per-shard capacity-grant write into the Governor accumulator.
+
+        Reads ``lease_id``, ``fencing_token`` and ``capacity_grant`` via
+        :func:`getattr` so legacy envelopes (no shard fields) are accepted as
+        no-ops and the single-process, no-shared-ledger path remains
+        byte-identical with the pre-M4 behaviour.
+
+        The fold is idempotent per ``(lease_id, fencing_token)`` pair —
+        re-folding the same shard is a silent no-op — and rejects stale
+        fencing tokens by poisoning the accumulator so the next write raises
+        :class:`BudgetExceeded`.  Envelopes without ``lease_id`` or
+        ``fencing_token`` are byte-identical no-ops (the executor falls back
+        to the existing additive ``envelope.join`` algebra).
+        """
+
+        lease_id = getattr(envelope, "lease_id", None)
+        fencing_token = getattr(envelope, "fencing_token", None)
+        grant = float(getattr(envelope, "capacity_grant", 0.0) or 0.0)
+
+        with self._lock:
+            if self._shard_poisoned:
+                self._shard_poisoned = False
+                raise BudgetExceeded(
+                    ExceedReason.DOLLAR_CAP,
+                    "stale fencing token poisoned the shard accumulator",
+                )
+            if lease_id is None or fencing_token is None:
+                return
+            seen = self._shard_seen.setdefault(lease_id, set())
+            if fencing_token in seen:
+                return
+            cur_max = self._shard_max_token.get(lease_id, -1)
+            if fencing_token < cur_max:
+                self._shard_poisoned = True
+                return
+            seen.add(fencing_token)
+            self._shard_max_token[lease_id] = fencing_token
+            self._shard_grants += grant
 
     def note_fanout(self, width: int) -> None:
         """Record a fan-out of ``width`` child specs being spawned."""

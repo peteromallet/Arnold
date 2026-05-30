@@ -20,6 +20,24 @@ from megaplan.observability.events import EventKind, read_events
 # ---------------------------------------------------------------------------
 
 
+def _vendor_for_cost_event(payload: dict, model: str | None) -> str:
+    """T27 — R5-aware vendor lookup. When UNIFIED_EMIT=1 or R5_UNIFIED=1 and
+    the payload carries a provenance dict with 'vendor', return it directly
+    (no _classify_vendor call). Otherwise fall through to the legacy path.
+    """
+    try:
+        from megaplan._pipeline.flags import unified_emit_on, unified_evaluand_on
+        if unified_emit_on() or unified_evaluand_on():
+            provenance = payload.get("provenance") if isinstance(payload, dict) else None
+            if isinstance(provenance, dict):
+                vendor = provenance.get("vendor")
+                if isinstance(vendor, str) and vendor:
+                    return vendor
+    except Exception:
+        pass
+    return _classify_vendor(model)
+
+
 def _classify_vendor(model: str | None) -> str:
     """Classify a model string into one of four vendor buckets.
 
@@ -113,7 +131,11 @@ def _aggregate(events: list[dict], meta_cost: float) -> dict:
             cost_by_model[model_key] += cost
 
             # per-vendor cost
-            vendor = _classify_vendor(model)
+            # T27: R5 read branch — gated UNIFIED_EMIT=1 or R5_UNIFIED=1.
+            # When the event payload carries RunEnvelope.provenance with a
+            # vendor (Step 10a field), read it directly instead of calling
+            # _classify_vendor. Old branch stays live and authoritative.
+            vendor = _vendor_for_cost_event(payload, model)
             cost_by_vendor[vendor] += cost
 
             # running events_cost sum (before reconciliation)

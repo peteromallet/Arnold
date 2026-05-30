@@ -48,6 +48,7 @@ from megaplan.orchestration.phase_result import (
     PhaseResult,
     read_phase_result,
 )
+from megaplan.orchestration.recovery_policy import RecoveryPolicy
 from megaplan.store import PlanRepository
 from megaplan.types import (
     AUTOMATION_TERMINAL_STATES,
@@ -2127,13 +2128,26 @@ def drive(
                 add_note_failures = 0
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.
+        #
+        # M4 T17: classification is delegated to RecoveryPolicy.classify
+        # (action ∈ {retry_fresh, halt}); auto.py retains every side
+        # effect verbatim — counter bumps, log lines, _record_failure
+        # call, and the returned _outcome.  Byte-stability of the trace
+        # is guarded by tests/characterization/test_context_retry_byte_stability.py.
         if max_context_retries > 0:
+            _ctx_policy = RecoveryPolicy(max_context_retries=max_context_retries)
             while (
                 next_step == "execute"
                 and result is not None
                 and getattr(result, "exit_kind", None) == ExitKind.context_exhausted.value
             ):
-                if context_retry_count >= max_context_retries:
+                _ctx_decision = _ctx_policy.classify(
+                    result,
+                    layer="phase",
+                    context_retries_used=context_retry_count,
+                    phase=next_step,
+                )
+                if _ctx_decision.action == "halt":
                     log(
                         f"context exhaustion retry cap reached ({max_context_retries}) — bailing",
                         context_retries_used=context_retry_count,
@@ -2167,7 +2181,7 @@ def drive(
                     max_context_retries=max_context_retries,
                     next_context_retry=context_retry_count + 1,
                 )
-                context_retry_count += 1
+                context_retry_count += _ctx_decision.budget_delta
                 if "--fresh" not in cmd:
                     cmd = [*cmd, "--fresh"]
                 code, out, err, result = _run_phase(cmd, next_step)
@@ -2184,10 +2198,21 @@ def drive(
         ):
             external_error = getattr(result, "external_error", None)
             phase_retry_count = external_retry_counts_by_phase.get(next_step, 0)
-            if (
-                phase_retry_count >= max_external_retries
-                or not _is_retryable_external_error(next_step, external_error)
-            ):
+            # M4 T18: bind classification to RecoveryPolicy.classify while
+            # preserving every side effect verbatim. classify returns a pure
+            # decision; counter bumps + event emits stay below.
+            _ext_decision = RecoveryPolicy(
+                max_external_retries=max_external_retries
+            ).classify(
+                result,
+                layer="phase",
+                external_retries_used=phase_retry_count,
+                phase=next_step,
+            )
+            if _ext_decision.action != "retry_transient":
+                break
+            # Retain the legacy retryability gate verbatim (identity guard).
+            if not _is_retryable_external_error(next_step, external_error):
                 break
             provider = getattr(external_error, "provider", "unknown")
             error_kind = getattr(external_error, "error_kind", "unknown")

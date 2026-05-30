@@ -221,7 +221,11 @@ def _find_megaplan_checkouts() -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _check_stale_lock(plan_dir: Path) -> tuple[str, str, str]:
+def _check_stale_lock(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
+    """T26 — `composition` (CompositionObservability) is the flag-ON path for
+    non-plan composers; today it is accepted but unused (plan_dir remains
+    authoritative for flag-OFF). Strangler discipline keeps the legacy
+    plan_dir call sites unchanged."""
     lock_file = plan_dir / ".lock"
     if not lock_file.exists():
         return _check_status("Lock", True)
@@ -255,7 +259,7 @@ def _check_stale_lock(plan_dir: Path) -> tuple[str, str, str]:
         )
 
 
-def _check_phase_timeout(plan_dir: Path) -> tuple[str, str, str]:
+def _check_phase_timeout(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
     # cache-tolerant: doctor probe.
     state_file = plan_dir / "state.json"
     if not state_file.exists():
@@ -297,7 +301,7 @@ def _check_phase_timeout(plan_dir: Path) -> tuple[str, str, str]:
     return _check_status(f"Phase running {elapsed:.0f}s (within timeout)", True)
 
 
-def _check_llm_liveness(plan_dir: Path) -> tuple[str, str, str]:
+def _check_llm_liveness(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
     """Check for unmatched llm_call_start (no end) with no heartbeat >60s."""
     import time
 
@@ -345,7 +349,7 @@ def _check_llm_liveness(plan_dir: Path) -> tuple[str, str, str]:
     return _check_status("LLM liveness", True)
 
 
-def _check_cost_trajectory(plan_dir: Path) -> tuple[str, str, str]:
+def _check_cost_trajectory(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
     """Compare cumulative cost_recorded sum against nominal tier cap."""
     events = list(read_events(plan_dir))
     total_cost = 0.0
@@ -365,7 +369,7 @@ def _check_cost_trajectory(plan_dir: Path) -> tuple[str, str, str]:
     return _check_status(f"Cost ${total_cost:.2f} (within 2× cap)", True)
 
 
-def _check_orphan_subprocesses(plan_dir: Path) -> tuple[str, str, str]:
+def _check_orphan_subprocesses(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
     """Check for megaplan subprocesses with dead parents."""
     try:
         import psutil
@@ -398,7 +402,7 @@ def _check_orphan_subprocesses(plan_dir: Path) -> tuple[str, str, str]:
     return _check_status("No orphan subprocesses", True)
 
 
-def _check_outstanding_flags(plan_dir: Path) -> tuple[str, str, str]:
+def _check_outstanding_flags(plan_dir: Path, *, composition: object | None = None) -> tuple[str, str, str]:
     """Check for outstanding flags and enumerate recoverable_via."""
     from megaplan._core.workflow import workflow_next
 

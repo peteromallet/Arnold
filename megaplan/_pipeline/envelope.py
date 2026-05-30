@@ -31,6 +31,17 @@ class RunEnvelope:
         Remaining retry attempts.
     error_class : str | None
         Symbolic error class if an error has been recorded.
+    lease_id : str | None
+        Identifier of the capacity lease this envelope represents, if any.
+        Two non-None unequal lease_ids cannot join — joining raises
+        :class:`LeaseIdConflict`.
+    fencing_token : int | None
+        Monotonic fencing token for stale-lease detection.  Join takes the max
+        (treating ``None`` as ``-1`` so any concrete token dominates).
+    capacity_grant : int
+        Additive capacity-grant amount in abstract units.  Join sums; the
+        budget authority is responsible for downstream
+        (lease_id, fencing_token) de-duplication.
     """
 
     taint: str = "clean"
@@ -40,6 +51,9 @@ class RunEnvelope:
     cancellation: bool = False
     retry_budget: int = 3
     error_class: str | None = None
+    lease_id: str | None = None
+    fencing_token: int | None = None
+    capacity_grant: int = 0
 
     # ------------------------------------------------------------------
     # Semilattice join
@@ -101,6 +115,28 @@ class RunEnvelope:
         else:
             error_class = "multiple"
 
+        # lease_id: equal or one-side None merges; unequal non-None conflicts.
+        if self.lease_id is None:
+            lease_id = other.lease_id
+        elif other.lease_id is None:
+            lease_id = self.lease_id
+        elif self.lease_id == other.lease_id:
+            lease_id = self.lease_id
+        else:
+            raise LeaseIdConflict(
+                f"Cannot join envelopes with unequal lease_ids: "
+                f"{self.lease_id!r} vs {other.lease_id!r}"
+            )
+
+        # fencing_token: max, treating None as -1.
+        a = -1 if self.fencing_token is None else self.fencing_token
+        b = -1 if other.fencing_token is None else other.fencing_token
+        merged_ft = max(a, b)
+        fencing_token = None if merged_ft == -1 else merged_ft
+
+        # capacity_grant: additive (downstream de-dups by (lease_id, fencing_token)).
+        capacity_grant = self.capacity_grant + other.capacity_grant
+
         return RunEnvelope(
             taint=taint,
             cost=cost,
@@ -109,6 +145,9 @@ class RunEnvelope:
             cancellation=cancellation,
             retry_budget=retry_budget,
             error_class=error_class,
+            lease_id=lease_id,
+            fencing_token=fencing_token,
+            capacity_grant=capacity_grant,
         )
 
     # ------------------------------------------------------------------
@@ -124,6 +163,9 @@ class RunEnvelope:
             "cancellation": self.cancellation,
             "retry_budget": self.retry_budget,
             "error_class": self.error_class,
+            "lease_id": self.lease_id,
+            "fencing_token": self.fencing_token,
+            "capacity_grant": self.capacity_grant,
         }
 
     @classmethod
@@ -136,6 +178,9 @@ class RunEnvelope:
             cancellation=data["cancellation"],
             retry_budget=data["retry_budget"],
             error_class=data.get("error_class"),
+            lease_id=data.get("lease_id"),
+            fencing_token=data.get("fencing_token"),
+            capacity_grant=data.get("capacity_grant", 0),
         )
 
 
@@ -144,6 +189,16 @@ class EnvelopeDroppedError(RuntimeError):
 
     Only active when ``CONVEYANCE_STRICT=1`` (or inherited from
     ``MEGAPLAN_UNIFIED_DISPATCH``).  Silent when the flag is off.
+    """
+
+
+class LeaseIdConflict(RuntimeError):
+    """Raised when joining two envelopes that carry unequal non-None lease_ids.
+
+    Lease identifiers are exclusive — a single envelope cannot simultaneously
+    represent two distinct capacity leases.  Conflicts surface at join time so
+    that the budget authority sees them as hard errors rather than silent
+    overwrites.
     """
 
 
@@ -160,6 +215,9 @@ def make_envelope(
     cancellation: bool = False,
     retry_budget: int = 3,
     error_class: str | None = None,
+    lease_id: str | None = None,
+    fencing_token: int | None = None,
+    capacity_grant: int = 0,
 ) -> RunEnvelope:
     """Convenience constructor with keyword-only args and list→tuple coercion."""
     return RunEnvelope(
@@ -170,6 +228,9 @@ def make_envelope(
         cancellation=cancellation,
         retry_budget=retry_budget,
         error_class=error_class,
+        lease_id=lease_id,
+        fencing_token=fencing_token,
+        capacity_grant=capacity_grant,
     )
 
 

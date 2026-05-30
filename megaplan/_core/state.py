@@ -991,12 +991,37 @@ def clear_active_step(state: PlanState, *, run_id: str | None = None) -> None:
 
 
 def append_history(state: PlanState, entry: HistoryEntry) -> None:
-    state["history"].append(entry)
-    state["meta"].setdefault("total_cost_usd", 0.0)
-    state["meta"]["total_cost_usd"] = round(
-        float(state["meta"]["total_cost_usd"]) + float(entry.get("cost_usd", 0.0)),
-        6,
+    # M4 T15 — first journaled model-spend seam.  Under EFFECT_LEDGER=1, route
+    # the cost-attribution write through journal_then_execute so the intent is
+    # durably journaled BEFORE the in-memory accumulation; off-path is
+    # byte-identical.
+    def _accumulate() -> None:
+        state["history"].append(entry)
+        state["meta"].setdefault("total_cost_usd", 0.0)
+        state["meta"]["total_cost_usd"] = round(
+            float(state["meta"]["total_cost_usd"]) + float(entry.get("cost_usd", 0.0)),
+            6,
+        )
+
+    try:
+        from megaplan._pipeline.flags import effect_ledger_on
+        from megaplan.observability.effect_enforcement import journal_then_execute
+        from megaplan.observability.effect_ledger import Effect, ReplayClass
+    except Exception:
+        _accumulate()
+        return
+    if not effect_ledger_on():
+        _accumulate()
+        return
+    cost = float(entry.get("cost_usd", 0.0) or 0.0)
+    step = str(entry.get("step", "") or "")
+    key = f"model_spend:{step}:{cost}:{len(state.get('history', []))}"
+    eff = Effect(
+        replay_class=ReplayClass.idempotent_keyed,
+        idempotency_key=key,
+        provenance={"module": "megaplan._core.state", "fn": "append_history"},
     )
+    journal_then_execute(eff, _accumulate, phase="execute")
 
 
 def make_history_entry(

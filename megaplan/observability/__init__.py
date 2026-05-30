@@ -14,5 +14,24 @@ from megaplan.observability.events import (
     read_events,
     spawned,
 )
+from megaplan.observability.event_sink import (
+    EventEnvelope,
+    EventSink,
+    NdjsonBackend,
+    StoreBackend,
+)
+from megaplan.observability.evaluand import EvaluandRecord
 
-__all__ = ["EventWriter", "EventKind", "emit", "read_events", "spawned", "live_log_tee"]
+__all__ = [
+    "EventWriter",
+    "EventKind",
+    "emit",
+    "read_events",
+    "spawned",
+    "live_log_tee",
+    "EventSink",
+    "EventEnvelope",
+    "NdjsonBackend",
+    "StoreBackend",
+    "EvaluandRecord",
+]
