@@ -1230,6 +1230,7 @@ def test_run_chain_passes_milestone_rubric_knobs_to_init(tmp_path: Path) -> None
 
     with patch("megaplan.chain._init_plan", side_effect=fake_init), \
          patch("megaplan.chain.auto_drive", return_value=_fake_outcome("plan-m1", "done")), \
+         patch("megaplan.workers._is_agent_available", lambda agent: True), \
          patch("megaplan.chain._refresh_base_branch", lambda *a, **k: None):
         result = run_chain(spec_path, tmp_path, writer=lambda _m: None)
 
