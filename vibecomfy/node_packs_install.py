@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from vibecomfy.node_packs import CustomNodePack, get_known_node_packs, resolve_node_packs, unresolved_class_types
 from vibecomfy.node_packs_lockfile import LockEntry, upsert_lockfile_entry
 from vibecomfy.registry.pack_resolver import PackNotFoundError, PackRef, resolve_pack
+from vibecomfy.security.gate import current_gate_context, require_confirmation, requesting_provenance
 from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeWorkflow
 InstallStatus = Literal["installed", "refreshed", "skipped_dirty", "failed"]
@@ -113,6 +114,18 @@ def install_pack(*, name: str | None = None, repo: str | None = None, force: boo
     install_dir = install_root / pack_name
     if install_dir.exists(): return _refresh_existing(pack_name, repo_url, install_dir, force, lockfile_path, runner, pack=pack, pack_ref=resolved_ref)
     cm_cli_argv = cm_cli_resolver(install_root, runner)
+    # S4 capability fence: gate AFTER parameter validation (name/repo lookup,
+    # cm-cli path detection, directory-exists check) and BEFORE any subprocess
+    # call (cm-cli install / git clone / pip install). Refusal raises
+    # CapabilityFenceError before any process is spawned.
+    require_confirmation(
+        operation="install_pack",
+        class_type=None,
+        provenance=requesting_provenance.get(),
+        capabilities=frozenset({"code_exec", "network", "filesystem_write"}),
+        details={"name": pack_name, "repo": repo_url},
+        ctx=current_gate_context(),
+    )
     if cm_cli_argv is None: return _install_pack_via_clone(pack_name, repo_url, pack, install_dir, lockfile_path, runner, pack_ref=resolved_ref)
     try: runner([*cm_cli_argv, "install", pack_name], check=True, capture_output=True, text=True, cwd=install_root.parent)
     except (OSError, subprocess.CalledProcessError):

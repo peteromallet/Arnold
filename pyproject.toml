@@ -46,6 +46,13 @@ runpod-launch = [
   "python-dotenv>=1.0",
   "runpod-lifecycle @ git+https://github.com/banodoco/runpod-lifecycle.git@v0.1.1",
 ]
+intent = [
+  # Optional extra for the intent-oracle gate (S3).  anthropic is needed for
+  # text-judge / vision-judge LLM calls; Pillow is needed for pHash-based
+  # structural diff detection.  Neither is required for any other module.
+  "anthropic>=0.40",
+  "Pillow>=10",
+]
 
 [project.scripts]
 vibecomfy = "vibecomfy.cli:main"
@@ -70,6 +77,7 @@ addopts = "-m 'not gpu'"
 markers = [
   "comfy_version_compat: marks opt-in multi-ComfyUI-version compatibility tests (Sprint 4 scope).",
   "gpu: marks tests that provision live GPU resources",
+  "intent_ci: marks fast, deterministic intent-oracle CI gate tests (invoke with `pytest -m intent_ci tests/intent`).",
   "runpod: opt-in smoke tests that provision real RunPod GPU pods (requires --runpod and RUNPOD_API_KEY).",
   "runpod_full: opt-in production-resolution matrix tests; multi-pod, ~$5-10 per run (requires --runpod-full and RUNPOD_API_KEY).",
   "comfy: opt-in release gate that imports ComfyUI and runs convert_ui_to_api; skipped offline (requires VIBECOMFY_COMFY_SMOKE=1).",

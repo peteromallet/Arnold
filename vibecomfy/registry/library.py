@@ -69,5 +69,5 @@ def load_workflow_reference(
             if not allow_scratchpad:
                 raise
     if allow_scratchpad:
-        return load_scratchpad(value)
+        return load_scratchpad(value, provenance_override="user_confirmed")
     return workflow_from_id(value, schema_provider=schema_provider)
