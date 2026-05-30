@@ -663,6 +663,13 @@ def test_run_shannon_step_passes_prompt_with_print_flag(tmp_path: Path, monkeypa
     # Output ceiling is raised above the inherited ~64k default so opus is not
     # cut off mid-run before emitting the structured envelope.
     assert run_command.call_args.kwargs["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
+    # The launched Claude CLI's per-command Bash timeout is raised above its 120s
+    # built-in default so a legitimate long-running execute command (e.g. a full
+    # pytest run) is not SIGKILLed mid-run; megaplan's 7200s execute cap + 900s
+    # stall watchdog own the stop-policy instead.
+    env_out = run_command.call_args.kwargs["env"]
+    assert env_out["BASH_DEFAULT_TIMEOUT_MS"] == "7200000"
+    assert env_out["BASH_MAX_TIMEOUT_MS"] == "7200000"
     # On non-root systems, ANTHROPIC_API_KEY is set to "" to block Bun's dotenv auto-load.
     api_key_val = run_command.call_args.kwargs["env"].get("ANTHROPIC_API_KEY")
     assert api_key_val is None or api_key_val == ""
@@ -1908,3 +1915,20 @@ def test_session_strategy_stall_after_clear_rotation_clears_persisted_id(
             )
     assert calls[1][calls[1].index("--resume") + 1] == "rot-1"   # work turn resumed rotated id
     assert key not in state["sessions"]                          # persisted pre-clear id dropped
+
+
+def test_shannon_bash_timeout_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The launched Claude CLI's per-command Bash timeout defaults well above its
+    built-in 120s cap and is overridable via env, so megaplan's phase budget +
+    stall watchdog own the stop-policy rather than a 120s SIGKILL mid-command."""
+    from megaplan.workers.shannon import _shannon_bash_timeout_ms
+
+    monkeypatch.delenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", raising=False)
+    assert _shannon_bash_timeout_ms() == 7200000
+
+    monkeypatch.setenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", "300000")
+    assert _shannon_bash_timeout_ms() == 300000
+
+    # Garbage falls back to the safe default rather than crashing the worker.
+    monkeypatch.setenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", "not-a-number")
+    assert _shannon_bash_timeout_ms() == 7200000
