@@ -14,6 +14,8 @@ from vibecomfy.metadata import (
 from vibecomfy.porting.uid import make_uid, mint_local_uid
 from vibecomfy.porting.widget_aliases import widget_names_for_class, widget_names_from_schema
 from vibecomfy.schema import OutputSpec, SchemaProvider, schema_for
+from vibecomfy.security.gate import untrusted_scope
+from vibecomfy.security.provenance import PROVENANCE_KEY
 from vibecomfy.workflow import VibeEdge, VibeNode, VibeOutput, VibeWorkflow, WorkflowSource
 
 
@@ -202,6 +204,22 @@ def convert_to_vibe_format(
     workflow_id: str | None = None,
     schema_provider: SchemaProvider | None = None,
 ) -> VibeWorkflow:
+    with untrusted_scope():
+        return _convert_to_vibe_format_impl(
+            api_workflow,
+            source_path=source_path,
+            workflow_id=workflow_id,
+            schema_provider=schema_provider,
+        )
+
+
+def _convert_to_vibe_format_impl(
+    api_workflow: dict[str, Any],
+    *,
+    source_path: str | None = None,
+    workflow_id: str | None = None,
+    schema_provider: SchemaProvider | None = None,
+) -> VibeWorkflow:
     if detect_workflow_shape(api_workflow) != "api":
         api_workflow = normalize_to_api(api_workflow, schema_provider=schema_provider)
     source = WorkflowSource(
@@ -262,6 +280,10 @@ def convert_to_vibe_format(
         schema_source = _schema_source_provenance(schema_provider, class_type)
         if schema_source is not None:
             metadata.setdefault("schema_source", schema_source)
+        # S4 capability fence: ingest is the external-JSON boundary, so every
+        # ingested node is tagged untrusted_source. Unconditional set — never
+        # `setdefault` — so a hostile JSON cannot pre-declare itself trusted.
+        metadata[PROVENANCE_KEY] = "untrusted_source"
         workflow.nodes[str(node_id)] = VibeNode(
             id=str(node_id),
             class_type=class_type,

@@ -8,6 +8,8 @@ import warnings
 from typing import Any, Iterable
 
 from vibecomfy.registry.ready_template import apply_ready_template_policy
+from vibecomfy.security import current_gate_context, require_confirmation
+from vibecomfy.security.loader_provenance import _provenance_for_path
 from vibecomfy.utils import find_repo_root
 from vibecomfy.workflow import VibeWorkflow
 
@@ -94,6 +96,14 @@ def workflow_from_ready(template_id: str) -> VibeWorkflow:
     if spec is None or spec.loader is None:
         raise ValueError(f"Could not import ready template {path}")
     module = importlib.util.module_from_spec(spec)
+    require_confirmation(
+        operation="scratchpad_exec",
+        class_type=None,  # type: ignore[arg-type]
+        provenance=_provenance_for_path(path),
+        capabilities=frozenset({"code_exec"}),
+        details={"path": str(path)},
+        ctx=current_gate_context(),
+    )
     spec.loader.exec_module(module)
     build = getattr(module, "build", None)
     if build is None:

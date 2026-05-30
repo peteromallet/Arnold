@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from vibecomfy.errors import WorkflowBuildError
+from vibecomfy.security import current_gate_context, require_confirmation
+from vibecomfy.security.loader_provenance import _provenance_for_path
 
 from .workflow import VibeWorkflow
 
@@ -21,6 +23,14 @@ def load_scratchpad(path: str | Path) -> VibeWorkflow:
     if spec is None or spec.loader is None:
         raise ValueError(f"Could not import scratchpad {path}")
     module = importlib.util.module_from_spec(spec)
+    require_confirmation(
+        operation="scratchpad_exec",
+        class_type=None,  # type: ignore[arg-type]
+        provenance=_provenance_for_path(path),
+        capabilities=frozenset({"code_exec"}),
+        details={"path": str(path)},
+        ctx=current_gate_context(),
+    )
     spec.loader.exec_module(module)
     build = getattr(module, "build", None)
     if build is None:
