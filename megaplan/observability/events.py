@@ -20,9 +20,77 @@ import json
 import os
 import threading
 import time
+import warnings
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterator, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Any, Dict, Generator, Iterator, Optional, Sequence, Set
+
+if TYPE_CHECKING:
+    from megaplan._pipeline.envelope import RunEnvelope
+
+
+# ---------------------------------------------------------------------------
+# M4 T9 — observability-side envelope ContextVar (run_id carrier).
+#
+# install_runtime_governor seats the active RunEnvelope here on enter and
+# clears it on exit (via the token returned by ContextVar.set).  Event emits
+# read this ContextVar to resolve the current run_id; when the ContextVar is
+# unset, the emit proceeds WITHOUT a run_id and WARN_ONCE is fired exactly
+# once for the lifetime of the process so the missing-carrier case is loud
+# without spamming the log on every emit.
+#
+# EventWriter.emit's signature is intentionally unchanged at this step — the
+# run_id is injected into the emitted event dict as a sibling key when an
+# envelope is in scope.
+# ---------------------------------------------------------------------------
+
+_envelope_ctx: ContextVar[Optional["RunEnvelope"]] = ContextVar(
+    "_envelope_ctx_events", default=None
+)
+
+_missing_envelope_ctx_warned: bool = False
+_missing_envelope_ctx_warn_lock = threading.Lock()
+
+
+def _warn_missing_envelope_ctx_once() -> None:
+    global _missing_envelope_ctx_warned
+    with _missing_envelope_ctx_warn_lock:
+        if _missing_envelope_ctx_warned:
+            return
+        _missing_envelope_ctx_warned = True
+    warnings.warn(
+        "observability.events: emit() invoked with no RunEnvelope in "
+        "_envelope_ctx; emitting without run_id (M4 T9 WARN_ONCE).",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
+def _reset_missing_envelope_ctx_warned_for_tests() -> None:
+    """Test hook — re-arms the WARN_ONCE latch."""
+    global _missing_envelope_ctx_warned
+    with _missing_envelope_ctx_warn_lock:
+        _missing_envelope_ctx_warned = False
+
+
+def _resolve_run_id() -> Optional[str]:
+    """Return the run_id derived from the active RunEnvelope, or None.
+
+    When the ContextVar is unset, fires WARN_ONCE and returns None so the
+    caller emits the envelope WITHOUT a run_id field.
+    """
+    env = _envelope_ctx.get()
+    if env is None:
+        _warn_missing_envelope_ctx_once()
+        return None
+    rid = getattr(env, "run_id", None)
+    if rid:
+        return str(rid)
+    lineage = getattr(env, "lineage", ()) or ()
+    if lineage:
+        return str(lineage[0])
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -187,14 +255,23 @@ class EventWriter:
             init_ts = self._load_init_ts()
 
             # Build the event dict first so we know the line to write.
+            # M4 T10: schema_version=1 pinned in the NDJSON envelope; run_id
+            # added below from the active _envelope_ctx.
             event: dict = {
                 "seq": -1,  # placeholder — assigned under flock
+                "schema_version": 1,
                 "ts_utc": ts_utc.isoformat(),
                 "ts_rel_init_s": None,
                 "kind": kind,
                 "phase": phase,
                 "payload": payload if payload is not None else {},
             }
+            # M4 T9: inject run_id resolved from the active RunEnvelope when
+            # one is in scope.  Missing context omits the field and fires
+            # WARN_ONCE on the first miss (no signature change to emit()).
+            _rid = _resolve_run_id()
+            if _rid is not None:
+                event["run_id"] = _rid
             if init_ts is not None:
                 event["ts_rel_init_s"] = (ts_utc - init_ts).total_seconds()
             if kind == EventKind.INIT and init_ts is None:
@@ -356,6 +433,8 @@ def emit_state_wal(
                 "replay_class": effect.replay_class.value,
                 "idempotency_key": effect.idempotency_key,
                 "compensation": effect.compensation,
+                "provenance": dict(effect.provenance),
+                "effect_taint": effect.effect_taint,
             }
     return _get_writer(Path(plan_dir)).emit(EventKind.STATE_WRITTEN, payload=payload)
 
@@ -393,7 +472,20 @@ def read_events(
                 continue
             try:
                 event = json.loads(line)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                # M4 T10: under UNIFIED_EMIT=1 (or master flag), a journal
+                # decode error is a LOUD catalogued failure — silent
+                # continue used to swallow corruption.  Flag-off path
+                # remains byte-identical (silent skip).
+                try:
+                    from megaplan._pipeline.flags import unified_emit_on
+                    if unified_emit_on():
+                        raise RuntimeError(
+                            "EVENTS_NDJSON_DECODE_ERROR: "
+                            f"plan_dir={plan_dir} line={line!r} err={exc}"
+                        ) from exc
+                except ImportError:
+                    pass
                 continue
 
             # seq filter

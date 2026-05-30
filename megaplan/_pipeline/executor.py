@@ -227,7 +227,26 @@ def _run_parallel_stage(node: ParallelStage, ctx: StepContext) -> StepResult:
             idx = future_to_idx[fut]
             results[idx] = fut.result()
 
-    return node.join(results, ctx)
+    joined = node.join(results, ctx)
+    # M4 T3 — fold the reduced envelope's shard spend into the active
+    # Governor accumulator (if installed).  No-op when no Governor is
+    # attached or when the envelope lacks lease_id / fencing_token, which
+    # preserves byte-identical behaviour on the single-process fallback
+    # path where no shared capacity ledger is configured.
+    try:
+        from megaplan.runtime.governor import current_governor as _cur_gov
+        _gov_p = _cur_gov()
+        if _gov_p is not None:
+            _gov_p.fold_shard_spend(joined.envelope)
+    except Exception:
+        # fold is observational; never mask the upstream join result.
+        # BudgetExceeded must still propagate, however — re-raise it.
+        from megaplan.runtime.governor import BudgetExceeded as _BE
+        import sys as _sys
+        _exc = _sys.exc_info()[1]
+        if isinstance(_exc, _BE):
+            raise
+    return joined
 
 
 def run_pipeline(
@@ -262,6 +281,14 @@ def run_pipeline(
 
     executor_owned_keys: set[str] = set()
     envelope: RunEnvelope = ctx.envelope if ctx.envelope is not None else EMPTY_ENVELOPE
+
+    # M4 T2: under MEGAPLAN_UNIFIED_DISPATCH=1, install a tree-scoped Governor
+    # for the duration of this pipeline run.  Strangler-pattern: bare path is
+    # unchanged when the flag is off.
+    from megaplan._pipeline.flags import unified_dispatch_on as _udo
+    if _udo():
+        from megaplan.runtime import install_runtime_governor as _install_gov
+        _install_gov(envelope)
     cursor = pipeline.entry
     iterations = 0
     loop_iters: dict[str, int] = {}
@@ -423,9 +450,25 @@ def run_pipeline(
         # Envelope join: accumulate cross-cutting metadata from each step.
         _assert_envelope_present(result.envelope, f"step_result:{node.name}")
         envelope = envelope.join(result.envelope)
+        # M4 T3 — fold the joined shard spend into the active Governor.
+        # No-op without lease_id / fencing_token (single-process fallback is
+        # byte-identical with the pre-M4 behaviour).
+        from megaplan.runtime.governor import current_governor as _cur_gov_seq
+        _gov_s = _cur_gov_seq()
+        if _gov_s is not None:
+            _gov_s.fold_shard_spend(envelope)
 
         _assert_envelope_present(envelope, "_merge_state_to_disk")
-        _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
+        # T24: gated behind UNIFIED_EVALUAND — wrap the state-merge +
+        # receipt write in a Store.transaction so state.json + receipt
+        # row + DB roll back together on mid-stage crash (UU#8).
+        from megaplan._pipeline.flags import unified_evaluand_on
+        if unified_evaluand_on():
+            from megaplan.observability.evaluand import _evaluand_transaction_boundary
+            with _evaluand_transaction_boundary(envelope):
+                _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
+        else:
+            _merge_state_to_disk(artifact_root, state, executor_owned_keys=executor_owned_keys)
 
         if policy is not None:
             _assert_envelope_present(envelope, "stall_cost_observer")

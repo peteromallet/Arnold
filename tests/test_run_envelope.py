@@ -7,6 +7,7 @@ import pytest
 
 from megaplan._pipeline.envelope import (
     EMPTY_ENVELOPE,
+    LeaseIdConflict,
     RunEnvelope,
     make_envelope,
 )
@@ -216,3 +217,113 @@ def test_step_result_custom_envelope():
     env = e(retry_budget=1)
     result = StepResult(envelope=env)
     assert result.envelope.retry_budget == 1
+
+
+# ---------------------------------------------------------------------------
+# M4 T1: lease_id / fencing_token / capacity_grant
+# ---------------------------------------------------------------------------
+
+
+def test_new_fields_default_to_empty():
+    env = RunEnvelope()
+    assert env.lease_id is None
+    assert env.fencing_token is None
+    assert env.capacity_grant == 0
+    assert EMPTY_ENVELOPE.lease_id is None
+    assert EMPTY_ENVELOPE.fencing_token is None
+    assert EMPTY_ENVELOPE.capacity_grant == 0
+
+
+def test_make_envelope_accepts_new_fields():
+    env = make_envelope(lease_id="L7", fencing_token=12, capacity_grant=5)
+    assert env.lease_id == "L7"
+    assert env.fencing_token == 12
+    assert env.capacity_grant == 5
+
+
+def test_legacy_json_roundtrip_via_deleted_keys_fixture():
+    """Legacy payloads (pre-T1) omit the three new keys — from_json must default."""
+    full = e(taint="tainted", cost=1.5, lineage=("a", "b"), retry_budget=2).to_json()
+    # Synthesize a legacy payload by deleting the new keys.
+    for k in ("lease_id", "fencing_token", "capacity_grant"):
+        assert k in full
+        del full[k]
+    restored = RunEnvelope.from_json(full)
+    assert restored.taint == "tainted"
+    assert restored.cost == 1.5
+    assert restored.lineage == ("a", "b")
+    assert restored.retry_budget == 2
+    assert restored.lease_id is None
+    assert restored.fencing_token is None
+    assert restored.capacity_grant == 0
+
+
+def test_json_roundtrip_preserves_new_fields():
+    env = make_envelope(lease_id="L42", fencing_token=11, capacity_grant=3)
+    restored = RunEnvelope.from_json(env.to_json())
+    assert restored == env
+
+
+def test_json_roundtrip_via_string_new_fields():
+    env = make_envelope(lease_id="LX", fencing_token=4, capacity_grant=7)
+    restored = RunEnvelope.from_json(json.loads(json.dumps(env.to_json())))
+    assert restored == env
+
+
+def test_join_idempotent_new_fields():
+    env = make_envelope(lease_id="L1", fencing_token=9, capacity_grant=3)
+    assert env.join(env) == env
+
+
+def test_join_capacity_grant_sums_commutatively():
+    a = make_envelope(capacity_grant=2)
+    b = make_envelope(capacity_grant=5)
+    assert a.join(b).capacity_grant == 7
+    assert b.join(a).capacity_grant == 7
+
+
+def test_join_fencing_token_max_treats_none_as_minus_one():
+    a = make_envelope(fencing_token=None)
+    b = make_envelope(fencing_token=3)
+    assert a.join(b).fencing_token == 3
+    assert b.join(a).fencing_token == 3
+    c = make_envelope(fencing_token=10)
+    d = make_envelope(fencing_token=4)
+    assert c.join(d).fencing_token == 10
+    assert d.join(c).fencing_token == 10
+    # Both None stays None (max(-1,-1) == -1 maps back to None).
+    assert make_envelope().join(make_envelope()).fencing_token is None
+
+
+def test_join_lease_id_none_side_absorbs():
+    a = make_envelope(lease_id="L1")
+    b = make_envelope(lease_id=None)
+    assert a.join(b).lease_id == "L1"
+    assert b.join(a).lease_id == "L1"
+
+
+def test_join_lease_id_equal_merges():
+    a = make_envelope(lease_id="L1", capacity_grant=1)
+    b = make_envelope(lease_id="L1", capacity_grant=2)
+    joined = a.join(b)
+    assert joined.lease_id == "L1"
+    assert joined.capacity_grant == 3
+
+
+def test_join_unequal_lease_ids_raises_lease_id_conflict_commutatively():
+    a = make_envelope(lease_id="L1")
+    b = make_envelope(lease_id="L2")
+    with pytest.raises(LeaseIdConflict):
+        a.join(b)
+    with pytest.raises(LeaseIdConflict):
+        b.join(a)
+
+
+def test_join_with_empty_preserves_new_fields():
+    env = make_envelope(lease_id="L1", fencing_token=4, capacity_grant=2)
+    left = env.join(EMPTY_ENVELOPE)
+    right = EMPTY_ENVELOPE.join(env)
+    for joined in (left, right):
+        assert joined.lease_id == "L1"
+        assert joined.fencing_token == 4
+        assert joined.capacity_grant == 2

@@ -3,6 +3,19 @@
 Centralized single source of truth for MEGAPLAN_TYPED_PORTS and future
 feature flags.  All callers must import from here rather than calling
 ``os.getenv`` directly.
+
+M4 T5 — Companion flags
+-----------------------
+The seven companion flags introduced for the unified-dispatch strangler
+(``UNIFIED_EMIT``, ``UNIFIED_EVIDENCE``, ``UNIFIED_CONFIG``, ``EFFECT_LEDGER``,
+``UNIFIED_RECOVERY``, ``UNIFIED_BUDGET``, ``UNIFIED_EVALUAND`` / ``R5_UNIFIED``)
+are deliberately **NOT** entries in the long-lived ``FLAG-*`` catalog.  Their
+lifecycle is tied to the strangler pattern — each flips once its organ has
+migrated and then disappears.  Treat them as scaffold, not as feature gates.
+
+Each companion inherits from ``MEGAPLAN_UNIFIED_DISPATCH`` (the master gate)
+when its own env var is unset, so a single master flip exercises every organ
+simultaneously while still allowing per-organ overrides for debugging.
 """
 
 from __future__ import annotations
@@ -67,3 +80,57 @@ def activation_emit_on() -> bool:
     ``MEGAPLAN_UNIFIED_DISPATCH`` when ``ACTIVATION_EMIT`` is unset.
     """
     return _companion_on("ACTIVATION_EMIT")
+
+
+# ---------------------------------------------------------------------------
+# M4 T5 — Companion flags for the unified-dispatch strangler.
+# These are intentionally NOT entries in the long-lived FLAG-* catalog; see
+# the module docstring above.
+# ---------------------------------------------------------------------------
+
+
+def unified_emit_on() -> bool:
+    """``UNIFIED_EMIT`` — observability emit re-home companion."""
+    return _companion_on("UNIFIED_EMIT")
+
+
+def unified_evidence_on() -> bool:
+    """``UNIFIED_EVIDENCE`` — evidence-attribution re-home companion."""
+    return _companion_on("UNIFIED_EVIDENCE")
+
+
+def unified_config_on() -> bool:
+    """``UNIFIED_CONFIG`` — N-layer ConfigResolver companion."""
+    return _companion_on("UNIFIED_CONFIG")
+
+
+def effect_ledger_on() -> bool:
+    """``EFFECT_LEDGER`` — journal-then-execute Effect-Ledger companion."""
+    return _companion_on("EFFECT_LEDGER")
+
+
+def unified_recovery_on() -> bool:
+    """``UNIFIED_RECOVERY`` — RecoveryPolicy.classify companion."""
+    return _companion_on("UNIFIED_RECOVERY")
+
+
+def unified_budget_on() -> bool:
+    """``UNIFIED_BUDGET`` — BudgetAuthority capacity-grant companion."""
+    return _companion_on("UNIFIED_BUDGET")
+
+
+def unified_evaluand_on() -> bool:
+    """``UNIFIED_EVALUAND`` (alias ``R5_UNIFIED``) — Evaluand scaffold companion."""
+    val = os.getenv("UNIFIED_EVALUAND")
+    if val is None:
+        val = os.getenv("R5_UNIFIED")
+    if val is None:
+        return _master_on()
+    return val == "1"
+
+
+# Alias for the master gate, exposed under the conventional name used by the
+# M4 brief / consumers ("is the unified dispatch path enabled?").
+def unified_dispatch_enabled() -> bool:
+    """Return ``True`` when the master ``MEGAPLAN_UNIFIED_DISPATCH`` flag is on."""
+    return _master_on()
