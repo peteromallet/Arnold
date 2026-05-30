@@ -2234,6 +2234,68 @@ def _maybe_file_ladder_ticket(
         )
 
 
+def _milestone_uses_hermes_backend(milestone: "MilestoneSpec") -> str | None:
+    """Return a phase name if *milestone* will exercise the hermes/agent backend.
+
+    The canonical prep models (triage/fanout/distill) all route to
+    ``hermes:deepseek:...`` (see ``CANONICAL_PREP_MODELS``), so any milestone
+    that runs prep WILL import the hermes runtime. Explicit per-phase
+    ``hermes:...`` routes (via ``phase_model``) also need the backend. Returns
+    the most representative phase name for the error message, or ``None`` if the
+    milestone does not need the hermes backend.
+    """
+    for entry in milestone.phase_model or []:
+        if "=" not in entry:
+            continue
+        phase_step, spec = entry.split("=", 1)
+        if spec.strip().startswith("hermes:") or spec.strip() == "hermes":
+            return phase_step
+    if milestone.with_prep:
+        return "prep"
+    return None
+
+
+def _preflight_agent_backends(spec: "ChainSpec", *, writer) -> None:
+    """Fail fast (cold path) if a milestone needs the hermes/agent backend but
+    it is not importable.
+
+    Without this, a misconfigured install only surfaces the failure deep inside
+    the prep phase (e.g. prep research iteration 3) as a confusing
+    ``phase 'prep' internal_error`` whose stdout is the raw
+    ``agent_deps_missing`` payload. This preflight names the offending
+    milestone + phase and the exact remediation BEFORE any milestone is driven.
+    """
+    offenders: list[tuple[str, str]] = []
+    for milestone in spec.milestones:
+        phase = _milestone_uses_hermes_backend(milestone)
+        if phase is not None:
+            offenders.append((milestone.label, phase))
+    if not offenders:
+        return
+
+    # Probe via the same import check the hot path uses, so a partial install
+    # (e.g. hermes_state present but run_agent's deps missing) also fails here.
+    from megaplan.workers import _is_agent_available
+
+    if _is_agent_available("hermes"):
+        return
+
+    first_label, first_phase = offenders[0]
+    detail = ", ".join(f"{label} ({phase})" for label, phase in offenders)
+    raise CliError(
+        "agent_deps_missing",
+        "The hermes/agent backend is required for this chain but is not "
+        f"installed. Milestone {first_label!r} phase {first_phase!r} (and: "
+        f"{detail}) will route to the hermes runtime. Reinstall the engine so "
+        "the agent backend is present, e.g. `uv pip install -e .` (its packages "
+        "are core dependencies) or, on an older checkout, "
+        "`uv pip install -e '.[agent]'`. "
+        "Verify with: python -c \"import megaplan.agent; "
+        "import sys; sys.path.insert(0, megaplan.agent.__path__[0]); "
+        "from run_agent import AIAgent\".",
+    )
+
+
 def run_chain(
     spec_path: Path,
     root: Path,
@@ -2253,6 +2315,7 @@ def run_chain(
     effective_stop_at_finalized = planning_pass or (stop_at_finalized and not execution_pass)
     spec = load_spec(spec_path)
     validate_paths(spec, root)
+    _preflight_agent_backends(spec, writer=writer)
     state = load_chain_state(spec_path)
     preexisting_dirty_paths = _dirty_worktree_paths(root)
     push_enabled = not no_push and os.environ.get("MEGAPLAN_CHAIN_NO_PUSH") not in {"1", "true", "TRUE", "yes", "YES"}
