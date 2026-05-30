@@ -888,6 +888,7 @@ def handle_status(root: Path, args: argparse.Namespace) -> StepResponse:
     if getattr(args, "pending_human", False):
         items = []
         for pd in cli_mod.active_plan_dirs(root):
+            # cache-tolerant: status-view read.
             st = cli_mod.read_json(pd / "state.json")
             if st.get("current_state") == "awaiting_human_verify":
                 items.append({"name": st["name"], "state": st["current_state"]})

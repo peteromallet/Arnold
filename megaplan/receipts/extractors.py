@@ -330,6 +330,7 @@ def load_and_extract(plan_dir: Path, phase: str, iteration: int, *, drift_report
         prep_path = plan_dir / "prep.json"
         payload = _read_json_if_exists(prep_path) or {}
         metrics_payload = _read_json_if_exists(plan_dir / "prep_metrics.json") or {}
+        # cache-tolerant: receipts extractor reads a snapshot view.
         state_payload = _read_json_if_exists(plan_dir / "state.json") or {}
         resolver_trace = (
             state_payload.get("config", {}).get("prep_model_resolver_trace")

@@ -26,6 +26,11 @@ from megaplan.types import CliError
 
 load_spec = load_cloud_spec
 
+# Cloud deployments always drive phases via subprocess (remote SSH exec);
+# the substrate is pinned here so the cloud CLI explicitly declares its
+# execution model to _phase_command (M3 Step 12 shim).
+cloud_substrate: str = "subprocess_isolated"
+
 
 def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     cloud_sub = cloud_parser.add_subparsers(dest="cloud_action", required=True)
@@ -224,7 +229,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
                 raise CliError("invalid_status", "Remote status did not include a next_step")
             from megaplan.auto import _phase_command
 
-            argv = list(_phase_command(next_step))
+            argv = list(_phase_command(next_step, substrate=cloud_substrate))
             if getattr(args, "plan", None):
                 argv.extend(["--plan", args.plan])
             command = f"cd {shlex.quote(spec.repo.workspace)} && megaplan {shlex.join(argv)}"

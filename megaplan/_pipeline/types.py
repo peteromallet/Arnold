@@ -69,6 +69,8 @@ from typing import (
     runtime_checkable,
 )
 
+from megaplan._pipeline.envelope import EMPTY_ENVELOPE, RunEnvelope
+
 if TYPE_CHECKING:  # pragma: no cover - typing-only aliases
     BudgetRef = Any
     Profile = Any
@@ -148,6 +150,7 @@ class StepContext:
     mode: str
     inputs: Mapping[str, Path] = field(default_factory=dict)
     budget: Any = None
+    envelope: RunEnvelope = field(default_factory=lambda: EMPTY_ENVELOPE)
 
 
 @dataclass(frozen=True)
@@ -165,6 +168,7 @@ class StepResult:
     verdict: "PipelineVerdict | None" = None
     next: NextEdge = "halt"
     state_patch: Mapping[str, Any] = field(default_factory=dict)
+    envelope: RunEnvelope = field(default_factory=lambda: EMPTY_ENVELOPE)
 
 
 @runtime_checkable

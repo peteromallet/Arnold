@@ -86,7 +86,8 @@ def resolve_plan_dir(root: Path, requested_name: str | None) -> Path:
         raise CliError("missing_plan", "No plans found. Run init first.")
     active = []
     for plan_dir in plan_dirs:
-        state = read_json(plan_dir / "state.json")
+        from megaplan._core.io import read_plan_state_cached
+        state = read_plan_state_cached(plan_dir, mode="authority")
         if state.get("current_state") not in TERMINAL_STATES:
             active.append(plan_dir)
     if len(active) == 1:
@@ -141,7 +142,8 @@ def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
 
 
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
-    state = read_json(plan_dir / "state.json")
+    from megaplan._core.io import read_plan_state_cached
+    state = read_plan_state_cached(plan_dir, mode="authority")
     if isinstance(state, dict) and (
         state.get("current_state") in {"clarified", "evaluated"}
         or "last_evaluation" in state
@@ -271,6 +273,7 @@ PlanStateWriteMode = Literal[
     "merge-meta-list",
     "legacy-migration",
     "copy-time-rewrite",
+    "reversible",
 ]
 
 PlanStateMutation = Callable[[dict[str, Any]], bool | None]
@@ -385,6 +388,121 @@ def _apply_copy_time_rewrite(
         changed = True
     config["project_dir"] = project_dir
     return changed
+
+
+_STATE_VERSIONS_DIRNAME = ".state-versions"
+
+
+class RestorableBoundaryViolation(RuntimeError):
+    """Raised when a ``restorable_boundary`` is entered from a composition
+    context where snapshot-then-replace cannot be reversed cheaply: under the
+    ``subprocess_isolated`` driver (the child owns its own state.json copy and
+    a parent-side restore would race the child) or under an active fan-out
+    spec (``_fanout_active_ctx`` is True; siblings would observe a torn
+    rollback).
+
+    This error precedes any Governor ``BudgetExceeded`` raised by the same
+    operation — the boundary is checked at ``__enter__`` time, before the
+    work begins.
+    """
+
+
+def _state_versions_dir(plan_dir: Path) -> Path:
+    return plan_dir / _STATE_VERSIONS_DIRNAME
+
+
+def _snapshot_unlocked(plan_dir: Path) -> str | None:
+    """Whole-blob copy of ``state.json`` to ``.state-versions/<id>.json``.
+
+    Assumes the caller already holds ``plan_state_lock(plan_dir)``. Returns
+    the snapshot id, or ``None`` when there is no on-disk state to capture.
+
+    The directory name ``.state-versions`` is distinct from the executor's
+    sibling forensic-backup path (``state.json.corrupt-executor-backup``);
+    the two namespaces do not collide.
+    """
+
+    state_path = plan_dir / "state.json"
+    if not state_path.exists():
+        return None
+    snapshot_id = uuid.uuid4().hex
+    versions_dir = _state_versions_dir(plan_dir)
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    dest = versions_dir / f"{snapshot_id}.json"
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+    tmp.write_bytes(state_path.read_bytes())
+    os.replace(tmp, dest)
+    return snapshot_id
+
+
+def snapshot(plan_dir: Path) -> str | None:
+    """Capture ``state.json`` under ``plan_state_lock``.
+
+    Returns the snapshot id (a hex uuid) or ``None`` when no state file
+    exists. The blob lives at ``<plan_dir>/.state-versions/<id>.json``.
+    """
+
+    with plan_state_lock(plan_dir):
+        return _snapshot_unlocked(plan_dir)
+
+
+def restore(plan_dir: Path, snapshot_id: str) -> dict[str, Any]:
+    """Atomically restore ``state.json`` from the recorded snapshot.
+
+    Raises ``CliError('missing_snapshot', ...)`` when the snapshot file is
+    absent. Returns the restored state dict.
+    """
+
+    versions_dir = _state_versions_dir(plan_dir)
+    src = versions_dir / f"{snapshot_id}.json"
+    with plan_state_lock(plan_dir):
+        if not src.exists():
+            raise CliError(
+                "missing_snapshot",
+                f"reversible restore: snapshot {snapshot_id} not found at {src}",
+                extra={"plan": plan_dir.name, "snapshot_id": snapshot_id},
+            )
+        restored = read_json(src)
+        if not isinstance(restored, dict):
+            raise CliError(
+                "invalid_state_shape",
+                f"reversible restore: snapshot {snapshot_id} is not a JSON object",
+                extra={"path": str(src), "root_type": type(restored).__name__},
+            )
+        atomic_write_json(plan_dir / "state.json", restored)
+    return restored
+
+
+@contextmanager
+def restorable_boundary(operation: str) -> Iterator[None]:
+    """Boundary that refuses to enter under composition contexts where a
+    snapshot/restore round-trip would race or tear other observers.
+
+    Raises :class:`RestorableBoundaryViolation` (loud, NOT silent) when
+    either:
+      * ``current_substrate() == 'subprocess_isolated'`` — the child owns its
+        own ``state.json`` copy and a parent-side restore would race it.
+      * ``_fanout_active_ctx.get(False)`` is ``True`` — sibling spec replicas
+        would observe a torn rollback.
+
+    The check fires at ``__enter__``, *before* any Governor budget check the
+    same operation might perform, so the boundary error precedes
+    ``BudgetExceeded``.
+    """
+
+    # Lazy imports avoid a state.py -> drivers / pipeline import cycle at
+    # module-load time (state.py is imported very early in the stack).
+    from megaplan.drivers import current_substrate
+    from megaplan._pipeline.envelope import _fanout_active_ctx
+
+    substrate = current_substrate()
+    fanout_active = _fanout_active_ctx.get(False)
+    if substrate == "subprocess_isolated" or fanout_active:
+        raise RestorableBoundaryViolation(
+            f"restorable_boundary({operation!r}) refused: "
+            f"substrate={substrate!r}, fanout_active={fanout_active!r}"
+        )
+    yield
 
 
 def write_plan_state(
@@ -508,6 +626,24 @@ def write_plan_state(
             elif mode == "copy-time-rewrite":
                 next_state = dict(existing)
                 should_write = _apply_copy_time_rewrite(next_state, project_dir=project_dir)
+            elif mode == "reversible":
+                if state is None:
+                    raise TypeError("state is required for reversible mode")
+                # Snapshot-then-replace: capture current on-disk blob (if any)
+                # under the held lock, then atomically replace. The snapshot id
+                # is recorded under ``next_state['_state_meta']['last_snapshot']``
+                # so callers can restore() it explicitly. A missing prior
+                # state.json yields snapshot_id=None — the anti-silent-no-op
+                # invariant requires the meta key to be present either way.
+                snapshot_id = _snapshot_unlocked(plan_dir)
+                next_state = dict(state)
+                meta = next_state.get("_state_meta")
+                if not isinstance(meta, dict):
+                    meta = {}
+                else:
+                    meta = dict(meta)
+                meta["last_snapshot"] = snapshot_id
+                next_state["_state_meta"] = meta
             else:
                 raise ValueError(f"unknown plan state write mode: {mode}")
 

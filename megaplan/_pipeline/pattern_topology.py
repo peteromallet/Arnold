@@ -289,16 +289,24 @@ def iterate_until(
     """
 
     from megaplan._pipeline.pattern_stops import LoopState
+    from megaplan._pipeline.loop_node import LoopNode
+
+    _max = int(max_iterations)
 
     if condition is None:
-        _max = int(max_iterations)
+        # Default predicate: caller relies entirely on the cap.
+        def _default_pred(_ls: Any) -> bool:
+            return False
 
-        def _default_cond(ls: LoopState) -> bool:
-            return ls.iteration >= _max
-
-        stored = _default_cond
+        pred: Callable[[Any], bool] = _default_pred
     else:
-        stored = condition
+        pred = condition
+
+    node = LoopNode(predicate=pred, max_iterations=_max)
+    # Stage.loop_condition is consulted per-iteration; route it through the
+    # LoopNode so the cap + budget + predicate composition is enforced in
+    # one place.  Existing legacy callers continue to see a plain callable.
+    stored: Callable[[LoopState], bool] = node.should_halt
 
     return Stage(
         name=stage.name,

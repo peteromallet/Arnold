@@ -68,4 +68,7 @@ markers = [
     "asyncio: async tests, primarily for the vendored agent runtime",
     "integration: integration tests that may exercise external process boundaries",
     "slow: tests that require Docker or other external runtime dependencies",
+    "crash_isolation: tests verifying crash isolation between subprocess drivers",
+    "version_skew: tests verifying compatibility across version skew scenarios",
+    "hinge_gate: gate test for the M3 hinge (R1 authority flip)",
 ]

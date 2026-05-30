@@ -78,6 +78,14 @@ class EventKind:
     HEALTH_CHECK_FAILED: str = "health_check_failed"
     DRIFT_DETECTED: str = "drift_detected"
 
+    # ── Activation (1) ─────────────────────────────────────────────────
+    ACTIVATION_TRANSITIONED: str = "activation_transitioned"
+
+    # ── R1 authority (1) ───────────────────────────────────────────────
+    # WAL-fold rebuild disagreed with on-disk state.json cache; cache was
+    # rewritten with the WAL-derived truth.
+    STATE_CACHE_DRIFT: str = "state_cache_drift"
+
 
 # Convenience set for fast membership checks.
 _ALL_EVENT_KINDS: Set[str] = frozenset(
@@ -109,6 +117,8 @@ _ALL_EVENT_KINDS: Set[str] = frozenset(
         EventKind.COST_RECORDED,
         EventKind.HEALTH_CHECK_FAILED,
         EventKind.DRIFT_DETECTED,
+        EventKind.ACTIVATION_TRANSITIONED,
+        EventKind.STATE_CACHE_DRIFT,
     }
 )
 

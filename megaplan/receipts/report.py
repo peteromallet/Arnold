@@ -247,6 +247,7 @@ def _build_report_payload(root: Path, plan_name: str | None, compare_name: str |
     }
     if compare_name:
         compare_dir = resolve_plan_dir(root, compare_name)
+        # cache-tolerant: report-only comparison view.
         compare_state = _safe_read_json(compare_dir / "state.json") or {}
         compare_rows = _phase_rows(_collect_receipts(compare_dir), compare_state)
         payload["compare"] = {

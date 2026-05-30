@@ -292,6 +292,7 @@ def handle_list(root: Path, args: argparse.Namespace) -> StepResponse:
         resolved_search = search_root.resolve()
         is_local = resolved_search == resolved_root
         for plan_dir in active_plan_dirs(search_root):
+            # cache-tolerant: CLI status aggregation.
             state = read_json(plan_dir / "state.json")
             current_state = state["current_state"]
             state_counts[current_state] = state_counts.get(current_state, 0) + 1
