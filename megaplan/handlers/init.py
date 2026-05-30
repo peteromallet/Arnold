@@ -210,6 +210,22 @@ def _build_state_config(
     if max_tasks_per_batch <= 0:
         max_tasks_per_batch = int(get_effective("execution", "max_tasks_per_batch"))
 
+    # Completion-verification contract mode: CLI flag > get_effective.
+    # Snapshotted here so the gate never re-reads the live environment.
+    completion_contract_mode = getattr(args, "completion_contract_mode", None)
+    if completion_contract_mode is None:
+        completion_contract_mode = get_effective("execution", "completion_contract_mode")
+
+    # Test command the harness invokes: CLI flag > get_effective.
+    test_command = getattr(args, "test_command", None)
+    if test_command is None:
+        test_command = get_effective("execution", "test_command")
+
+    # Baseline / verification timeout: CLI flag > get_effective.
+    test_baseline_timeout = getattr(args, "test_baseline_timeout", None)
+    if test_baseline_timeout is None:
+        test_baseline_timeout = get_effective("execution", "test_baseline_timeout")
+
     config: dict[str, Any] = {
         "project_dir": str(project_dir),
         "auto_approve": auto_approve,
@@ -221,6 +237,9 @@ def _build_state_config(
         "strict_notes": strict_notes,
         "max_tasks_per_batch": max_tasks_per_batch,
         "agent": "hermes" if getattr(args, "hermes", None) is not None else "",
+        "completion_contract_mode": completion_contract_mode,
+        "test_command": test_command,
+        "test_baseline_timeout": test_baseline_timeout,
     }
     if pipeline is not None:
         config["pipeline"] = pipeline

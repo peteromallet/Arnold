@@ -92,8 +92,29 @@ def test_normalize_contract_mode_defaults_to_shadow():
     assert normalize_contract_mode("enforce") == "enforce"
 
 
-def test_healthy_plan_is_accepted_in_shadow(healthy_plan):
+def test_healthy_plan_is_accepted_in_shadow(healthy_plan, monkeypatch):
     plan_dir, project_dir, state = healthy_plan
+    # Mock run_suite to return a passed result so the suite doesn't actually run.
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    fake_result = SuiteRunResult(
+        run_id="fake-run-id",
+        phase="verification",
+        command="pytest",
+        duration=0.1,
+        collected=1,
+        collected_ids=["tests/test_x.py::test_pass"],
+        failures=[],
+        passes=["tests/test_x.py::test_pass"],
+        status="passed",
+        exit_code=0,
+        raw_log_path=Path("/dev/null"),
+        code_hash="abc123",
+        collections_parse_ok=True,
+    )
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: fake_result,
+    )
     verdict = compute_verdict(
         plan_dir=plan_dir,
         project_dir=project_dir,
@@ -104,13 +125,23 @@ def test_healthy_plan_is_accepted_in_shadow(healthy_plan):
     assert verdict.mode == CONTRACT_MODE_SHADOW
     assert verdict.accepted is True, verdict.failures
     assert verdict.failures == ()
-    # green_suite must report green from the CACHED baseline, never having run.
+    # green_suite must report the verification result (now always runs).
     green = {e.kind: e for e in verdict.evidence}["green_suite"]
     assert green.status == EvidenceStatus.satisfied
-    assert green.details["suite_run_in_shadow"] is False
+    assert green.details["status"] == "passed"
 
 
-def test_verdict_artifact_is_written(healthy_plan, tmp_path):
+def test_verdict_artifact_is_written(healthy_plan, tmp_path, monkeypatch):
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: SuiteRunResult(
+            run_id="r", phase="verification", command="pytest", duration=0.1,
+            collected=1, collected_ids=["t::x"], failures=[], passes=["t::x"],
+            status="passed", exit_code=0, raw_log_path=Path("/dev/null"),
+            code_hash="abc", collections_parse_ok=True,
+        ),
+    )
     plan_dir, project_dir, state = healthy_plan
     verdict = compute_verdict(
         plan_dir=plan_dir,
@@ -127,8 +158,18 @@ def test_verdict_artifact_is_written(healthy_plan, tmp_path):
     assert roundtrip["subject"]["kind"] == "plan"
 
 
-def test_flags_abandoned_zero_diff(tmp_path):
+def test_flags_abandoned_zero_diff(tmp_path, monkeypatch):
     """Planned then quit: no diff, no batch, no waiver → flagged unsatisfied."""
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: SuiteRunResult(
+            run_id="r", phase="verification", command="pytest", duration=0.1,
+            collected=0, collected_ids=[], failures=[], passes=[],
+            status="not_applicable", exit_code=5, raw_log_path=Path("/dev/null"),
+            code_hash="abc", collections_parse_ok=False,
+        ),
+    )
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     _init_git_repo(project_dir)  # clean tree → empty diff
@@ -158,12 +199,34 @@ def test_flags_abandoned_zero_diff(tmp_path):
     assert by_kind["landed_diff"].status == EvidenceStatus.unsatisfied
 
 
-def test_flags_red_suite(healthy_plan):
-    """A cached baseline with failures is flagged in the verdict."""
+def test_flags_red_suite(healthy_plan, monkeypatch):
+    """A verification suite with failures is flagged in the verdict."""
     plan_dir, project_dir, state = healthy_plan
-    finalize = json.loads((plan_dir / "finalize.json").read_text())
-    finalize["baseline_test_failures"] = ["tests/test_x.py::test_a", "tests/test_y.py::test_b"]
-    _write(plan_dir / "finalize.json", finalize)
+    # Mock run_suite to return a failed result.
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    fake_result = SuiteRunResult(
+        run_id="fake-run-id",
+        phase="verification",
+        command="pytest",
+        duration=0.2,
+        collected=3,
+        collected_ids=[
+            "tests/test_x.py::test_a",
+            "tests/test_y.py::test_b",
+            "tests/test_z.py::test_c",
+        ],
+        failures=["tests/test_x.py::test_a", "tests/test_y.py::test_b"],
+        passes=["tests/test_z.py::test_c"],
+        status="failed",
+        exit_code=1,
+        raw_log_path=Path("/dev/null"),
+        code_hash="abc123",
+        collections_parse_ok=True,
+    )
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: fake_result,
+    )
     verdict = compute_verdict(
         plan_dir=plan_dir,
         project_dir=project_dir,
@@ -173,12 +236,21 @@ def test_flags_red_suite(healthy_plan):
     assert verdict.accepted is False
     by_kind = {e.kind: e for e in verdict.evidence}
     assert by_kind["green_suite"].status == EvidenceStatus.unsatisfied
-    assert by_kind["green_suite"].details["baseline_failure_count"] == 2
-    # The suite was NEVER run in shadow.
-    assert by_kind["green_suite"].details["suite_run_in_shadow"] is False
+    assert by_kind["green_suite"].details["failure_count"] == 2
+    assert by_kind["green_suite"].details["status"] == "failed"
 
 
-def test_typed_noop_waiver_excuses_missing_diff(tmp_path):
+def test_typed_noop_waiver_excuses_missing_diff(tmp_path, monkeypatch):
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: SuiteRunResult(
+            run_id="r", phase="verification", command="pytest", duration=0.1,
+            collected=0, collected_ids=[], failures=[], passes=[],
+            status="not_applicable", exit_code=5, raw_log_path=Path("/dev/null"),
+            code_hash="abc", collections_parse_ok=False,
+        ),
+    )
     project_dir = tmp_path / "repo"
     project_dir.mkdir()
     _init_git_repo(project_dir)  # clean → empty diff
@@ -259,8 +331,18 @@ def _make_done_plan_dir(tmp_path: Path) -> tuple[Path, Path]:
     return plan_dir, project_dir
 
 
-def test_auto_hook_writes_verdict_and_logs(tmp_path):
+def test_auto_hook_writes_verdict_and_logs(tmp_path, monkeypatch):
     from megaplan import auto
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: SuiteRunResult(
+            run_id="r", phase="verification", command="pytest", duration=0.1,
+            collected=1, collected_ids=["t::x"], failures=[], passes=["t::x"],
+            status="passed", exit_code=0, raw_log_path=Path("/dev/null"),
+            code_hash="abc", collections_parse_ok=True,
+        ),
+    )
 
     plan_dir, _ = _make_done_plan_dir(tmp_path)
     logged: list[str] = []
@@ -283,9 +365,19 @@ def test_auto_hook_off_mode_writes_nothing(tmp_path):
     assert not (plan_dir / COMPLETION_VERDICT_FILENAME).is_file()
 
 
-def test_auto_hook_is_fail_open(tmp_path):
+def test_auto_hook_is_fail_open(tmp_path, monkeypatch):
     """A broken plan dir (no state.json) must not raise."""
     from megaplan import auto
+    from megaplan.orchestration.suite_runner import SuiteRunResult
+    monkeypatch.setattr(
+        "megaplan.orchestration.suite_runner.run_suite",
+        lambda *a, **kw: SuiteRunResult(
+            run_id="r", phase="verification", command="pytest", duration=0.1,
+            collected=0, collected_ids=[], failures=[], passes=[],
+            status="not_applicable", exit_code=5, raw_log_path=Path("/dev/null"),
+            code_hash="abc", collections_parse_ok=False,
+        ),
+    )
 
     plan_dir = tmp_path / "empty_plan"
     plan_dir.mkdir()

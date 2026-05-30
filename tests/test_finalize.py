@@ -215,7 +215,8 @@ def test_after_execute_user_actions_are_handoff_artifact_not_executor_task(
     _write_finalize_artifacts(plan_fixture.plan_dir, payload, state)
 
     finalize_data = read_json(plan_fixture.plan_dir / "finalize.json")
-    assert [task["id"] for task in finalize_data["tasks"]] == ["T1", "T2"]
+    # The scrubber no longer injects a verification task; only T1 is expected.
+    assert [task["id"] for task in finalize_data["tasks"]] == ["T1"]
     assert not any(
         "Surface after_execute user_actions" in task["description"]
         for task in finalize_data["tasks"]
@@ -333,8 +334,8 @@ def test_render_final_md_pending_partially_done_and_reviewed_states() -> None:
 def test_finalize_normalize_complexity_missing_defaults_to_4(plan_fixture: PlanFixture) -> None:
     """Worker response missing complexity writes 4 (Sonnet) in finalize artifacts.
 
-    Auto-injected verification/gate tasks are read-and-check work, not deep
-    implementation — Sonnet is capable enough and ~5–10× cheaper than Opus.
+    Tasks missing a complexity score default to 4 (Sonnet) — read-and-check
+    work is well within Sonnet's capability and ~5–10× cheaper than Opus.
     """
     from megaplan.handlers.finalize import _normalize_task_complexity
 
@@ -453,7 +454,7 @@ def test_finalize_artifacts_include_complexity_after_normalization(plan_fixture:
     assert len(original_snapshot) == 1
     assert original_snapshot[0]["complexity"] == 4
 
-    # Auto-injected tasks (verification, user-action gate) should also have a valid complexity
+    # All tasks in finalize.json must have a valid 1-5 complexity score
     for task in finalize_data["tasks"]:
         assert isinstance(task.get("complexity"), int)
         assert 1 <= task["complexity"] <= 5

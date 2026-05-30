@@ -1823,6 +1823,87 @@ def test_review_doc_and_joke_json_examples_differ(tmp_path: Path) -> None:
     assert '"summary": "Approved. The scene meets the brief and the primary criterion."' in joke_prompt
 
 
+def test_finalize_prompt_has_harness_verification_framing(tmp_path: Path) -> None:
+    """T1: finalize.py prompt must contain harness-owns-verification framing and
+    must NOT contain banned loop phrases (re-run until, never stop, until they pass)."""
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = create_claude_prompt("finalize", state, plan_dir, root=tmp_path)
+
+    # New framing must be present
+    assert "harness owns test verification" in prompt.lower() or (
+        "do NOT author a run-until-pass task" in prompt
+        and "The harness will run the authoritative post-execute suite" in prompt
+    )
+    assert "introduce no new failures vs the recorded baseline" in prompt
+
+    # Banned phrases must be absent
+    banned = ["re-run until", "never stop", "until they pass"]
+    for phrase in banned:
+        assert phrase not in prompt, f"Banned phrase '{phrase}' found in finalize prompt"
+
+
+def test_execute_prompt_has_harness_framing_no_loop(tmp_path: Path) -> None:
+    """T1: execute.py:94 single-execute prompt must contain authoritative-harness
+    framing and must NOT contain the old re-run-until-pass / never-stop phrasing."""
+    plan_dir, state = _scaffold(tmp_path)
+    prompt = _execute_prompt(state, plan_dir)
+
+    # New framing must be present
+    assert (
+        "A mechanical post-execute suite run by the harness — not you — is the authoritative regression check"
+        in prompt
+    )
+    assert "Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass" in prompt
+
+    # Banned phrases must be absent
+    banned = ["re-run until", "never stop", "until they pass"]
+    for phrase in banned:
+        assert phrase not in prompt, f"Banned phrase '{phrase}' found in execute single prompt"
+
+
+def test_execute_batch_prompt_has_harness_framing_no_loop(tmp_path: Path) -> None:
+    """T1: execute.py:596 batch prompt must contain authoritative-harness framing
+    and must NOT contain the old re-run-until-pass / never-stop phrasing."""
+    plan_dir, state = _scaffold(tmp_path)
+    atomic_write_json(
+        plan_dir / "finalize.json",
+        _build_mock_payload(
+            "finalize",
+            state,
+            plan_dir,
+            tasks=[
+                {
+                    "id": "T1",
+                    "description": "First task",
+                    "depends_on": [],
+                    "status": "pending",
+                    "executor_notes": "",
+                    "files_changed": [],
+                    "commands_run": [],
+                    "evidence_files": [],
+                    "reviewer_verdict": "",
+                },
+            ],
+            sense_checks=[
+                {"id": "SC1", "task_id": "T1", "question": "Done?", "executor_note": "", "verdict": ""},
+            ],
+        ),
+    )
+    prompt = _execute_batch_prompt(state, plan_dir, ["T1"], set())
+
+    # New framing must be present
+    assert (
+        "A mechanical post-execute suite run by the harness — not you — is the authoritative regression check"
+        in prompt
+    )
+    assert "Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass" in prompt
+
+    # Banned phrases must be absent
+    banned = ["re-run until", "never stop", "until they pass"]
+    for phrase in banned:
+        assert phrase not in prompt, f"Banned phrase '{phrase}' found in execute batch prompt"
+
+
 def test_plan_template_has_no_megaplan_path_references() -> None:
     """PLAN_TEMPLATE must use neutral example paths (e.g. src/), not megaplan/."""
     from megaplan.prompts.planning import PLAN_TEMPLATE

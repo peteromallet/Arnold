@@ -64,6 +64,91 @@ def _plan_version_unified_diff(plan_dir: Path, iteration: int) -> str:
     return "".join(diff)
 
 
+def _build_verification_delta_block(
+    delta: dict[str, Any] | None,
+    raw_log_path: str | None,
+) -> str:
+    """Build a bounded ~5000-char mechanical verification block for the revise prompt.
+
+    *newly_failing* tests get error-type + message (and a traceback snippet when
+    the raw log is parseable).  *still_red* is rendered name-only (comma-separated
+    nodeids).  The raw log path is NEVER exposed to the LLM.  When *delta* is
+    absent or non-computable, returns an empty string.
+    """
+    if not isinstance(delta, dict):
+        return ""
+    if not delta.get("computable", True):
+        return ""
+
+    newly_failing: list[str] = delta.get("newly_failing") or []
+    still_red: list[str] = delta.get("still_red") or []
+
+    if not newly_failing and not still_red:
+        return ""
+
+    # Extract failure details for newly_failing tests from the raw log
+    failure_details: dict[str, dict[str, str]] = {}
+    if newly_failing and raw_log_path:
+        try:
+            from megaplan.orchestration.suite_runner import extract_failure_details
+            details = extract_failure_details(Path(raw_log_path), newly_failing)
+            failure_details = {d["nodeid"]: d for d in details}
+        except Exception:
+            pass
+
+    lines: list[str] = []
+    lines.append(
+        "Mechanical post-execute verification \u2014 fix these new regressions; "
+        "do NOT scope-creep into still_red."
+    )
+    lines.append("")
+
+    CHAR_BUDGET = 5000
+
+    def _current_len() -> int:
+        return len("\n".join(lines))
+
+    # --- newly_failing section -------------------------------------------
+    if newly_failing:
+        header = f"Newly failing tests ({len(newly_failing)}):"
+        if _current_len() + len(header) + 2 <= CHAR_BUDGET:
+            lines.append(header)
+        else:
+            return "\n".join(lines)
+
+        for i, nid in enumerate(newly_failing):
+            fd = failure_details.get(nid, {})
+            err_type = fd.get("error_type", "<unknown>")
+            msg = fd.get("message", "<unparsed>")
+            tb_head = fd.get("traceback_head", "")
+
+            entry_lines = [f"  {nid} \u2014 {err_type}: {msg}"]
+            if tb_head and tb_head != "<could not extract>":
+                tb_first = tb_head.split("\n")[0][:200]
+                entry_lines.append(f"    Traceback: {tb_first}")
+
+            candidate = "\n".join(lines + entry_lines)
+            if len(candidate) > CHAR_BUDGET - 50:
+                remaining = len(newly_failing) - i
+                lines.append(f"  \u2026[{remaining} more]")
+                break
+            lines.extend(entry_lines)
+
+    # --- still_red section (name-only) -----------------------------------
+    if still_red:
+        max_names = 20
+        names = ", ".join(still_red[:max_names])
+        if len(still_red) > max_names:
+            names += f" \u2026[{len(still_red) - max_names} more]"
+        sr_line = (
+            f"\nPre-existing failures (still red \u2014 do NOT fix): {names}"
+        )
+        if _current_len() + len(sr_line) <= CHAR_BUDGET:
+            lines.append(sr_line.strip())
+
+    return "\n".join(lines)
+
+
 def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
     project_dir = Path(state["config"]["project_dir"])
     latest_plan = latest_plan_path(plan_dir, state).read_text(encoding="utf-8")
@@ -89,6 +174,16 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         elif isinstance(decisions_data, dict):
             settled_decisions = decisions_data.get("decisions", [])
     settled_block = _settled_decisions_block(settled_decisions)
+
+    # Build the mechanical verification delta block from the completion
+    # verdict (if present).  The raw log path is used internally for
+    # failure-detail parsing but NEVER surfaced to the LLM.
+    ctx = _critique_context(state, plan_dir)
+    delta_block = _build_verification_delta_block(
+        ctx.get("verification_delta"),
+        ctx.get("verification_raw_log_path"),
+    )
+
     return textwrap.dedent(
         f"""
         You are revising an implementation plan after critique and gate feedback.
@@ -111,6 +206,8 @@ def _revise_prompt(state: PlanState, plan_dir: Path) -> str:
         {json_dump(open_flags).strip()}
 
         {settled_block}
+
+        {delta_block}
 
         Requirements:
         - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
@@ -160,6 +257,32 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
             settled_decisions = decisions_data.get("decisions", [])
 
     debt_block = _planning_debt_block(plan_dir, root)
+
+    # ----- Read the mechanical post-execute verification verdict ----------
+    # We surface the delta so the revise LLM knows exactly which tests
+    # regressed and must be fixed.  The raw log path is extracted for
+    # internal use (failure-detail parsing) but NEVER surfaced to the LLM.
+    verification_delta: dict[str, Any] | None = None
+    verification_raw_log_path: str | None = None
+    try:
+        from megaplan.orchestration.completion_io import read_completion_verdict
+        verdict = read_completion_verdict(plan_dir)
+        if isinstance(verdict, dict):
+            gs = verdict.get("green_suite")
+            if isinstance(gs, dict):
+                verification_delta = gs.get("delta")
+            # Also extract the raw_log_path from the green_suite evidence ref
+            # for failure-detail parsing (never surfaced to the LLM).
+            for ref in verdict.get("evidence") or []:
+                if isinstance(ref, dict) and ref.get("kind") == "green_suite":
+                    details = ref.get("details")
+                    if isinstance(details, dict):
+                        rlp = details.get("raw_log_path")
+                        if isinstance(rlp, str):
+                            verification_raw_log_path = rlp
+                    break
+    except Exception:
+        pass
 
     # ----- prompt-size guard: keep the assembled context under ~150K tokens -----
     # Estimate tokens ≈ chars / 4.  The debt block and the full plan text are
@@ -212,6 +335,8 @@ def _critique_context(state: PlanState, plan_dir: Path, root: Path | None = None
         "debt_block": debt_block,
         "robustness": configured_robustness(state),
         "settled_tiebreaker_decisions": settled_decisions,
+        "verification_delta": verification_delta,
+        "verification_raw_log_path": verification_raw_log_path,
     }
 
 
