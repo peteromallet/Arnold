@@ -249,6 +249,37 @@ def _shannon_max_output_tokens() -> int:
         return 128000
 
 
+def _shannon_bash_timeout_ms() -> int:
+    """Per-command Bash-tool timeout for the Claude CLI that Shannon launches.
+
+    Claude Code's built-in Bash tool kills any single *foreground* command at
+    ``BASH_DEFAULT_TIMEOUT_MS`` (default 120000ms = 120s) with a SIGKILL and the
+    message ``Command timed out after 120s``. That default is per-command, not
+    per-turn, so it is invisible on light batches but lethal on a legitimate
+    long-running command inside an ``execute`` turn — e.g. ``python -m pytest
+    tests/`` on a full suite, a build, or an integration run. A forensic
+    analysis of a failed run found exactly this: the final worker attempt was
+    SIGKILLed (exit 137) mid-``pytest`` at 120s while earlier batches that never
+    ran a single >2min command completed fine in 5-10 minutes.
+
+    megaplan — not the spawned Claude Code's per-command default — owns the
+    stop-policy here: the worker has a 7200s execute cap (``run_command``
+    ``timeout``) and a 900s idle-output stall watchdog (``idle_timeout``). So
+    raise the launched CLI's Bash ceiling well above that 120s default and let
+    megaplan's phase budget + stall watchdog decide when to stop waiting,
+    matching how we already override ``SHANNON_TURN_TIMEOUT_MS`` and
+    ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``. Overridable via
+    ``MEGAPLAN_SHANNON_BASH_TIMEOUT_MS``.
+    """
+    raw = os.getenv("MEGAPLAN_SHANNON_BASH_TIMEOUT_MS", "").strip()
+    if not raw:
+        return 7200000
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 7200000
+
+
 def _shannon_handshake_probability() -> float:
     raw = os.getenv("MEGAPLAN_SHANNON_HANDSHAKE_PROBABILITY", "").strip()
     if not raw:
@@ -936,6 +967,19 @@ function megaplanSlashCompletionRow(prompt, rows) {
     )
     if send_prompt_target in patched and "tmux load-buffer" not in patched:
         patched = patched.replace(send_prompt_target, send_prompt_replacement, 1)
+
+    # --- megaplan: match Claude Code's project-folder slug for dotted paths ---
+    # Shannon derives the ~/.claude/projects/<slug> folder by replacing non
+    # [A-Za-z0-9._-] with "-", which KEEPS ".". Claude Code replaces "." too, so
+    # for a cwd under ".megaplan-worktrees" Shannon searches
+    # "…-.megaplan-worktrees-…" while Claude wrote "…--megaplan-worktrees-…" →
+    # the transcript is never found and EVERY claude phase times out
+    # ("Timed out waiting for Claude transcript…"). Drop "." from the kept set so
+    # the slug matches. Fixes all worktree-based runs.
+    slug_target = 'return resolve(cwd).normalize("NFC").replace(/[^a-zA-Z0-9._-]/g, "-");'
+    slug_replacement = 'return resolve(cwd).normalize("NFC").replace(/[^a-zA-Z0-9_-]/g, "-");'
+    if slug_target in patched:
+        patched = patched.replace(slug_target, slug_replacement, 1)
 
     if patched == original:
         return
@@ -2121,6 +2165,14 @@ def run_shannon_step(
     # off at the inherited ~64k default mid-run, before emitting the structured
     # result envelope. megaplan, not the model default, owns this budget.
     env.setdefault("CLAUDE_CODE_MAX_OUTPUT_TOKENS", str(_shannon_max_output_tokens()))
+    # Raise the Claude CLI's per-command Bash-tool timeout. Its built-in 120s
+    # default (BASH_DEFAULT_TIMEOUT_MS) SIGKILLs legitimate long-running execute
+    # commands (full test suites, builds) mid-run; megaplan's 7200s execute cap +
+    # 900s stall watchdog already own the stop-policy. Set both the default and
+    # the max so the model cannot be capped below this even if it requests more.
+    bash_timeout_ms = str(_shannon_bash_timeout_ms())
+    env.setdefault("BASH_DEFAULT_TIMEOUT_MS", bash_timeout_ms)
+    env.setdefault("BASH_MAX_TIMEOUT_MS", bash_timeout_ms)
     shannon_prefix, env = _prepare_nonroot_shannon_runtime(work_dir, env)
 
     def _launch_command(shannon_command: list[str]) -> list[str]:
