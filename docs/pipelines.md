@@ -198,14 +198,16 @@ handler, escape = escalate_if(
 )
 ```
 
-### `majority_vote(panel_output_key="verdict")`
+### `majority_vote(panel_output_key="verdict", *, label_extractor=None, default_on_tie=None)`
 
 Returns a `join` callable for `panel_parallel(..., join=majority_vote())`
-patterns. Tallies each reviewer's `verdict.recommendation`; the majority
-wins, ties resolve to `"tiebreaker"`, empty panels also yield
-`"tiebreaker"`. The synthetic result carries a `PipelineVerdict` plus
-`next=<recommendation>` so a downstream gate stage can dispatch on
-either typed or label-fallback edges.
+patterns. Tallies each reviewer's `verdict.recommendation` (or the
+`label_extractor` result); the majority wins. Ties and empty panels
+resolve to `default_on_tie` — pass ``default_on_tie="tiebreaker"`` for
+the legacy behaviour. The synthetic result carries a `PipelineVerdict`
+with ``next=<recommendation>`` plus a ``types.ReduceResult`` dataclass
+instance in ``verdict.payload["reduce_result"]`` (fields: ``value``,
+``label``, ``scores``, ``tally``, ``provenance``).
 
 ```python
 panel = panel_parallel(
@@ -214,7 +216,8 @@ panel = panel_parallel(
 )
 # Replace the default join with majority_vote() when constructing the
 # pipeline manually:
-panel = ParallelStage(name="judges", steps=panel.steps, join=majority_vote())
+panel = ParallelStage(name="judges", steps=panel.steps,
+                      join=majority_vote(default_on_tie="tiebreaker"))
 ```
 
 ### `phase_zero_gate(step, *, name="prep", on_pass="plan", on_fail="halt", criteria=None)`
@@ -261,13 +264,15 @@ Runs `generator` once, harvests the specs it emits (either
 stage uses to turn a runtime-decided list of sections into a per-section
 draft step (see `megaplan/pipelines/doc/__init__.py`).
 
-### `weighted_vote(weights) -> JoinFn`
+### `weighted_vote(weights, *, label_extractor=None, default_on_tie=None) -> JoinFn`
 
 Variant of `majority_vote` that weighs each panellist's verdict by the
 caller-supplied `weights[reviewer_id]`. Missing reviewer ids contribute
-zero. Ties and empty panels resolve to `"tiebreaker"`, matching
-`majority_vote`'s shape so the two are drop-in interchangeable as a
-`ParallelStage` `join`.
+zero. Ties and empty panels resolve to `default_on_tie` — pass
+``default_on_tie="tiebreaker"`` for legacy behaviour. Stores a
+``types.ReduceResult`` dataclass in ``verdict.payload["reduce_result"]``
+(value, label, scores, tally, provenance), matching `majority_vote`'s
+shape so the two are drop-in interchangeable as a `ParallelStage` `join`.
 
 ### `iterate_until_consensus(panel, min_agreement=0.8, max_iters=3, *, name) -> SubloopStep`
 
@@ -317,7 +322,8 @@ design_personas = AgentStep(
 critique_panel = panel_from_artifact(
     artifact_ref="personas.json",
     base_template=_PersonaCritique(name="critique", prompt_key="critique_with_persona"),
-    join=weighted_vote(weights={"p1": 1.0, "p2": 1.0, "p3": 1.5, "p4": 1.0, "p5": 1.0}),
+    join=weighted_vote(weights={"p1": 1.0, "p2": 1.0, "p3": 1.5, "p4": 1.0, "p5": 1.0},
+                       default_on_tie="tiebreaker"),
     name="critique",
 )
 
@@ -609,7 +615,7 @@ debate = alternating_turns(roles=(
 judges = ParallelStage(
     name="judges",
     steps=(JudgeStep(name="j1", ...), JudgeStep(name="j2", ...), JudgeStep(name="j3", ...)),
-    join=majority_vote(),
+    join=majority_vote(default_on_tie="tiebreaker"),
     edges=(
         Edge(label="proceed",    target="halt",     kind="gate", recommendation="proceed"),
         Edge(label="iterate",    target="pro",      kind="gate", recommendation="iterate"),
