@@ -2824,6 +2824,31 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         "phase_idle_timeout",
         DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     )
+
+    # ── Single-driver guard ──────────────────────────────────────────────
+    # Acquire a per-plan, driver-lifetime advisory lock so two `megaplan auto`
+    # processes can't drive the same plan at once. Two drivers contend over
+    # plan state and pin the run at a fixed file count for hours — a
+    # zero-progress plateau that masquerades as a stall (observed live). A
+    # stale lock from a crashed driver is reclaimed automatically (the kernel
+    # drops the flock on process exit). When the plan can't be resolved yet we
+    # skip the lock and let `drive` surface the not-found error.
+    from contextlib import nullcontext
+    from megaplan._core import driver_lock
+
+    plan_dir = _resolve_plan_dir(args.plan, root)
+    lock_ctx = driver_lock(plan_dir) if plan_dir is not None else nullcontext()
+    with lock_ctx:
+        return _run_auto_locked(root, args, progress_env, raw_phase_idle_timeout)
+
+
+def _run_auto_locked(
+    root: Path,
+    args: argparse.Namespace,
+    progress_env: dict[str, str] | None,
+    raw_phase_idle_timeout: float,
+) -> int:
+    """Run the driver once the per-plan single-driver lock is held."""
     outcome = drive(
         args.plan,
         cwd=root,
