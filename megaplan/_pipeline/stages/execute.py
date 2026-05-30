@@ -27,6 +27,8 @@ class ExecuteStep:
     prompt_key: str | None = "execute"
     slot: str | None = "execute"
     arg_overrides: Mapping[str, Any] = field(default_factory=lambda: dict(_DEFAULTS))
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         import megaplan

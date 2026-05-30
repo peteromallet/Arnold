@@ -181,6 +181,77 @@ def _resolve_overrides(robustness: str, *, creative: bool) -> dict[str, list[Tra
     return _ROBUSTNESS_OVERRIDES.get(robustness, {})
 
 
+class BuildBindingError(Exception):
+    """Raised by :func:`build_with_binding` when contracts.bind() fails."""
+
+    def __init__(self, gradient: Any) -> None:
+        self.gradient = gradient
+        super().__init__(str(gradient))
+
+
+def build_with_binding(
+    pipeline: Any,
+    *,
+    robustness: str = "thorough",
+    creative: bool = False,
+    with_prep: bool = False,
+    with_feedback: bool = False,
+) -> Any:
+    """Build the pipeline for ``robustness`` and, when typed_ports_on(),
+    bind it.
+
+    Deviation (M2 / T5): the M2 brief sketched a ``(robustness, ...)``-only
+    signature deriving a ``Pipeline`` from the workflow data here, but
+    ``_workflow_for_robustness`` returns the legacy ``dict[state, list[
+    Transition]]`` state-machine — not a ``Pipeline`` object — so this
+    function takes a pre-built :class:`Pipeline` as a positional argument
+    instead. Flag-OFF behavior returns ``pipeline`` unchanged.
+
+    Flag-ON: calls :func:`megaplan._pipeline.contracts.bind` and either
+    raises :class:`BuildBindingError` on a :class:`RepairGradient`, or
+    returns the same pipeline with ``binding_map`` attached via
+    :func:`dataclasses.replace`.
+    """
+    # Touch resolution helpers so the call participates in workflow
+    # normalization (even if the result isn't used today).
+    _ = _resolve_overrides(robustness, creative=creative)
+    _ = _workflow_for_robustness(
+        robustness, creative=creative, with_prep=with_prep, with_feedback=with_feedback
+    )
+
+    from megaplan._pipeline.flags import typed_ports_on
+
+    if not typed_ports_on():
+        return pipeline
+
+    import dataclasses
+
+    from megaplan._pipeline import contracts
+    from megaplan._pipeline.types import Pipeline
+
+    stages = pipeline.stages
+    edges = []
+    for src, stage in stages.items():
+        for edge in getattr(stage, "edges", ()):
+            if edge.target != "halt":
+                edges.append((src, edge.target))
+
+    result = contracts.bind(list(stages.values()) and dict(stages), edges)
+    # contracts.bind expects a Mapping; pass the stages mapping directly.
+    result = contracts.bind(dict(stages), edges)
+    if isinstance(result, contracts.RepairGradient):
+        raise BuildBindingError(result)
+
+    if isinstance(pipeline, Pipeline):
+        return dataclasses.replace(pipeline, binding_map=result.binding_map)
+    # Fallback: best-effort attribute set for non-Pipeline objects.
+    try:
+        object.__setattr__(pipeline, "binding_map", result.binding_map)
+    except Exception:
+        pass
+    return pipeline
+
+
 def _workflow_for_robustness(
     robustness: str,
     *,

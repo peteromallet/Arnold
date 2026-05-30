@@ -21,6 +21,14 @@ class _NoopStep:
     prompt_key = None
     slot = None
 
+    @property
+    def produces(self) -> tuple:
+        return ()
+
+    @property
+    def consumes(self) -> tuple:
+        return ()
+
     def run(self, ctx):  # pragma: no cover - never called by static check
         raise RuntimeError("static validator must not dispatch")
 

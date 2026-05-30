@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
+from typing import ClassVar
 from pathlib import Path
 
 import pytest
@@ -99,6 +100,8 @@ class _SyntheticJudge:
     prompt_key = None
     slot = None
     recommendation: str = "iterate"
+    produces: ClassVar[tuple] = ()
+    consumes: ClassVar[tuple] = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(
@@ -115,6 +118,8 @@ class _LabelStep:
     prompt_key = None
     slot = None
     next_label: str = "forward"
+    produces: ClassVar[tuple] = ()
+    consumes: ClassVar[tuple] = ()
 
     def run(self, ctx: StepContext) -> StepResult:
         return StepResult(next=self.next_label)

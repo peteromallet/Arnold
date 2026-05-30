@@ -12,8 +12,8 @@ themselves live elsewhere (e.g. ``_pipeline/stages/``,
 Sprint conventions encoded here:
 
 * Gate stages produced by :func:`critique_revise_gate_loop` carry the
-  four required ``kind="gate"`` recommendation edges (one per
-  :data:`GateRecommendation` literal) ahead of any caller-supplied
+  four required ``kind="gate"`` recommendation edges (one per literal
+  of the planning binding) ahead of any caller-supplied
   ``gate_extra_edges``. The executor's typed-verdict dispatch resolves
   them in preference to label-string matching.
 * Panel fan-out stages produced by :func:`panel_parallel` collate per-
@@ -171,7 +171,7 @@ def alternating_turns(
     on top.
     """
 
-    del history_strategy, max_rounds, until_condition  # consumed by Step.run, not topology
+    del history_strategy, max_rounds  # consumed by Step.run, not topology
 
     if not roles:
         raise ValueError("alternating_turns: roles must be non-empty")
@@ -180,12 +180,14 @@ def alternating_turns(
     target_for_loop: str = loop_target if loop_target is not None else names[0]
 
     stages: dict[str, Stage] = {}
+    terminal_name = names[-1]
     for idx, (role_name, role_step) in enumerate(roles):
         next_name: str = names[idx + 1] if idx + 1 < len(names) else target_for_loop
         stages[role_name] = Stage(
             name=role_name,
             step=role_step,
             edges=(Edge(label=next_name, target=next_name),),
+            loop_condition=until_condition if role_name == terminal_name else None,
         )
     return stages
 
@@ -203,7 +205,8 @@ def subpipeline_call(
     Documentation-first primitive for future user pipelines. The
     executor's ``kind="subloop"`` dispatch runs the child as a nested
     pipeline; *promote* maps the child's terminal state ``dict`` to a
-    :data:`GateRecommendation` on the parent's :class:`PipelineVerdict`.
+    literal of the planning binding on the parent's
+    :class:`PipelineVerdict`.
 
     Note: :class:`SubloopStep` copies the parent ``StepContext.state``
     into the child via ``dict(ctx.state)`` — the child's state patches
@@ -269,7 +272,7 @@ def mode_prompts(
 def iterate_until(
     stage: Stage,
     *,
-    condition: Callable[[Mapping[str, Any]], bool],
+    condition: Callable[[Any], bool] | None = None,
     max_iterations: int = 10,
     iterate_label: str = "iterate",
     halt_label: str = "halt",
@@ -285,7 +288,17 @@ def iterate_until(
     ``Edge(label=halt_label, target="halt")``.
     """
 
-    del condition, max_iterations  # consumed by Step.run, not topology
+    from megaplan._pipeline.pattern_stops import LoopState
+
+    if condition is None:
+        _max = int(max_iterations)
+
+        def _default_cond(ls: LoopState) -> bool:
+            return ls.iteration >= _max
+
+        stored = _default_cond
+    else:
+        stored = condition
 
     return Stage(
         name=stage.name,
@@ -295,6 +308,7 @@ def iterate_until(
             Edge(label=iterate_label, target=stage.name),
             Edge(label=halt_label, target="halt"),
         ),
+        loop_condition=stored,
     )
 
 

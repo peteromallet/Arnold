@@ -7,16 +7,24 @@ import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Callable, Mapping, Optional, Sequence, cast
 
 from megaplan._pipeline.pattern_types import JoinFn
 from megaplan._pipeline.subloop import SubloopStep
+from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.types import (
     PipelineVerdict,
+    Port,
     Stage,
     Step,
     StepContext,
     StepResult,
+)
+
+#: Typed value-kind Port emitted by the fan-out join when typed-ports is on.
+LAST_FANOUT_RESULTS_PORT: Port = Port(
+    name="last_fanout_results",
+    content_type="application/x-fanout-results+json",
 )
 
 
@@ -50,14 +58,33 @@ def _read_specs_from_path(path: Path) -> list[Any]:
 
 
 def _extract_specs_from_result(result: StepResult) -> list[Any]:
-    """Pull a list of reviewer specs from a generator's StepResult."""
+    """Pull a list of reviewer specs from a generator's StepResult.
+
+    Flag-ON (``typed_ports_on()``): read the typed Port channel
+    ``last_fanout_results`` from ``state_patch`` or ``outputs``;
+    flag-OFF: preserve the untyped ``specs`` channel.
+    """
 
     state_patch = result.state_patch
+    outputs = result.outputs
+    if typed_ports_on():
+        port_name = LAST_FANOUT_RESULTS_PORT.name
+        if isinstance(state_patch, Mapping):
+            value = state_patch.get(port_name)
+            if isinstance(value, list):
+                return list(value)
+        if isinstance(outputs, Mapping):
+            out_path = outputs.get(port_name)
+            if out_path is not None:
+                return _read_specs_from_path(Path(out_path))
+        raise LookupError(
+            f"dynamic_fanout: generator emitted no typed Port "
+            f"{port_name!r} (neither in state_patch nor outputs)"
+        )
     if isinstance(state_patch, Mapping):
         value = state_patch.get("specs")
         if isinstance(value, list):
             return list(value)
-    outputs = result.outputs
     if isinstance(outputs, Mapping):
         out_path = outputs.get("specs")
         if out_path is not None:
@@ -112,6 +139,7 @@ class _DynamicFanoutStep(SubloopStep):
     generator: Step | None = None
     base_prompt: Step | None = None
     join_fn: JoinFn | None = None
+    produces: tuple = field(default_factory=lambda: (LAST_FANOUT_RESULTS_PORT,))
 
     def run(self, ctx: StepContext) -> StepResult:
         if self.generator is None:
@@ -125,7 +153,15 @@ class _DynamicFanoutStep(SubloopStep):
         specs = _extract_specs_from_result(gen_result)
         steps = [_specialize_step(self.base_prompt, spec) for spec in specs]
         results = [step.run(ctx) for step in steps]
-        return self.join_fn(results, ctx)
+        joined = self.join_fn(results, ctx)
+        if typed_ports_on():
+            # Emit the typed Port last_fanout_results carrying the per-spec
+            # StepResults; do NOT touch the untyped state_patch['specs'] channel.
+            patch = dict(joined.state_patch) if isinstance(joined.state_patch, Mapping) else {}
+            patch[LAST_FANOUT_RESULTS_PORT.name] = list(results)
+            patch.pop("specs", None)
+            joined = dataclasses.replace(joined, state_patch=patch)
+        return joined
 
 
 def panel_from_artifact(
@@ -187,6 +223,7 @@ class _ConsensusStep(SubloopStep):
     panel: Any = None  # Step | Stage
     min_agreement: float = 0.8
     max_iters: int = 3
+    condition: Optional[Callable[[Any], bool]] = None
 
     def run(self, ctx: StepContext) -> StepResult:
         if self.panel is None:
@@ -206,6 +243,27 @@ class _ConsensusStep(SubloopStep):
             result = panel_step.run(ctx)
             last_result = result
             last_ratio = _agreement_ratio(result)
+            if self.condition is not None:
+                loop_state = type("LoopState", (), {
+                    "state": ctx.state,
+                    "last_fanout_results": dict(result.outputs),
+                    "iteration": iteration + 1,
+                })()
+                if self.condition(loop_state):
+                    merged = (
+                        dict(result.state_patch)
+                        if isinstance(result.state_patch, Mapping)
+                        else {}
+                    )
+                    merged[f"consensus:{self.name}:agreement"] = last_ratio
+                    merged[f"consensus:{self.name}:iterations"] = iteration + 1
+                    return StepResult(
+                        outputs=result.outputs,
+                        verdict=result.verdict,
+                        next="halt",
+                        state_patch=merged,
+                    )
+                continue
             if last_ratio >= self.min_agreement:
                 merged = (
                     dict(result.state_patch)

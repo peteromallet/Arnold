@@ -22,7 +22,7 @@ Relationships:
 State-flow contract: the child runs with a *copy* of ``ctx.state``
 (``state=dict(ctx.state)``). Child state mutations therefore do not
 propagate back to the parent state map directly — only the
-``promote`` callable's :class:`GateRecommendation` flows up via
+``promote`` callable's recommendation literal flows up via
 :class:`PipelineVerdict`, plus the two ``subloop:<name>:recommendation`` /
 ``subloop:<name>:state`` keys emitted as ``state_patch`` on the
 parent. Downstream handlers that need to observe child results

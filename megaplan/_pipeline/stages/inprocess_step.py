@@ -39,6 +39,8 @@ class InProcessHandlerStep:
     prompt_key: str | None = None
     slot: str | None = None
     arg_overrides: Mapping[str, Any] = field(default_factory=dict)
+    produces: tuple = field(default_factory=tuple)
+    consumes: tuple = field(default_factory=tuple)
 
     def run(self, ctx: StepContext) -> StepResult:
         state = ctx.state if isinstance(ctx.state, Mapping) else {}
