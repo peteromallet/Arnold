@@ -227,6 +227,210 @@ def _emit_llm_error(
         pass
 
 
+# ── Worker-level wedge watchdog ──────────────────────────────────────────────
+# A coarse, transport-agnostic backstop that sits ABOVE the in-agent
+# stream-progress watchdog (run_agent._interruptible_streaming_api_call's
+# `stream_progress_stall`, which is keyed on real non-whitespace chars) and the
+# shannon subprocess idle watchdog (workers/_impl.run_command's `idle_timeout`).
+#
+# Those two catch their respective regimes (whitespace-keepalive freeze; silent
+# subprocess). This one catches the regime that defeated both on 2026-05-24/28:
+# the hermes worker's `run_conversation` producing NO chunk of ANY kind — not
+# content, not reasoning, not even a keepalive — for ~17 minutes while the
+# `megaplan auto` parent sat alive. It observes the same `_StreamTracker` the
+# heartbeat uses and, on a full timeout of zero advancement in BOTH
+# `tokens_emitted` and `reasoning_emitted`, calls `agent.interrupt()` (clean
+# abort that aborts the in-flight request client and raises InterruptedError
+# inside the agent loop) and flags the trip so `_run_attempt` re-raises it as a
+# retryable `worker_stall`.
+#
+# Conservative by construction: it requires the FULL timeout of ZERO real
+# progress (any new chunk — content OR reasoning — resets the clock), so a
+# healthy long Opus/DeepSeek turn that keeps streaming is never killed.
+#
+# Tool-call awareness (2026-05-30 false-kill fix): an execute worker legitimately
+# fires long terminal/Bash tool calls (e.g. `pytest --cov` over the engine,
+# 4–6 min) during which the LLM emits ZERO stream chunks of any kind — it is
+# BLOCKED awaiting the tool_result, not wedged. Counting that silence toward the
+# stall timeout false-kills a HEALTHY worker mid-task (observed live: a worker
+# passed a batch, fired a coverage Bash, sat at 279s, was killed at 300s; the
+# retry re-ran the same long command and was re-killed → non-convergence). The
+# watchdog therefore distinguishes two states via the agent's own
+# ``_executing_tools`` flag (set True by ``AIAgent._execute_tool_calls`` for the
+# WHOLE duration of a tool batch, including a single long Bash): while a tool is
+# in flight, silence is EXPECTED and the clock is held; chunk-silence only counts
+# toward the timeout when the worker is genuinely awaiting LLM tokens (no tool
+# running). A truly dead worker — no tool in flight, no tokens — is STILL aborted.
+DEFAULT_WORKER_STALL_TIMEOUT_SECONDS = 600.0
+_WORKER_STALL_TIMEOUT_FLOOR_SECONDS = 60.0
+
+
+def _worker_stall_timeout_seconds() -> float:
+    """Resolve the worker-wedge watchdog timeout (env-overridable, floored).
+
+    ``HERMES_WORKER_STALL_TIMEOUT`` overrides the 300s default. A misconfigured
+    tiny value is clamped to a 60s floor so a healthy-but-slow long turn (e.g. a
+    big Opus reasoning burst before its first streamed chunk) can never be
+    false-aborted.
+    """
+    raw = os.getenv("HERMES_WORKER_STALL_TIMEOUT")
+    if raw is None:
+        return DEFAULT_WORKER_STALL_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_WORKER_STALL_TIMEOUT_SECONDS
+    if value <= 0:
+        return DEFAULT_WORKER_STALL_TIMEOUT_SECONDS
+    return max(value, _WORKER_STALL_TIMEOUT_FLOOR_SECONDS)
+
+
+def _emit_worker_stalled(
+    plan_dir: Path,
+    step: str,
+    *,
+    provider: str | None,
+    model: str | None,
+    tokens_emitted: int,
+    reasoning_emitted: int,
+    seconds_since_progress: float,
+    timeout_s: float,
+    transport: str,
+    subprocess_pid: int | None = None,
+    stderr_tail: str | None = None,
+    exception_type: str | None = None,
+    exception_message: str | None = None,
+) -> None:
+    """Emit a structured ``worker_stalled`` (LLM_CALL_ERROR) diagnostic event.
+
+    Captures everything needed to tell DeepSeek-vs-Claude and
+    server-vs-network-vs-silent apart next time, instead of guessing: provider +
+    model, tokens/reasoning emitted at abort, seconds since the last real chunk,
+    the transport, and (when available) the subprocess pid + a stderr tail and
+    any underlying httpx/SSE exception.
+    """
+    try:
+        from megaplan.observability.events import emit, EventKind
+
+        payload: dict = {
+            "event": "worker_stalled",
+            "provider": provider,
+            "model": model,
+            "transport": transport,
+            "tokens_emitted": tokens_emitted,
+            "reasoning_emitted": reasoning_emitted,
+            "seconds_since_last_token": round(seconds_since_progress, 1),
+            "stall_timeout_s": timeout_s,
+            "provider_error_code": "worker_stall",
+        }
+        if subprocess_pid is not None:
+            payload["subprocess_pid"] = subprocess_pid
+        if stderr_tail:
+            payload["stderr_tail"] = stderr_tail[-2000:]
+        if exception_type:
+            payload["exception_type"] = exception_type
+        if exception_message:
+            payload["exception_message"] = exception_message[:500]
+        emit(
+            EventKind.LLM_CALL_ERROR,
+            plan_dir=plan_dir,
+            phase=step,
+            payload=payload,
+        )
+    except Exception:
+        pass
+
+
+class _WorkerStallWatchdog:
+    """Daemon-thread watchdog that aborts a wedged ``run_conversation``.
+
+    Polls the shared ``_StreamTracker`` every second. The clock resets whenever
+    EITHER ``tokens_emitted`` or ``reasoning_emitted`` advances (i.e. any new
+    chunk arrived) OR a tool call is in flight on the agent. If none of those
+    hold for the full ``timeout`` AND the agent has not already been interrupted,
+    it calls ``agent.interrupt()`` — the same clean abort the gateway uses, which
+    aborts the in-flight request client and raises ``InterruptedError`` inside
+    the agent loop — and records the trip.
+
+    Tool-in-flight is read from ``agent._executing_tools`` (set True by
+    ``AIAgent._execute_tool_calls`` for the full duration of a tool batch,
+    including a single long Bash/terminal call). A worker BLOCKED awaiting a
+    tool_result emits zero stream chunks — that is expected, not a wedge — so we
+    must NOT count that silence. Only genuine LLM-token silence (no tool running,
+    no new chunk) advances toward the timeout. A truly dead worker (no tool in
+    flight, no tokens) is still aborted.
+
+    ``tripped`` is read back by ``_run_attempt`` after ``run_conversation``
+    returns/raises so the stall is re-raised as a retryable ``worker_stall``
+    rather than mistaken for a normal (empty) completion.
+    """
+
+    def __init__(self, agent, tracker: "_StreamTracker", timeout: float) -> None:
+        self._agent = agent
+        self._tracker = tracker
+        self._timeout = timeout
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.tripped = False
+        self.seconds_since_progress = 0.0
+        self.tokens_at_trip = 0
+        self.reasoning_at_trip = 0
+
+    def __enter__(self) -> "_WorkerStallWatchdog":
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+
+    def _tool_in_flight(self) -> bool:
+        """True while the agent is executing a tool batch (incl. a long Bash).
+
+        Reads the agent's own ``_executing_tools`` flag, which ``AIAgent``
+        wraps around the WHOLE tool-execution span. Defaults to False if the
+        agent doesn't expose it (e.g. a non-AIAgent fake), so the watchdog
+        degrades to the original chunk-only behaviour.
+        """
+        return bool(getattr(self._agent, "_executing_tools", False))
+
+    def _run(self) -> None:
+        last_progress_at = time.monotonic()
+        last_tokens = self._tracker.tokens_emitted
+        last_reasoning = self._tracker.reasoning_emitted
+        while not self._stop.wait(1.0):
+            now = time.monotonic()
+            tokens = self._tracker.tokens_emitted
+            reasoning = self._tracker.reasoning_emitted
+            if tokens != last_tokens or reasoning != last_reasoning:
+                # Any new chunk (content OR reasoning) is real progress.
+                last_tokens = tokens
+                last_reasoning = reasoning
+                last_progress_at = now
+                continue
+            if self._tool_in_flight():
+                # A tool is running (e.g. a multi-minute `pytest --cov`). The
+                # LLM is BLOCKED awaiting its tool_result and legitimately emits
+                # zero chunks — this is NOT a wedge. Hold the clock so the long
+                # tool call cannot trip the stall timeout. The instant the tool
+                # returns and we go back to awaiting LLM tokens, the clock
+                # resumes from here, so a genuine post-tool wedge is still caught.
+                last_progress_at = now
+                continue
+            if now - last_progress_at >= self._timeout:
+                self.tripped = True
+                self.seconds_since_progress = now - last_progress_at
+                self.tokens_at_trip = tokens
+                self.reasoning_at_trip = reasoning
+                try:
+                    self._agent.interrupt("worker stall watchdog: no stream progress")
+                except Exception:
+                    pass
+                return
+
+
 def _start_heartbeat(
     plan_dir: Path,
     step: str,
@@ -920,6 +1124,18 @@ def run_hermes_step(
         for _empty_attempt in range(1, _MAX_EMPTY_RETRIES + 1):
             run_kwargs = _streaming_run_kwargs(current_model or model, agent_max_tokens, plan_dir=plan_dir)
             tracker = run_kwargs.get("stream_callback")
+            # Execute is where both transports wedged (the 2026-05-24/28 silent
+            # ~17-min hangs: DeepSeek SSE AND Claude/anthropic). For execute we
+            # ALWAYS attach a _StreamTracker so the worker-stall watchdog below
+            # has a progress signal regardless of provider — registering a
+            # stream_callback also forces streaming on the Claude/anthropic path
+            # (run_agent._has_stream_consumers()), giving it the same observable
+            # token throughput DeepSeek already had. Non-execute phases keep the
+            # prior behaviour (tracker only when the provider requires streaming)
+            # so structured-output/finalize calls are untouched.
+            if tracker is None and step == "execute":
+                tracker = _StreamTracker()
+                run_kwargs["stream_callback"] = tracker
             is_streaming = isinstance(tracker, _StreamTracker)
 
             # Wire the reasoning_callback to the tracker so reasoning_emitted_so_far
@@ -959,12 +1175,68 @@ def run_hermes_step(
             if is_streaming and tracker is not None:
                 _start_heartbeat(plan_dir, step, tracker, heartbeat_stop, run_id=run_id)
 
-            try:
-                current_result = current_agent.run_conversation(
-                    user_message=prompt,
-                    conversation_history=conversation_history,
-                    **run_kwargs,
+            # Worker-wedge watchdog: aborts run_conversation if the tracker sees
+            # ZERO new chunks (content or reasoning) for the full stall timeout.
+            # Active whenever a tracker is wired (all execute calls + any
+            # streaming non-execute call), covering BOTH the DeepSeek SSE and the
+            # Claude/anthropic transports.
+            from contextlib import nullcontext
+
+            watchdog: "_WorkerStallWatchdog | None" = None
+            if is_streaming and tracker is not None:
+                watchdog = _WorkerStallWatchdog(
+                    current_agent, tracker, _worker_stall_timeout_seconds()
                 )
+            watchdog_ctx = watchdog if watchdog is not None else nullcontext()
+
+            def _raise_worker_stall(cause: BaseException | None) -> "CliError":
+                """Emit the worker_stalled diagnostic + build the retryable error.
+
+                Used for BOTH abort shapes: the agent loop catches
+                ``InterruptedError`` internally and RETURNS a result with
+                ``interrupted=True`` (the common case), but a deeper streaming
+                abort can also propagate ``InterruptedError`` — both must land
+                here so the stall is never mistaken for a normal completion.
+                """
+                timeout_s = _worker_stall_timeout_seconds()
+                _emit_worker_stalled(
+                    plan_dir,
+                    step,
+                    provider=(current_model or model or "").split(":", 1)[0] or None,
+                    model=resolved_model,
+                    tokens_emitted=watchdog.tokens_at_trip,
+                    reasoning_emitted=watchdog.reasoning_at_trip,
+                    seconds_since_progress=watchdog.seconds_since_progress,
+                    timeout_s=timeout_s,
+                    transport="hermes_in_process",
+                    exception_type=type(cause).__name__ if cause is not None else None,
+                    exception_message=str(cause) if cause is not None else None,
+                )
+                return CliError(
+                    "worker_stall",
+                    (
+                        f"Hermes worker stalled on step '{step}': no stream "
+                        f"progress (content or reasoning) for "
+                        f"{watchdog.seconds_since_progress:.0f}s "
+                        f"(timeout={timeout_s:.0f}s, "
+                        f"tokens={watchdog.tokens_at_trip}, "
+                        f"reasoning={watchdog.reasoning_at_trip})"
+                    ),
+                    extra={"raw_output": ""},
+                )
+
+            try:
+                with watchdog_ctx:
+                    current_result = current_agent.run_conversation(
+                        user_message=prompt,
+                        conversation_history=conversation_history,
+                        **run_kwargs,
+                    )
+            except InterruptedError as interrupt_exc:
+                # Defensive: a deeper streaming abort propagated InterruptedError.
+                if watchdog is not None and watchdog.tripped:
+                    raise _raise_worker_stall(interrupt_exc) from interrupt_exc
+                raise
             finally:
                 if is_streaming:
                     heartbeat_stop.set()
@@ -974,6 +1246,20 @@ def run_hermes_step(
                         current_agent._megaplan_retry_error_callback = None
                     except Exception:
                         pass
+                # Clear any interrupt flag so a retry on the same agent object
+                # (or a reused session) starts clean.
+                try:
+                    current_agent.clear_interrupt()
+                except Exception:
+                    pass
+
+            # Common abort shape: the agent loop caught our watchdog's
+            # InterruptedError internally and RETURNED a result flagged
+            # interrupted=True. Detect the tripped watchdog here so a wedge is
+            # surfaced as a retryable worker_stall rather than parsed as a
+            # (truncated/empty) normal completion.
+            if watchdog is not None and watchdog.tripped:
+                raise _raise_worker_stall(None)
 
             try:
                 current_payload, current_raw_output = parse_agent_output(
