@@ -9,8 +9,8 @@ Last updated: 2026-05-31.
 | s3-intent-oracle | `frontier-s3-intent` | `9e91dc6` | DONE — merging to main |
 | s4-capability-fence | `frontier-s4-capability` | `6d5e3e4` | DONE — merging to main (reconciled against main's existing `vibecomfy/security/`) |
 | s1-oracle-durability | (not started) | — | QUEUED — launchable now |
-| s2-dynamic-widget-fence | (not started) | — | GATED — wait for scratchpad-emitter m4/m5 |
-| s5-felt-fidelity-gate | (not started) | — | GATED — wait for scratchpad-emitter m4/m5 |
+| s2-dynamic-widget-fence | (not started) | — | READY AFTER REGROUND — m4-m7 landed; consume existing `refuse.py` |
+| s5-felt-fidelity-gate | (not started) | — | READY AFTER REGROUND — m4-m7 landed; consume existing delta/change-report primitives |
 
 s3 and s4 are the two existential gates (roadmap §14). Both now exist — the write-enabled-editor
 tripwire is satisfiable.
@@ -36,10 +36,11 @@ PYENV_VERSION=3.11.11 megaplan init \
   --auto-start
 ```
 
-### s2-dynamic-widget-fence — GATED
+### s2-dynamic-widget-fence — launch after current-main reground
 
-s2 touches the `emit_ui_json` hot zone; it must wait until scratchpad-emitter m4/m5 land on main.
-Once unblocked, launch with:
+s2 touches the `emit_ui_json` hot zone, but scratchpad-emitter m4-m7 have now landed on main. Its brief
+must be grounded against the landed `vibecomfy/porting/refuse.py` module: s2 should add widget-shape
+verdicts/reasons into the existing refusal spine, not rebuild the generic detector. Launch with:
 
 ```
 PYENV_VERSION=3.11.11 megaplan init \
@@ -54,9 +55,11 @@ PYENV_VERSION=3.11.11 megaplan init \
   --auto-start
 ```
 
-### s5-felt-fidelity-gate — GATED
+### s5-felt-fidelity-gate — launch after current-main reground
 
-s5 also touches `emit_ui_json` (consumes m5's Step-0 delta signal). Launch after m4/m5 land:
+s5 also touches `emit_ui_json`. m4-m7 have landed, and current main already has `layout/delta.py`,
+`layout/reconcile.py`, `build_change_report(...)`, and `change_report_out`. s5 should consume those
+primitives first and add only the minimal missing felt-fidelity classifier/gate. Launch with:
 
 ```
 PYENV_VERSION=3.11.11 megaplan init \

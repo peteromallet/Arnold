@@ -14,6 +14,10 @@ degradation" fence is **data-complete but gate-incomplete**: the recovery report
 `schema_less` / `widget_length_check` / confidence per node; nothing consumes it as a refusal.
 
 ## Scope — IN
+- **Current-main reground (2026-05-31):** scratchpad-emitter m4-m7 have landed. `vibecomfy/porting/refuse.py`
+  is the generic refusal spine, and `ui_emitter.emit_ui_json(...)` already calls it for applied re-emits.
+  This sprint must **compose with that module** instead of rebuilding a parallel detector: add the
+  widget-shape verdicts/reasons that `refuse.py` and the recovery report can consume.
 - A **first-class IR representation for dict/row-shaped `widgets_values`** (dynamic-count widgets), so the
   rows are modeled, not positionally flattened.
 - The **§6 fence as a real emit-path module**: promote `overflow` / `schema_less` / low-confidence into a
@@ -24,8 +28,9 @@ degradation" fence is **data-complete but gate-incomplete**: the recovery report
 - The **Power Lora Loader falsification test** (the §14 probe) as a committed regression.
 
 ## Scope — OUT
-- The GENERIC corruption-detector / refusal-spine — scratchpad-emitter **m5 owns that**. This sprint owns
-  the widget-SHAPE fence + dict-widget IR; expose a clean interface m5's detector can call. Do NOT rebuild it.
+- The GENERIC corruption-detector / refusal-spine — scratchpad-emitter m5 already landed
+  `vibecomfy/porting/refuse.py`. This sprint owns the widget-SHAPE fence + dict-widget IR; expose a clean
+  interface the existing refusal spine can call. Do NOT rebuild it.
 - Get/Set virtual-wire semantics (m2/m5 own those).
 
 ## Locked decisions
@@ -39,6 +44,8 @@ degradation" fence is **data-complete but gate-incomplete**: the recovery report
 ## Constraints
 - Offline/deterministic. Must inherit S1's trustworthy oracle gate.
 - Must not regress the currently-passing official families.
+- Treat current `main` as the source of truth: `ui_emitter.py` already records `schema_less`,
+  `confidence`, and `widget_length_check`; `refuse.py` already raises typed emit refusals.
 
 ## Done criteria
 - The music-video Power Lora Loader graph `ingest→emit→convert_ui_to_api` **round-trips faithfully OR is
@@ -56,5 +63,5 @@ degradation" fence is **data-complete but gate-incomplete**: the recovery report
   shape-divergence check needs. Don't touch Get/Set normalization.
 
 ## Handoff artifact
-The fence module interface (per-node verdict map + typed refusal reason) that scratchpad-emitter m5's
-corruption-detector and s5's felt-delta gate both call.
+The fence module interface (per-node verdict map + typed refusal reason) that the existing
+`vibecomfy.porting.refuse` spine and s5's felt-delta gate both call.

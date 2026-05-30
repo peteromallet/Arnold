@@ -13,9 +13,16 @@ multi-second round-trip that kills the magic. The "change report" is a `print`, 
 Latency is gated nowhere. Trust is a single-surprise cliff.
 
 ## Scope — IN
+- **Current-main reground (2026-05-31):** scratchpad-emitter m4-m7 have landed. Current `main` includes
+  `vibecomfy/porting/layout/delta.py`, `vibecomfy/porting/layout/reconcile.py`,
+  `build_change_report(...)`, and `emit_ui_json(..., change_report_out=...)`; it does **not** expose a
+  dedicated emitter-path "touched/untouched" API beyond `compute_field_delta(...)` + `ChangeReport`.
+  Consume those existing primitives first, and add only the minimal missing classification needed for
+  felt-fidelity.
 - A **felt-delta gate**: assert that nodes/reroutes the agent did NOT touch do not move or get rationalized
-  unexpectedly on re-emit. Reuse scratchpad-emitter m5's **system-computed touched/untouched delta**
-  (§0 Step 0); block on any unintended visual move of an untouched node OR a collapsed-without-cause reroute.
+  unexpectedly on re-emit. Use current-main `compute_field_delta(...)` + `ChangeReport` as the baseline
+  touched/untouched signal; if insufficient, add the smallest emitter-path classifier locally. Block on any
+  unintended visual move of an untouched node OR a collapsed-without-cause reroute.
 - A **latency budget gate**: measure the full `ingest→emit (+oracle)` wall-time on the ~90-node music-video
   monster; fail if it exceeds a declared budget.
 - Promote the change-report from a `print` into a **structured artifact** (the data a future preview UI
@@ -35,8 +42,8 @@ Latency is gated nowhere. Trust is a single-surprise cliff.
 - Reroute-rationalization detection: how to flag "the user's Get/Set furniture changed without a structural cause".
 
 ## Constraints
-- Depends on m5's touched/untouched delta being on `main` (ordered LAST for this reason). If absent, compute
-  a minimal delta locally rather than blocking.
+- Do not wait on m5; it has landed. If the current-main field delta/change-report primitives are too coarse,
+  compute a minimal local touched/untouched classifier rather than blocking.
 - Offline/deterministic; the latency gate must be machine-stable enough to not flake CI.
 
 ## Done criteria
@@ -47,10 +54,11 @@ Latency is gated nowhere. Trust is a single-surprise cliff.
 
 ## Touchpoints
 - `vibecomfy/porting/ui_emitter.py` (re-emit path + the report), `vibecomfy/porting/layout/` (felt-delta
-  over positions), the touched/untouched delta from m5, `tests/` (felt-delta + latency fixtures).
+  over positions), current-main `compute_field_delta(...)` / `ChangeReport`, `tests/` (felt-delta + latency fixtures).
 
 ## Anti-scope
-- No editor JS / preview UI / undo wiring (future m8). Don't rebuild m5's delta — consume it.
+- No editor JS / preview UI / undo wiring (future m8). Don't rebuild the landed reconcile/delta/refusal
+  stack — consume and extend it narrowly.
 - Don't change semantic or geometric gates; ADD the felt axis alongside them.
 
 ## Handoff artifact
