@@ -242,6 +242,123 @@ def load_plan_locked(
         yield load_plan_from_dir(plan_dir)
 
 
+def driver_lock_path(plan_dir: Path) -> Path:
+    """Path of the per-plan ``auto`` driver-lifetime lockfile.
+
+    Distinct from ``plan_lock_path`` (``.plan.lock``), which is a SHORT per-step
+    lock the driver acquires and releases around each individual phase. The
+    driver lock is held for the WHOLE ``auto`` process so two ``megaplan auto``
+    invocations on the same plan can't interleave at step boundaries and contend
+    over plan state (the dueling-drivers zero-progress plateau).
+    """
+    return plan_dir / ".auto-driver.lock"
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    """Best-effort read of the pid recorded in a driver lockfile."""
+    try:
+        text = lock_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    try:
+        return int(text.split()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _pid_is_live(pid: int) -> bool:
+    """True if ``pid`` names a live process this user can signal.
+
+    ``os.kill(pid, 0)`` raises ``ProcessLookupError`` for a dead pid and
+    ``PermissionError`` for a live pid owned by another user (still live). pid
+    <= 0 targets a process group / every process and must never be treated as a
+    specific live holder.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+@contextmanager
+def driver_lock(plan_dir: Path) -> Iterator[None]:
+    """Acquire the per-plan ``auto`` driver-lifetime advisory lock.
+
+    Uses a non-blocking ``fcntl.flock`` on ``.auto-driver.lock`` — the same
+    primitive ``plan_lock`` uses — held for the lifetime of this context. On
+    contention:
+
+    * If the recorded holder pid is LIVE, refuse with a ``driver_locked``
+      ``CliError`` naming the pid, so a second ``megaplan auto`` on the same plan
+      can't start and create the dueling-drivers plateau.
+    * If the holder pid is DEAD (stale lock — the kernel already released the
+      ``flock`` when that process exited, so ``flock`` itself won't block here;
+      the pid file is just informational), we proceed and reclaim it.
+
+    The kernel drops the advisory lock automatically when the holding process
+    exits — including a crash — so a genuinely dead holder never wedges a new
+    driver even though its pidfile lingers.
+    """
+    lock_path = driver_lock_path(plan_dir)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            # flock is held by a LIVE process (the kernel released it if the
+            # holder had exited). Report which pid, falling back to "another
+            # process" if the pidfile is unreadable.
+            holder_pid = _read_lock_pid(lock_path)
+            if holder_pid is not None and _pid_is_live(holder_pid):
+                message = (
+                    f"Cannot start 'auto' for plan '{plan_dir.name}': another live "
+                    f"megaplan auto driver (pid {holder_pid}) already holds it. "
+                    f"Running two drivers on one plan contends over plan state and "
+                    f"stalls progress. Stop pid {holder_pid} first, or wait for it "
+                    f"to finish."
+                )
+            else:
+                message = (
+                    f"Cannot start 'auto' for plan '{plan_dir.name}': another "
+                    f"megaplan auto driver already holds it."
+                )
+            handle.close()
+            raise CliError(
+                "driver_locked",
+                message,
+                extra={"plan": plan_dir.name, "holder_pid": holder_pid},
+            ) from exc
+        # We hold the lock. Record our pid (truncate any stale pid first) so a
+        # later contender can name us / detect our liveness.
+        try:
+            handle.seek(0)
+            handle.truncate(0)
+            handle.write(f"{os.getpid()}\n")
+            handle.flush()
+        except OSError:
+            pass
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+    finally:
+        if not handle.closed:
+            handle.close()
+
+
 def save_state(plan_dir: Path, state: PlanState) -> None:
     write_plan_state(plan_dir, mode="replace", state=state)
 
