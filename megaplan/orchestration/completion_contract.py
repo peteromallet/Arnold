@@ -665,89 +665,90 @@ class GreenSuiteProvider:
         and the *stable* newly-failing / newly-passing sets (nodeids that stayed
         flipped across both runs).  Everything else becomes a flake.
         """
+        flip_count = len(flips)
+        if flip_count > 1000:
+            return self._skipped_flake_retry(baseline, verification, flips)
+
+        retry_result = self._run_flake_retry_suite(
+            ctx, config, baseline, flips, timeout
+        )
+        stable_newly_failing, stable_newly_passing, flakes = (
+            self._classify_flake_retry(baseline, verification, retry_result, flips)
+        )
+        delta = self._flake_retry_delta(
+            baseline,
+            verification,
+            retry_result,
+            stable_newly_failing,
+            stable_newly_passing,
+            flakes,
+        )
+        return retry_result, delta, stable_newly_failing, stable_newly_passing
+
+    @staticmethod
+    def _skipped_flake_retry(
+        baseline: "SuiteRunResult",
+        verification: "SuiteRunResult",
+        flips: set[str],
+    ) -> tuple["SuiteRunResult", SuiteDelta, set[str], set[str]]:
+        flip_count = len(flips)
+        log.warning(
+            "flake_retry: %d flipped nodeids (>1000) — skipping retry; "
+            "all flips classified as flakes.  "
+            "Baseline run_id=%s verification run_id=%s",
+            flip_count,
+            baseline.run_id,
+            verification.run_id,
+        )
+        delta = SuiteDelta(
+            computable=True,
+            newly_failing=(),
+            newly_passing=(),
+            still_red=tuple(
+                sorted(
+                    set(baseline.failures)
+                    & set(verification.failures)
+                    & set(verification.collected_ids)
+                )
+            ),
+            still_green=tuple(
+                sorted(
+                    (set(baseline.collected_ids) & set(verification.collected_ids))
+                    - set(baseline.failures)
+                    - set(verification.failures)
+                )
+            ),
+            deleted_tests=tuple(
+                sorted(set(baseline.collected_ids) - set(verification.collected_ids))
+            ),
+            added_tests=tuple(
+                sorted(set(verification.collected_ids) - set(baseline.collected_ids))
+            ),
+            flakes=tuple(sorted(flips)),
+            tests_collected=len(verification.collected_ids),
+            duration=verification.duration,
+            flake_retry_skipped=True,
+            flake_retry_reason=f">{1000} flipped nodeids ({flip_count}); retry suppressed",
+        )
+        return verification, delta, set(), set()
+
+    def _run_flake_retry_suite(
+        self,
+        ctx: CompletionContext,
+        config: dict[str, Any],
+        baseline: "SuiteRunResult",
+        flips: set[str],
+        timeout: int,
+    ) -> "SuiteRunResult":
         from megaplan.orchestration.suite_runner import (
             append_suite_run,
             run_suite,
         )
 
-        flip_count = len(flips)
-
-        # --- >1000 flips: skip retry entirely, mark everything as flakes ---
-        if flip_count > 1000:
-            log.warning(
-                "flake_retry: %d flipped nodeids (>1000) — skipping retry; "
-                "all flips classified as flakes.  "
-                "Baseline run_id=%s verification run_id=%s",
-                flip_count,
-                baseline.run_id,
-                verification.run_id,
-            )
-            delta = SuiteDelta(
-                computable=True,
-                newly_failing=(),
-                newly_passing=(),
-                still_red=tuple(sorted(set(baseline.failures) & set(verification.failures) & set(verification.collected_ids))),
-                still_green=tuple(
-                    sorted(
-                        (set(baseline.collected_ids) & set(verification.collected_ids))
-                        - set(baseline.failures)
-                        - set(verification.failures)
-                    )
-                ),
-                deleted_tests=tuple(
-                    sorted(set(baseline.collected_ids) - set(verification.collected_ids))
-                ),
-                added_tests=tuple(
-                    sorted(set(verification.collected_ids) - set(baseline.collected_ids))
-                ),
-                flakes=tuple(sorted(flips)),
-                tests_collected=len(verification.collected_ids),
-                duration=verification.duration,
-                flake_retry_skipped=True,
-                flake_retry_reason=f">{1000} flipped nodeids ({flip_count}); retry suppressed",
-            )
-            return verification, delta, set(), set()
-
-        # --- Build retry command: run only the flipped nodeids ---
-        base_cmd = config.get("test_command") if isinstance(config, dict) else None
-        if not base_cmd:
-            base_cmd = "pytest"
-
-        # Strip flags we always add ourselves so we can append cleanly.
-        for flag in ("--tb=no", "-q", "--no-header", "-rN", "-rA"):
-            base_cmd = base_cmd.replace(flag, "")
-        base_cmd = base_cmd.strip()
-
-        nodeid_args: list[str] = []
-        use_from_file = flip_count > 100
-        from_file_path: Path | None = None
-
-        if use_from_file:
-            # Write to a tempfile and use as positional args (pytest reads
-            # extra args after the command as test selectors).
-            fd, tmpname = tempfile.mkstemp(
-                suffix=".txt", prefix="flake_retry_nodeids_"
-            )
-            from_file_path = Path(tmpname)
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                for nid in sorted(flips):
-                    fh.write(nid + "\n")
-            # Read them back as positional args
-            nodeid_args = sorted(flips)
-        else:
-            nodeid_args = sorted(flips)
-
-        retry_command = " ".join(
-            [base_cmd, "--tb=no", "-q", "--no-header", "-rA"]
-            + [shlex.quote(a) for a in nodeid_args]
-        )
-
-        # Build a config overlay with the custom command and plan_dir.
+        retry_command, from_file_path = self._flake_retry_command(config, flips)
         retry_config: dict[str, Any] = dict(config)
         retry_config["test_command"] = retry_command
         retry_config["plan_dir"] = str(ctx.plan_dir)
-
-        # Deadline: min(test_baseline_timeout, max(300, baseline.duration*2))
         retry_deadline = time.monotonic() + min(
             timeout, max(300.0, baseline.duration * 2)
         )
@@ -759,20 +760,60 @@ class GreenSuiteProvider:
             deadline_seconds=retry_deadline,
         )
         append_suite_run(ctx.plan_dir, retry_result)
+        self._cleanup_flake_retry_file(from_file_path)
+        return retry_result
 
-        # Clean up tempfile
+    @staticmethod
+    def _flake_retry_command(
+        config: dict[str, Any],
+        flips: set[str],
+    ) -> tuple[str, "Path | None"]:
+        base_cmd = config.get("test_command") if isinstance(config, dict) else None
+        if not base_cmd:
+            base_cmd = "pytest"
+
+        for flag in ("--tb=no", "-q", "--no-header", "-rN", "-rA"):
+            base_cmd = base_cmd.replace(flag, "")
+        base_cmd = base_cmd.strip()
+
+        nodeid_args: list[str] = []
+        use_from_file = len(flips) > 100
+        from_file_path: Path | None = None
+        if use_from_file:
+            fd, tmpname = tempfile.mkstemp(
+                suffix=".txt", prefix="flake_retry_nodeids_"
+            )
+            from_file_path = Path(tmpname)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                for nid in sorted(flips):
+                    fh.write(nid + "\n")
+            nodeid_args = sorted(flips)
+        else:
+            nodeid_args = sorted(flips)
+
+        retry_command = " ".join(
+            [base_cmd, "--tb=no", "-q", "--no-header", "-rA"]
+            + [shlex.quote(a) for a in nodeid_args]
+        )
+        return retry_command, from_file_path
+
+    @staticmethod
+    def _cleanup_flake_retry_file(from_file_path: "Path | None") -> None:
         if from_file_path is not None:
             try:
                 from_file_path.unlink()
             except OSError:
                 pass
 
-        # --- Reclassify: a flip is stable ONLY if the retry agrees ---
+    @staticmethod
+    def _classify_flake_retry(
+        baseline: "SuiteRunResult",
+        verification: "SuiteRunResult",
+        retry_result: "SuiteRunResult",
+        flips: set[str],
+    ) -> tuple[set[str], set[str], set[str]]:
         retry_failures: set[str] = set(retry_result.failures)
-        retry_passes: set[str] = set(retry_result.passes)
-
         verification_fail = set(verification.failures)
-        verification_pass = set(verification.passes)
         baseline_fail = set(baseline.failures)
 
         stable_newly_failing: set[str] = set()
@@ -803,9 +844,20 @@ class GreenSuiteProvider:
             else:
                 # Shouldn't happen given flips definition, but be safe.
                 flakes.add(nid)
+        return stable_newly_failing, stable_newly_passing, flakes
 
-        # Recompute delta with stable classifications
-        delta = SuiteDelta(
+    @staticmethod
+    def _flake_retry_delta(
+        baseline: "SuiteRunResult",
+        verification: "SuiteRunResult",
+        retry_result: "SuiteRunResult",
+        stable_newly_failing: set[str],
+        stable_newly_passing: set[str],
+        flakes: set[str],
+    ) -> SuiteDelta:
+        baseline_fail = set(baseline.failures)
+        retry_failures = set(retry_result.failures)
+        return SuiteDelta(
             computable=True,
             newly_failing=tuple(sorted(stable_newly_failing)),
             newly_passing=tuple(sorted(stable_newly_passing)),
@@ -840,26 +892,44 @@ class GreenSuiteProvider:
             flake_retry_reason="",
         )
 
-        return retry_result, delta, stable_newly_failing, stable_newly_passing
-
     # ------------------------------------------------------------------
     # collect
     # ------------------------------------------------------------------
 
     def collect(self, ctx: CompletionContext) -> EvidenceRef:
-        from megaplan.orchestration.suite_runner import (
-            _compute_code_hash,
-            append_suite_run,
-            freshness_skip,
-            run_suite,
+        config, timeout = self._suite_config_and_timeout(ctx)
+        current_code_hash = self._current_code_hash(ctx, config)
+        result, cached = self._verification_result(
+            ctx, config, timeout, current_code_hash
+        )
+        baseline = self._baseline_from_log(ctx.plan_dir)
+        baseline_stale = (
+            baseline.code_hash != current_code_hash if baseline is not None else False
+        )
+        result, delta, flake_retried = self._verification_delta(
+            ctx, config, baseline, result, timeout
+        )
+        details = self._suite_details(
+            ctx, result, cached, delta, flake_retried, baseline_stale
+        )
+        return self._evidence_from_suite_status(
+            ctx, result, delta, details, cached, baseline, timeout
         )
 
-        config: dict[str, Any] = ctx.state.get("config", {}) if isinstance(ctx.state, dict) else {}
+    @staticmethod
+    def _suite_config_and_timeout(
+        ctx: CompletionContext,
+    ) -> tuple[dict[str, Any], int]:
+        config: dict[str, Any] = (
+            ctx.state.get("config", {}) if isinstance(ctx.state, dict) else {}
+        )
         timeout: int = config.get("test_baseline_timeout", 900)
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             timeout = 900
+        return config, timeout
 
-        # Resolve hash paths from config (test_dirs + source_globs)
+    @staticmethod
+    def _hash_paths_from_config(config: dict[str, Any]) -> "list[str] | None":
         hash_paths: list[str] | None = None
         if isinstance(config, dict):
             test_dirs = config.get("test_dirs")
@@ -876,72 +946,96 @@ class GreenSuiteProvider:
                         hash_paths.extend(source_globs)
                     elif isinstance(source_globs, str):
                         hash_paths.append(source_globs)
+        return hash_paths
 
-        current_code_hash = _compute_code_hash(ctx.project_dir, paths=hash_paths)
+    def _current_code_hash(
+        self,
+        ctx: CompletionContext,
+        config: dict[str, Any],
+    ) -> str:
+        from megaplan.orchestration.suite_runner import _compute_code_hash
 
-        # --- freshness short-circuit: skip the run when code_hash matches the
-        #     latest verification record already on disk ---
+        return _compute_code_hash(
+            ctx.project_dir,
+            paths=self._hash_paths_from_config(config),
+        )
+
+    @staticmethod
+    def _verification_result(
+        ctx: CompletionContext,
+        config: dict[str, Any],
+        timeout: int,
+        current_code_hash: str,
+    ) -> tuple["SuiteRunResult", "SuiteRunResult | None"]:
+        from megaplan.orchestration.suite_runner import (
+            append_suite_run,
+            freshness_skip,
+            run_suite,
+        )
+
         cached = freshness_skip(ctx.plan_dir, current_code_hash, phase="verification")
         if cached is not None:
-            # Reuse the cached result — no need to re-run.
-            result = cached
-        else:
-            deadline = time.monotonic() + timeout
-            result = run_suite(
-                ctx.project_dir,
-                config,
-                phase="verification",
-                deadline_seconds=deadline,
-            )
-            append_suite_run(ctx.plan_dir, result)
+            return cached, cached
+        deadline = time.monotonic() + timeout
+        result = run_suite(
+            ctx.project_dir,
+            config,
+            phase="verification",
+            deadline_seconds=deadline,
+        )
+        append_suite_run(ctx.plan_dir, result)
+        return result, None
 
-        # --- Retrieve baseline SuiteRunResult from the ndjson log ---
-        baseline = self._baseline_from_log(ctx.plan_dir)
-
-        # --- Baseline-stale detection: compare baseline code_hash with current HEAD ---
-        baseline_stale = False
-        if baseline is not None:
-            baseline_stale = baseline.code_hash != current_code_hash
-
-        # --- Delta computation -------------------------------------------------
-        delta: SuiteDelta | None = None
+    def _verification_delta(
+        self,
+        ctx: CompletionContext,
+        config: dict[str, Any],
+        baseline: "SuiteRunResult | None",
+        result: "SuiteRunResult",
+        timeout: int,
+    ) -> tuple["SuiteRunResult", "SuiteDelta | None", bool]:
         flake_retried = False
-
-        # Collection-parse-failure: if either run has collections_parse_ok=False,
-        # set delta.computable=False and emit a runner_error-style verdict.
         if baseline is not None and (
             not baseline.collections_parse_ok
             or not result.collections_parse_ok
         ):
-            delta = SuiteDelta(
-                computable=False,
-                newly_failing=(),
-                newly_passing=(),
-                still_red=(),
-                still_green=(),
-                deleted_tests=(),
-                added_tests=(),
-                flakes=(),
-                tests_collected=0,
-                duration=result.duration,
+            return result, self._noncomputable_delta(result), flake_retried
+        if baseline is None:
+            return result, None, flake_retried
+
+        delta = compute_delta(baseline, result)
+        flips: set[str] = set(delta.newly_failing) | set(delta.newly_passing)
+        if flips:
+            result, delta, _, _ = self._flake_retry(
+                ctx, config, baseline, result, flips, timeout
             )
-        elif baseline is not None:
-            # Compute initial delta
-            delta = compute_delta(baseline, result)
+            flake_retried = True
+        return result, delta, flake_retried
 
-            # --- Flake retry: re-run nodeids whose pass/fail state flipped ---
-            flips: set[str] = set(delta.newly_failing) | set(delta.newly_passing)
+    @staticmethod
+    def _noncomputable_delta(result: "SuiteRunResult") -> SuiteDelta:
+        return SuiteDelta(
+            computable=False,
+            newly_failing=(),
+            newly_passing=(),
+            still_red=(),
+            still_green=(),
+            deleted_tests=(),
+            added_tests=(),
+            flakes=(),
+            tests_collected=0,
+            duration=result.duration,
+        )
 
-            if flips:
-                retry_result, delta, _, _ = self._flake_retry(
-                    ctx, config, baseline, result, flips, timeout
-                )
-                flake_retried = True
-                # Use the retry result as the authoritative verification for
-                # status mapping below.
-                result = retry_result
-
-        # Build details from the SuiteRunResult.
+    @staticmethod
+    def _suite_details(
+        ctx: CompletionContext,
+        result: "SuiteRunResult",
+        cached: "SuiteRunResult | None",
+        delta: "SuiteDelta | None",
+        flake_retried: bool,
+        baseline_stale: bool,
+    ) -> dict[str, Any]:
         details: dict[str, Any] = {
             "run_id": result.run_id,
             "phase": result.phase,
@@ -960,28 +1054,32 @@ class GreenSuiteProvider:
             "freshness_cache_hit": cached is not None,
         }
 
-        # --- Also surface the original baseline for back-compat ---
         finalize = _read_finalize(ctx.plan_dir)
         baseline_command = finalize.get("baseline_test_command")
         note = finalize.get("baseline_test_note")
         details["baseline_test_command"] = baseline_command
         details["baseline_test_note"] = note
 
-        # --- Attach delta to details ---
         if delta is not None:
             details["delta"] = delta.to_dict()
             details["delta.computable"] = delta.computable
             details["flake_retried"] = flake_retried
             details["baseline_stale"] = baseline_stale
+        return details
 
-        # --- Status mapping ---
-        # If delta is non-computable (collections_parse_ok=False), emit a
-        # runner_error-style verdict — NEVER silent-green.
+    def _evidence_from_suite_status(
+        self,
+        ctx: CompletionContext,
+        result: "SuiteRunResult",
+        delta: "SuiteDelta | None",
+        details: dict[str, Any],
+        cached: "SuiteRunResult | None",
+        baseline: "SuiteRunResult | None",
+        timeout: int,
+    ) -> EvidenceRef:
         if delta is not None and not delta.computable:
             details["failures"] = ["runner_error"]
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
+            self._emit_telemetry(ctx, result, delta, details, cached)
             return EvidenceRef(
                 self.kind,
                 EvidenceStatus.unsatisfied,
@@ -990,41 +1088,13 @@ class GreenSuiteProvider:
                 details,
             )
 
-        # not_applicable: zero collected.  Distinguish genuine no-tests from
-        # silent partial-drop (baseline had tests, verification collected zero).
         if result.status == "not_applicable":
-            baseline_collected = baseline.collected if baseline is not None else 0
-            if baseline_collected > 0:
-                # baseline collected > 0 but verification collected == 0 →
-                # runner_error (no silent partial-drop tolerance)
-                details["failures"] = ["runner_error"]
-                self._emit_telemetry(
-                    ctx, result, delta, details, cached
-                )
-                return EvidenceRef(
-                    self.kind,
-                    EvidenceStatus.unsatisfied,
-                    "verification suite runner error: "
-                    f"baseline collected {baseline_collected} test(s) "
-                    "but verification collected 0 (partial-drop / catastrophic failure)",
-                    details,
-                )
-            # Genuine not_applicable: both baseline and verification
-            # collected zero.
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.not_applicable,
-                "verification suite not applicable (no tests collected)",
-                details,
+            return self._not_applicable_evidence(
+                ctx, result, delta, details, cached, baseline
             )
 
         if result.status == "passed":
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
+            self._emit_telemetry(ctx, result, delta, details, cached)
             return EvidenceRef(
                 self.kind,
                 EvidenceStatus.satisfied,
@@ -1032,36 +1102,10 @@ class GreenSuiteProvider:
                 details,
             )
         elif result.status == "failed":
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
-            # If the delta is computable and shows zero newly_failing and zero
-            # deleted_tests, all failures are pre-existing baseline failures —
-            # the milestone did not introduce regressions, so mark satisfied.
-            if (
-                delta is not None
-                and delta.computable
-                and not delta.newly_failing
-                and not delta.deleted_tests
-            ):
-                return EvidenceRef(
-                    self.kind,
-                    EvidenceStatus.satisfied,
-                    "verification suite has only pre-existing baseline "
-                    f"failures ({len(result.failures)}); no new regressions",
-                    details,
-                )
-            return EvidenceRef(
-                self.kind,
-                EvidenceStatus.unsatisfied,
-                f"verification suite has {len(result.failures)} failing test(s)",
-                details,
-            )
+            return self._failed_suite_evidence(ctx, result, delta, details, cached)
         elif result.status == "timeout":
             details["failures"] = ["runner_error"]
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
+            self._emit_telemetry(ctx, result, delta, details, cached)
             return EvidenceRef(
                 self.kind,
                 EvidenceStatus.unsatisfied,
@@ -1070,9 +1114,7 @@ class GreenSuiteProvider:
             )
         elif result.status == "runner_error":
             details["failures"] = ["runner_error"]
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
+            self._emit_telemetry(ctx, result, delta, details, cached)
             return EvidenceRef(
                 self.kind,
                 EvidenceStatus.unsatisfied,
@@ -1081,15 +1123,71 @@ class GreenSuiteProvider:
             )
         else:  # unknown/unexpected status – treat as runner_error
             details["failures"] = ["runner_error"]
-            self._emit_telemetry(
-                ctx, result, delta, details, cached
-            )
+            self._emit_telemetry(ctx, result, delta, details, cached)
             return EvidenceRef(
                 self.kind,
                 EvidenceStatus.unsatisfied,
                 f"verification suite unexpected status: {result.status}",
                 details,
             )
+
+    def _not_applicable_evidence(
+        self,
+        ctx: CompletionContext,
+        result: "SuiteRunResult",
+        delta: "SuiteDelta | None",
+        details: dict[str, Any],
+        cached: "SuiteRunResult | None",
+        baseline: "SuiteRunResult | None",
+    ) -> EvidenceRef:
+        baseline_collected = baseline.collected if baseline is not None else 0
+        if baseline_collected > 0:
+            details["failures"] = ["runner_error"]
+            self._emit_telemetry(ctx, result, delta, details, cached)
+            return EvidenceRef(
+                self.kind,
+                EvidenceStatus.unsatisfied,
+                "verification suite runner error: "
+                f"baseline collected {baseline_collected} test(s) "
+                "but verification collected 0 (partial-drop / catastrophic failure)",
+                details,
+            )
+        self._emit_telemetry(ctx, result, delta, details, cached)
+        return EvidenceRef(
+            self.kind,
+            EvidenceStatus.not_applicable,
+            "verification suite not applicable (no tests collected)",
+            details,
+        )
+
+    def _failed_suite_evidence(
+        self,
+        ctx: CompletionContext,
+        result: "SuiteRunResult",
+        delta: "SuiteDelta | None",
+        details: dict[str, Any],
+        cached: "SuiteRunResult | None",
+    ) -> EvidenceRef:
+        self._emit_telemetry(ctx, result, delta, details, cached)
+        if (
+            delta is not None
+            and delta.computable
+            and not delta.newly_failing
+            and not delta.deleted_tests
+        ):
+            return EvidenceRef(
+                self.kind,
+                EvidenceStatus.satisfied,
+                "verification suite has only pre-existing baseline "
+                f"failures ({len(result.failures)}); no new regressions",
+                details,
+            )
+        return EvidenceRef(
+            self.kind,
+            EvidenceStatus.unsatisfied,
+            f"verification suite has {len(result.failures)} failing test(s)",
+            details,
+        )
 
     # ------------------------------------------------------------------
     # telemetry
