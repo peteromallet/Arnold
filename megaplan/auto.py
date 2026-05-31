@@ -1471,10 +1471,15 @@ def drive(
         except TypeError as error:
             # Several unit tests monkeypatch _run_megaplan with the pre-idle-timeout
             # signature. Keep that surface compatible without weakening the real path.
-            if "idle_timeout" not in str(error) and "liveness_plan_dir" not in str(error):
+            if (
+                "idle_timeout" not in str(error)
+                and "liveness_plan_dir" not in str(error)
+                and "progress_env" not in str(error)
+            ):
                 raise
             run_kwargs.pop("idle_timeout", None)
             run_kwargs.pop("liveness_plan_dir", None)
+            run_kwargs.pop("progress_env", None)
             code, out, err = _run_megaplan(cmd, **run_kwargs)
 
         # Read the structured phase_result.json only when this command actually

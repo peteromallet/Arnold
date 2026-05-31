@@ -6,6 +6,7 @@ from megaplan.chain.m5_eval_gates import (
     assert_m5_eval_gates_before_calibration,
     check_better_join_is_pure,
     check_calibration_guard_targets,
+    check_calibration_source_purity,
     check_no_bare_float_judgments,
     check_no_second_eval_journals,
     replay_oracle_corpus_marker,
@@ -226,3 +227,199 @@ REPLAY_ORACLE_CORPUS_SIZE = 4
 
     assert check_calibration_guard_targets(tmp_path) == ()
     assert_m5_eval_gates_before_calibration(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# T12 — calibration source purity gate tests
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_source_purity_passes_current_repo() -> None:
+    """The current calibration source tree must be clean."""
+    findings = check_calibration_source_purity()
+    assert findings == (), (
+        f"Calibration source purity violations: "
+        + "; ".join(f"{f.code}:{f.path}:{f.line}" for f in findings)
+    )
+
+
+def test_calibration_gate_catches_bare_numeric_outcome_assignment(
+    tmp_path,
+) -> None:
+    """Detect ``outcome = 0.72`` in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "outcome = 0.72\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_BARE_NUMERIC_OUTCOME" in codes
+
+
+def test_calibration_gate_catches_bare_numeric_outcome_constructor(
+    tmp_path,
+) -> None:
+    """Detect ``CapabilityClaim(outcome=0.72)`` in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "from megaplan.calibration import CapabilityClaim\n"
+        "claim = CapabilityClaim(outcome=0.72, task_signature='x', model_identity='y')\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_BARE_NUMERIC_OUTCOME" in codes
+
+
+def test_calibration_gate_catches_state_star_import_from(
+    tmp_path,
+) -> None:
+    """Detect ``from megaplan.types import STATE_DONE`` in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "from megaplan.types import STATE_DONE, STATE_FAILED\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_STATE_STAR_IMPORT" in codes
+
+
+def test_calibration_gate_catches_state_star_bare_usage(
+    tmp_path,
+) -> None:
+    """Detect bare ``STATE_INITIALIZED`` name references in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "def check(state):\n"
+        "    return state == STATE_BLOCKED\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_STATE_STAR_USAGE" in codes
+
+
+def test_calibration_gate_catches_state_star_attribute(
+    tmp_path,
+) -> None:
+    """Detect ``types.STATE_PAUSED`` attribute references in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "import megaplan.types as t\n"
+        "def check(state):\n"
+        "    return state == t.STATE_PAUSED\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_STATE_STAR_USAGE" in codes
+
+
+def test_calibration_gate_catches_gaterecommendation_import(
+    tmp_path,
+) -> None:
+    """Detect ``from foo import GateRecommendation`` in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "from megaplan._pipeline.types import GateRecommendation\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_GATEREC_IMPORT" in codes
+
+
+def test_calibration_gate_catches_gaterecommendation_reference(
+    tmp_path,
+) -> None:
+    """Detect bare ``GateRecommendation`` name reference in calibration sources."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/bad.py",
+        "def route(rec: GateRecommendation) -> str:\n"
+        "    return 'ok'\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    codes = {f.code for f in findings}
+    assert "M5_CAL_GATEREC_REFERENCE" in codes
+
+
+def test_calibration_gate_allows_valid_evaluandref_usage(
+    tmp_path,
+) -> None:
+    """Valid EvaluandRef usage must not trip the calibration source gate."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/clean.py",
+        "from megaplan.calibration import CapabilityClaim, EvaluandRef\n"
+        "ref = EvaluandRef('pv', 'jv', 'rv', 'ish')\n"
+        "claim = CapabilityClaim(\n"
+        "    outcome=ref,\n"
+        "    task_signature='ts',\n"
+        "    model_identity='mi',\n"
+        ")\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    assert findings == (), (
+        f"Valid EvaluandRef usage tripped gate: "
+        + "; ".join(f"{f.code}:{f.line}" for f in findings)
+    )
+
+
+def test_calibration_gate_allows_normal_calibration_code(
+    tmp_path,
+) -> None:
+    """Normal calibration imports and dataclass usage must be allowed."""
+    _write(
+        tmp_path,
+        "megaplan/calibration/clean.py",
+        "from megaplan.calibration import (\n"
+        "    CapabilityClaim, EvaluandRef, ModelIdentity,\n"
+        "    QueryPolicy, RouteSuggestion,\n"
+        "    write_capability_claim, read_capability_claims,\n"
+        ")\n"
+        "\n"
+        "def build_claim():\n"
+        "    ref = EvaluandRef('piece-v1', 'judge-v1', 'rubric-v1', 'hash')\n"
+        "    claim = CapabilityClaim(\n"
+        "        outcome=ref,\n"
+        "        task_signature='sig',\n"
+        "        model_identity='id',\n"
+        "        taint_class='SHARED',\n"
+        "    )\n"
+        "    return claim\n",
+    )
+    findings = check_calibration_source_purity(tmp_path)
+    assert findings == (), (
+        f"Normal calibration code tripped gate: "
+        + "; ".join(f"{f.code}:{f.line}" for f in findings)
+    )
+
+
+def test_m5_eval_gate_preserved_after_calibration_gate_addition() -> None:
+    """Existing M5-eval gates must still pass after calibration gate additions."""
+    # Run the pre-existing checks directly (not via run_m5_eval_gates
+    # which now includes calibration source purity).
+    bare_float_findings = check_no_bare_float_judgments()
+    assert bare_float_findings == (), (
+        f"Bare-float gate regressed: {bare_float_findings}"
+    )
+
+    second_journal_findings = check_no_second_eval_journals()
+    assert second_journal_findings == (), (
+        f"Second-journal gate regressed: {second_journal_findings}"
+    )
+
+    better_pure_findings = check_better_join_is_pure()
+    assert better_pure_findings == (), (
+        f"Better-join-pure gate regressed: {better_pure_findings}"
+    )
+
+    # Full run_m5_eval_gates (includes calibration source purity) must pass.
+    result = run_m5_eval_gates()
+    assert result.passed, "\n".join(
+        f"{f.path}:{f.line}: {f.code}: {f.detail}"
+        for f in result.findings
+    )

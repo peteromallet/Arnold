@@ -8,7 +8,6 @@ from typing import Any, Callable, Mapping
 from megaplan._pipeline.pattern_types import JoinFn
 from megaplan._pipeline.flags import typed_ports_on
 from megaplan._pipeline.types import (
-    GateRecommendation,
     PipelineVerdict,
     ReduceResult,
     StepContext,

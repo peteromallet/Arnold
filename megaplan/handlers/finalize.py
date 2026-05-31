@@ -8,6 +8,16 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from megaplan._pipeline.flags import calibration_query_route_on
+from megaplan.calibration import (
+    CapabilityClaim,
+    EvaluandRef,
+    ModelIdentity,
+    check_reviewer_invariant,
+    classify_claim_taint,
+    query_route_if_enabled,
+    write_capability_claim,
+)
 from megaplan.types import MOCK_ENV_VAR, PlanState, STATE_FINALIZED, STATE_GATED, STATE_PLANNED, StepResponse
 from megaplan.workers import WorkerResult
 from megaplan._core import (
@@ -17,10 +27,12 @@ from megaplan._core import (
     is_creative_mode,
     latest_plan_path,
     load_plan_locked,
+    read_json,
     render_final_md,
     require_state,
     sha256_file,
 )
+from megaplan.observability.evaluand import read_evaluand_events
 
 from .shared import _finish_step, _raise_step_validation_error, _run_worker, shutil, subprocess
 
@@ -593,6 +605,286 @@ def _normalize_task_complexity(payload: dict[str, Any]) -> None:
             )
 
 
+def _finalize_task_signature(task: dict[str, Any]) -> str | None:
+    task_id = task.get("id")
+    complexity = task.get("complexity")
+    if (
+        not isinstance(task_id, str)
+        or not task_id.strip()
+        or not isinstance(complexity, int)
+        or isinstance(complexity, bool)
+    ):
+        return None
+    return f"finalize:task_id={task_id}:complexity={complexity}"
+
+
+def _attach_calibration_route_reports(
+    plan_dir: Path,
+    payload: dict[str, Any],
+    state: PlanState,
+) -> None:
+    """Attach report-only calibration suggestions without mutating complexity."""
+    if not calibration_query_route_on():
+        return
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    tier_models = state.get("config", {}).get("tier_models")
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        signature = _finalize_task_signature(task)
+        if signature is None:
+            continue
+        suggestion = query_route_if_enabled(
+            signature,
+            plan_dir=plan_dir,
+            taint_class=None,
+            exploration_budget=0.0,
+            default_tier=task["complexity"],
+            tier_models=tier_models,
+        )
+        report = {
+            "task_signature": signature,
+            "authoritative_complexity": task["complexity"],
+            "authoritative_complexity_justification": task.get("complexity_justification"),
+            "suggestion": suggestion.to_json() if suggestion is not None else None,
+        }
+        metadata = task.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            task["metadata"] = metadata
+        metadata["calibration_route_report"] = report
+
+
+def _task_evaluand_ref(task: dict[str, Any]) -> EvaluandRef | None:
+    metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+    candidates = (
+        task.get("evaluand_ref"),
+        metadata.get("evaluand_ref"),
+        metadata.get("calibration_evaluand_ref"),
+        metadata.get("evaluand"),
+        metadata.get("evaluand_record"),
+    )
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            if {"piece_version", "judge_version", "rubric_version", "input_set_hash"} <= set(candidate):
+                return EvaluandRef.from_json(candidate)
+            attribution_key = candidate.get("attribution_key")
+            if isinstance(attribution_key, (list, tuple)) and len(attribution_key) == 4:
+                piece_version, judge_version, rubric_version, input_set_hash = attribution_key
+                return EvaluandRef(
+                    piece_version=str(piece_version),
+                    judge_version=str(judge_version),
+                    rubric_version=str(rubric_version),
+                    input_set_hash=str(input_set_hash),
+                )
+    return None
+
+
+def _task_execute_claim_context(
+    plan_dir: Path,
+    state: PlanState,
+) -> dict[str, dict[str, Any]]:
+    history_by_output: dict[str, dict[str, Any]] = {
+        str(entry["output_file"]): entry
+        for entry in state.get("history", [])
+        if isinstance(entry, dict)
+        and entry.get("step") == "execute"
+        and isinstance(entry.get("output_file"), str)
+    }
+    aggregate_tier_by_batch: dict[int, dict[str, Any]] = {}
+    for entry in state.get("history", []):
+        if not isinstance(entry, dict) or entry.get("step") != "execute":
+            continue
+        batch_to_tier = entry.get("batch_to_tier")
+        if not isinstance(batch_to_tier, list):
+            continue
+        for batch_entry in batch_to_tier:
+            if not isinstance(batch_entry, dict):
+                continue
+            raw_batch_number = batch_entry.get("batch_number")
+            if not isinstance(raw_batch_number, int):
+                continue
+            aggregate_tier_by_batch[raw_batch_number] = batch_entry
+    context_by_task_id: dict[str, dict[str, Any]] = {}
+    for batch_path in sorted(plan_dir.glob("execution_batch_*.json")):
+        history = history_by_output.get(batch_path.name)
+        batch_number: int | None = None
+        name = batch_path.name
+        prefix = "execution_batch_"
+        suffix = ".json"
+        if name.startswith(prefix) and name.endswith(suffix):
+            try:
+                batch_number = int(name[len(prefix) : -len(suffix)])
+            except ValueError:
+                batch_number = None
+        aggregate_tier = (
+            aggregate_tier_by_batch.get(batch_number)
+            if batch_number is not None
+            else None
+        )
+        if history is None and aggregate_tier is None:
+            continue
+        batch_data = read_json(batch_path)
+        task_updates = batch_data.get("task_updates", [])
+        if not isinstance(task_updates, list):
+            continue
+        history = history or {}
+        aggregate_tier = aggregate_tier or {}
+        routed_model_identity = history.get("tier_model_resolved")
+        if routed_model_identity is None:
+            routed_model_identity = aggregate_tier.get("tier_model_resolved")
+        if routed_model_identity is None:
+            routed_model_identity = aggregate_tier.get("resolved_model")
+        context = {
+            "cost_usd": history.get("cost_usd"),
+            "predicted_tier": history.get(
+                "tier_projected",
+                history.get(
+                    "batch_complexity",
+                    aggregate_tier.get(
+                        "projected_tier",
+                        aggregate_tier.get("batch_complexity"),
+                    ),
+                ),
+            ),
+            "routed_model_identity": routed_model_identity,
+            "counterfactual_tag": history.get(
+                "tier_counterfactual_tag",
+                history.get(
+                    "tier_exploration_tag",
+                    aggregate_tier.get(
+                        "counterfactual_tag",
+                        aggregate_tier.get("exploration_tag"),
+                    ),
+                ),
+            ),
+            "low_confidence_signal": bool(
+                history.get(
+                    "tier_low_confidence",
+                    aggregate_tier.get("low_confidence", False),
+                )
+            ),
+            "route_phase": "execute",
+            "routed_tier_spec": history.get(
+                "tier_model_spec", aggregate_tier.get("tier_model_spec")
+            ),
+        }
+        for update in task_updates:
+            if not isinstance(update, dict):
+                continue
+            task_id = update.get("task_id")
+            if isinstance(task_id, str) and task_id:
+                context_by_task_id[task_id] = context
+    return context_by_task_id
+
+
+def _verifier_identity_from_record(record: Any) -> str:
+    provenance = record.provenance if isinstance(getattr(record, "provenance", None), dict) else {}
+    for key in ("verifier_identity", "verifier_model_identity", "model_identity"):
+        value = provenance.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    model_name = provenance.get("verifier_model")
+    reported_version = provenance.get("verifier_version")
+    if isinstance(model_name, str) and model_name.strip():
+        rv = str(reported_version) if reported_version is not None else None
+        return ModelIdentity(model_name, rv).identity
+    piece_version = getattr(record, "piece_version", None)
+    judge_version = getattr(record, "judge_version", None)
+    return ModelIdentity(
+        str(piece_version or judge_version or "unknown-verifier"),
+        str(judge_version) if judge_version is not None else None,
+    ).identity
+
+
+def _write_capability_claims_from_finalize(
+    plan_dir: Path,
+    payload: dict[str, Any],
+    state: PlanState,
+) -> None:
+    if not calibration_query_route_on():
+        return
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    evaluands = read_evaluand_events(plan_dir, strict=False)
+    execute_context = _task_execute_claim_context(plan_dir, state)
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            continue
+        task_signature = _finalize_task_signature(task)
+        evaluand_ref = _task_evaluand_ref(task)
+        if task_signature is None or evaluand_ref is None:
+            continue
+        record = evaluands.get(evaluand_ref.key)
+        if record is None:
+            continue
+        task_context = execute_context.get(task_id, {})
+        predicted_tier_raw = task_context.get("predicted_tier", task.get("complexity"))
+        predicted_tier = (
+            int(predicted_tier_raw)
+            if isinstance(predicted_tier_raw, int) and not isinstance(predicted_tier_raw, bool)
+            else None
+        )
+        verifier_tier_raw = record.provenance.get("verifier_tier") if isinstance(record.provenance, dict) else None
+        verifier_tier = str(verifier_tier_raw) if verifier_tier_raw is not None else "4"
+        verifier_identity = _verifier_identity_from_record(record)
+        low_confidence_signal = bool(task_context.get("low_confidence_signal", False))
+        if not low_confidence_signal:
+            low_confidence_signal, _ = check_reviewer_invariant(
+                verifier_tier=verifier_tier,
+                routed_model_tier=predicted_tier,
+            )
+        taint_class, _ = classify_claim_taint(tuple(record.taint))
+        routed_model_identity = (
+            str(task_context["routed_model_identity"])
+            if task_context.get("routed_model_identity") is not None
+            else None
+        )
+        claim = CapabilityClaim(
+            outcome=evaluand_ref,
+            task_signature=task_signature,
+            routed_model=routed_model_identity or verifier_identity,
+            recorded_at=float(getattr(record, "recorded_at", 0.0) or 0.0),
+            verifier_tier=verifier_tier,
+            verifier_identity=verifier_identity,
+            counterfactual_tag=(
+                str(task_context["counterfactual_tag"])
+                if task_context.get("counterfactual_tag") is not None
+                else None
+            ),
+            low_confidence_signal=low_confidence_signal,
+            taint_class=taint_class,
+            predicted_tier=predicted_tier,
+            route_phase=(
+                str(task_context["route_phase"])
+                if task_context.get("route_phase") is not None
+                else None
+            ),
+            routed_tier_spec=(
+                str(task_context["routed_tier_spec"])
+                if task_context.get("routed_tier_spec") is not None
+                else None
+            ),
+            cost_usd=(
+                float(task_context["cost_usd"])
+                if task_context.get("cost_usd") is not None
+                else None
+            ),
+        )
+        write_capability_claim(
+            claim,
+            plan_dir=plan_dir,
+            phase="execute",
+            scope="calibration",
+        )
+
+
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
     if state["config"].get("mode") in {"doc", "joke"}:
         payload["baseline_test_failures"] = None
@@ -606,6 +898,8 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         _ensure_user_actions_post_gate_task(payload, state)
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
+    _attach_calibration_route_reports(plan_dir, payload, state)
+    _write_capability_claims_from_finalize(plan_dir, payload, state)
     _reconcile_validation_after_mutation(payload)
     atomic_write_json(plan_dir / "finalize.json", payload)
     atomic_write_json(plan_dir / "finalize_snapshot.json", payload)

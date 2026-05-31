@@ -335,6 +335,199 @@ def replay_oracle_corpus_marker(
     return None
 
 
+def check_calibration_source_purity(
+    root: Path | str = REPO_ROOT,
+) -> tuple[M5EvalGateFinding, ...]:
+    """Scan ``megaplan/calibration/**/*.py`` for prohibited patterns.
+
+    Enforces three invariants on calibration source files:
+
+    1. **No bare numeric outcomes** — ``outcome = 0.72`` or
+       ``CapabilityClaim(outcome=0.72)`` inside calibration sources.
+    2. **No STATE_\\* imports or usages** — any import of a ``STATE_*``
+       constant from ``megaplan.types`` or bare ``STATE_*`` reference.
+    3. **No GateRecommendation references** — any import, type annotation,
+       or bare name ``GateRecommendation`` detected via AST (does NOT
+       require the symbol to be importable).
+
+    The check is purely AST-based for (2) and (3) — it never imports the
+    symbols it is checking for.
+    """
+    repo_root = Path(root)
+    findings: list[M5EvalGateFinding] = []
+
+    for path in sorted(repo_root.glob("megaplan/calibration/**/*.py")):
+        rel_path = _relative_path(path, repo_root)
+        tree = ast.parse(_read_source(path), filename=rel_path)
+        findings.extend(
+            _find_bare_numeric_outcomes(tree, rel_path=rel_path)
+        )
+        findings.extend(
+            _find_state_star_references(tree, rel_path=rel_path)
+        )
+        findings.extend(
+            _find_gaterecommendation_refs(tree, rel_path=rel_path)
+        )
+
+    return tuple(findings)
+
+
+def _find_bare_numeric_outcomes(
+    tree: ast.AST,
+    *,
+    rel_path: str,
+) -> list[M5EvalGateFinding]:
+    """Detect ``outcome = <numeric>`` and ``Fn(outcome=<numeric>)`` in AST."""
+    findings: list[M5EvalGateFinding] = []
+
+    for node in ast.walk(tree):
+        # Assignment: outcome = 0.72
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "outcome":
+                    if _is_numeric_literal(node.value):
+                        findings.append(
+                            M5EvalGateFinding(
+                                rel_path,
+                                node.lineno,
+                                "M5_CAL_BARE_NUMERIC_OUTCOME",
+                                "calibration sources must not assign a bare numeric literal to 'outcome'",
+                            )
+                        )
+        # Keyword argument: CapabilityClaim(outcome=0.72, ...)
+        elif isinstance(node, ast.Call):
+            for keyword in node.keywords:
+                if keyword.arg == "outcome" and _is_numeric_literal(keyword.value):
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CAL_BARE_NUMERIC_OUTCOME",
+                            "calibration sources must not pass a bare numeric literal as outcome=",
+                        )
+                    )
+
+    return findings
+
+
+def _find_state_star_references(
+    tree: ast.AST,
+    *,
+    rel_path: str,
+) -> list[M5EvalGateFinding]:
+    """Detect ``STATE_*`` imports and bare ``STATE_*`` name references in AST."""
+    findings: list[M5EvalGateFinding] = []
+
+    for node in ast.walk(tree):
+        # Import: import megaplan.types (allows types.STATE_*)
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname and alias.asname.startswith("STATE_"):
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CAL_STATE_STAR_IMPORT",
+                            f"calibration sources must not import STATE_* names: {alias.asname}",
+                        )
+                    )
+
+        # ImportFrom: from megaplan.types import STATE_INITIALIZED, ...
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                name = alias.asname or alias.name
+                if name.startswith("STATE_"):
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CAL_STATE_STAR_IMPORT",
+                            f"calibration sources must not import STATE_*: {name}",
+                        )
+                    )
+
+        # Bare Name usage: STATE_INITIALIZED, etc.
+        elif isinstance(node, ast.Name) and node.id.startswith("STATE_"):
+            # Only flag if it's a reference (not an assignment target)
+            # But assignments to STATE_* in calibration would also be bad.
+            findings.append(
+                M5EvalGateFinding(
+                    rel_path,
+                    node.lineno,
+                    "M5_CAL_STATE_STAR_USAGE",
+                    f"calibration sources must not reference STATE_* names: {node.id}",
+                )
+            )
+
+        # Attribute access: types.STATE_INITIALIZED
+        elif isinstance(node, ast.Attribute) and node.attr.startswith("STATE_"):
+            findings.append(
+                M5EvalGateFinding(
+                    rel_path,
+                    node.lineno,
+                    "M5_CAL_STATE_STAR_USAGE",
+                    f"calibration sources must not reference STATE_* attributes: .{node.attr}",
+                )
+            )
+
+    return findings
+
+
+def _find_gaterecommendation_refs(
+    tree: ast.AST,
+    *,
+    rel_path: str,
+) -> list[M5EvalGateFinding]:
+    """Detect ``GateRecommendation`` imports and name references in AST.
+
+    This is a pure AST string-match — it does **not** require
+    ``GateRecommendation`` to be an importable symbol anywhere.
+    """
+    findings: list[M5EvalGateFinding] = []
+
+    for node in ast.walk(tree):
+        # Import: import foo.GateRecommendation
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.asname or alias.name
+                if "GateRecommendation" in name:
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CAL_GATEREC_IMPORT",
+                            "calibration sources must not import GateRecommendation",
+                        )
+                    )
+
+        # ImportFrom: from x import GateRecommendation
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                name = alias.asname or alias.name
+                if name == "GateRecommendation":
+                    findings.append(
+                        M5EvalGateFinding(
+                            rel_path,
+                            node.lineno,
+                            "M5_CAL_GATEREC_IMPORT",
+                            "calibration sources must not import GateRecommendation",
+                        )
+                    )
+
+        # Bare Name: GateRecommendation (type annotation, variable, etc.)
+        elif isinstance(node, ast.Name) and node.id == "GateRecommendation":
+            findings.append(
+                M5EvalGateFinding(
+                    rel_path,
+                    node.lineno,
+                    "M5_CAL_GATEREC_REFERENCE",
+                    "calibration sources must not reference GateRecommendation",
+                )
+            )
+
+    return findings
+
+
 def check_calibration_guard_targets(
     root: Path | str = REPO_ROOT,
 ) -> tuple[M5EvalGateFinding, ...]:
@@ -400,6 +593,7 @@ def run_m5_eval_gates(root: Path | str = REPO_ROOT) -> M5EvalGateResult:
         check_no_bare_float_judgments(root)
         + check_no_second_eval_journals(root)
         + check_better_join_is_pure(root)
+        + check_calibration_source_purity(root)
     )
     return M5EvalGateResult(passed=not findings, findings=findings)
 
@@ -422,6 +616,7 @@ __all__ = [
     "assert_m5_eval_gates_before_calibration",
     "check_better_join_is_pure",
     "check_calibration_guard_targets",
+    "check_calibration_source_purity",
     "check_no_bare_float_judgments",
     "check_no_second_eval_journals",
     "format_findings",

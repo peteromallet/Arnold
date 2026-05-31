@@ -246,4 +246,6 @@ def test_atomic_write_text_logs_warning_when_artifact_emit_fails(
 def test_evaluand_recorded_is_registered_event_kind() -> None:
     assert EventKind.EVALUAND_RECORDED == "evaluand_recorded"
     assert EventKind.EVALUAND_RECORDED in _ALL_EVENT_KINDS
-    assert len(_ALL_EVENT_KINDS) == 30
+    # M5-cal adds CAPABILITY_CLAIM and CALIBRATION_EXPERIMENT, bringing
+    # the total to 32.
+    assert len(_ALL_EVENT_KINDS) == 32

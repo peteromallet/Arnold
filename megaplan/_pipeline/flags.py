@@ -129,6 +129,16 @@ def unified_evaluand_on() -> bool:
     return val == "1"
 
 
+def calibration_query_route_on() -> bool:
+    """Return ``True`` only when ``MEGAPLAN_CALIBRATION_QUERY_ROUTE=1``.
+
+    This flag is deliberately independent of the unified-dispatch master gate
+    and all companion inheritance helpers. Calibration query routing stays
+    default-off until this exact env var is flipped.
+    """
+    return os.getenv("MEGAPLAN_CALIBRATION_QUERY_ROUTE") == "1"
+
+
 # Alias for the master gate, exposed under the conventional name used by the
 # M4 brief / consumers ("is the unified dispatch path enabled?").
 def unified_dispatch_enabled() -> bool:

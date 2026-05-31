@@ -22,16 +22,18 @@ _GATEREC_FILES: tuple[str, ...] = (
     "megaplan/_pipeline/types.py",
     "megaplan/_pipeline/validator.py",
     "megaplan/_pipeline/planning_bindings.py",
+    "megaplan/_pipeline/_forward_m2_m3.py",
 )
 
 #: Total code-only ref baseline (sum of _EXPECTED_PER_FILE values).
-_BASELINE: int = 11
+_BASELINE: int = 16
 
 #: Per-file expected code-only counts at the pinned baseline.
 _EXPECTED_PER_FILE: dict[str, int] = {
     "megaplan/_pipeline/types.py": 4,
     "megaplan/_pipeline/validator.py": 3,
     "megaplan/_pipeline/planning_bindings.py": 4,
+    "megaplan/_pipeline/_forward_m2_m3.py": 5,
 }
 
 
