@@ -65,6 +65,23 @@ def test_prerequisite_blocker_resolution_is_task_scoped() -> None:
     assert details["T2"]["is_terminal"] is True
 
 
+def test_malformed_prerequisite_blocker_suggests_retry_not_unknown_action() -> None:
+    evaluation = evaluate_blocker_recovery(
+        {"tasks": [{"id": "T1"}], "user_actions": []},
+        _state(),
+        blocked_tasks=[BlockedTask(task_id="T1", reason="blocked_by_prereq")],
+    )
+    details = command_blocker_details(evaluation)
+
+    assert evaluation.requires_rerun is True
+    assert evaluation.has_terminal_blockers is False
+    assert details[0]["blocker_id"] == "prereq:unknown:T1"
+    assert details[0]["malformed_reason"] == "no blocking action scope"
+    assert details[0]["resolution_behavior"] == "rerun_required"
+    assert details[0]["suggested_commands"] == ["execute --retry-blocked-tasks"]
+    assert "user-action resolve --action-id unknown" not in details[0]["suggested_commands"]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Characterization: memory resolution_applies_to_task semantics
 # ══════════════════════════════════════════════════════════════════════════════
