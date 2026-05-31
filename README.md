@@ -77,7 +77,7 @@ In subagent mode (the default for Claude Code and Codex) the agent drives the ph
 Run the focused CI-equivalent suite locally:
 
 ```bash
-pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
+python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_cloud_template.py tests/test_cloud_spec.py -q
 ```
 
 ## Some other features
