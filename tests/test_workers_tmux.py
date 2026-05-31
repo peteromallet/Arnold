@@ -443,3 +443,40 @@ def test_both_run_command_sites_receive_tmux_session(
         )
         assert len(env["SHANNON_TMUX_SESSION_NAME"]) == 12
         assert all(c in "0123456789abcdef" for c in env["SHANNON_TMUX_SESSION_NAME"])
+
+
+def test_shannon_success_result_detector_accepts_jsonl_success() -> None:
+    from megaplan.workers.shannon import _raw_contains_success_result
+
+    raw = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init"}),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "terminal_reason": "completed",
+                    "result": "{}",
+                }
+            ),
+        ]
+    )
+
+    assert _raw_contains_success_result(raw) is True
+
+
+def test_shannon_success_result_detector_rejects_error_jsonl() -> None:
+    from megaplan.workers.shannon import _raw_contains_success_result
+
+    raw = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error",
+            "is_error": True,
+            "terminal_reason": "failed",
+            "result": "nope",
+        }
+    )
+
+    assert _raw_contains_success_result(raw) is False

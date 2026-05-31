@@ -119,6 +119,42 @@ def _assert_vendored_shannon_sentinel() -> None:
     _shannon_vendor_sentinel_ok = True
 
 
+def _raw_contains_success_result(raw: str) -> bool:
+    """Return True when Shannon/Claude JSON output includes a success result."""
+    if not raw.strip():
+        return False
+
+    candidates: list[Any] = []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list):
+        candidates.extend(parsed)
+    elif isinstance(parsed, dict):
+        candidates.append(parsed)
+
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed_line = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed_line, dict):
+            candidates.append(parsed_line)
+
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "result" and item.get("subtype") == "success":
+            return True
+        if item.get("terminal_reason") == "completed" and item.get("is_error") is False:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -2040,6 +2076,15 @@ def run_shannon_step(
                     error.extra["session_id"] = pre_turn.session_id
                 raise
             if pre_result.returncode != 0:
+                if _raw_contains_success_result(pre_result.raw):
+                    print(
+                        "[megaplan] WARNING: Shannon readiness probe returned "
+                        f"exit code {pre_result.returncode} after a successful "
+                        "result envelope; accepting readiness output.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    continue
                 raise CliError(
                     "worker_error",
                     f"Shannon readiness probe failed with exit code {pre_result.returncode}",
