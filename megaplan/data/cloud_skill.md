@@ -58,6 +58,21 @@ If neither is set the entrypoint warns and continues — Claude phases will then
 
 **Why a shim rather than `apiKeyHelper` in `--settings`**: shannon/megaplan invoke `claude --bare` without an explicit `--settings` flag. Wrapping the binary is the only way to inject auth without patching megaplan.
 
+## Codex auth: ChatGPT subscription OAuth (not the metered API key)
+
+When codex (GPT-5.x) phases run on the worker, megaplan invokes the `codex exec` CLI. The codex CLI **defaults to API-key auth whenever `OPENAI_API_KEY` is in the environment** — routing to `api.openai.com` standard billing, which fails with `ERROR: Quota exceeded. Check your plan and billing details.` the moment that key is dead or out of credits. A stray `OPENAI_API_KEY` on the service silently hijacks codex onto metered billing even when you intend to use your ChatGPT subscription.
+
+**Default (`megaplan.codex_auth: chatgpt`)** forces the subscription path:
+
+- The entrypoint writes `preferred_auth_method = "chatgpt"` (and `forced_login_method = "chatgpt"`) into `~/.codex/config.toml`, so codex uses the ChatGPT-subscription endpoint (`chatgpt.com/backend-api/codex`) **even when `OPENAI_API_KEY` is set**.
+- `seed_codex_oauth()` (run on `cloud deploy` and before each `cloud chain`) copies your local `~/.codex/auth.json` and `~/.hermes/auth.json` OAuth bundles to `/workspace/.creds/` (persistent volume) and `/root`; the entrypoint re-seeds from the volume on every boot, so a container restart restores the credential automatically (`/root` is ephemeral).
+
+**Seeding / refresh:** seed once from a machine where you're logged in (`codex login` → `~/.codex/auth.json` with `auth_mode: chatgpt`). Codex auto-refreshes the OAuth bundle during use and writes it back; a session only goes stale after ~8 days idle. Re-run `cloud deploy` (or the seed) to re-push if it goes stale or the chain breaks. **Rotation caveat:** the same OAuth refresh token can't be used concurrently by your laptop *and* the box without invalidating one — let the box own the session, or (ChatGPT Business/Enterprise) use a **Codex Access Token** (`CODEX_ACCESS_TOKEN`, 7/30/60/90-day) instead.
+
+**Opt out** with `megaplan.codex_auth: apikey` to use standard API-key billing — the entrypoint then runs `codex login --with-api-key` from `OPENAI_API_KEY` and skips the OAuth seed.
+
+**Verify** which path is live: `RUST_LOG=debug codex exec --sandbox read-only --skip-git-repo-check "ok" 2>&1 | grep -iE 'chatgpt.com/backend-api/codex|api.openai.com'` — you want the chatgpt backend, not `api.openai.com`.
+
 ## Multi-repo and multi-tenant chains
 
 Two `cloud.yaml` fields let one shared worker host many sibling repos and several concurrent chains:
@@ -139,11 +154,15 @@ Today this operator loop is usually a small project-local shell script under `.m
 
 5. **`secrets:` in `cloud.yaml` drives an upload from local env at deploy time.** If you pre-set values directly on the Railway service (e.g. copied from another service), leave `secrets: []` in the `cloud.yaml` — otherwise `megaplan cloud deploy` reads the names from your local env, finds them missing, and either fails the deploy or overwrites the Railway values with empty strings. List the names in a comment for reference.
 
-6. **Credit-balance failures look like `internal_error`.** When a phase exits as "internal_error" with no useful stderr, read `plan_v<n>_raw.txt` in the plan directory. Anthropic/OpenAI quota errors arrive there as `"text":"Credit balance is too low"` from the agent CLI wrapper. For Claude, the real fix is the refresh-token shim (see "Claude auth" above) — it bills against your subscription, never depletes. For OpenAI, top up the console balance or switch to a profile with credit headroom.
+6. **Credit-balance failures look like `internal_error`.** When a phase exits as "internal_error" with no useful stderr, read `plan_v<n>_raw.txt` in the plan directory. Anthropic/OpenAI quota errors arrive there as `"text":"Credit balance is too low"` from the agent CLI wrapper. For Claude, the real fix is the refresh-token shim (see "Claude auth" above) — it bills against your subscription, never depletes. For OpenAI, top up the console balance or switch to a profile with credit headroom — **but for a `codex` phase it's usually the API-key fallback, not a real balance issue; see gotcha #9.**
 
 7. **`secrets` get baked into the image-build context, not just runtime env.** `megaplan cloud deploy` runs `railway variables --set NAME=VALUE` for every secret in the local environment that matches a declared name, then `railway up`. Pre-existing values on the service are overwritten when the local env has the same key set. To preserve service-side values, either unset them locally before deploy or empty the `secrets:` list.
 
 8. **Volume size and disk pressure.** The default Railway volume is 5 GB. A multi-repo chain with `node_modules` and `.venv` directories across sibling repos can fill it quickly; `git clean -fdx` and `npm cache clean --force` on the worker free space, but ultimately bump the volume in the Railway UI if you're routinely seeing disk-pressure errors.
+
+9. **Codex `Quota exceeded. Check your plan and billing details.` is the API-key fallback, not a real cap.** megaplan runs codex via `codex exec`, which silently uses **API-key mode** when `OPENAI_API_KEY` is present — so plan/critique/etc. hit `api.openai.com` with that (often dead) key and quota-fail, even though you have a working ChatGPT subscription. This is the codex-specific case of gotcha #6, and "top up the console balance" is the *wrong* fix. Right fix: `megaplan.codex_auth: chatgpt` (the default) forces `preferred_auth_method=chatgpt` so codex uses the subscription OAuth (`chatgpt.com/backend-api/codex`) regardless of `OPENAI_API_KEY`. If you see this error, confirm `/root/.codex/config.toml` has `preferred_auth_method = "chatgpt"` and `~/.codex/auth.json` has `auth_mode: chatgpt`, and that the OAuth seed landed (`/workspace/.creds/codex-auth.json`). See "Codex auth" above.
+
+10. **Stalled `chain_state` makes a relaunch resume a dead plan (session alive, milestone stuck at "none").** An aborted run leaves `.megaplan/plans/.chains/<spec>-<digest>.json` with `last_state: "stalled"`; the next `cloud chain` resumes it and never starts the milestone. `cloud chain` now auto-clears a stalled-with-no-progress state on fresh launch; if you hit it on an older worker, `rm -rf .megaplan/plans/.chains/* .megaplan/plans/<milestone>-*` (only the stalled ones) and relaunch.
 
 ## Quick reference: shared dev-box workflow
 

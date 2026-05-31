@@ -89,6 +89,9 @@ megaplan cloud attach
 |---|---|---:|---|
 | `codex.model` | no | `gpt-5.4` | Written into `/root/.codex/config.toml` on boot. |
 | `codex.reasoning` | no | `high` | Reasoning level written into `/root/.codex/config.toml` on boot. |
+| `megaplan.codex_auth` | no | `chatgpt` | `chatgpt` forces the ChatGPT-subscription OAuth (`preferred_auth_method=chatgpt`; codex uses `chatgpt.com/backend-api/codex` even when `OPENAI_API_KEY` is set) and seeds your local `~/.codex`/`~/.hermes` OAuth onto the volume. `apikey` opts into standard API-key billing. See the "Codex auth" section in the cloud skill. |
+
+> **Codex auth gotcha:** without `codex_auth=chatgpt`, a stray `OPENAI_API_KEY` makes the codex CLI use API-key mode → `api.openai.com` billing → `ERROR: Quota exceeded. Check your plan and billing details.` even with a working ChatGPT subscription.
 
 ### `auto`
 
