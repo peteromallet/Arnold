@@ -116,6 +116,28 @@ def test_render_entrypoint_replaces_placeholders_and_reigh_hardcodes(mode: str) 
         assert "mp-chain " not in rendered
 
 
+def test_render_entrypoint_wires_megaplan_repo_refresh_install() -> None:
+    spec = replace(
+        _spec("idle"),
+        megaplan=MegaplanSpec(
+            ref="feature/cloud-refresh",
+            repo="https://github.com/peteromallet/arnold.git",
+        ),
+    )
+
+    rendered = render_entrypoint(spec)
+
+    for name in PLACEHOLDERS:
+        assert f"${{{name}}}" not in rendered
+    assert 'MEGAPLAN_REPO="${MEGAPLAN_REPO:-https://github.com/peteromallet/arnold.git}"' in rendered
+    assert 'MEGAPLAN_INSTALL_SPEC_OVERRIDE="${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-}"' in rendered
+    assert 'repo="https://x-access-token:${GITHUB_TOKEN}@github.com/${repo#https://github.com/}"' in rendered
+    assert 'local spec="megaplan-harness[agent] @ git+$repo"' in rendered
+    assert 'pip install --upgrade --force-reinstall --no-cache-dir "$spec@$MEGAPLAN_REF" 2>&1 | tail -3' in rendered
+    assert "/usr/local/bin/mp-refresh-megaplan" in rendered
+    assert "mp_install_megaplan" in rendered
+
+
 def test_render_ensure_repo_command_is_fixed_and_safely_quoted() -> None:
     repo = RepoSpec(
         url="git@github.com:example/repo name.git",

@@ -512,6 +512,7 @@ def _cloud_chain_launch_provenance(
 
 CHAIN_SESSION_NAME = "megaplan-chain"
 _CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"
+_MEGAPLAN_REFRESH_COMMAND = "/usr/local/bin/mp-refresh-megaplan 2>&1 | tail -3 || true"
 
 
 def _get_provider_identity(spec: CloudSpec) -> str | None:
@@ -552,6 +553,10 @@ def _chain_start_command(remote_spec_path: str, *, one_shot: bool = False) -> st
     )
 
 
+def _refresh_then_chain_start_command(remote_spec_path: str, *, one_shot: bool = False) -> str:
+    return f"{_MEGAPLAN_REFRESH_COMMAND}; {_chain_start_command(remote_spec_path, one_shot=one_shot)}"
+
+
 def _tmux_chain_launch_command(
     workspace: str,
     remote_spec_path: str,
@@ -568,7 +573,7 @@ def _tmux_chain_launch_command(
     when not provided.
     """
     name = session_name or CHAIN_SESSION_NAME
-    chain_cmd = _chain_start_command(remote_spec_path, one_shot=one_shot)
+    chain_cmd = _refresh_then_chain_start_command(remote_spec_path, one_shot=one_shot)
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "
@@ -597,7 +602,7 @@ def _tmux_chain_restart_command(
     when not provided.
     """
     name = session_name or CHAIN_SESSION_NAME
-    chain_cmd = _chain_start_command(remote_spec_path, one_shot=True)
+    chain_cmd = _refresh_then_chain_start_command(remote_spec_path, one_shot=True)
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
         " && "

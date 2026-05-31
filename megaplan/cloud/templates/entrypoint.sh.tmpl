@@ -57,27 +57,61 @@ EOF
 echo "Codex model: ${CODEX_MODEL}, reasoning: ${CODEX_REASONING}, sandbox: danger-full-access (container-sandboxed)"
 
 # Megaplan install: always re-pull on boot so entrypoint restarts pick up the
-# requested ref without rebuilding the base image.
+# requested ref without rebuilding the base image. The refresh helper is also
+# invoked by `megaplan cloud chain` before each run.
 #
-# MEGAPLAN_INSTALL_SPEC – pip install spec; defaults to PyPI megaplan-harness[agent].
-#   Set to a git URL (e.g. "megaplan-harness[agent] @ git+https://github.com/...")
-#   to install from source. When using a git spec, MEGAPLAN_REF appends @ref.
-# MEGAPLAN_REF – git ref (branch/tag/commit); only used when MEGAPLAN_INSTALL_SPEC
-#   contains "git+". Ignored (with a warning) for PyPI install specs.
-MEGAPLAN_INSTALL_SPEC="$${MEGAPLAN_INSTALL_SPEC:-megaplan-harness[agent]}"
+# MEGAPLAN_INSTALL_SPEC – runtime pip install override, verbatim. Git specs get
+#   @MEGAPLAN_REF appended.
+# MEGAPLAN_INSTALL_SPEC_OVERRIDE – rendered cloud.yaml megaplan.install_spec.
+# MEGAPLAN_REPO – rendered cloud.yaml megaplan.repo source URL.
+# MEGAPLAN_REF – git ref (branch/tag/commit) used for git installs.
 MEGAPLAN_REF="$${MEGAPLAN_REF:-${MEGAPLAN_REF}}"
+MEGAPLAN_REPO="$${MEGAPLAN_REPO:-${MEGAPLAN_REPO}}"
+MEGAPLAN_INSTALL_SPEC_OVERRIDE="$${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-${MEGAPLAN_INSTALL_SPEC_OVERRIDE}}"
 
-if [[ -n "$$MEGAPLAN_REF" ]] && [[ "$$MEGAPLAN_INSTALL_SPEC" == *git+* ]]; then
-  echo "Installing/upgrading megaplan from git: $$MEGAPLAN_INSTALL_SPEC@$$MEGAPLAN_REF"
-  pip install --upgrade --force-reinstall --no-cache-dir "$$MEGAPLAN_INSTALL_SPEC@$$MEGAPLAN_REF" 2>&1 | tail -3
-elif [[ -n "$$MEGAPLAN_REF" ]]; then
-  echo "MEGAPLAN_REF=$$MEGAPLAN_REF is set but MEGAPLAN_INSTALL_SPEC is a PyPI spec — ref ignored"
-  echo "Installing/upgrading megaplan: $$MEGAPLAN_INSTALL_SPEC"
-  pip install --upgrade --force-reinstall --no-cache-dir "$$MEGAPLAN_INSTALL_SPEC" 2>&1 | tail -3
-else
-  echo "Installing/upgrading megaplan: $$MEGAPLAN_INSTALL_SPEC"
-  pip install --upgrade --force-reinstall --no-cache-dir "$$MEGAPLAN_INSTALL_SPEC" 2>&1 | tail -3
-fi
+mp_install_megaplan() {
+  local explicit_spec="$${MEGAPLAN_INSTALL_SPEC:-$${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-}}"
+  if [[ -n "$$explicit_spec" ]]; then
+    if [[ "$$explicit_spec" == *git+* ]] && [[ -n "$$MEGAPLAN_REF" ]]; then
+      echo "Installing/upgrading megaplan from explicit git spec at ref $$MEGAPLAN_REF"
+      pip install --upgrade --force-reinstall --no-cache-dir "$$explicit_spec@$$MEGAPLAN_REF" 2>&1 | tail -3
+    else
+      echo "Installing/upgrading megaplan from explicit spec"
+      pip install --upgrade --force-reinstall --no-cache-dir "$$explicit_spec" 2>&1 | tail -3
+    fi
+    return
+  fi
+
+  if [[ -n "$$MEGAPLAN_REPO" ]]; then
+    local repo="$$MEGAPLAN_REPO"
+    if [[ "$$repo" == https://github.com/* ]] && [[ "$$repo" != https://*@github.com/* ]] && [[ -n "$${GITHUB_TOKEN:-}" ]]; then
+      repo="https://x-access-token:$${GITHUB_TOKEN}@github.com/$${repo#https://github.com/}"
+    fi
+    local spec="megaplan-harness[agent] @ git+$$repo"
+    echo "Installing/upgrading megaplan from repo at ref $$MEGAPLAN_REF"
+    pip install --upgrade --force-reinstall --no-cache-dir "$$spec@$$MEGAPLAN_REF" 2>&1 | tail -3
+    return
+  fi
+
+  if [[ -n "$$MEGAPLAN_REF" ]]; then
+    echo "MEGAPLAN_REF=$$MEGAPLAN_REF ignored because no git source is configured — set megaplan.repo (or a git+ megaplan.install_spec) in cloud.yaml to install from source at this ref."
+  fi
+  echo "Installing/upgrading megaplan: megaplan-harness[agent]"
+  pip install --upgrade --force-reinstall --no-cache-dir "megaplan-harness[agent]" 2>&1 | tail -3
+}
+
+{
+  echo '#!/usr/bin/env bash'
+  echo 'set -euo pipefail'
+  printf 'MEGAPLAN_REF=$${MEGAPLAN_REF:-%q}\n' "$$MEGAPLAN_REF"
+  printf 'MEGAPLAN_REPO=$${MEGAPLAN_REPO:-%q}\n' "$$MEGAPLAN_REPO"
+  printf 'MEGAPLAN_INSTALL_SPEC_OVERRIDE=$${MEGAPLAN_INSTALL_SPEC_OVERRIDE:-%q}\n' "$$MEGAPLAN_INSTALL_SPEC_OVERRIDE"
+  declare -f mp_install_megaplan
+  echo 'mp_install_megaplan "$$@"'
+} > /usr/local/bin/mp-refresh-megaplan
+chmod +x /usr/local/bin/mp-refresh-megaplan
+
+mp_install_megaplan
 
 echo "Configuring megaplan agent routing and execution defaults"
 ${AGENT_ROUTING_BLOCK}
