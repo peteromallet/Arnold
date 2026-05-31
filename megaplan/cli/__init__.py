@@ -1220,10 +1220,10 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
             )
         return
 
-    if action not in (None, "start"):
+    if action not in (None, "start", "plan", "execute"):
         raise CliError(
             "invalid_args",
-            "--in-worktree is only valid for `megaplan chain start`",
+            "--in-worktree is only valid for `megaplan chain start`, `plan`, or `execute`",
         )
     if getattr(args, "project_dir", None):
         raise CliError(
